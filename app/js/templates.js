@@ -5,14 +5,19 @@ export const templates = {
       <p>Factory interna para criar aplicativos da RControl.</p>
     </section>
 
-    <section class="actions">
+    <div class="actions">
       <button class="btn primary" data-route="newapp">+ Criar novo app</button>
       <button class="btn" data-route="generator">⚙️ Gerar app</button>
       <button class="btn" data-route="settings">⚙️ Settings</button>
+    </div>
+
+    <section class="card">
+      <h3>Apps salvos</h3>
+      <div id="appsList" class="list"></div>
     </section>
   `,
 
-  newapp: `
+  newApp: `
     <section class="card">
       <h2>Criar novo app</h2>
       <p>Preencha os dados abaixo para gerar a estrutura inicial.</p>
@@ -25,7 +30,7 @@ export const templates = {
 
         <label class="label">
           ID do app (sem espaço)
-           <input id="appId" class="input" name="id" type="text" placeholder="ex: rcontrol-orders" />
+          <input id="appId" class="input" name="id" type="text" placeholder="ex: rcontrol-orders" />
           <small class="hint">Use letras minúsculas, números e hífen.</small>
         </label>
 
@@ -53,7 +58,7 @@ export const templates = {
       <p>Área para gerar/baixar os arquivos do app.</p>
 
       <div class="card subtle">
-        <p><b>Status:</b> Em construção.</p>
+        <p><strong>Status:</strong> Em construção.</p>
         <p>Próximo passo: criar o gerador que monta pastas e arquivos a partir do formulário.</p>
       </div>
     </section>
@@ -65,9 +70,10 @@ export const templates = {
       <p>Configurações do Factory.</p>
 
       <div class="card subtle">
-        <p><b>Modo:</b> Offline-first • Local mode</p>
+        <p><strong>Modo:</strong> Offline-first • Local mode</p>
         <p>Próximo passo: configurar nome da empresa, tema, logo, etc.</p>
       </div>
     </section>
   `,
 };
+  
