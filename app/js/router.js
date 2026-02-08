@@ -1,35 +1,16 @@
 import { templates } from "./templates.js";
 
-function setActiveTab(route) {
-  const tabs = document.querySelectorAll(".tab");
-  tabs.forEach((t) => t.classList.remove("active"));
-
-  const match = Array.from(tabs).find((t) => t.getAttribute("data-route") === route);
-  if (match) match.classList.add("active");
-}
-
-export function navigate(route) {
+export function navigate(route, data = {}) {
   const app = document.getElementById("app");
   if (!app) return;
 
-  const r = route || "home";
+  const r = (route || "home").toLowerCase();
 
-  if (r === "home" || r === "dashboard") {
-    app.innerHTML = templates.home;
-    setActiveTab("home");
-  } else if (r === "newapp") {
-    app.innerHTML = templates.newApp;
-    setActiveTab("newapp");
-  } else if (r === "generator") {
-    app.innerHTML = templates.generator;
-    setActiveTab("generator");
-  } else if (r === "settings") {
-    app.innerHTML = templates.settings;
-    setActiveTab("settings");
-  } else {
-    app.innerHTML = templates.home;
-    setActiveTab("home");
-  }
+  if (r === "newapp") app.innerHTML = templates.newApp;
+  else if (r === "generator") app.innerHTML = templates.generator;
+  else if (r === "settings") app.innerHTML = templates.settings;
+  else app.innerHTML = templates.home;
 
-  document.dispatchEvent(new CustomEvent("route:changed", { detail: { route: r } }));
-} 
+  // evento de “tela carregada”
+  window.dispatchEvent(new CustomEvent("route:changed", { detail: { route: r, data } }));
+}
