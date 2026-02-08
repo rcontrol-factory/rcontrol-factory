@@ -20,24 +20,24 @@ export const templates = {
       <form id="newAppForm" class="form">
         <label class="label">
           Nome do app
-          <input class="input" name="name" type="text" placeholder="Ex: RControl Orders" required />
+          <input id="appName" class="input" name="name" type="text" placeholder="Ex: RControl Orders" />
         </label>
 
         <label class="label">
           ID do app (sem espaço)
-          <input class="input" name="id" type="text" placeholder="ex: rcontrol-orders" required />
+           <input id="appId" class="input" name="id" type="text" placeholder="ex: rcontrol-orders" />
           <small class="hint">Use letras minúsculas, números e hífen.</small>
         </label>
 
         <label class="label">
           Tipo
-          <select class="input" name="type">
+          <select id="appType" class="input" name="type">
             <option value="pwa" selected>PWA</option>
             <option value="web">Web</option>
           </select>
         </label>
 
-        <button class="btn primary" type="submit">Salvar</button>
+        <button id="saveNewApp" class="btn primary" type="button">Salvar</button>
       </form>
 
       <div class="card subtle">
