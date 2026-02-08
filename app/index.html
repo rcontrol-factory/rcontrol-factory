@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>RControl Factory</title>
+
+  <link rel="manifest" href="manifest.json">
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      background: #0f172a;
+      color: #e5e7eb;
+    }
+    header {
+      background: #020617;
+      padding: 16px;
+      text-align: center;
+      font-weight: bold;
+      font-size: 18px;
+    }
+    main {
+      padding: 20px;
+    }
+    button {
+      width: 100%;
+      padding: 14px;
+      margin-top: 12px;
+      background: #22c55e;
+      border: none;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    button.secondary {
+      background: #2563eb;
+    }
+    .card {
+      background: #020617;
+      padding: 16px;
+      border-radius: 10px;
+      margin-bottom: 16px;
+    }
+  </style>
+</head>
+
+<body>
+  <header>RControl Factory</header>
+
+  <main>
+    <div class="card">
+      <h2>Bem-vindo 👋</h2>
+      <p>Factory interna para criar aplicativos da RControl.</p>
+    </div>
+
+    <button onclick="alert('Criar projeto (fake IA)')">
+      ➕ Criar novo app
+    </button>
+
+    <button class="secondary" onclick="alert('Gerar app (modo fake)')">
+      ⚙️ Gerar app
+    </button>
+  </main>
+</body>
+</html>
