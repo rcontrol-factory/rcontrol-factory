@@ -146,3 +146,16 @@ body{
   color:var(--muted);
   font-weight:600;
 }
+.toast {
+  padding: 10px 12px;
+  border-radius: 10px;
+  margin-bottom: 10px;
+  font-size: 14px;
+  border: 1px solid rgba(255,255,255,.15);
+  background: rgba(0,0,0,.25);
+}
+
+.toast-info { }
+.toast-success { border-color: rgba(0,255,120,.35); }
+.toast-warn { border-color: rgba(255,200,0,.35); }
+.toast-error { border-color: rgba(255,80,80,.45); }
