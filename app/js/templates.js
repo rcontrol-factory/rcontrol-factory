@@ -2,73 +2,72 @@ export const templates = {
   home: `
     <section class="card">
       <h2>Bem-vindo 👋</h2>
-      <p>Escolha uma ação abaixo.</p>
-    </section>
-  `,
-
-  export const templates = {
-  home: `
-    <section class="card">
-      <h2>Bem-vindo 👋</h2>
       <p>Factory interna para criar aplicativos da RControl.</p>
     </section>
 
-    <div class="actions">
+    <section class="actions">
       <button class="btn primary" data-route="newapp">+ Criar novo app</button>
       <button class="btn" data-route="generator">⚙️ Gerar app</button>
       <button class="btn" data-route="settings">⚙️ Settings</button>
-    </div>
+    </section>
   `,
 
-  newApp: `
+  newapp: `
     <section class="card">
       <h2>Criar novo app</h2>
-      <p>Preencha os dados abaixo para gerar a estrutura do app.</p>
+      <p>Preencha os dados abaixo para gerar a estrutura inicial.</p>
 
       <form id="newAppForm" class="form">
         <label class="label">
           Nome do app
-          <input class="input" type="text" name="appName" placeholder="Ex: RControl Estimates" required />
+          <input class="input" name="name" type="text" placeholder="Ex: RControl Orders" required />
         </label>
 
         <label class="label">
           ID do app (sem espaço)
-          <input class="input" type="text" name="appId" placeholder="Ex: rcontrol-estimates" required />
-          <small class="hint">Use letras minúsculas e hífen. Ex: rcontrol-estimates</small>
+          <input class="input" name="id" type="text" placeholder="ex: rcontrol-orders" required />
+          <small class="hint">Use letras minúsculas, números e hífen.</small>
         </label>
 
         <label class="label">
           Tipo
-          <select class="input" name="appType" required>
-            <option value="landing">Landing Page</option>
-            <option value="pwa">PWA (app instalável)</option>
-            <option value="internal">Interno (admin)</option>
+          <select class="input" name="type">
+            <option value="pwa" selected>PWA</option>
+            <option value="web">Web</option>
           </select>
         </label>
 
-        <label class="label">
-          Cor principal
-          <input class="input" type="color" name="primaryColor" value="#0b1220" />
-        </label>
-
-        <button class="btn primary" type="submit">Gerar estrutura</button>
+        <button class="btn primary" type="submit">Salvar</button>
       </form>
 
-      <div id="newAppResult" class="result" style="display:none;"></div>
+      <div class="card subtle">
+        <h3>Dica</h3>
+        <p>Depois vamos gerar automaticamente os arquivos do app com base nesses dados.</p>
+      </div>
     </section>
   `,
 
   generator: `
     <section class="card">
-      <h2>Gerar app</h2>
-      <p>Em breve: geração automática de arquivos e download/commit.</p>
+      <h2>Generator</h2>
+      <p>Área para gerar/baixar os arquivos do app.</p>
+
+      <div class="card subtle">
+        <p><b>Status:</b> Em construção.</p>
+        <p>Próximo passo: criar o gerador que monta pastas e arquivos a partir do formulário.</p>
+      </div>
     </section>
   `,
 
   settings: `
     <section class="card">
       <h2>Settings</h2>
-      <p>Em breve: configurações do Factory.</p>
+      <p>Configurações do Factory.</p>
+
+      <div class="card subtle">
+        <p><b>Modo:</b> Offline-first • Local mode</p>
+        <p>Próximo passo: configurar nome da empresa, tema, logo, etc.</p>
+      </div>
     </section>
-  `
+  `,
 };
