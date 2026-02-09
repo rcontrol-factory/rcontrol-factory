@@ -28,6 +28,7 @@
   </header>
 
   <main class="container">
+    <!-- DASHBOARD -->
     <section class="panel" id="tab-dashboard">
       <h2>Bem-vindo 👋</h2>
       <p class="muted">Crie apps e publique no GitHub Pages.</p>
@@ -49,8 +50,10 @@
       </div>
     </section>
 
+    <!-- NEW APP -->
     <section class="panel hidden" id="tab-newapp">
       <h2>Criar novo app</h2>
+
       <div class="grid2">
         <label class="field">
           <span>Nome do app</span>
@@ -87,6 +90,7 @@
       </div>
     </section>
 
+    <!-- EDITOR -->
     <section class="panel hidden" id="tab-editor">
       <h2>Editor</h2>
 
@@ -125,6 +129,7 @@
       </div>
     </section>
 
+    <!-- GENERATOR -->
     <section class="panel hidden" id="tab-generator">
       <h2>Generator</h2>
 
@@ -154,6 +159,7 @@
       </div>
     </section>
 
+    <!-- SETTINGS -->
     <section class="panel hidden" id="tab-settings">
       <h2>Settings</h2>
 
@@ -182,13 +188,15 @@
 
       <div class="row">
         <button class="btn primary" id="saveSettingsBtn">Salvar</button>
+        <button class="btn danger" id="resetFactoryBtn">Reset Factory</button>
       </div>
     </section>
   </main>
 
+  <!-- libs -->
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 
-  <!-- IMPORTANTE: Tudo sem "import", sem module, sem router antigo -->
+  <!-- Factory -->
   <script src="app.js"></script>
 
   <script>
