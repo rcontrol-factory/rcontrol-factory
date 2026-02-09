@@ -738,3 +738,42 @@ window.__rcf_ai_test = async function () {
   console.log("AI RESULT:\n", text);
   return text;
 };
+// ===== OpenAI Test Button (NO CONSOLE, NO F12) =====
+async function testOpenAIFromUI() {
+  try {
+    const settings = loadSettings();
+
+    if (!settings.openaiKey) {
+      alert("❌ OpenAI Key não configurada em Settings");
+      return;
+    }
+
+    const result = await callOpenAI({
+      apiKey: settings.openaiKey,
+      model: settings.openaiModel || "gpt-4.1",
+      prompt: "Crie um index.html simples com um botão e um contador em JavaScript."
+    });
+
+    alert("✅ OpenAI respondeu! Veja o resultado na tela.");
+    showAITestResult(result);
+
+  } catch (err) {
+    alert("❌ Erro na OpenAI: " + err.message);
+  }
+}
+
+function showAITestResult(text) {
+  let box = document.getElementById("ai-test-result");
+  if (!box) {
+    box = document.createElement("pre");
+    box.id = "ai-test-result";
+    box.style.whiteSpace = "pre-wrap";
+    box.style.background = "#0b1220";
+    box.style.color = "#9ef0c3";
+    box.style.padding = "12px";
+    box.style.borderRadius = "8px";
+    box.style.marginTop = "12px";
+    document.body.appendChild(box);
+  }
+  box.textContent = text;
+}
