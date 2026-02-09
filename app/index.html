@@ -11,7 +11,7 @@
 
 <body>
   <header class="topbar">
-    <div class="brand">
+    <div class="brand" id="brandTap">
       <span class="dot"></span>
       <div>
         <div class="title">RControl Factory</div>
@@ -29,14 +29,15 @@
   </header>
 
   <main class="container">
+    <!-- DASHBOARD -->
     <section class="panel" id="tab-dashboard">
       <h2>Bem-vindo 👋</h2>
-      <p class="muted">Crie apps e publique no GitHub Pages.</p>
+      <p class="muted">Crie apps e publique depois (primeiro vamos estabilizar).</p>
 
       <div class="row">
         <button class="btn primary" id="goNewApp">+ Criar novo app</button>
         <button class="btn" id="goEditor">✍️ Abrir Editor</button>
-        <button class="btn" id="goGenerator">🚀 Gerar/ZIP/Publish</button>
+        <button class="btn" id="goGenerator">📦 Gerar ZIP</button>
       </div>
 
       <div class="card">
@@ -51,6 +52,7 @@
       </div>
     </section>
 
+    <!-- NEW APP -->
     <section class="panel hidden" id="tab-newapp">
       <h2>Criar novo app</h2>
       <p class="muted">Cria a estrutura inicial e salva localmente.</p>
@@ -92,6 +94,7 @@
       </div>
     </section>
 
+    <!-- EDITOR -->
     <section class="panel hidden" id="tab-editor">
       <h2>Editor</h2>
       <p class="muted">Edite os arquivos do app ativo e veja o preview.</p>
@@ -125,16 +128,17 @@
 
       <div class="card">
         <h3>Preview</h3>
-        <div class="muted small">Se der cache: use “Limpar Cache PWA” no painel Logs/Diag.</div>
+        <div class="muted small">Se der cache, use “Diag → Limpar Cache PWA”.</div>
         <div class="previewBox">
           <iframe id="previewFrame" title="Preview"></iframe>
         </div>
       </div>
     </section>
 
+    <!-- GENERATOR -->
     <section class="panel hidden" id="tab-generator">
       <h2>Generator</h2>
-      <p class="muted">Baixe ZIP (Publish a gente liga depois de estabilizar).</p>
+      <p class="muted">Baixe ZIP do app salvo.</p>
 
       <div class="card">
         <label class="field">
@@ -144,7 +148,7 @@
 
         <div class="row wrap">
           <button class="btn primary" id="downloadZipBtn">⬇️ Baixar ZIP</button>
-          <button class="btn" id="publishBtn">🚀 Publicar (em breve)</button>
+          <button class="btn" id="publishBtn">🚀 Publicar (depois)</button>
           <button class="btn" id="copyLinkBtn">🔗 Copiar link</button>
         </div>
 
@@ -162,9 +166,10 @@
       </div>
     </section>
 
+    <!-- SETTINGS -->
     <section class="panel hidden" id="tab-settings">
       <h2>Settings</h2>
-      <p class="muted">Configurações do Factory (salvas no seu dispositivo).</p>
+      <p class="muted">Configurações (salvas no seu dispositivo).</p>
 
       <div class="grid2">
         <label class="field">
@@ -186,6 +191,12 @@
           <span>Base URL do Pages</span>
           <input id="pagesBase" placeholder="https://SEUUSER.github.io" />
         </label>
+
+        <label class="field">
+          <span>Admin PIN (6 dígitos)</span>
+          <input id="adminPin" placeholder="ex: 123456" inputmode="numeric" />
+          <span class="hint">Aba Admin só abre com PIN.</span>
+        </label>
       </div>
 
       <div class="row">
@@ -193,24 +204,49 @@
         <button class="btn danger" id="resetFactoryBtn">Reset Factory</button>
       </div>
     </section>
+
+    <!-- ADMIN (escondida) -->
+    <section class="panel hidden" id="tab-admin">
+      <h2>Admin</h2>
+      <p class="muted">Diagnóstico, backup e auto-repair (só você).</p>
+
+      <div class="card">
+        <div class="row wrap">
+          <button class="btn" id="adminDiagBtn">Gerar diagnóstico</button>
+          <button class="btn" id="adminCopyDiagBtn">Copiar diagnóstico</button>
+          <button class="btn danger" id="adminClearPwaBtn">Limpar Cache PWA</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Backup</h3>
+        <div class="row wrap">
+          <button class="btn" id="adminExportBtn">Exportar backup</button>
+          <button class="btn" id="adminImportBtn">Importar backup</button>
+          <input id="adminImportFile" type="file" accept="application/json" style="display:none" />
+        </div>
+        <div class="muted small">Export salva um JSON do localStorage (apps + settings).</div>
+      </div>
+
+      <div class="card">
+        <h3>Auto-repair</h3>
+        <div class="row wrap">
+          <button class="btn primary" id="adminRepairBtn">Rodar auto-repair</button>
+        </div>
+        <pre class="pre" id="adminOut">—</pre>
+      </div>
+    </section>
   </main>
 
   <!-- libs -->
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-
-  <!-- módulos (ORDEM IMPORTA) -->
-  <script src="js/ai.js"></script>
-  <script src="js/templates.js"></script>
-  <script src="js/router.js"></script>
 
   <!-- app principal -->
   <script src="app.js"></script>
 
   <script>
     if ("serviceWorker" in navigator) {
-      window.addEventListener("load", () => {
-        navigator.serviceWorker.register("./sw.js").catch(() => {});
-      });
+      window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js").catch(() => {}));
     }
   </script>
 </body>
