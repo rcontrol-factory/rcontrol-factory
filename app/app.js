@@ -189,7 +189,37 @@
   }
 
   // --------- Debug UI + Admin UI ----------
-  const ADMIN = {
+     // ====== EXPOR APIs (pra Admin/Diag/Logs não “morrer” no clique) ======
+    window.RCF = window.RCF || {};
+
+    // Debug API
+    window.RCF.debug = {
+      buildDiagnosisReport,
+      nukePwaCache,
+      getLogs: () => (__logs ? __logs.slice() : []),
+      clearLogs: () => { try { __logs.length = 0; __renderDebug(); } catch {} },
+    };
+
+    // Core API (storage + dados) — usado por admin.js (export/import/reset)
+    window.RCF.core = {
+      LS,
+      loadSettings,
+      saveSettings,
+      loadApps,
+      saveApps,
+      getActiveAppId,
+      setActiveAppId,
+    };
+
+    // Boot do admin (se existir)
+    try {
+      if (window.RCF.admin && typeof window.RCF.admin.init === "function") {
+        window.RCF.admin.init();
+      }
+    } catch (e) {
+      console.warn("Admin init falhou:", e);
+    }
+   const ADMIN = {
     pinKey: "rcf_admin_pin_v1",
     sessionKey: "rcf_admin_ok_session_v1",
     defaultPin: "7777",
