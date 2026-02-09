@@ -1139,3 +1139,12 @@ function showAITestResult(text) {
     try { rcf_ai_mountPanel(); } catch {}
   });
 })();
+// FORÇAR ABERTURA DO PAINEL AI (Safari/PWA fix)
+setTimeout(() => {
+  if (window.__rcf_ai_panel) {
+    window.__rcf_ai_panel();
+    console.log("AI Engine montada manualmente");
+  } else {
+    console.log("AI Engine não encontrada");
+  }
+}, 800);
