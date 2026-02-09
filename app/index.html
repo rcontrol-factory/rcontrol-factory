@@ -7,6 +7,19 @@
   <meta name="theme-color" content="#0b1220" />
   <link rel="manifest" href="manifest.json" />
   <link rel="stylesheet" href="styles.css" />
+
+  <!-- Segurança básica (CSP) -->
+  <meta http-equiv="Content-Security-Policy"
+    content="
+      default-src 'self';
+      img-src 'self' data:;
+      style-src 'self' 'unsafe-inline';
+      script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline';
+      connect-src 'self';
+      frame-src 'self';
+      base-uri 'self';
+      form-action 'self';
+    " />
 </head>
 <body>
   <header class="top">
@@ -15,6 +28,11 @@
       <div>
         <div class="title">RControl Factory</div>
         <div class="sub">Factory interna • PWA • Offline-first</div>
+        <div class="sub" style="opacity:.75">
+          <a href="./privacy.html" style="color:inherit;text-decoration:underline">Privacidade</a>
+          •
+          <a href="./terms.html" style="color:inherit;text-decoration:underline">Termos</a>
+        </div>
       </div>
     </div>
 
@@ -23,6 +41,7 @@
       <button class="tab" data-tab="newapp">New App</button>
       <button class="tab" data-tab="editor">Editor</button>
       <button class="tab" data-tab="generator">Generator</button>
+      <button class="tab" data-tab="agent">Agente</button>
       <button class="tab" data-tab="settings">Settings</button>
       <button class="tab" data-tab="admin">Admin</button>
     </nav>
@@ -39,6 +58,7 @@
         <button class="btn" id="goNewApp">+ Criar novo app</button>
         <button class="btn ghost" id="goEditor">Abrir Editor</button>
         <button class="btn ghost" id="goGenerator">Gerar ZIP</button>
+        <button class="btn ghost" id="goAgent">Agente</button>
       </div>
 
       <h3>Apps salvos</h3>
@@ -118,10 +138,36 @@
       <div id="genStatus" class="status">Status: pronto ✅</div>
     </section>
 
+    <!-- AGENTE (FORA DO ADMIN) -->
+    <section id="tab-agent" class="panel hidden">
+      <h2>Agente (Criador de Apps)</h2>
+      <p class="muted">
+        Aqui é a IA “operária”: cria apps, cria telas e estrutura os projetos (RQuotas primeiro).<br/>
+        Segurança: pra rodar, você precisa desbloquear o Admin (PIN) — por enquanto.
+      </p>
+
+      <div class="card">
+        <div class="muted" style="margin-bottom:8px">
+          Exemplos: <code>criar app RQuotas</code> • <code>listar apps</code> • <code>selecionar rquotas</code>
+        </div>
+
+        <textarea id="agentInput" class="textarea mini" placeholder="Digite um comando..."></textarea>
+
+        <div class="row">
+          <button id="agentRunBtn" class="btn">Executar</button>
+          <button id="agentClearBtn" class="btn ghost">Limpar</button>
+          <button id="agentApplyBtn" class="btn ghost">Aplicar sugestão</button>
+          <button id="agentDiscardBtn" class="btn danger ghost">Descartar</button>
+        </div>
+
+        <pre id="agentOut" class="pre">—</pre>
+      </div>
+    </section>
+
     <!-- SETTINGS -->
     <section id="tab-settings" class="panel hidden">
       <h2>Settings</h2>
-      <p class="muted">Configurações locais (GitHub token depois).</p>
+      <p class="muted">Configurações locais (Supabase entra na etapa do app).</p>
 
       <div class="grid">
         <label class="lbl">GitHub user</label>
@@ -146,11 +192,11 @@
     <!-- ADMIN -->
     <section id="tab-admin" class="panel hidden">
       <h2>Admin</h2>
-      <p class="muted">Diagnóstico + backup + mini-IA offline (com aprovação).</p>
+      <p class="muted">Diagnóstico + backup + mini-IA interna (com aprovação).</p>
 
       <div class="card">
         <div class="row">
-          <input id="adminPinInput" class="input" placeholder="PIN (padrão 1122)" />
+          <input id="adminPinInput" class="input" placeholder="PIN (padrão 1122) | emergência: 0000" />
           <button id="adminUnlockBtn" class="btn">Unlock 15min</button>
           <span id="adminState" class="badge">LOCKED 🔒</span>
         </div>
@@ -176,14 +222,10 @@
       </div>
 
       <div class="card">
-        <h3>IA Offline v2 (70%)</h3>
-        <div class="muted">
-          Você digita um pedido. Ela cria um <strong>PLANO</strong> e uma <strong>SUGESTÃO</strong>. Só aplica se você tocar em <strong>Aplicar sugestão</strong>.
-        </div>
+        <h3>IA Admin (Estruturar Factory)</h3>
+        <div class="muted">Essa IA é pra manutenção/upgrade da Factory (não pra construir apps finais).</div>
 
-        <div class="row wrap">
-          <textarea id="aiInput" class="textarea mini" placeholder="Ex: criar app AgroControl | listar apps | selecionar agrocontrol | add template login | corrigir preview | colar código e pedir pra encaixar"></textarea>
-        </div>
+        <textarea id="aiInput" class="textarea mini" placeholder="Ex: help | status | list | export | diag"></textarea>
 
         <div class="row">
           <button id="aiRunBtn" class="btn">Executar</button>
@@ -201,15 +243,18 @@
   <!-- libs -->
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 
-  <!-- app principal (ÚNICO) -->
-  <script src="./app.js?v=2026-02-09-rcf-v2"></script>
+  <!-- módulos -->
+  <script src="./js/ai.builder.js"></script>
 
-  <!-- service worker register (sempre completo / nunca quebrado) -->
+  <!-- app principal -->
+  <script src="./app.js"></script>
+
+  <!-- service worker register (fixo) -->
   <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", async () => {
         try {
-          const v = "2026-02-09-rcf-v2";
+          const v = "2026-02-09-v3";
           await navigator.serviceWorker.register("./sw.js?v=" + v);
         } catch (e) {}
       });
