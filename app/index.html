@@ -176,13 +176,13 @@
       </div>
 
       <div class="card">
-        <h3>IA Offline (70%)</h3>
+        <h3>IA Offline v2 (70%)</h3>
         <div class="muted">
-          Ela não “adivinha”, mas entende texto e código e te dá ações prontas. Ela NUNCA aplica sem você aprovar.
+          Você digita um pedido. Ela cria um <strong>PLANO</strong> e uma <strong>SUGESTÃO</strong>. Só aplica se você tocar em <strong>Aplicar sugestão</strong>.
         </div>
 
         <div class="row wrap">
-          <textarea id="aiInput" class="textarea mini" placeholder="Ex: criar app RQuotas | listar apps | selecionar rquotas | corrigir SW | colar código e pedir pra encaixar"></textarea>
+          <textarea id="aiInput" class="textarea mini" placeholder="Ex: criar app AgroControl | listar apps | selecionar agrocontrol | add template login | corrigir preview | colar código e pedir pra encaixar"></textarea>
         </div>
 
         <div class="row">
@@ -202,14 +202,14 @@
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 
   <!-- app principal (ÚNICO) -->
-  <script src="./app.js"></script>
+  <script src="./app.js?v=2026-02-09-rcf-v2"></script>
 
   <!-- service worker register (sempre completo / nunca quebrado) -->
   <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", async () => {
         try {
-          const v = "2026-02-09-v2";
+          const v = "2026-02-09-rcf-v2";
           await navigator.serviceWorker.register("./sw.js?v=" + v);
         } catch (e) {}
       });
