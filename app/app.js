@@ -1139,3 +1139,25 @@ function showAITestResult(text) {
     try { rcf_ai_mountPanel(); } catch {}
   });
 })();
+// app/app.js
+(function () {
+  function boot() {
+    if (!window.RCF || !window.RCF.engine || !window.RCF.templates || !window.RCF.router) {
+      const el = document.getElementById("root");
+      if (el) el.innerHTML = "<div style='padding:16px;color:#fff'>ERRO: Factory não carregou módulos (ai/templates/router).</div>";
+      return;
+    }
+
+    const mount = () => window.RCF.router.mount(window.RCF.router.getRoute());
+
+    window.addEventListener("hashchange", mount);
+    mount();
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", boot);
+  } else {
+    boot();
+  }
+})();
+
