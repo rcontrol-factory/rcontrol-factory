@@ -371,3 +371,394 @@ self.addEventListener("fetch",(e)=>{
       root.appendChild(item);
     });
   }
+  // --------------------- Editor + Preview ---------------------
+  function renderEditor() {
+    ensureActiveApp();
+    const app = pickAppById(activeAppId);
+
+    const label = $("activeAppLabel");
+    if (label) label.textContent = app ? `${app.name} (${app.id})` : "—";
+
+    const fl = $("filesList");
+    const area = $("codeArea");
+    const cur = $("currentFileLabel");
+    const frame = $("previewFrame");
+    if (!fl || !area || !cur || !frame) return;
+
+    fl.innerHTML = "";
+
+    if (!app) {
+      area.value = "";
+      cur.textContent = "—";
+      frame.srcdoc = `<p style="font-family:system-ui;padding:12px">Sem app ativo</p>`;
+      return;
+    }
+
+    if (!FILE_ORDER.includes(currentFile)) currentFile = "index.html";
+
+    FILE_ORDER.forEach((f) => {
+      const b = document.createElement("button");
+      b.className = "fileBtn" + (f === currentFile ? " active" : "");
+      b.textContent = f;
+      b.addEventListener("click", () => {
+        currentFile = f;
+        renderEditor();
+      });
+      fl.appendChild(b);
+    });
+
+    cur.textContent = currentFile;
+    area.value = app.files[currentFile] ?? "";
+    refreshPreview(app);
+  }
+
+  function refreshPreview(app) {
+    const frame = $("previewFrame");
+    if (!frame) return;
+
+    const html = app.files["index.html"] || "<h1>Sem index.html</h1>";
+    const css = app.files["styles.css"] || "";
+    const js = app.files["app.js"] || "";
+
+    const looksLikeFullDoc = /<!doctype\s+html>/i.test(html) || /<html[\s>]/i.test(html);
+
+    const doc = looksLikeFullDoc
+      ? injectIntoFullHtml(html, css, js)
+      : `<!doctype html>
+<html lang="pt-BR"><head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<style>${css}</style>
+</head><body>
+${html}
+<script>${js}<\/script>
+</body></html>`;
+
+    frame.srcdoc = doc;
+  }
+
+  function injectIntoFullHtml(fullHtml, css, js) {
+    let out = String(fullHtml);
+
+    if (/<\/head>/i.test(out)) out = out.replace(/<\/head>/i, `<style>${css}</style>\n</head>`);
+    else out = `<style>${css}</style>\n` + out;
+
+    if (/<\/body>/i.test(out)) out = out.replace(/<\/body>/i, `<script>${js}<\/script>\n</body>`);
+    else out = out + `\n<script>${js}<\/script>\n`;
+
+    return out;
+  }
+
+  // --------------------- Generator ---------------------
+  function renderGeneratorSelect() {
+    ensureActiveApp();
+    const sel = $("genAppSelect");
+    if (!sel) return;
+
+    sel.innerHTML = "";
+    apps.forEach((a) => {
+      const opt = document.createElement("option");
+      opt.value = a.id;
+      opt.textContent = `${a.name} (${a.id})`;
+      sel.appendChild(opt);
+    });
+
+    if (activeAppId) sel.value = activeAppId;
+  }
+
+  async function downloadZip(app) {
+    if (typeof JSZip === "undefined") {
+      alert("JSZip não carregou. Verifique o index.html (script do jszip).");
+      return;
+    }
+
+    const zip = new JSZip();
+    Object.entries(app.files).forEach(([path, content]) => {
+      zip.file(path, String(content ?? ""));
+    });
+    zip.file("README.md", `# ${app.name}\n\nGerado pelo RControl Factory.\n`);
+
+    const blob = await zip.generateAsync({ type: "blob" });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${app.id}.zip`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+
+    URL.revokeObjectURL(url);
+  }
+
+  // --------------------- Settings ---------------------
+  function renderSettings() {
+    $("ghUser") && ($("ghUser").value = settings.ghUser || "");
+    $("ghToken") && ($("ghToken").value = settings.ghToken || "");
+    $("repoPrefix") && ($("repoPrefix").value = settings.repoPrefix || "rapp-");
+    $("pagesBase") && ($("pagesBase").value = settings.pagesBase || (settings.ghUser ? `https://${settings.ghUser}.github.io` : ""));
+  }
+
+  // --------------------- Admin: PIN / Unlock ---------------------
+  const DEFAULT_PIN = "1122";
+
+  function getPin() {
+    return localStorage.getItem(LS.adminPin) || DEFAULT_PIN;
+  }
+  function setPin(pin) {
+    localStorage.setItem(LS.adminPin, String(pin || "").trim());
+  }
+  function isUnlocked() {
+    const until = Number(localStorage.getItem(LS.adminUnlockUntil) || "0");
+    return until && until > Date.now();
+  }
+  function unlock(minutes) {
+    const ms = (Number(minutes || 15) * 60 * 1000);
+    localStorage.setItem(LS.adminUnlockUntil, String(Date.now() + ms));
+  }
+  function lockAdmin() {
+    localStorage.setItem(LS.adminUnlockUntil, "0");
+  }
+  function renderAdminState() {
+    const st = $("adminState");
+    if (!st) return;
+    st.textContent = isUnlocked() ? "UNLOCK ✅" : "LOCKED 🔒";
+  }
+  function guardUnlocked() {
+    if (isUnlocked()) return true;
+    alert("Admin está bloqueado 🔒 (digite PIN e Unlock).");
+    return false;
+  }
+
+  // --------------------- Diagnóstico / Backup ---------------------
+  async function nukePwaCache() {
+    try {
+      if ("caches" in window) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map((k) => caches.delete(k)));
+      }
+    } catch (e) { logWarn("Falha ao limpar caches:", e); }
+
+    try {
+      if ("serviceWorker" in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map((r) => r.unregister()));
+      }
+    } catch (e) { logWarn("Falha ao desregistrar SW:", e); }
+  }
+
+  async function buildDiagnosisReport() {
+    const lines = [];
+    const add = (k, v) => lines.push(`${k}: ${v}`);
+
+    add("=== RCF DIAGNÓSTICO ===", "");
+    add("URL", location.href);
+    add("UA", navigator.userAgent);
+    add("Hora", new Date().toString());
+
+    try {
+      const s = localStorage.getItem(LS.settings) || "";
+      const a = localStorage.getItem(LS.apps) || "";
+      const act = localStorage.getItem(LS.activeAppId) || "";
+      add("LS.settings bytes", s.length);
+      add("LS.apps bytes", a.length);
+      add("LS.activeAppId", act || "(vazio)");
+    } catch (e) { add("localStorage", "ERRO: " + e.message); }
+
+    try {
+      const _apps = loadApps();
+      add("Apps count", _apps.length);
+      const _active = getActiveAppId();
+      const found = _apps.find(x => x && x.id === _active);
+      add("Active exists", found ? "SIM" : "NÃO");
+      if (found) add("Active name/id", `${found.name} / ${found.id}`);
+    } catch (e) { add("Apps parse", "ERRO: " + e.message); }
+
+    try {
+      add("SW supported", ("serviceWorker" in navigator) ? "SIM" : "NÃO");
+      if ("serviceWorker" in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        add("SW registrations", regs.length);
+      }
+    } catch (e) { add("SW", "ERRO: " + e.message); }
+
+    try {
+      add("Cache API", ("caches" in window) ? "SIM" : "NÃO");
+      if ("caches" in window) {
+        const keys = await caches.keys();
+        add("Caches", keys.join(", ") || "(nenhum)");
+      }
+    } catch (e) { add("Caches", "ERRO: " + e.message); }
+
+    const must = [
+      "appsList","statusBox","newName","newId","newTemplate","createAppBtn",
+      "activeAppLabel","filesList","codeArea","previewFrame","genAppSelect",
+      "downloadZipBtn","genStatus","ghUser","ghToken","repoPrefix","pagesBase",
+      "adminUnlockBtn","adminState","aiRunBtn","aiApplyBtn"
+    ];
+    const missing = must.filter(id => !document.getElementById(id));
+    add("DOM missing IDs", missing.length ? missing.join(", ") : "OK");
+
+    add("---- últimos logs ----", "");
+    const tail = __logs.slice(-80).map(l => `[${l.time}] ${String(l.level).toUpperCase()} ${l.msg}`);
+    lines.push(tail.join("\n") || "(sem logs)");
+
+    return lines.join("\n");
+  }
+
+  function downloadText(filename, text, mime = "application/json;charset=utf-8") {
+    const blob = new Blob([String(text || "")], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function pickFile(accept = "application/json,.json") {
+    return new Promise((resolve) => {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = accept;
+      input.onchange = () => resolve(input.files && input.files[0] ? input.files[0] : null);
+      input.click();
+    });
+  }
+
+  // --------------------- IA Offline (70%) ---------------------
+  // Ela NÃO aplica sozinha: cria um "draft" (patch) e você aplica se quiser.
+  function setAiDraft(draft) {
+    localStorage.setItem(LS.aiDraft, JSON.stringify(draft || null));
+  }
+  function getAiDraft() {
+    return safeJsonParse(localStorage.getItem(LS.aiDraft) || "null", null);
+  }
+
+  function aiHelp() {
+    return [
+      "IA Offline — comandos:",
+      "- help",
+      "- status",
+      "- list",
+      "- select <id>",
+      "- create app <nome> (usa o template escolhido no New App)",
+      "- fix buttons (verifica IDs do DOM e sugere correção)",
+      "- show draft (mostra a sugestão atual)",
+      "",
+      "Dica: você pode colar código e pedir: 'encaixar isso no app.js do app ativo'.",
+    ].join("\n");
+  }
+
+  function aiStatus() {
+    const active = pickAppById(activeAppId);
+    return [
+      "Engine: OK",
+      `Apps: ${apps.length}`,
+      active ? `Ativo: ${active.name} (${active.id})` : "Ativo: (nenhum)",
+      "Draft: " + (getAiDraft() ? "SIM" : "NÃO"),
+    ].join("\n");
+  }
+
+  function aiList() {
+    if (!apps.length) return "Nenhum app salvo ainda.";
+    return ["Apps salvos:"].concat(apps.map(a => `- ${a.name} (${a.id})`)).join("\n");
+  }
+
+  function aiSelect(id) {
+    const ok = apps.some(a => a.id === id);
+    if (!ok) return `ERRO: App não encontrado: ${id}`;
+    setActiveAppId(id);
+    renderAppsList();
+    renderEditor();
+    renderGeneratorSelect();
+    return `✅ App ativo: ${id}`;
+  }
+
+  function aiCreateFromName(name) {
+    const n = String(name || "").trim();
+    if (!n) return "ERRO: Informe um nome. Ex: create app RQuotas";
+
+    // cria um id automático seguro
+    const id = sanitizeId(n) || ("app-" + Date.now().toString(36));
+    if (pickAppById(id)) return "ERRO: Já existe um app com esse ID: " + id;
+
+    const templateId = $("newTemplate")?.value || "pwa-base";
+    createApp({ name: n, id, type: "pwa", templateId });
+
+    renderAppsList();
+    renderEditor();
+    renderGeneratorSelect();
+    showTab("editor");
+    return `✅ App criado: ${n} (${id})`;
+  }
+
+  function aiFixButtons() {
+    // isso não muda código do Factory; só faz check e cria draft informativo
+    const ids = [
+      "goNewApp","goEditor","goGenerator",
+      "createAppBtn","saveFileBtn","resetFileBtn","downloadZipBtn",
+      "adminUnlockBtn","aiRunBtn","aiApplyBtn"
+    ];
+    const missing = ids.filter(id => !document.getElementById(id));
+    const report = [
+      "Check botões:",
+      missing.length ? ("FALTANDO IDs: " + missing.join(", ")) : "OK ✅ (IDs principais existem)",
+      "",
+      "Se botões 'morrem', causa nº1 é erro JS no init.",
+      "Este app.js já tem fail-safe pra não morrer.",
+    ].join("\n");
+
+    setAiDraft({
+      kind: "info",
+      createdAt: Date.now(),
+      message: report
+    });
+    return report + "\n\n✅ Draft criado (aperta 'show draft' pra ver).";
+  }
+
+  function aiShowDraft() {
+    const d = getAiDraft();
+    if (!d) return "Sem draft.";
+    return typeof d.message === "string" ? d.message : JSON.stringify(d, null, 2);
+  }
+
+  function aiRun(inputRaw) {
+    const raw = String(inputRaw || "").trim();
+    const lower = raw.toLowerCase();
+
+    if (!raw) return aiHelp();
+    if (lower === "help") return aiHelp();
+    if (lower === "status") return aiStatus();
+    if (lower === "list") return aiList();
+    if (lower.startsWith("select ")) return aiSelect(raw.split(/\s+/)[1] || "");
+    if (lower.startsWith("create app ")) return aiCreateFromName(raw.replace(/^create\s+app\s+/i, ""));
+    if (lower === "fix buttons") return aiFixButtons();
+    if (lower === "show draft") return aiShowDraft();
+
+    // default: cria um draft “info” com o que entendeu
+    const msg = [
+      "Comando não reconhecido.",
+      "Digite: help",
+      "",
+      "Se você colar código + pedido, eu consigo sugerir ações (draft).",
+    ].join("\n");
+    setAiDraft({ kind: "info", createdAt: Date.now(), message: msg });
+    return msg;
+  }
+
+  // aplicar draft (por enquanto só draft tipo info — no próximo passo a gente liga patch em arquivos)
+  function aiApply() {
+    if (!guardUnlocked()) return;
+    const d = getAiDraft();
+    if (!d) return "Sem draft para aplicar.";
+    // nesta versão, draft é informativo (não altera arquivos). segurança máxima.
+    return "✅ Draft aplicado (modo seguro): nenhuma alteração automática foi feita.";
+  }
+
+  function aiDiscard() {
+    setAiDraft(null);
+    return "✅ Draft descartado.";
+  }
