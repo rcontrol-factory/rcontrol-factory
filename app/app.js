@@ -1,64 +1,40 @@
 /* =========================================================
-   RControl Factory — app/app.js (Standalone - NO modules)
-   - Offline-first (localStorage)
-   - Dashboard / New App / Editor / Generator / Settings
-   - Preview via iframe srcdoc
-   - ZIP via JSZip
-   - Debug Console + Diagnóstico + Limpar Cache PWA
+   RControl Factory — app/app.js (MODULAR, NO imports)
+   - Usa: window.RCF.engine / window.RCF.templates / window.RCF.router
+   - Debug Console iPhone-friendly (Logs/Diag)
+   - ADMIN (PIN) com "chat" tipo Replit (comandos do engine)
+   - Ações rápidas: limpar cache PWA / reset storage / export/import
    ========================================================= */
+
 (function () {
   "use strict";
 
-  // ---------- Storage keys ----------
-  const LS = {
-    settings: "rcf_settings_v3",
-    apps: "rcf_apps_v3",
-    activeAppId: "rcf_active_app_id_v3",
-  };
-
-  const DEFAULT_SETTINGS = {
-    ghUser: "",
-    ghToken: "",
-    repoPrefix: "rapp-",
-    pagesBase: "",
-    openaiKey: "",
-    openaiModel: "gpt-4.1",
-  };
-
-  const FILE_ORDER = ["index.html", "app.js", "styles.css", "manifest.json", "sw.js"];
-
-  // ---------- DOM helpers ----------
-  const $ = (id) => document.getElementById(id);
-  const qsa = (sel) => Array.from(document.querySelectorAll(sel));
-
-  function safeJsonParse(s, fallback) {
-    try { return JSON.parse(s); } catch { return fallback; }
-  }
-
-  // ---------- Debug / Logs ----------
-  const __LOG_MAX = 250;
+  // --------- Debug / Logs (iPhone friendly) ----------
+  const __LOG_MAX = 300;
   const __logs = [];
-
-  function __pushLog(level, args) {
-    const time = new Date().toISOString().slice(11, 19);
-    const msg = (args || []).map((a) => {
-      try {
-        if (typeof a === "string") return a;
-        return JSON.stringify(a);
-      } catch {
-        return String(a);
-      }
-    }).join(" ");
-    __logs.push({ time, level, msg });
-    while (__logs.length > __LOG_MAX) __logs.shift();
-    __renderDebug();
-  }
-
   const __origConsole = {
     log: console.log.bind(console),
     warn: console.warn.bind(console),
     error: console.error.bind(console),
   };
+
+  function __safeString(x) {
+    try {
+      if (typeof x === "string") return x;
+      return JSON.stringify(x);
+    } catch {
+      return String(x);
+    }
+  }
+
+  function __pushLog(level, args) {
+    const time = new Date().toISOString().slice(11, 19);
+    const msg = (args || []).map(__safeString).join(" ");
+    __logs.push({ time, level, msg });
+    while (__logs.length > __LOG_MAX) __logs.shift();
+    __renderDebug();
+  }
+
   console.log = (...a) => { __origConsole.log(...a); __pushLog("log", a); };
   console.warn = (...a) => { __origConsole.warn(...a); __pushLog("warn", a); };
   console.error = (...a) => { __origConsole.error(...a); __pushLog("error", a); };
@@ -70,106 +46,30 @@
     __pushLog("error", ["Promise rejeitada:", e.reason]);
   });
 
-  function __ensureDebugUI() {
-    if (document.getElementById("rcf-debug-btn")) return;
+  // --------- Helpers ----------
+  const $ = (id) => document.getElementById(id);
 
-    const btnLogs = document.createElement("button");
-    btnLogs.id = "rcf-debug-btn";
-    btnLogs.textContent = "Logs";
-    btnLogs.style.cssText = `
-      position:fixed; right:12px; bottom:12px; z-index:99999;
-      padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,.2);
-      background:rgba(0,0,0,.55); color:white; font-weight:900;
-    `;
+  function setStatus(msg) {
+    const el = $("statusBox");
+    if (el) el.textContent = msg;
+    console.log("STATUS:", msg);
+  }
 
-    const btnDiag = document.createElement("button");
-    btnDiag.id = "rcf-diag-btn";
-    btnDiag.textContent = "Diag";
-    btnDiag.style.cssText = `
-      position:fixed; right:72px; bottom:12px; z-index:99999;
-      padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,.2);
-      background:rgba(0,0,0,.55); color:white; font-weight:900;
-    `;
-
-    const panel = document.createElement("div");
-    panel.id = "rcf-debug-panel";
-    panel.style.display = "none";
-    panel.style.cssText = `
-      position:fixed; left:12px; right:12px; bottom:64px; z-index:99999;
-      max-height:55vh; overflow:auto; padding:10px;
-      border-radius:14px; border:1px solid rgba(255,255,255,.15);
-      background:rgba(10,10,10,.92); color:#eaeaea;
-      font:12px/1.35 -apple-system,system-ui,Segoe UI,Roboto,Arial;
-      white-space:pre-wrap;
-    `;
-
-    const actions = document.createElement("div");
-    actions.style.cssText = "display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px;";
-
-    const mkBtn = (label) => {
-      const b = document.createElement("button");
-      b.textContent = label;
-      b.style.cssText =
-        "padding:6px 10px;border-radius:10px;border:1px solid rgba(255,255,255,.2);" +
-        "background:rgba(255,255,255,.08);color:#fff;font-weight:900;";
-      return b;
-    };
-
-    const clear = mkBtn("Limpar logs");
-    clear.onclick = () => { __logs.length = 0; __renderDebug(); };
-
-    const copy = mkBtn("Copiar logs");
-    copy.onclick = async () => {
-      const text = __logs.map(l => `[${l.time}] ${l.level.toUpperCase()} ${l.msg}`).join("\n");
-      try { await navigator.clipboard.writeText(text); alert("Logs copiados ✅"); }
-      catch { alert("iOS bloqueou copiar. Segura no texto e copia manual."); }
-    };
-
-    const copyDiag = mkBtn("Copiar diagnóstico");
-    copyDiag.onclick = async () => {
-      const diag = await buildDiagnosisReport();
-      try { await navigator.clipboard.writeText(diag); alert("Diagnóstico copiado ✅"); }
-      catch { alert("iOS bloqueou copiar. Vou mostrar na tela; copie manual."); }
-      const body = document.getElementById("rcf-debug-body");
-      if (body) body.textContent = diag;
-      panel.style.display = "block";
-    };
-
-    const fix = mkBtn("Limpar Cache PWA");
-    fix.onclick = async () => {
-      const ok = confirm("Vai limpar caches + desregistrar Service Worker e recarregar. Continuar?");
-      if (!ok) return;
-      await nukePwaCache();
-      alert("Cache limpo ✅ Recarregando…");
-      location.reload();
-    };
-
-    actions.append(clear, copy, copyDiag, fix);
-    panel.append(actions);
-
-    const body = document.createElement("div");
-    body.id = "rcf-debug-body";
-    panel.append(body);
-
-    btnLogs.onclick = () => {
-      panel.style.display = (panel.style.display === "none") ? "block" : "none";
-      __renderDebug();
-    };
-
-    btnDiag.onclick = async () => {
-      const diag = await buildDiagnosisReport();
-      const body = document.getElementById("rcf-debug-body");
-      if (body) body.textContent = diag;
-      panel.style.display = "block";
-    };
-
-    document.body.append(btnDiag, btnLogs, panel);
+  function escapeHtml(s) {
+    return String(s ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
   }
 
   function __renderDebug() {
     const body = document.getElementById("rcf-debug-body");
     if (!body) return;
-    body.textContent = __logs.map(l => `[${l.time}] ${l.level.toUpperCase()} ${l.msg}`).join("\n");
+    body.textContent = __logs
+      .map((l) => `[${l.time}] ${l.level.toUpperCase()} ${l.msg}`)
+      .join("\n");
   }
 
   async function nukePwaCache() {
@@ -188,6 +88,28 @@
     } catch (e) { console.warn("Falha ao desregistrar SW:", e); }
   }
 
+  function getRCF() {
+    return window.RCF || null;
+  }
+
+  function rcfExists() {
+    const R = getRCF();
+    return !!(R && R.engine && R.templates && R.router);
+  }
+
+  function __getLikelyStorageKeys() {
+    // ai.js (v1) normalmente usa:
+    // rcf_apps_v1 / rcf_active_app_v1
+    // algumas versões usam:
+    // rcf_apps_v2 / rcf_active_app_id_v2 etc
+    const candidates = [
+      "rcf_settings_v1", "rcf_settings_v2", "rcf_settings_v3",
+      "rcf_apps_v1", "rcf_apps_v2", "rcf_apps_v3",
+      "rcf_active_app_v1", "rcf_active_app_id_v2", "rcf_active_app_id_v3",
+    ];
+    return candidates;
+  }
+
   async function buildDiagnosisReport() {
     const lines = [];
     const add = (k, v) => lines.push(`${k}: ${v}`);
@@ -197,24 +119,42 @@
     add("UA", navigator.userAgent);
     add("Hora", new Date().toString());
 
-    try {
-      const s = localStorage.getItem(LS.settings) || "";
-      const a = localStorage.getItem(LS.apps) || "";
-      const act = localStorage.getItem(LS.activeAppId) || "";
-      add("LS.settings bytes", s.length);
-      add("LS.apps bytes", a.length);
-      add("LS.activeAppId", act || "(vazio)");
-    } catch (e) { add("localStorage", "ERRO: " + e.message); }
+    const R = getRCF();
+    add("RCF exists", R ? "SIM" : "NÃO");
+    add("engine", (R && R.engine) ? "SIM" : "NÃO");
+    add("templates", (R && R.templates) ? "SIM" : "NÃO");
+    add("router", (R && R.router) ? "SIM" : "NÃO");
 
+    // storage sizes
     try {
-      const _apps = loadApps();
-      add("Apps count", _apps.length);
-      const _active = getActiveAppId();
-      const found = _apps.find(x => x && x.id === _active);
-      add("Active exists", found ? "SIM" : "NÃO");
-      if (found) add("Active name/id", `${found.name} / ${found.id}`);
-    } catch (e) { add("Apps parse", "ERRO: " + e.message); }
+      const keys = __getLikelyStorageKeys();
+      keys.forEach((k) => {
+        const v = localStorage.getItem(k);
+        if (v != null) add(`LS ${k} bytes`, v.length);
+      });
+      // se nenhum apareceu, mostra “vazio”
+      const any = keys.some((k) => localStorage.getItem(k) != null);
+      if (!any) add("localStorage", "(sem chaves RCF detectadas)");
+    } catch (e) {
+      add("localStorage", "ERRO: " + e.message);
+    }
 
+    // apps count
+    try {
+      if (R && R.engine) {
+        const apps = R.engine.loadApps();
+        const active = R.engine.getActiveId();
+        add("Apps count", apps.length);
+        add("Active ID", active || "(vazio)");
+      } else {
+        add("Apps count", "(sem engine)");
+        add("Active ID", "(sem engine)");
+      }
+    } catch (e) {
+      add("Apps parse", "ERRO: " + e.message);
+    }
+
+    // service worker / caches
     try {
       add("SW supported", ("serviceWorker" in navigator) ? "SIM" : "NÃO");
       if ("serviceWorker" in navigator) {
@@ -231,557 +171,391 @@
       }
     } catch (e) { add("Caches", "ERRO: " + e.message); }
 
+    // DOM IDs principais do factory (pra saber se index.html está certo)
     const must = [
-      "appsList","statusBox","newName","newId","newTemplate","createAppBtn",
-      "activeAppLabel","filesList","codeArea","previewFrame","genAppSelect",
-      "downloadZipBtn","genStatus","logs","ghUser","ghToken","repoPrefix","pagesBase"
+      "appsList","statusBox","goNewApp","goEditor","goGenerator",
+      "newName","newId","newTemplate","createAppBtn","newAppValidation",
+      "activeAppLabel","filesList","codeArea","previewFrame","currentFileLabel",
+      "genAppSelect","downloadZipBtn","genStatus","logs",
+      "ghUser","ghToken","repoPrefix","pagesBase","saveSettingsBtn","resetFactoryBtn"
     ];
-    const missing = must.filter(id => !document.getElementById(id));
+    const missing = must.filter((id) => !document.getElementById(id));
     add("DOM missing IDs", missing.length ? missing.join(", ") : "OK");
 
     add("---- últimos logs ----", "");
-    const tail = __logs.slice(-40).map(l => `[${l.time}] ${l.level.toUpperCase()} ${l.msg}`);
-    lines.push(tail.join("\n") || "(sem logs)");
+    lines.push(__logs.slice(-60).map((l) => `[${l.time}] ${l.level.toUpperCase()} ${l.msg}`).join("\n") || "(sem logs)");
 
     return lines.join("\n");
   }
 
-  // ---------- Load/Save ----------
-  function loadSettings() {
-    const raw = localStorage.getItem(LS.settings);
-    const data = raw ? safeJsonParse(raw, {}) : {};
-    return { ...DEFAULT_SETTINGS, ...(data || {}) };
-  }
-  function saveSettings() {
-    localStorage.setItem(LS.settings, JSON.stringify(settings));
-  }
-  function loadApps() {
-    const raw = localStorage.getItem(LS.apps);
-    return raw ? safeJsonParse(raw, []) : [];
-  }
-  function saveApps() {
-    localStorage.setItem(LS.apps, JSON.stringify(apps));
-  }
-  function getActiveAppId() {
-    return localStorage.getItem(LS.activeAppId) || "";
-  }
-  function setActiveAppId(id) {
-    activeAppId = id || "";
-    localStorage.setItem(LS.activeAppId, activeAppId);
+  // --------- Debug UI + Admin UI ----------
+  const ADMIN = {
+    pinKey: "rcf_admin_pin_v1",
+    sessionKey: "rcf_admin_ok_session_v1",
+    defaultPin: "7777",
+  };
+
+  function isAdminUnlocked() {
+    return sessionStorage.getItem(ADMIN.sessionKey) === "1";
   }
 
-  // ---------- State ----------
-  let settings = loadSettings();
-  let apps = loadApps();
-  let activeAppId = getActiveAppId();
-  let currentFile = "index.html";
-
-  function setStatus(msg) {
-    const el = $("statusBox");
-    if (el) el.textContent = msg;
-    console.log("STATUS:", msg);
-  }
-  function setGenStatus(msg) {
-    const el = $("genStatus");
-    if (el) el.textContent = msg;
-    console.log("GEN:", msg);
+  function ensureAdminPinExists() {
+    const cur = localStorage.getItem(ADMIN.pinKey);
+    if (!cur) localStorage.setItem(ADMIN.pinKey, ADMIN.defaultPin);
   }
 
-  // ---------- Tabs ----------
-  const TAB_IDS = ["dashboard", "newapp", "editor", "generator", "settings"];
-  function showTab(tab) {
-    TAB_IDS.forEach((t) => {
-      const sec = $(`tab-${t}`);
-      if (sec) sec.classList.toggle("hidden", t !== tab);
-    });
-    qsa(".tab").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
-  }
-
-  // ---------- Utils ----------
-  function escapeHtml(s) {
-    return String(s ?? "")
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;")
-      .replaceAll("'", "&#039;");
-  }
-
-  function sanitizeId(raw) {
-    return (raw || "")
-      .trim()
-      .toLowerCase()
-      .replace(/\s+/g, "-")
-      .replace(/[^a-z0-9-]/g, "")
-      .replace(/--+/g, "-")
-      .replace(/^-|-$/g, "");
-  }
-
-  function validateApp(name, id) {
-    const errors = [];
-    if (!name || name.trim().length < 2) errors.push("Nome do app muito curto.");
-    if (!id || id.length < 2) errors.push("ID do app muito curto.");
-    if (/[A-Z]/.test(id)) errors.push("ID não pode ter letra maiúscula.");
-    if (!/^[a-z0-9-]+$/.test(id)) errors.push("ID só pode ter a-z, 0-9 e hífen.");
-    return errors;
-  }
-
-  function pickAppById(id) {
-    return apps.find((a) => a && a.id === id) || null;
-  }
-
-  function ensureActiveApp() {
-    if (activeAppId && pickAppById(activeAppId)) return;
-    if (apps.length) setActiveAppId(apps[0].id);
-    else setActiveAppId("");
-  }
-
-  // ---------- Templates ----------
-  function applyVars(text, app) {
-    return String(text)
-      .replaceAll("{{APP_NAME}}", app.name)
-      .replaceAll("{{APP_ID}}", app.id);
-  }
-
-  function makePwaBaseTemplateFiles() {
-    const index = `<!doctype html>
-<html lang="pt-BR">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>{{APP_NAME}}</title>
-  <meta name="theme-color" content="#0b1220" />
-  <link rel="manifest" href="manifest.json" />
-  <link rel="stylesheet" href="styles.css" />
-</head>
-<body>
-  <header class="top">
-    <h1>{{APP_NAME}}</h1>
-    <div class="muted">Gerado pelo RControl Factory • ID: {{APP_ID}}</div>
-  </header>
-
-  <main class="wrap">
-    <div class="card">
-      <h2>App rodando ✅</h2>
-      <p>Agora edite <code>app.js</code> e <code>styles.css</code>.</p>
-      <button id="btn">Clique aqui</button>
-      <div id="out" class="out"></div>
-    </div>
-  </main>
-
-  <script src="app.js"></script>
-  <script>
-    if ("serviceWorker" in navigator) {
-      window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js").catch(() => {}));
+  function promptAdminUnlock() {
+    ensureAdminPinExists();
+    const pin = prompt("ADMIN • Digite o PIN (padrão: 7777)");
+    if (pin == null) return false;
+    const real = localStorage.getItem(ADMIN.pinKey) || ADMIN.defaultPin;
+    if (String(pin).trim() === String(real).trim()) {
+      sessionStorage.setItem(ADMIN.sessionKey, "1");
+      return true;
     }
-  </script>
-</body>
-</html>`;
-
-    const appjs = `// {{APP_NAME}} - {{APP_ID}}
-const btn = document.getElementById("btn");
-const out = document.getElementById("out");
-
-btn?.addEventListener("click", () => {
-  const now = new Date().toLocaleString();
-  out.textContent = "Funcionando! " + now;
-});`;
-
-    const css = `:root{--bg:#0b1220;--card:#0f1a2e;--border:rgba(255,255,255,.1);--text:rgba(255,255,255,.92);--muted:rgba(255,255,255,.65)}
-*{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial}
-.top{padding:16px 14px;border-bottom:1px solid var(--border)}
-.wrap{max-width:900px;margin:16px auto;padding:0 14px}
-.card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px}
-.muted{color:var(--muted);font-size:12px}
-button{background:rgba(25,195,125,.2);border:1px solid rgba(25,195,125,.35);color:var(--text);padding:10px 12px;border-radius:12px;font-weight:700}
-.out{margin-top:10px;padding:10px;border:1px dashed rgba(255,255,255,.2);border-radius:12px;min-height:24px}`;
-
-    const manifest = `{
-  "name": "{{APP_NAME}}",
-  "short_name": "{{APP_NAME}}",
-  "start_url": "./",
-  "display": "standalone",
-  "background_color": "#0b1220",
-  "theme_color": "#0b1220",
-  "icons": []
-}`;
-
-    const sw = `const CACHE = "{{APP_ID}}-v1";
-const ASSETS = ["./","./index.html","./styles.css","./app.js","./manifest.json"];
-self.addEventListener("install",(e)=>{e.waitUntil((async()=>{const c=await caches.open(CACHE);await c.addAll(ASSETS);self.skipWaiting();})());});
-self.addEventListener("activate",(e)=>{e.waitUntil((async()=>{const keys=await caches.keys();await Promise.all(keys.map(k=>k!==CACHE?caches.delete(k):null));self.clients.claim();})());});
-self.addEventListener("fetch",(e)=>{e.respondWith((async()=>{const cached=await caches.match(e.request);if(cached) return cached;try{return await fetch(e.request);}catch{return caches.match("./index.html");}})());});`;
-
-    return { "index.html": index, "app.js": appjs, "styles.css": css, "manifest.json": manifest, "sw.js": sw };
+    alert("PIN incorreto ❌");
+    return false;
   }
 
-  function makePwaEmptyTemplateFiles() {
-    return {
-      "index.html": `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>{{APP_NAME}}</title></head><body><h1>{{APP_NAME}}</h1><p>ID: {{APP_ID}}</p></body></html>`,
-      "app.js": `// {{APP_NAME}}`,
-      "styles.css": `body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial}`,
-      "manifest.json": `{"name":"{{APP_NAME}}","short_name":"{{APP_NAME}}","start_url":"./","display":"standalone","background_color":"#0b1220","theme_color":"#0b1220","icons":[]}`,
-      "sw.js": `self.addEventListener("fetch",()=>{});`,
-    };
+  function lockAdmin() {
+    sessionStorage.removeItem(ADMIN.sessionKey);
   }
 
-  function getTemplates() {
-    return [
-      { id: "pwa-base", name: "PWA Base (com app.js + styles.css)", files: makePwaBaseTemplateFiles() },
-      { id: "pwa-empty", name: "PWA Vazia (minimal)", files: makePwaEmptyTemplateFiles() },
-    ];
-  }
+  function __ensureDebugUI() {
+    if (document.getElementById("rcf-debug-panel")) return;
 
-  function createApp({ name, id, type, templateId }) {
-    const tpl = getTemplates().find((t) => t.id === templateId) || getTemplates()[0];
-    const files = {};
-    Object.keys(tpl.files).forEach((k) => {
-      files[k] = applyVars(tpl.files[k], { name, id });
-    });
+    // Painel
+    const panel = document.createElement("div");
+    panel.id = "rcf-debug-panel";
+    panel.style.display = "none";
+    panel.style.cssText = `
+      position:fixed; left:12px; right:12px; bottom:64px; z-index:99999;
+      max-height:60vh; overflow:auto; padding:10px;
+      border-radius:14px; border:1px solid rgba(255,255,255,.15);
+      background:rgba(10,10,10,.92); color:#eaeaea;
+      font:12px/1.35 -apple-system,system-ui,Segoe UI,Roboto,Arial;
+      white-space:pre-wrap;
+    `;
 
-    const app = {
-      name,
-      id,
-      type,
-      templateId,
-      createdAt: Date.now(),
-      files,
-      baseFiles: { ...files },
-    };
+    const actions = document.createElement("div");
+    actions.style.cssText = "display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px;";
 
-    apps.unshift(app);
-    saveApps();
-    setActiveAppId(id);
-  }  // ---------- Render ----------
-  function renderTemplatesSelect() {
-    const sel = $("newTemplate");
-    if (!sel) return;
-    sel.innerHTML = "";
-    getTemplates().forEach((t) => {
-      const opt = document.createElement("option");
-      opt.value = t.id;
-      opt.textContent = t.name;
-      sel.appendChild(opt);
-    });
-  }
-
-  function renderAppsList() {
-    ensureActiveApp();
-    const root = $("appsList");
-    if (!root) return;
-    root.innerHTML = "";
-
-    if (!apps.length) {
-      root.innerHTML = `<div class="muted">Nenhum app salvo ainda.</div>`;
-      return;
-    }
-
-    apps.forEach((a) => {
-      const item = document.createElement("div");
-      item.className = "item";
-      const isOn = a.id === activeAppId;
-
-      item.innerHTML = `
-        <div>
-          <strong>${escapeHtml(a.name)}</strong>
-          <div class="meta">${escapeHtml(a.id)} • ${escapeHtml(a.type || "pwa")}</div>
-        </div>
-        <span class="badge ${isOn ? "on" : ""}">${isOn ? "ativo" : "selecionar"}</span>
-      `;
-
-      item.addEventListener("click", () => {
-        setActiveAppId(a.id);
-        setStatus(`App ativo: ${a.name} (${a.id}) ✅`);
-        renderAppsList();
-        renderEditor();
-        renderGeneratorSelect();
-      });
-
-      root.appendChild(item);
-    });
-  }
-
-  function renderEditor() {
-    ensureActiveApp();
-    const app = pickAppById(activeAppId);
-
-    const label = $("activeAppLabel");
-    if (label) label.textContent = app ? `${app.name} (${app.id})` : "—";
-
-    const fl = $("filesList");
-    const area = $("codeArea");
-    const cur = $("currentFileLabel");
-    const frame = $("previewFrame");
-    if (!fl || !area || !cur || !frame) return;
-
-    fl.innerHTML = "";
-
-    if (!app) {
-      area.value = "";
-      cur.textContent = "—";
-      frame.srcdoc = `<p style="font-family:system-ui;padding:12px">Sem app ativo</p>`;
-      return;
-    }
-
-    if (!FILE_ORDER.includes(currentFile)) currentFile = "index.html";
-
-    FILE_ORDER.forEach((f) => {
+    const mkBtn = (label) => {
       const b = document.createElement("button");
-      b.className = "fileBtn" + (f === currentFile ? " active" : "");
-      b.textContent = f;
-      b.addEventListener("click", () => {
-        currentFile = f;
-        renderEditor();
-      });
-      fl.appendChild(b);
-    });
+      b.textContent = label;
+      b.style.cssText = "padding:7px 10px;border-radius:10px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.08);color:#fff;font-weight:900;";
+      return b;
+    };
 
-    cur.textContent = currentFile;
-    area.value = app.files[currentFile] ?? "";
-    refreshPreview(app);
+    const clear = mkBtn("Limpar logs");
+    clear.onclick = () => { __logs.length = 0; __renderDebug(); };
+
+    const copy = mkBtn("Copiar logs");
+    copy.onclick = async () => {
+      const text = __logs.map((l) => `[${l.time}] ${l.level.toUpperCase()} ${l.msg}`).join("\n");
+      try { await navigator.clipboard.writeText(text); alert("Logs copiados ✅"); }
+      catch { alert("iOS bloqueou copiar. Segura no texto e copia manual."); }
+    };
+
+    const diagBtn = mkBtn("Copiar diagnóstico");
+    diagBtn.onclick = async () => {
+      const diag = await buildDiagnosisReport();
+      try { await navigator.clipboard.writeText(diag); alert("Diagnóstico copiado ✅"); }
+      catch { alert("iOS bloqueou copiar. Vou mostrar na tela; copie manual."); }
+      const body = document.getElementById("rcf-debug-body");
+      if (body) body.textContent = diag;
+      panel.style.display = "block";
+    };
+
+    const pwa = mkBtn("Limpar Cache PWA");
+    pwa.onclick = async () => {
+      const ok = confirm("Vai limpar caches + desregistrar Service Worker e recarregar. Continuar?");
+      if (!ok) return;
+      await nukePwaCache();
+      alert("Cache limpo ✅ Recarregando…");
+      location.reload();
+    };
+
+    actions.append(clear, copy, diagBtn, pwa);
+    panel.append(actions);
+
+    const body = document.createElement("div");
+    body.id = "rcf-debug-body";
+    panel.append(body);
+
+    // Botões flutuantes
+    function floatBtn(id, text, rightPx) {
+      const b = document.createElement("button");
+      b.id = id;
+      b.textContent = text;
+      b.style.cssText = `
+        position:fixed; right:${rightPx}px; bottom:12px; z-index:99999;
+        padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,.2);
+        background:rgba(0,0,0,.55); color:white; font-weight:900;
+      `;
+      return b;
+    }
+
+    const btnLogs = floatBtn("rcf-debug-btn", "Logs", 12);
+    const btnDiag = floatBtn("rcf-diag-btn", "Diag", 76);
+    const btnAdmin = floatBtn("rcf-admin-btn", "Admin", 144);
+
+    btnLogs.onclick = () => {
+      panel.style.display = (panel.style.display === "none") ? "block" : "none";
+      __renderDebug();
+    };
+
+    btnDiag.onclick = async () => {
+      const diag = await buildDiagnosisReport();
+      const body = document.getElementById("rcf-debug-body");
+      if (body) body.textContent = diag;
+      panel.style.display = "block";
+    };
+
+    btnAdmin.onclick = () => {
+      if (!isAdminUnlocked()) {
+        const ok = promptAdminUnlock();
+        if (!ok) return;
+      }
+      openAdminPanel();
+    };
+
+    document.body.append(panel, btnAdmin, btnDiag, btnLogs);
+    __renderDebug();
   }
 
-  function injectIntoFullHtml(fullHtml, css, js) {
-    let out = String(fullHtml);
-    if (/<\/head>/i.test(out)) out = out.replace(/<\/head>/i, `<style>${css}</style>\n</head>`);
-    else out = `<style>${css}</style>\n` + out;
-
-    if (/<\/body>/i.test(out)) out = out.replace(/<\/body>/i, `<script>${js}<\/script>\n</body>`);
-    else out = out + `\n<script>${js}<\/script>\n`;
-
-    return out;
-  }
-
-  function refreshPreview(app) {
-    const frame = $("previewFrame");
-    if (!frame) return;
-
-    const html = app.files["index.html"] || "<h1>Sem index.html</h1>";
-    const css = app.files["styles.css"] || "";
-    const js = app.files["app.js"] || "";
-
-    const looksLikeFullDoc = /<!doctype\s+html>/i.test(html) || /<html[\s>]/i.test(html);
-
-    const doc = looksLikeFullDoc
-      ? injectIntoFullHtml(html, css, js)
-      : `<!doctype html><html lang="pt-BR"><head>
-<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<style>${css}</style></head><body>${html}<script>${js}<\/script></body></html>`;
-
-    frame.srcdoc = doc;
-  }
-
-  function renderGeneratorSelect() {
-    ensureActiveApp();
-    const sel = $("genAppSelect");
-    if (!sel) return;
-
-    sel.innerHTML = "";
-    apps.forEach((a) => {
-      const opt = document.createElement("option");
-      opt.value = a.id;
-      opt.textContent = `${a.name} (${a.id})`;
-      sel.appendChild(opt);
-    });
-
-    if (activeAppId) sel.value = activeAppId;
-  }
-
-  function renderSettings() {
-    if ($("ghUser")) $("ghUser").value = settings.ghUser || "";
-    if ($("ghToken")) $("ghToken").value = settings.ghToken || "";
-    if ($("repoPrefix")) $("repoPrefix").value = settings.repoPrefix || "rapp-";
-    if ($("pagesBase")) $("pagesBase").value = settings.pagesBase || (settings.ghUser ? `https://${settings.ghUser}.github.io` : "");
-  }
-
-  // ---------- ZIP ----------
-  async function downloadZip(app) {
-    if (typeof JSZip === "undefined") {
-      alert("JSZip não carregou. Verifique o index.html (script do jszip).");
+  // --------- Admin Panel ----------
+  function openAdminPanel() {
+    if (document.getElementById("rcf-admin-panel")) {
+      document.getElementById("rcf-admin-panel").style.display = "block";
       return;
     }
 
-    const zip = new JSZip();
-    Object.entries(app.files).forEach(([path, content]) => {
-      zip.file(path, String(content ?? ""));
-    });
-    zip.file("README.md", `# ${app.name}\n\nGerado pelo RControl Factory.\n`);
+    const wrap = document.createElement("div");
+    wrap.id = "rcf-admin-panel";
+    wrap.style.cssText = `
+      position:fixed; left:12px; right:12px; top:12px; bottom:12px; z-index:100000;
+      background:rgba(10,10,10,.94); color:#fff; border:1px solid rgba(255,255,255,.14);
+      border-radius:16px; padding:12px; overflow:auto;
+      font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;
+    `;
 
-    const blob = await zip.generateAsync({ type: "blob" });
-    const url = URL.createObjectURL(blob);
+    wrap.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px;">
+        <div style="font-weight:1000;font-size:16px;">ADMIN • RControl Factory</div>
+        <div style="display:flex;gap:8px;">
+          <button id="rcf-admin-lock" style="padding:9px 10px;border-radius:12px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.08);color:#fff;font-weight:900;">Lock</button>
+          <button id="rcf-admin-close" style="padding:9px 10px;border-radius:12px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.08);color:#fff;font-weight:900;">Fechar</button>
+        </div>
+      </div>
 
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${app.id}.zip`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+      <div style="display:grid;gap:10px;">
+        <div style="border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:10px;">
+          <div style="font-weight:900;margin-bottom:6px;">Auto-check / Reparos rápidos</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button id="rcf-admin-check" class="abtn">Rodar diagnóstico</button>
+            <button id="rcf-admin-fix-cache" class="abtn">Limpar Cache PWA</button>
+            <button id="rcf-admin-reset-storage" class="abtn">Reset Storage RCF</button>
+            <button id="rcf-admin-export" class="abtn">Export (JSON)</button>
+            <button id="rcf-admin-import" class="abtn">Import (JSON)</button>
+            <button id="rcf-admin-pin" class="abtn">Trocar PIN</button>
+          </div>
+          <div style="margin-top:8px;font-size:12px;opacity:.85;">
+            “Auto-corrigir” aqui = ações seguras (cache/storage) + diagnóstico. A IA real a gente liga depois.
+          </div>
+        </div>
 
-    URL.revokeObjectURL(url);
+        <div style="border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:10px;">
+          <div style="font-weight:900;margin-bottom:6px;">Chat (tipo Replit) — comandos do engine</div>
+          <div style="font-size:12px;opacity:.85;margin-bottom:8px;">
+            Exemplos: <code>help</code> • <code>status</code> • <code>list</code> • <code>create app RQuotas</code> • <code>select &lt;id&gt;</code>
+          </div>
+          <textarea id="rcf-admin-cmd" rows="3"
+            style="width:100%;border-radius:12px;border:1px solid rgba(255,255,255,.14);background:rgba(0,0,0,.25);color:#fff;padding:10px;outline:none;"
+            placeholder="Digite um comando e toque em Executar..."></textarea>
+          <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">
+            <button id="rcf-admin-run" class="abtn">Executar</button>
+            <button id="rcf-admin-clear-out" class="abtn">Limpar saída</button>
+          </div>
+          <pre id="rcf-admin-out" style="margin-top:10px;white-space:pre-wrap;background:rgba(0,0,0,.25);border:1px solid rgba(255,255,255,.12);padding:10px;border-radius:12px;min-height:90px;"></pre>
+        </div>
+
+        <div style="border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:10px;">
+          <div style="font-weight:900;margin-bottom:6px;">Diagnóstico (visual)</div>
+          <pre id="rcf-admin-diag" style="white-space:pre-wrap;background:rgba(0,0,0,.25);border:1px solid rgba(255,255,255,.12);padding:10px;border-radius:12px;"></pre>
+        </div>
+      </div>
+    `;
+
+    // style buttons inside admin
+    const style = document.createElement("style");
+    style.textContent = `
+      .abtn{padding:9px 10px;border-radius:12px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.08);color:#fff;font-weight:900}
+      code{background:rgba(255,255,255,.08);padding:2px 6px;border-radius:8px}
+    `;
+    wrap.appendChild(style);
+
+    document.body.appendChild(wrap);
+
+    // Wire admin actions
+    $("#rcf-admin-close").onclick = () => { wrap.style.display = "none"; };
+    $("#rcf-admin-lock").onclick = () => { lockAdmin(); alert("Admin lock ✅"); wrap.style.display = "none"; };
+
+    $("#rcf-admin-check").onclick = async () => {
+      const diag = await buildDiagnosisReport();
+      $("#rcf-admin-diag").textContent = diag;
+    };
+
+    $("#rcf-admin-fix-cache").onclick = async () => {
+      const ok = confirm("Limpar Cache PWA + desregistrar SW e recarregar?");
+      if (!ok) return;
+      await nukePwaCache();
+      alert("Cache limpo ✅ Recarregando…");
+      location.reload();
+    };
+
+    $("#rcf-admin-reset-storage").onclick = async () => {
+      const ok = confirm("Resetar storage RCF (apps e active) no seu iPhone? Isso apaga apps salvos localmente.");
+      if (!ok) return;
+      try {
+        // tenta engine primeiro
+        const R = getRCF();
+        if (R && R.engine) {
+          R.engine.saveApps([]);
+          R.engine.setActiveId("");
+        }
+        // remove chaves conhecidas também
+        __getLikelyStorageKeys().forEach((k) => localStorage.removeItem(k));
+        alert("Storage resetado ✅");
+      } catch (e) {
+        alert("Erro ao resetar: " + e.message);
+      }
+    };
+
+    $("#rcf-admin-export").onclick = async () => {
+      try {
+        const R = getRCF();
+        const payload = {
+          exportedAt: new Date().toISOString(),
+          apps: (R && R.engine) ? R.engine.loadApps() : [],
+          activeId: (R && R.engine) ? R.engine.getActiveId() : "",
+        };
+        const json = JSON.stringify(payload, null, 2);
+        try { await navigator.clipboard.writeText(json); alert("Export copiado ✅ (cole num bloco de notas)"); }
+        catch { alert("Não consegui copiar. Vou mostrar na saída."); }
+        $("#rcf-admin-out").textContent = json;
+      } catch (e) {
+        $("#rcf-admin-out").textContent = "ERRO: " + e.message;
+      }
+    };
+
+    $("#rcf-admin-import").onclick = async () => {
+      const txt = prompt("Cole aqui o JSON exportado (vai substituir seus apps locais).");
+      if (!txt) return;
+      try {
+        const data = JSON.parse(txt);
+        const R = getRCF();
+        if (!R || !R.engine) throw new Error("Engine não carregou.");
+        if (!Array.isArray(data.apps)) throw new Error("JSON inválido: apps precisa ser array.");
+        R.engine.saveApps(data.apps);
+        R.engine.setActiveId(String(data.activeId || ""));
+        alert("Import OK ✅ Recarregue a página.");
+      } catch (e) {
+        alert("Falha no import: " + e.message);
+      }
+    };
+
+    $("#rcf-admin-pin").onclick = async () => {
+      ensureAdminPinExists();
+      const cur = prompt("Digite o PIN atual:");
+      if (cur == null) return;
+      const real = localStorage.getItem(ADMIN.pinKey) || ADMIN.defaultPin;
+      if (String(cur).trim() !== String(real).trim()) return alert("PIN atual incorreto ❌");
+      const next = prompt("Novo PIN (4-10 dígitos):");
+      if (!next) return;
+      localStorage.setItem(ADMIN.pinKey, String(next).trim());
+      alert("PIN atualizado ✅");
+    };
+
+    $("#rcf-admin-run").onclick = () => {
+      const cmd = ($("#rcf-admin-cmd").value || "").trim();
+      if (!cmd) return;
+      const R = getRCF();
+      if (!R || !R.engine || !R.templates) {
+        $("#rcf-admin-out").textContent = "ERRO: engine/templates não carregou.";
+        return;
+      }
+      try {
+        const out = R.engine.run(cmd, R.templates);
+        if (out === "__CLEAR__") {
+          $("#rcf-admin-out").textContent = "";
+        } else {
+          $("#rcf-admin-out").textContent = String(out);
+        }
+      } catch (e) {
+        $("#rcf-admin-out").textContent = "ERRO: " + e.message;
+      }
+    };
+
+    $("#rcf-admin-clear-out").onclick = () => {
+      $("#rcf-admin-out").textContent = "";
+      $("#rcf-admin-cmd").value = "";
+    };
+
+    // Primeiro diagnóstico automático
+    (async () => {
+      const diag = await buildDiagnosisReport();
+      $("#rcf-admin-diag").textContent = diag;
+    })();
   }
-
-  // ---------- Wiring ----------
-  function wireTabs() {
-    qsa(".tab").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
-    $("goNewApp")?.addEventListener("click", () => showTab("newapp"));
-    $("goEditor")?.addEventListener("click", () => showTab("editor"));
-    $("goGenerator")?.addEventListener("click", () => showTab("generator"));
-  }
-
-  function wireNewApp() {
-    const nameEl = $("newName");
-    const idEl = $("newId");
-    const valEl = $("newAppValidation");
-    if (!nameEl || !idEl) return;
-
-    function updateValidation() {
-      const name = nameEl.value;
-      const id = sanitizeId(idEl.value);
-      const errors = validateApp(name, id);
-      if (valEl) valEl.textContent = errors.length ? errors.map((e) => `- ${e}`).join("\n") : "OK ✅";
-    }
-
-    idEl.addEventListener("input", () => {
-      const s = sanitizeId(idEl.value);
-      if (s !== idEl.value) idEl.value = s;
-      updateValidation();
-    });
-    nameEl.addEventListener("input", updateValidation);
-
-    $("createAppBtn")?.addEventListener("click", () => {
-      const name = (nameEl.value || "").trim();
-      const id = sanitizeId(idEl.value);
-      const errors = validateApp(name, id);
-
-      if (errors.length) return alert("Corrija antes de salvar:\n\n" + errors.join("\n"));
-      if (pickAppById(id)) return alert("Já existe um app com esse ID.");
-
-      createApp({
-        name,
-        id,
-        type: $("newType")?.value || "pwa",
-        templateId: $("newTemplate")?.value || "pwa-base",
-      });
-
-      nameEl.value = "";
-      idEl.value = "";
-      if (valEl) valEl.textContent = "OK ✅";
-
-      setStatus(`App criado: ${name} (${id}) ✅`);
-      renderAppsList();
-      renderEditor();
-      renderGeneratorSelect();
-      showTab("editor");
-    });
-
-    $("cancelNew")?.addEventListener("click", () => showTab("dashboard"));
-  }
-
-  function wireEditor() {
-    $("saveFileBtn")?.addEventListener("click", () => {
-      const app = pickAppById(activeAppId);
-      if (!app) return alert("Nenhum app ativo.");
-
-      app.files[currentFile] = $("codeArea")?.value ?? "";
-      saveApps();
-
-      setStatus(`Salvo: ${currentFile} ✅`);
-      renderEditor();
-    });
-
-    $("resetFileBtn")?.addEventListener("click", () => {
-      const app = pickAppById(activeAppId);
-      if (!app) return alert("Nenhum app ativo.");
-      if (!confirm(`Resetar ${currentFile} para o padrão do template?`)) return;
-
-      app.files[currentFile] = app.baseFiles?.[currentFile] ?? "";
-      saveApps();
-
-      setStatus(`Reset: ${currentFile} ✅`);
-      renderEditor();
-    });
-
-    $("openPreviewBtn")?.addEventListener("click", () => {
-      const app = pickAppById(activeAppId);
-      if (!app) return;
-      refreshPreview(app);
-      setStatus("Preview atualizado ✅");
-    });
-  }
-
-  function wireGenerator() {
-    $("genAppSelect")?.addEventListener("change", () => {
-      setActiveAppId($("genAppSelect").value);
-      renderAppsList();
-      renderEditor();
-    });
-
-    $("downloadZipBtn")?.addEventListener("click", async () => {
-      const app = pickAppById($("genAppSelect")?.value || activeAppId);
-      if (!app) return alert("Selecione um app.");
-
-      setGenStatus("Status: gerando ZIP…");
-      await downloadZip(app);
-      setGenStatus("Status: ZIP pronto ✅");
-    });
-
-    $("publishBtn")?.addEventListener("click", async () => {
-      alert("Publish vai entrar na próxima versão (primeiro estabilizar 100%).");
-    });
-  }
-
-  function wireSettings() {
-    $("saveSettingsBtn")?.addEventListener("click", () => {
-      settings.ghUser = ($("ghUser")?.value || "").trim();
-      settings.ghToken = ($("ghToken")?.value || "").trim();
-      settings.repoPrefix = ($("repoPrefix")?.value || "rapp-").trim() || "rapp-";
-      settings.pagesBase = ($("pagesBase")?.value || "").trim() || (settings.ghUser ? `https://${settings.ghUser}.github.io` : "");
-
-      saveSettings();
-      setStatus("Settings salvas ✅");
-      alert("Settings salvas ✅");
-    });
-
-    $("resetFactoryBtn")?.addEventListener("click", () => {
-      if (!confirm("Tem certeza? Vai apagar apps e settings locais.")) return;
-      localStorage.removeItem(LS.settings);
-      localStorage.removeItem(LS.apps);
-      localStorage.removeItem(LS.activeAppId);
-
-      settings = loadSettings();
-      apps = [];
-      setActiveAppId("");
-
-      renderAll();
-      alert("Factory resetado ✅");
-    });
-  }
-
-  function renderAll() {
-    renderTemplatesSelect();
-    renderAppsList();
-    renderEditor();
-    renderGeneratorSelect();
-    renderSettings();
-  }
-
-  function init() {
-    console.log("RCF init…");
+     // --------- Boot / Router glue ----------
+  function boot() {
     __ensureDebugUI();
 
-    wireTabs();
-    wireNewApp();
-    wireEditor();
-    wireGenerator();
-    wireSettings();
+    const root = document.getElementById("root");
+    const R = getRCF();
 
-    renderAll();
-    showTab("dashboard");
+    if (!R || !R.engine || !R.templates || !R.router) {
+      const msg =
+        "ERRO: módulos faltando.\n\n" +
+        "Confira se o index.html carrega nesta ordem:\n" +
+        "1) js/ai.js\n2) js/templates.js\n3) js/router.js\n4) app.js\n\n" +
+        "Dica: toque em 'Limpar Cache PWA' e recarregue.";
+      console.error("RCF módulos faltando. Confira se index.html carrega js/ai.js, js/templates.js, js/router.js antes do app.js");
+      if (root) root.innerHTML = "<pre style='padding:16px;color:#fff;white-space:pre-wrap'>" + escapeHtml(msg) + "</pre>";
+      setStatus("Pronto ✅"); // não travar UI
+      return;
+    }
+
+    // Monta rota atual e reage a hashchange
+    const mount = () => {
+      try {
+        R.router.mount(R.router.getRoute());
+      } catch (e) {
+        console.error("Router mount falhou:", e);
+        if (root) root.innerHTML = "<pre style='padding:16px;color:#fff;white-space:pre-wrap'>ERRO no router: " + escapeHtml(e.message) + "</pre>";
+      }
+    };
+
+    window.addEventListener("hashchange", mount);
+    mount();
+
+    // Watchdog leve (ajuda em cache bugado)
+    setTimeout(() => {
+      if (!rcfExists()) console.warn("RCF ainda não completo após boot (cache/ordem de scripts?)");
+    }, 800);
+
     setStatus("Pronto ✅");
     console.log("RCF pronto ✅");
   }
 
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
-  else init();
+  // --------- Init ----------
+  console.log("RCF init…");
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", boot);
+  } else {
+    boot();
+  }
 
 })();
