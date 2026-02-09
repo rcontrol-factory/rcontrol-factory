@@ -249,5 +249,10 @@
       window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js").catch(() => {}));
     }
   </script>
-</body>
+</body><!-- Ordem importa -->
+<script src="js/ai.js"></script>
+<script src="js/templates.js"></script>
+<script src="js/router.js"></script>
+<script src="js/admin.js"></script>
+<script src="app.js"></script>
 </html>
