@@ -11,7 +11,8 @@ const LS_KEYS = {
   activeAppId: "rcf_active_app_id_v2",
 };
 
-const DEFAULT_SETTINGS = {
+const DEFAULT_SETTINGS = {openaiKey: "",
+openaiModel: "gpt-4.1",}
   ghUser: "",
   ghToken: "",
   repoPrefix: "rapp-",
