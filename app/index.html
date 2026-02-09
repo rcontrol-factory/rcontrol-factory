@@ -1,1 +1,262 @@
 <!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RControl Factory</title>
+  <meta name="theme-color" content="#0b1220" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+
+<body>
+  <header class="topbar">
+    <div class="brand" id="brandTap">
+      <span class="dot"></span>
+      <div>
+        <div class="title">RControl Factory</div>
+        <div class="subtitle">Factory interna • PWA • Offline-first</div>
+      </div>
+    </div>
+
+    <nav class="tabs" id="tabs">
+      <button class="tab active" data-tab="dashboard">Dashboard</button>
+      <button class="tab" data-tab="newapp">New App</button>
+      <button class="tab" data-tab="editor">Editor</button>
+      <button class="tab" data-tab="generator">Generator</button>
+      <button class="tab" data-tab="settings">Settings</button>
+      <!-- Admin entra via JS (admin.js) -->
+    </nav>
+  </header>
+
+  <main class="container">
+    <!-- DASHBOARD -->
+    <section class="panel" id="tab-dashboard">
+      <h2>Bem-vindo 👋</h2>
+      <p class="muted">Crie apps e publique depois (primeiro vamos estabilizar).</p>
+
+      <div class="row">
+        <button class="btn primary" id="goNewApp">+ Criar novo app</button>
+        <button class="btn" id="goEditor">✍️ Abrir Editor</button>
+        <button class="btn" id="goGenerator">📦 Gerar ZIP</button>
+      </div>
+
+      <div class="card">
+        <h3>Apps salvos</h3>
+        <div id="appsList" class="list"></div>
+        <div class="muted small">Dica: toque em um app para selecionar como ativo.</div>
+      </div>
+
+      <div class="card">
+        <h3>Status</h3>
+        <div id="statusBox" class="status">Pronto ✅</div>
+      </div>
+    </section>
+
+    <!-- NEW APP -->
+    <section class="panel hidden" id="tab-newapp">
+      <h2>Criar novo app</h2>
+      <p class="muted">Cria a estrutura inicial e salva localmente.</p>
+
+      <div class="grid2">
+        <label class="field">
+          <span>Nome do app</span>
+          <input id="newName" placeholder="Ex: AgroControl" />
+        </label>
+
+        <label class="field">
+          <span>ID do app (sem espaço, minúsculo)</span>
+          <input id="newId" placeholder="Ex: agrocontrol" />
+          <span class="hint">Só a-z, 0-9 e hífen.</span>
+        </label>
+
+        <label class="field">
+          <span>Tipo</span>
+          <select id="newType">
+            <option value="pwa">PWA</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span>Template</span>
+          <select id="newTemplate"></select>
+          <span class="hint">Comece com “PWA Base”.</span>
+        </label>
+      </div>
+
+      <div class="row">
+        <button class="btn primary" id="createAppBtn">Salvar</button>
+        <button class="btn" id="cancelNew">Voltar</button>
+      </div>
+
+      <div class="card">
+        <h3>Validação</h3>
+        <pre class="pre" id="newAppValidation">—</pre>
+      </div>
+    </section>
+
+    <!-- EDITOR -->
+    <section class="panel hidden" id="tab-editor">
+      <h2>Editor</h2>
+      <p class="muted">Edite os arquivos do app ativo e veja o preview.</p>
+
+      <div class="card">
+        <div class="row wrap">
+          <div class="pill">
+            <span class="muted small">App ativo:</span>
+            <strong id="activeAppLabel">—</strong>
+          </div>
+
+          <button class="btn" id="openPreviewBtn">👁️ Preview</button>
+          <button class="btn" id="saveFileBtn">💾 Salvar arquivo</button>
+          <button class="btn danger" id="resetFileBtn">↩️ Reset arquivo</button>
+        </div>
+
+        <div class="editorLayout">
+          <div class="files">
+            <div class="filesHeader">Arquivos</div>
+            <div id="filesList" class="filesList"></div>
+          </div>
+
+          <div class="code">
+            <div class="codeHeader">
+              <div class="muted small" id="currentFileLabel">—</div>
+            </div>
+            <textarea id="codeArea" spellcheck="false"></textarea>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Preview</h3>
+        <div class="muted small">Se der cache, use “Diag → Limpar Cache PWA”.</div>
+        <div class="previewBox">
+          <iframe id="previewFrame" title="Preview"></iframe>
+        </div>
+      </div>
+    </section>
+
+    <!-- GENERATOR -->
+    <section class="panel hidden" id="tab-generator">
+      <h2>Generator</h2>
+      <p class="muted">Baixe ZIP do app salvo.</p>
+
+      <div class="card">
+        <label class="field">
+          <span>App salvo</span>
+          <select id="genAppSelect"></select>
+        </label>
+
+        <div class="row wrap">
+          <button class="btn primary" id="downloadZipBtn">⬇️ Baixar ZIP</button>
+          <button class="btn" id="publishBtn">🚀 Publicar (depois)</button>
+          <button class="btn" id="copyLinkBtn">🔗 Copiar link</button>
+        </div>
+
+        <div class="statusLine" id="genStatus">Status: aguardando…</div>
+
+        <div class="card inner">
+          <h3>Link do app</h3>
+          <a id="publishedLink" href="#" target="_blank" rel="noreferrer">—</a>
+        </div>
+
+        <details class="card inner">
+          <summary>Console / Logs</summary>
+          <pre class="pre" id="logs"></pre>
+        </details>
+      </div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section class="panel hidden" id="tab-settings">
+      <h2>Settings</h2>
+      <p class="muted">Configurações (salvas no seu dispositivo).</p>
+
+      <div class="grid2">
+        <label class="field">
+          <span>GitHub username</span>
+          <input id="ghUser" placeholder="ex: mateussantanna" />
+        </label>
+
+        <label class="field">
+          <span>GitHub Token</span>
+          <input id="ghToken" placeholder="cola o token aqui" />
+        </label>
+
+        <label class="field">
+          <span>Prefixo do repositório</span>
+          <input id="repoPrefix" value="rapp-" />
+        </label>
+
+        <label class="field">
+          <span>Base URL do Pages</span>
+          <input id="pagesBase" placeholder="https://SEUUSER.github.io" />
+        </label>
+
+        <label class="field">
+          <span>Admin PIN (6 dígitos)</span>
+          <input id="adminPin" placeholder="ex: 123456" inputmode="numeric" />
+          <span class="hint">Aba Admin só abre com PIN.</span>
+        </label>
+      </div>
+
+      <div class="row">
+        <button class="btn primary" id="saveSettingsBtn">Salvar Settings</button>
+        <button class="btn danger" id="resetFactoryBtn">Reset Factory</button>
+      </div>
+    </section>
+
+    <!-- ADMIN (escondida) -->
+    <section class="panel hidden" id="tab-admin">
+      <h2>Admin</h2>
+      <p class="muted">Diagnóstico, backup e auto-repair (só você).</p>
+
+      <div class="card">
+        <div class="row wrap">
+          <button class="btn" id="adminDiagBtn">Gerar diagnóstico</button>
+          <button class="btn" id="adminCopyDiagBtn">Copiar diagnóstico</button>
+          <button class="btn danger" id="adminClearPwaBtn">Limpar Cache PWA</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Backup</h3>
+        <div class="row wrap">
+          <button class="btn" id="adminExportBtn">Exportar backup</button>
+          <button class="btn" id="adminImportBtn">Importar backup</button>
+          <input id="adminImportFile" type="file" accept="application/json" style="display:none" />
+        </div>
+        <div class="muted small">Export salva um JSON do localStorage (apps + settings).</div>
+      </div>
+
+      <div class="card">
+        <h3>Auto-repair</h3>
+        <div class="row wrap">
+          <button class="btn primary" id="adminRepairBtn">Rodar auto-repair</button>
+        </div>
+        <pre class="pre" id="adminOut">—</pre>
+      </div>
+    </section>
+  </main>
+
+  <!-- libs -->
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+
+  <!-- módulos (ordem importa) -->
+  <script src="./js/templates.js"></script>
+  <script src="./js/ai.js"></script>
+  <script src="./js/router.js"></script>
+  <script src="./js/admin.js"></script>
+
+  <!-- app principal por último -->
+  <script src="./app.js"></script>
+
+  <script>
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("./sw.js").catch(() => {});
+      });
+    }
+  </script>
+</body>
+</html>
