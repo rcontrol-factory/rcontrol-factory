@@ -882,3 +882,260 @@ function showAITestResult(text) {
   }
   box.textContent = text;
 }
+/* =========================================================
+   RControl Factory - AI Engine v0 (offline, grátis)
+   - Painel flutuante no Editor
+   - Aplica comandos no app ativo (index.html / app.js / styles.css)
+   ========================================================= */
+
+(function () {
+  // --------- util ----------
+  const safeJsonParse = (s, fallback) => {
+    try { return JSON.parse(s); } catch { return fallback; }
+  };
+
+  function _getLSKeys() {
+    // tenta reaproveitar LS_KEYS se existir
+    if (typeof LS_KEYS !== "undefined") return LS_KEYS;
+    // fallback (caso seu arquivo mude)
+    return {
+      settings: "rcf_settings_v2",
+      apps: "rcf_apps_v2",
+      activeAppId: "rcf_active_app_id_v2",
+    };
+  }
+
+  function _loadAppsState() {
+    const K = _getLSKeys();
+    const apps = safeJsonParse(localStorage.getItem(K.apps) || "[]", []);
+    const activeId = localStorage.getItem(K.activeAppId) || "";
+    return { K, apps, activeId };
+  }
+
+  function _saveAppsState(apps) {
+    const K = _getLSKeys();
+    localStorage.setItem(K.apps, JSON.stringify(apps));
+  }
+
+  function _findActiveApp() {
+    const { apps, activeId } = _loadAppsState();
+    if (!activeId) return null;
+    const idx = apps.findIndex(a => a && a.id === activeId);
+    if (idx < 0) return null;
+    return { apps, idx, app: apps[idx] };
+  }
+
+  function _ensureFilesMap(app) {
+    // suportar modelos diferentes
+    // esperado: app.files = { "index.html": "...", "app.js": "...", ... }
+    if (!app.files || typeof app.files !== "object") app.files = {};
+    return app.files;
+  }
+
+  function _inferTarget(cmd, payload) {
+    const c = (cmd || "").trim().toLowerCase();
+
+    // Se usuário explicitou tipo:
+    // "html: <div>..." | "css: ..." | "js: ..."
+    if (c.startsWith("html:")) return { file: "index.html", mode: "inject_html", data: cmd.slice(5).trim() };
+    if (c.startsWith("css:"))  return { file: "styles.css", mode: "append",     data: cmd.slice(4).trim() };
+    if (c.startsWith("js:"))   return { file: "app.js",     mode: "append",     data: cmd.slice(3).trim() };
+
+    // Heurística por “cara” do conteúdo
+    const p = (payload || "").trim();
+    if (p.startsWith("<") || c.includes("html") || c.includes("div") || c.includes("button")) {
+      return { file: "index.html", mode: "inject_html", data: payload };
+    }
+    if (c.includes("css") || p.includes("{") && p.includes("}") && (p.includes(":") || p.includes(";"))) {
+      return { file: "styles.css", mode: "append", data: payload };
+    }
+    return { file: "app.js", mode: "append", data: payload };
+  }
+
+  function _injectHtmlAtEnd(html, snippet) {
+    const s = snippet || "";
+    if (!s.trim()) return html;
+
+    // injeta antes do </body> se existir, senão no fim
+    const tag = /<\/body\s*>/i;
+    if (tag.test(html)) return html.replace(tag, `${s}\n</body>`);
+    return `${html}\n${s}\n`;
+  }
+
+  function _appendWithSpacer(text, snippet) {
+    const s = (snippet || "").trim();
+    if (!s) return text;
+    const t = text || "";
+    return `${t}\n\n/* --- rcf_ai_append --- */\n${s}\n`;
+  }
+
+  // --------- templates de comandos (v0) ----------
+  function _templateFromCommand(cmdRaw) {
+    const cmd = (cmdRaw || "").trim();
+    const c = cmd.toLowerCase();
+
+    // 1) add button <texto>
+    // ex: "add button Salvar"
+    if (c.startsWith("add button ")) {
+      const label = cmd.slice("add button ".length).trim() || "Clique aqui";
+      const id = "btn_" + Math.random().toString(16).slice(2, 8);
+
+      const html = `<button id="${id}" class="rcf-btn">${label}</button>`;
+      const css = `.rcf-btn{padding:12px 16px;border-radius:12px;border:1px solid rgba(255,255,255,.15);background:rgba(0,200,120,.18);color:#eafff6;font-weight:700}`;
+      const js  = `document.getElementById("${id}")?.addEventListener("click", ()=>{ alert("OK: ${label}"); });`;
+
+      return [
+        { file: "index.html", mode: "inject_html", data: html },
+        { file: "styles.css", mode: "append", data: css },
+        { file: "app.js", mode: "append", data: js },
+      ];
+    }
+
+    // 2) add input <placeholder>
+    if (c.startsWith("add input ")) {
+      const ph = cmd.slice("add input ".length).trim() || "Digite...";
+      const id = "inp_" + Math.random().toString(16).slice(2, 8);
+      const html = `<input id="${id}" class="rcf-input" placeholder="${ph}" />`;
+      const css = `.rcf-input{width:100%;max-width:420px;padding:12px 14px;border-radius:12px;border:1px solid rgba(255,255,255,.12);background:rgba(0,0,0,.25);color:#fff;outline:none}`;
+      return [
+        { file: "index.html", mode: "inject_html", data: html },
+        { file: "styles.css", mode: "append", data: css },
+      ];
+    }
+
+    // 3) fallback: se não bater template, trata como "js:" por padrão
+    // (você pode mandar "html:" ou "css:" pra forçar)
+    return null;
+  }
+
+  // --------- engine principal ----------
+  function rcf_ai_applyCommand(cmdRaw) {
+    const active = _findActiveApp();
+    if (!active) {
+      return { ok: false, error: "Sem app ativo. Vá em New App e selecione/crie um app." };
+    }
+
+    const { apps, idx, app } = active;
+    const files = _ensureFilesMap(app);
+
+    const cmd = (cmdRaw || "").trim();
+    if (!cmd) return { ok: false, error: "Comando vazio." };
+
+    // tenta template
+    const templ = _templateFromCommand(cmd);
+    const patches = templ ? templ : [ _inferTarget(cmd, cmd) ];
+
+    // aplica patches
+    for (const p of patches) {
+      const file = p.file;
+      const mode = p.mode;
+      const data = p.data || "";
+
+      const current = files[file] || "";
+
+      if (file === "index.html" && mode === "inject_html") {
+        files[file] = _injectHtmlAtEnd(current, data);
+      } else {
+        files[file] = _appendWithSpacer(current, data);
+      }
+    }
+
+    apps[idx] = app;
+    _saveAppsState(apps);
+
+    return { ok: true, patches: patches.map(p => ({ file: p.file, mode: p.mode })) };
+  }
+
+  // --------- UI flutuante (não precisa mexer no HTML) ----------
+  function rcf_ai_mountPanel() {
+    // evita duplicar
+    if (document.getElementById("rcf-ai-panel")) return;
+
+    const panel = document.createElement("div");
+    panel.id = "rcf-ai-panel";
+    panel.style.cssText = `
+      position: fixed;
+      right: 14px;
+      bottom: 14px;
+      z-index: 99999;
+      width: min(420px, calc(100vw - 28px));
+      background: rgba(10,14,20,.92);
+      border: 1px solid rgba(255,255,255,.12);
+      border-radius: 14px;
+      padding: 12px;
+      box-shadow: 0 20px 60px rgba(0,0,0,.45);
+      backdrop-filter: blur(10px);
+      color: #eaf2ff;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
+    `;
+
+    panel.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;">
+        <div style="font-weight:800">AI Engine (offline)</div>
+        <button id="rcf-ai-close" style="border:none;background:transparent;color:#9fb3c8;font-weight:800;font-size:16px;">✕</button>
+      </div>
+
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+        <span style="font-size:12px;opacity:.8">Comandos:</span>
+        <code style="font-size:12px;opacity:.9">add button Salvar</code>
+        <code style="font-size:12px;opacity:.9">html:&lt;div&gt;...&lt;/div&gt;</code>
+        <code style="font-size:12px;opacity:.9">css: .x{...}</code>
+        <code style="font-size:12px;opacity:.9">js: console.log(...)</code>
+      </div>
+
+      <textarea id="rcf-ai-cmd" rows="3" placeholder="Digite o comando aqui..." 
+        style="width:100%;resize:none;border-radius:12px;border:1px solid rgba(255,255,255,.12);
+               background:rgba(0,0,0,.25);color:#fff;padding:10px 12px;outline:none;"></textarea>
+
+      <div style="display:flex;gap:10px;margin-top:10px;">
+        <button id="rcf-ai-run" style="
+          flex:1;padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,.14);
+          background:rgba(0,200,120,.18);color:#eafff6;font-weight:900;">
+          Aplicar no app ativo
+        </button>
+        <button id="rcf-ai-help" style="
+          padding:12px 14px;border-radius:12px;border:1px solid rgba(255,255,255,.14);
+          background:rgba(255,255,255,.06);color:#eaf2ff;font-weight:800;">
+          ?
+        </button>
+      </div>
+
+      <div id="rcf-ai-out" style="margin-top:10px;font-size:12px;opacity:.9"></div>
+    `;
+
+    document.body.appendChild(panel);
+
+    const out = panel.querySelector("#rcf-ai-out");
+    const ta = panel.querySelector("#rcf-ai-cmd");
+
+    panel.querySelector("#rcf-ai-close").onclick = () => panel.remove();
+
+    panel.querySelector("#rcf-ai-help").onclick = () => {
+      out.textContent =
+        "Dica: use 'add button Texto' pra testar. Se quiser forçar arquivo: 'html:' / 'css:' / 'js:'.";
+    };
+
+    panel.querySelector("#rcf-ai-run").onclick = () => {
+      const cmd = ta.value.trim();
+      const res = rcf_ai_applyCommand(cmd);
+      if (!res.ok) {
+        out.textContent = "❌ " + res.error;
+        return;
+      }
+      out.textContent = "✅ Aplicado: " + res.patches.map(p => p.file).join(", ")
+        + " | Agora vá em Editor e clique em Preview/Salvar arquivo se necessário.";
+      ta.value = "";
+    };
+
+    out.textContent = "Pronto. Crie/seleciona um app e rode um comando.";
+  }
+
+  // deixa disponível global (pra debug)
+  window.__rcf_ai_apply = rcf_ai_applyCommand;
+  window.__rcf_ai_panel = rcf_ai_mountPanel;
+
+  // monta sozinho quando a página carregar
+  window.addEventListener("load", () => {
+    try { rcf_ai_mountPanel(); } catch {}
+  });
+})();
