@@ -1,21 +1,13 @@
-/* RControl Factory — sw.js (v3)
-   - Cache versionado pra forçar update
-   - Cache inclui /js/*.js (ai/templates/router)
-*/
-
-const CACHE = "rcontrol-factory-v3-20260209";
+/* RControl Factory — sw.js (v4) */
+const CACHE = "rcontrol-factory-v4-20260209";
 const ASSETS = [
   "./",
   "./index.html",
   "./styles.css",
   "./app.js",
   "./manifest.json",
-  "./js/ai.js",
-  "./js/templates.js",
-  "./js/router.js",
 ];
 
-// instala e baixa tudo
 self.addEventListener("install", (e) => {
   e.waitUntil((async () => {
     const c = await caches.open(CACHE);
@@ -24,7 +16,6 @@ self.addEventListener("install", (e) => {
   })());
 });
 
-// ativa e apaga caches antigos
 self.addEventListener("activate", (e) => {
   e.waitUntil((async () => {
     const keys = await caches.keys();
@@ -33,12 +24,10 @@ self.addEventListener("activate", (e) => {
   })());
 });
 
-// estratégia: HTML tenta rede primeiro (pra atualizar mais fácil), resto cache-first
+// HTML: network-first (atualiza fácil). Outros: cache-first.
 self.addEventListener("fetch", (e) => {
   const req = e.request;
   const url = new URL(req.url);
-
-  // só trata mesma origem
   if (url.origin !== location.origin) return;
 
   const isHtml =
@@ -47,7 +36,6 @@ self.addEventListener("fetch", (e) => {
     url.pathname.endsWith("/index.html");
 
   if (isHtml) {
-    // network-first (pra não travar em versão velha)
     e.respondWith((async () => {
       try {
         const fresh = await fetch(req);
@@ -62,7 +50,6 @@ self.addEventListener("fetch", (e) => {
     return;
   }
 
-  // cache-first (rápido/offline)
   e.respondWith((async () => {
     const cached = await caches.match(req);
     if (cached) return cached;
