@@ -1,3 +1,108 @@
+// ===== RCF Debug Console (iPhone-friendly) =====
+(function setupRCFDebugConsole(){
+  const MAX = 200;
+  const logs = [];
+
+  function pushLog(level, args) {
+    const time = new Date().toISOString().slice(11,19);
+    const msg = args.map(a => {
+      try {
+        if (typeof a === "string") return a;
+        return JSON.stringify(a);
+      } catch {
+        return String(a);
+      }
+    }).join(" ");
+    logs.push({ time, level, msg });
+    while (logs.length > MAX) logs.shift();
+    render();
+  }
+
+  const orig = {
+    log: console.log.bind(console),
+    warn: console.warn.bind(console),
+    error: console.error.bind(console),
+  };
+
+  console.log = (...a) => { orig.log(...a); pushLog("log", a); };
+  console.warn = (...a) => { orig.warn(...a); pushLog("warn", a); };
+  console.error = (...a) => { orig.error(...a); pushLog("error", a); };
+
+  window.addEventListener("error", (e) => {
+    pushLog("error", [e.message || "Erro", e.filename, e.lineno, e.colno]);
+  });
+
+  window.addEventListener("unhandledrejection", (e) => {
+    pushLog("error", ["Promise rejeitada:", e.reason]);
+  });
+
+  function ensureUI(){
+    if (document.getElementById("rcf-debug-btn")) return;
+
+    const btn = document.createElement("button");
+    btn.id = "rcf-debug-btn";
+    btn.textContent = "Logs";
+    btn.style.cssText = `
+      position:fixed; right:12px; bottom:12px; z-index:99999;
+      padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,.2);
+      background:rgba(0,0,0,.55); color:white; font-weight:600;
+    `;
+    btn.onclick = () => {
+      const p = document.getElementById("rcf-debug-panel");
+      p.style.display = (p.style.display === "none") ? "block" : "none";
+      render();
+    };
+
+    const panel = document.createElement("div");
+    panel.id = "rcf-debug-panel";
+    panel.style.display = "none";
+    panel.style.cssText = `
+      position:fixed; left:12px; right:12px; bottom:64px; z-index:99999;
+      max-height:45vh; overflow:auto; padding:10px;
+      border-radius:14px; border:1px solid rgba(255,255,255,.15);
+      background:rgba(10,10,10,.92); color:#eaeaea; font:12px/1.35 -apple-system,system-ui,Segoe UI,Roboto,Arial;
+      white-space:pre-wrap;
+    `;
+
+    const actions = document.createElement("div");
+    actions.style.cssText = "display:flex; gap:8px; margin-bottom:8px;";
+    const clear = document.createElement("button");
+    clear.textContent = "Limpar";
+    clear.style.cssText = "padding:6px 10px;border-radius:10px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.08);color:#fff;";
+    clear.onclick = () => { logs.length = 0; render(); };
+
+    const copy = document.createElement("button");
+    copy.textContent = "Copiar";
+    copy.style.cssText = clear.style.cssText;
+    copy.onclick = async () => {
+      const text = logs.map(l => `[${l.time}] ${l.level.toUpperCase()} ${l.msg}`).join("\n");
+      try { await navigator.clipboard.writeText(text); console.log("Logs copiados ✅"); }
+      catch { console.error("Não consegui copiar (iOS às vezes bloqueia)."); }
+    };
+
+    actions.append(clear, copy);
+    panel.append(actions);
+
+    const body = document.createElement("div");
+    body.id = "rcf-debug-body";
+    panel.append(body);
+
+    document.body.append(btn, panel);
+  }
+
+  function render(){
+    const body = document.getElementById("rcf-debug-body");
+    if (!body) return;
+    body.textContent = logs.map(l => `[${l.time}] ${l.level.toUpperCase()} ${l.msg}`).join("\n");
+  }
+
+  // garante UI quando DOM estiver pronto
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", () => { ensureUI(); render(); });
+  } else {
+    ensureUI(); render();
+  }
+})();
 import { callOpenAI } from "./js/ai.js";
 import { routes } from "./js/router.js";
 import { templates } from "./js/templates.js";
