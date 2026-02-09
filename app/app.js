@@ -1,3 +1,5 @@
+import { routes } from "./js/router.js";
+import { templates } from "./js/templates.js";
 /* RControl Factory v2 - Offline, Editor, ZIP, Publish (GitHub Pages)
    Sem build. Tudo roda no browser.
 */
