@@ -25,12 +25,10 @@
       <button class="tab" data-tab="editor">Editor</button>
       <button class="tab" data-tab="generator">Generator</button>
       <button class="tab" data-tab="settings">Settings</button>
-      <button class="tab" data-tab="admin">Admin 🔒</button>
     </nav>
   </header>
 
   <main class="container">
-    <!-- DASHBOARD -->
     <section class="panel" id="tab-dashboard">
       <h2>Bem-vindo 👋</h2>
       <p class="muted">Crie apps e publique no GitHub Pages.</p>
@@ -44,7 +42,7 @@
       <div class="card">
         <h3>Apps salvos</h3>
         <div id="appsList" class="list"></div>
-        <div class="muted small">Dica: toque em um app para selecionar como “ativo”.</div>
+        <div class="muted small">Dica: toque em um app para selecionar como ativo.</div>
       </div>
 
       <div class="card">
@@ -53,21 +51,20 @@
       </div>
     </section>
 
-    <!-- NEW APP -->
     <section class="panel hidden" id="tab-newapp">
       <h2>Criar novo app</h2>
-      <p class="muted">Cria a estrutura inicial e salva localmente. Depois você edita e publica.</p>
+      <p class="muted">Cria a estrutura inicial e salva localmente.</p>
 
       <div class="grid2">
         <label class="field">
           <span>Nome do app</span>
-          <input id="newName" placeholder="Ex: R Quotas" />
+          <input id="newName" placeholder="Ex: AgroControl" />
         </label>
 
         <label class="field">
           <span>ID do app (sem espaço, minúsculo)</span>
-          <input id="newId" placeholder="Ex: rquotas" />
-          <span class="hint">Sem letras maiúsculas. Só a-z, 0-9 e hífen.</span>
+          <input id="newId" placeholder="Ex: agrocontrol" />
+          <span class="hint">Só a-z, 0-9 e hífen.</span>
         </label>
 
         <label class="field">
@@ -80,7 +77,7 @@
         <label class="field">
           <span>Template</span>
           <select id="newTemplate"></select>
-          <span class="hint">Comece com “PWA Base (com app.js + styles.css)”.</span>
+          <span class="hint">Comece com “PWA Base”.</span>
         </label>
       </div>
 
@@ -95,7 +92,6 @@
       </div>
     </section>
 
-    <!-- EDITOR -->
     <section class="panel hidden" id="tab-editor">
       <h2>Editor</h2>
       <p class="muted">Edite os arquivos do app ativo e veja o preview.</p>
@@ -129,17 +125,16 @@
 
       <div class="card">
         <h3>Preview</h3>
-        <div class="muted small">Se der cache, force refresh (Safari: recarregar) ou apague o PWA e instale de novo.</div>
+        <div class="muted small">Se der cache: use “Limpar Cache PWA” no painel Logs/Diag.</div>
         <div class="previewBox">
           <iframe id="previewFrame" title="Preview"></iframe>
         </div>
       </div>
     </section>
 
-    <!-- GENERATOR -->
     <section class="panel hidden" id="tab-generator">
       <h2>Generator</h2>
-      <p class="muted">Baixe ZIP ou publique no GitHub Pages para obter link de teste.</p>
+      <p class="muted">Baixe ZIP (Publish a gente liga depois de estabilizar).</p>
 
       <div class="card">
         <label class="field">
@@ -149,7 +144,7 @@
 
         <div class="row wrap">
           <button class="btn primary" id="downloadZipBtn">⬇️ Baixar ZIP</button>
-          <button class="btn" id="publishBtn">🚀 Publicar (GitHub Pages)</button>
+          <button class="btn" id="publishBtn">🚀 Publicar (em breve)</button>
           <button class="btn" id="copyLinkBtn">🔗 Copiar link</button>
         </div>
 
@@ -157,7 +152,6 @@
 
         <div class="card inner">
           <h3>Link do app</h3>
-          <div class="muted small">Quando publicar, o link aparece aqui.</div>
           <a id="publishedLink" href="#" target="_blank" rel="noreferrer">—</a>
         </div>
 
@@ -168,10 +162,9 @@
       </div>
     </section>
 
-    <!-- SETTINGS -->
     <section class="panel hidden" id="tab-settings">
       <h2>Settings</h2>
-      <p class="muted">Configurações do Factory (salvas localmente no seu dispositivo).</p>
+      <p class="muted">Configurações do Factory (salvas no seu dispositivo).</p>
 
       <div class="grid2">
         <label class="field">
@@ -180,9 +173,8 @@
         </label>
 
         <label class="field">
-          <span>GitHub Token (PAT)</span>
+          <span>GitHub Token</span>
           <input id="ghToken" placeholder="cola o token aqui" />
-          <span class="hint">⚠️ Por enquanto NÃO é seguro guardar token no front. Vamos ligar Worker depois.</span>
         </label>
 
         <label class="field">
@@ -194,57 +186,11 @@
           <span>Base URL do Pages</span>
           <input id="pagesBase" placeholder="https://SEUUSER.github.io" />
         </label>
-
-        <label class="field">
-          <span>Admin PIN (local)</span>
-          <input id="adminPin" placeholder="ex: 1234" />
-          <span class="hint">PIN simples só pra bloquear curioso. Segurança real vem com Worker.</span>
-        </label>
       </div>
 
       <div class="row">
         <button class="btn primary" id="saveSettingsBtn">Salvar Settings</button>
-        <button class="btn danger" id="resetFactoryBtn">Reset Factory (limpar local)</button>
-      </div>
-    </section>
-
-    <!-- ADMIN -->
-    <section class="panel hidden" id="tab-admin">
-      <h2>Admin 🔒</h2>
-      <p class="muted">Área só sua: diagnóstico, auto-fix, console tipo Replit, export/import do estado.</p>
-
-      <div class="card" id="adminGate">
-        <h3>Login</h3>
-        <div class="muted small">Digite seu PIN (defina em Settings).</div>
-        <div class="row wrap">
-          <input id="adminPinInput" placeholder="PIN" style="max-width:180px" />
-          <button class="btn primary" id="adminLoginBtn">Entrar</button>
-          <button class="btn" id="adminLogoutBtn">Sair</button>
-        </div>
-        <div class="statusLine" id="adminAuthStatus">Status: bloqueado</div>
-      </div>
-
-      <div class="card" id="adminTools" style="display:none;">
-        <h3>Doctor (Auto-correção)</h3>
-        <div class="row wrap">
-          <button class="btn" id="doctorRunBtn">🔎 Rodar diagnóstico</button>
-          <button class="btn" id="doctorFixStorageBtn">🛠 Fix storage</button>
-          <button class="btn" id="doctorFixCacheBtn">🧹 Limpar cache PWA/SW</button>
-          <button class="btn danger" id="doctorNukeBtn">💣 Reset total (local)</button>
-          <button class="btn" id="doctorRepairActiveBtn">🔧 Reparar app ativo</button>
-        </div>
-        <pre class="pre" id="doctorOut">—</pre>
-      </div>
-
-      <div class="card" id="adminConsole" style="display:none;">
-        <h3>Console (tipo Replit)</h3>
-        <div class="muted small">Comandos: <code>doctor</code>, <code>fix cache</code>, <code>fix storage</code>, <code>export state</code>, <code>import state</code></div>
-        <div class="row wrap">
-          <input id="adminCmd" placeholder="Digite comando..." style="flex:1;min-width:220px" />
-          <button class="btn primary" id="adminCmdRunBtn">Executar</button>
-          <button class="btn" id="adminCmdClearBtn">Limpar</button>
-        </div>
-        <pre class="pre" id="adminCmdOut">—</pre>
+        <button class="btn danger" id="resetFactoryBtn">Reset Factory</button>
       </div>
     </section>
   </main>
@@ -252,8 +198,13 @@
   <!-- libs -->
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 
-  <!-- BUST CACHE -->
-  <script src="app.js?v=4"></script>
+  <!-- módulos (ORDEM IMPORTA) -->
+  <script src="js/ai.js"></script>
+  <script src="js/templates.js"></script>
+  <script src="js/router.js"></script>
+
+  <!-- app principal -->
+  <script src="app.js"></script>
 
   <script>
     if ("serviceWorker" in navigator) {
