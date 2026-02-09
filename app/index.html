@@ -263,9 +263,17 @@
   <script src="./app.js"></script>
 
   <script>
-    if ("serviceWorker" in navigator) {
-      window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js").catch(() => {}));
-    }
-  </script>
+  // RCF: Service Worker register (cache-buster)
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", async () => {
+      try {
+        const v = "2026-02-09-01"; // muda esse valor pra forçar update
+        await navigator.serviceWorker.register("./sw.js?v=" + v);
+      } catch (e) {
+        // não trava iPhone
+      }
+    });
+  }
+</script>
 </body>
 </html>
