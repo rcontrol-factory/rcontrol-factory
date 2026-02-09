@@ -727,3 +727,14 @@ function init() {
 }
 
 init();
+window.__rcf_ai_test = async function () {
+  const s = loadSettings(); // usa sua função existente de settings
+  const prompt = "Crie um arquivo index.html simples com um botão e um contador.";
+  const text = await callOpenAI({
+    apiKey: s.openaiKey,
+    model: s.openaiModel,
+    prompt,
+  });
+  console.log("AI RESULT:\n", text);
+  return text;
+};
