@@ -1,131 +1,78 @@
-/* =========================================================
-   RControl Factory — Service Worker (ANTI-CACHE-TRAVA)
-   - Network-first para HTML (sempre atualiza)
-   - Cache-first para assets (rápido/offline)
-   - Limpa caches antigos automaticamente
-   - Endpoint /rcf-sw-reset para “zerar” cache quando precisar
-   ========================================================= */
+/* RControl Factory — sw.js (v3)
+   - Cache versionado pra forçar update
+   - Cache inclui /js/*.js (ai/templates/router)
+*/
 
-const VERSION = "v3"; // <-- quando publicar mudança grande, troque pra v4, v5...
-const CACHE = `rcontrol-factory-${VERSION}`;
-
-// Ajuste aqui se seu site roda na raiz "/" ou dentro de "/app/"
-// Se seu index.html fica em /app/index.html no Pages/Cloudflare, use: const BASE = "/app/";
-const BASE = "./";
-
+const CACHE = "rcontrol-factory-v3-20260209";
 const ASSETS = [
-  `${BASE}`,
-  `${BASE}index.html`,
-  `${BASE}styles.css`,
-  `${BASE}app.js`,
-  `${BASE}manifest.json`,
-  `${BASE}sw.js`,
+  "./",
+  "./index.html",
+  "./styles.css",
+  "./app.js",
+  "./manifest.json",
+  "./js/ai.js",
+  "./js/templates.js",
+  "./js/router.js",
 ];
 
-// --- install ---
-self.addEventListener("install", (event) => {
-  event.waitUntil((async () => {
-    const cache = await caches.open(CACHE);
-    try {
-      await cache.addAll(ASSETS);
-    } catch (e) {
-      // Se algum asset falhar (path diferente), não quebra instalação
-      // (a navegação online ainda funciona)
-    }
+// instala e baixa tudo
+self.addEventListener("install", (e) => {
+  e.waitUntil((async () => {
+    const c = await caches.open(CACHE);
+    await c.addAll(ASSETS);
     self.skipWaiting();
   })());
 });
 
-// --- activate ---
-self.addEventListener("activate", (event) => {
-  event.waitUntil((async () => {
+// ativa e apaga caches antigos
+self.addEventListener("activate", (e) => {
+  e.waitUntil((async () => {
     const keys = await caches.keys();
-    await Promise.all(
-      keys.map((k) => (k !== CACHE ? caches.delete(k) : Promise.resolve()))
-    );
-    await self.clients.claim();
+    await Promise.all(keys.map((k) => (k !== CACHE ? caches.delete(k) : null)));
+    self.clients.claim();
   })());
 });
 
-// Helpers
-function isHTML(req) {
-  const accept = req.headers.get("accept") || "";
-  return accept.includes("text/html");
-}
-function isGet(req) {
-  return req.method === "GET";
-}
-function urlPath(req) {
-  try { return new URL(req.url).pathname; } catch { return ""; }
-}
+// estratégia: HTML tenta rede primeiro (pra atualizar mais fácil), resto cache-first
+self.addEventListener("fetch", (e) => {
+  const req = e.request;
+  const url = new URL(req.url);
 
-// --- fetch ---
-self.addEventListener("fetch", (event) => {
-  const req = event.request;
+  // só trata mesma origem
+  if (url.origin !== location.origin) return;
 
-  // Só GET
-  if (!isGet(req)) return;
+  const isHtml =
+    req.mode === "navigate" ||
+    (req.headers.get("accept") || "").includes("text/html") ||
+    url.pathname.endsWith("/index.html");
 
-  const path = urlPath(req);
-
-  // “Reset total” de cache por URL:
-  // Abra no navegador: https://SEUSITE/rcf-sw-reset
-  if (path.endsWith("/rcf-sw-reset")) {
-    event.respondWith((async () => {
-      const keys = await caches.keys();
-      await Promise.all(keys.map((k) => caches.delete(k)));
-      return new Response(
-        "RCF cache limpo ✅ Agora feche o Safari e abra de novo.\n",
-        { headers: { "content-type": "text/plain; charset=utf-8" } }
-      );
-    })());
-    return;
-  }
-
-  // 1) HTML / navegação: NETWORK FIRST (sempre pega atualização)
-  if (isHTML(req) || req.mode === "navigate") {
-    event.respondWith((async () => {
+  if (isHtml) {
+    // network-first (pra não travar em versão velha)
+    e.respondWith((async () => {
       try {
-        const fresh = await fetch(req, { cache: "no-store" });
-        // Atualiza cache do HTML
-        const cache = await caches.open(CACHE);
-        cache.put(req, fresh.clone());
+        const fresh = await fetch(req);
+        const c = await caches.open(CACHE);
+        c.put(req, fresh.clone());
         return fresh;
-      } catch (e) {
-        // Offline: cai pro cache
+      } catch {
         const cached = await caches.match(req);
-        if (cached) return cached;
-
-        // Fallback pro index
-        const fallback = await caches.match(`${BASE}index.html`);
-        return fallback || new Response("Offline", { status: 503 });
+        return cached || caches.match("./index.html");
       }
     })());
     return;
   }
 
-  // 2) Assets: CACHE FIRST (rápido), com atualização em background
-  event.respondWith((async () => {
+  // cache-first (rápido/offline)
+  e.respondWith((async () => {
     const cached = await caches.match(req);
-    if (cached) {
-      // Atualiza em background (não bloqueia)
-      event.waitUntil((async () => {
-        try {
-          const fresh = await fetch(req);
-          const cache = await caches.open(CACHE);
-          await cache.put(req, fresh);
-        } catch {}
-      })());
-      return cached;
-    }
-
+    if (cached) return cached;
     try {
       const fresh = await fetch(req);
-      const cache = await caches.open(CACHE);
-      await cache.put(req, fresh.clone());
+      const c = await caches.open(CACHE);
+      c.put(req, fresh.clone());
       return fresh;
-    } catch (e) {
-      return new Response("", { status: 504 });
+    } catch {
+      return cached || Response.error();
     }
   })());
 });
