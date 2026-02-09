@@ -1,3 +1,4 @@
+import { callOpenAI } from "./js/ai.js";
 import { routes } from "./js/router.js";
 import { templates } from "./js/templates.js";
 /* RControl Factory v2 - Offline, Editor, ZIP, Publish (GitHub Pages)
