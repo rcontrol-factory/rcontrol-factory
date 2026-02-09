@@ -195,7 +195,7 @@
         <label class="field">
           <span>Admin PIN (6 dígitos)</span>
           <input id="adminPin" placeholder="ex: 123456" inputmode="numeric" />
-          <span class="hint">Aba Admin só abre com PIN.</span>
+          <span class="hint">Admin abre com PIN.</span>
         </label>
       </div>
 
@@ -204,21 +204,19 @@
         <button class="btn danger" id="resetFactoryBtn">Reset Factory</button>
       </div>
     </section>
-
-    <!-- ADMIN: a UI é criada pelo app.js (modal/fab). -->
   </main>
 
   <!-- libs -->
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 
-  <!-- app principal (UMA vez só) -->
-  <script src="app.js"></script>
+  <!-- app principal (1x só) -->
+  <script src="./app.js"></script>
 
   <script>
     if ("serviceWorker" in navigator) {
-      window.addEventListener("load", () => {
-        navigator.serviceWorker.register("./sw.js").catch(() => {});
-      });
+      window.addEventListener("load", () =>
+        navigator.serviceWorker.register("./sw.js").catch(() => {})
+      );
     }
   </script>
 </body>
