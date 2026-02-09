@@ -239,7 +239,7 @@
     </section>
   </main>
 
-  <!-- libs -->
+    <!-- libs -->
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 
   <!-- módulos (ordem importa) -->
@@ -253,9 +253,9 @@
 
   <script>
     if ("serviceWorker" in navigator) {
-      window.addEventListener("load", () => {
-        navigator.serviceWorker.register("./sw.js").catch(() => {});
-      });
+      window.addEventListener("load", () =>
+        navigator.serviceWorker.register("./sw.js").catch(() => {})
+      );
     }
   </script>
 </body>
