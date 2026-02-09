@@ -2,21 +2,19 @@
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>RControl Factory</title>
   <meta name="theme-color" content="#0b1220" />
-
   <link rel="manifest" href="manifest.json" />
   <link rel="stylesheet" href="styles.css" />
 </head>
-
 <body>
   <header class="topbar">
     <div class="brand">
       <span class="dot"></span>
       <div>
         <div class="title">RControl Factory</div>
-        <div class="subtitle">App creator (PWA) • Offline-first</div>
+        <div class="subtitle">Factory interna • PWA • Offline-first</div>
       </div>
     </div>
 
@@ -30,10 +28,9 @@
   </header>
 
   <main class="container">
-    <!-- DASHBOARD -->
     <section class="panel" id="tab-dashboard">
       <h2>Bem-vindo 👋</h2>
-      <p class="muted">Factory interna para criar e publicar apps da RControl (PWA).</p>
+      <p class="muted">Crie apps e publique no GitHub Pages.</p>
 
       <div class="row">
         <button class="btn primary" id="goNewApp">+ Criar novo app</button>
@@ -44,7 +41,6 @@
       <div class="card">
         <h3>Apps salvos</h3>
         <div id="appsList" class="list"></div>
-        <div class="muted small">Dica: toque em um app para selecionar como “ativo”.</div>
       </div>
 
       <div class="card">
@@ -53,11 +49,8 @@
       </div>
     </section>
 
-    <!-- NEW APP -->
     <section class="panel hidden" id="tab-newapp">
       <h2>Criar novo app</h2>
-      <p class="muted">Cria a estrutura inicial e salva localmente. Depois você edita e publica.</p>
-
       <div class="grid2">
         <label class="field">
           <span>Nome do app</span>
@@ -65,9 +58,9 @@
         </label>
 
         <label class="field">
-          <span>ID do app (sem espaço, minúsculo)</span>
+          <span>ID do app (minúsculo)</span>
           <input id="newId" placeholder="Ex: rquotas" />
-          <span class="hint">Sem letras maiúsculas. Só a-z, 0-9 e hífen.</span>
+          <span class="hint">Sem maiúsculas. Só a-z, 0-9 e hífen.</span>
         </label>
 
         <label class="field">
@@ -80,7 +73,6 @@
         <label class="field">
           <span>Template</span>
           <select id="newTemplate"></select>
-          <span class="hint">Comece com “PWA Base (com app.js + styles.css)”.</span>
         </label>
       </div>
 
@@ -95,10 +87,8 @@
       </div>
     </section>
 
-    <!-- EDITOR -->
     <section class="panel hidden" id="tab-editor">
       <h2>Editor</h2>
-      <p class="muted">Edite os arquivos do app ativo e veja o preview.</p>
 
       <div class="card">
         <div class="row wrap">
@@ -108,8 +98,8 @@
           </div>
 
           <button class="btn" id="openPreviewBtn">👁️ Preview</button>
-          <button class="btn" id="saveFileBtn">💾 Salvar arquivo</button>
-          <button class="btn danger" id="resetFileBtn">↩️ Reset arquivo</button>
+          <button class="btn" id="saveFileBtn">💾 Salvar</button>
+          <button class="btn danger" id="resetFileBtn">↩️ Reset</button>
         </div>
 
         <div class="editorLayout">
@@ -129,17 +119,14 @@
 
       <div class="card">
         <h3>Preview</h3>
-        <div class="muted small">Se der cache, force refresh (Safari: recarregar) ou apague o PWA e instale de novo.</div>
         <div class="previewBox">
           <iframe id="previewFrame" title="Preview"></iframe>
         </div>
       </div>
     </section>
 
-    <!-- GENERATOR -->
     <section class="panel hidden" id="tab-generator">
       <h2>Generator</h2>
-      <p class="muted">Baixe ZIP ou publique no GitHub Pages para obter link de teste.</p>
 
       <div class="card">
         <label class="field">
@@ -157,7 +144,6 @@
 
         <div class="card inner">
           <h3>Link do app</h3>
-          <div class="muted small">Quando publicar, o link aparece aqui.</div>
           <a id="publishedLink" href="#" target="_blank" rel="noreferrer">—</a>
         </div>
 
@@ -168,10 +154,8 @@
       </div>
     </section>
 
-    <!-- SETTINGS -->
     <section class="panel hidden" id="tab-settings">
       <h2>Settings</h2>
-      <p class="muted">Configurações do Factory (salvas localmente no seu dispositivo).</p>
 
       <div class="grid2">
         <label class="field">
@@ -182,48 +166,34 @@
         <label class="field">
           <span>GitHub Token (PAT)</span>
           <input id="ghToken" placeholder="cola o token aqui" />
-          <span class="hint">Permissões: Contents (read/write). Para ativar Pages automático: Pages (read/write).</span>
+          <span class="hint">Permissões: Contents (read/write) e Pages (read/write)</span>
         </label>
 
         <label class="field">
           <span>Prefixo do repositório</span>
           <input id="repoPrefix" value="rapp-" />
-          <span class="hint">Repo final vira: prefixo + id do app (ex: rapp-rquotas)</span>
         </label>
 
         <label class="field">
           <span>Base URL do Pages</span>
           <input id="pagesBase" placeholder="https://SEUUSER.github.io" />
-          <span class="hint">Normalmente: https://&lt;username&gt;.github.io</span>
         </label>
       </div>
 
       <div class="row">
-        <button class="btn primary" id="saveSettingsBtn">Salvar Settings</button>
-        <button class="btn danger" id="resetFactoryBtn">Reset Factory (limpar local)</button>
-      </div>
-
-      <div class="card">
-        <h3>Como pegar o link</h3>
-        <p class="muted">Depois de publicar, o link fica no Generator. Se o link der 404 na primeira vez: repo → Settings → Pages → main / root.</p>
+        <button class="btn primary" id="saveSettingsBtn">Salvar</button>
       </div>
     </section>
   </main>
 
-  <!-- libs -->
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 
-  <!-- Ordem importa -->
-  <script src="js/ai.js"></script>
-  <script src="js/templates.js"></script>
-  <script src="js/router.js"></script>
+  <!-- IMPORTANTE: Tudo sem "import", sem module, sem router antigo -->
   <script src="app.js"></script>
 
   <script>
     if ("serviceWorker" in navigator) {
-      window.addEventListener("load", () => {
-        navigator.serviceWorker.register("./sw.js").catch(() => {});
-      });
+      window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js").catch(() => {}));
     }
   </script>
 </body>
