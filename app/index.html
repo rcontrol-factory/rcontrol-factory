@@ -2,16 +2,16 @@
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>RControl Factory</title>
   <meta name="theme-color" content="#0b1220" />
-  <link rel="manifest" href="manifest.json" />
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="manifest" href="./manifest.json" />
+  <link rel="stylesheet" href="./styles.css" />
 </head>
 
 <body>
   <header class="topbar">
-    <div class="brand" id="brandTap">
+    <div class="brand" id="brandTap" role="button" tabindex="0" aria-label="RControl Factory">
       <span class="dot"></span>
       <div>
         <div class="title">RControl Factory</div>
@@ -25,6 +25,7 @@
       <button class="tab" data-tab="editor">Editor</button>
       <button class="tab" data-tab="generator">Generator</button>
       <button class="tab" data-tab="settings">Settings</button>
+      <button class="tab tab-admin hidden" data-tab="admin" id="adminTabBtn">Admin</button>
     </nav>
   </header>
 
@@ -128,7 +129,7 @@
 
       <div class="card">
         <h3>Preview</h3>
-        <div class="muted small">Se der cache, use “Diag → Limpar Cache PWA”.</div>
+        <div class="muted small">Se der cache, use “Admin → Limpar Cache PWA”.</div>
         <div class="previewBox">
           <iframe id="previewFrame" title="Preview"></iframe>
         </div>
@@ -195,7 +196,7 @@
         <label class="field">
           <span>Admin PIN (6 dígitos)</span>
           <input id="adminPin" placeholder="ex: 123456" inputmode="numeric" />
-          <span class="hint">Admin abre com PIN.</span>
+          <span class="hint">Aba Admin só abre com PIN.</span>
         </label>
       </div>
 
@@ -204,19 +205,66 @@
         <button class="btn danger" id="resetFactoryBtn">Reset Factory</button>
       </div>
     </section>
+
+    <!-- ADMIN -->
+    <section class="panel hidden" id="tab-admin">
+      <h2>Admin</h2>
+      <p class="muted">Diagnóstico + backup + mini-IA offline (com aprovação).</p>
+
+      <div class="card">
+        <div class="row wrap">
+          <button class="btn" id="adminDiagBtn">Gerar diagnóstico</button>
+          <button class="btn" id="adminCopyDiagBtn">Copiar diagnóstico</button>
+          <button class="btn danger" id="adminClearPwaBtn">Limpar Cache PWA</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Backup</h3>
+        <div class="row wrap">
+          <button class="btn" id="adminExportBtn">Exportar backup</button>
+          <button class="btn" id="adminImportBtn">Importar backup</button>
+          <input id="adminImportFile" type="file" accept="application/json" style="display:none" />
+        </div>
+        <div class="muted small">Export salva um JSON do localStorage (apps + settings).</div>
+      </div>
+
+      <div class="card">
+        <h3>IA Offline (70%)</h3>
+        <div class="muted small">
+          Ela não “adivinha”, mas entende texto e código e te dá ações prontas. Ela NUNCA aplica sem você aprovar.
+        </div>
+
+        <div class="row wrap">
+          <textarea id="aiInput" class="textarea" rows="3" placeholder="Ex: criar app RQuotas | corrigir botões | add tela login | colar código e pedir pra encaixar"></textarea>
+          <button class="btn primary" id="aiRunBtn">Executar</button>
+          <button class="btn" id="aiClearBtn">Limpar</button>
+        </div>
+
+        <div class="row wrap">
+          <button class="btn" id="aiApplyBtn" disabled>Aplicar sugestão</button>
+          <button class="btn danger" id="aiDiscardBtn" disabled>Descartar</button>
+        </div>
+
+        <pre class="pre" id="aiOut">—</pre>
+      </div>
+
+      <div class="card">
+        <h3>Output Admin</h3>
+        <pre class="pre" id="adminOut">—</pre>
+      </div>
+    </section>
   </main>
 
   <!-- libs -->
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 
-  <!-- app principal (1x só) -->
+  <!-- app principal (ÚNICO) -->
   <script src="./app.js"></script>
 
   <script>
     if ("serviceWorker" in navigator) {
-      window.addEventListener("load", () =>
-        navigator.serviceWorker.register("./sw.js").catch(() => {})
-      );
+      window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js").catch(() => {}));
     }
   </script>
 </body>
