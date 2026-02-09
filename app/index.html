@@ -25,6 +25,8 @@
       <button class="tab" data-tab="editor">Editor</button>
       <button class="tab" data-tab="generator">Generator</button>
       <button class="tab" data-tab="settings">Settings</button>
+      <!-- se você usa Admin como aba real (não só modal), deixa esse botão -->
+      <button class="tab" data-tab="admin">Admin 🔒</button>
     </nav>
   </header>
 
@@ -191,12 +193,6 @@
           <span>Base URL do Pages</span>
           <input id="pagesBase" placeholder="https://SEUUSER.github.io" />
         </label>
-
-        <label class="field">
-          <span>Admin PIN (6 dígitos)</span>
-          <input id="adminPin" placeholder="ex: 123456" inputmode="numeric" />
-          <span class="hint">Aba Admin só abre com PIN.</span>
-        </label>
       </div>
 
       <div class="row">
@@ -205,7 +201,7 @@
       </div>
     </section>
 
-    <!-- ADMIN (escondida) -->
+    <!-- ADMIN (se você usa aba Admin real) -->
     <section class="panel hidden" id="tab-admin">
       <h2>Admin</h2>
       <p class="muted">Diagnóstico, backup e auto-repair (só você).</p>
@@ -238,25 +234,25 @@
     </section>
   </main>
 
-  <!-- libs -->
+  <!-- 1) libs -->
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 
-  <!-- app principal -->
-  <script src="app.js"></script>
-
-  <script>
-    if ("serviceWorker" in navigator) {
-      window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js").catch(() => {}));
-    }
-  </script>
-</body>  <!-- módulos (ordem importa) -->
+  <!-- 2) módulos internos (se existirem) -->
   <script src="./js/templates.js"></script>
   <script src="./js/ai.js"></script>
   <script src="./js/router.js"></script>
   <script src="./js/admin.js"></script>
 
-  <!-- app principal por último -->
+  <!-- 3) app principal (SEMPRE por último) -->
   <script src="./app.js"></script>
+
+  <!-- SW register -->
+  <script>
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () =>
+        navigator.serviceWorker.register("./sw.js").catch(() => {})
+      );
+    }
+  </script>
 </body>
-</html>
 </html>
