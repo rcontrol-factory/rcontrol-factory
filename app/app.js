@@ -4,6 +4,7 @@
    - Dashboard / New App / Editor / Generator / Settings
    - Preview via iframe srcdoc
    - ZIP via JSZip (já incluso no index.html)
+   - + Debug Console + Diagnóstico + Limpar Cache PWA
    ========================================================= */
 
 (function () {
@@ -21,7 +22,6 @@
     ghToken: "",
     repoPrefix: "rapp-",
     pagesBase: "", // ex: https://SEUUSER.github.io
-    // OpenAI (opcional, se for usar depois)
     openaiKey: "",
     openaiModel: "gpt-4.1",
   };
@@ -30,15 +30,223 @@
 
   // ---------- DOM helpers ----------
   const $ = (id) => document.getElementById(id);
-  const qs = (sel) => document.querySelector(sel);
   const qsa = (sel) => Array.from(document.querySelectorAll(sel));
 
   function safeJsonParse(s, fallback) {
+    try { return JSON.parse(s); } catch { return fallback; }
+  }
+
+  // ---------- Debug / Logs (iPhone friendly) ----------
+  const __LOG_MAX = 250;
+  const __logs = [];
+  function __pushLog(level, args) {
+    const time = new Date().toISOString().slice(11, 19);
+    const msg = (args || []).map((a) => {
+      try {
+        if (typeof a === "string") return a;
+        return JSON.stringify(a);
+      } catch {
+        return String(a);
+      }
+    }).join(" ");
+    __logs.push({ time, level, msg });
+    while (__logs.length > __LOG_MAX) __logs.shift();
+    __renderDebug();
+  }
+  const __origConsole = {
+    log: console.log.bind(console),
+    warn: console.warn.bind(console),
+    error: console.error.bind(console),
+  };
+  console.log = (...a) => { __origConsole.log(...a); __pushLog("log", a); };
+  console.warn = (...a) => { __origConsole.warn(...a); __pushLog("warn", a); };
+  console.error = (...a) => { __origConsole.error(...a); __pushLog("error", a); };
+
+  window.addEventListener("error", (e) => {
+    __pushLog("error", [e.message || "Erro", e.filename, e.lineno, e.colno]);
+  });
+  window.addEventListener("unhandledrejection", (e) => {
+    __pushLog("error", ["Promise rejeitada:", e.reason]);
+  });
+
+  function __ensureDebugUI() {
+    if (document.getElementById("rcf-debug-btn")) return;
+
+    const btn = document.createElement("button");
+    btn.id = "rcf-debug-btn";
+    btn.textContent = "Logs";
+    btn.style.cssText = `
+      position:fixed; right:12px; bottom:12px; z-index:99999;
+      padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,.2);
+      background:rgba(0,0,0,.55); color:white; font-weight:900;
+    `;
+
+    const btn2 = document.createElement("button");
+    btn2.id = "rcf-diag-btn";
+    btn2.textContent = "Diag";
+    btn2.style.cssText = `
+      position:fixed; right:72px; bottom:12px; z-index:99999;
+      padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,.2);
+      background:rgba(0,0,0,.55); color:white; font-weight:900;
+    `;
+
+    const panel = document.createElement("div");
+    panel.id = "rcf-debug-panel";
+    panel.style.display = "none";
+    panel.style.cssText = `
+      position:fixed; left:12px; right:12px; bottom:64px; z-index:99999;
+      max-height:55vh; overflow:auto; padding:10px;
+      border-radius:14px; border:1px solid rgba(255,255,255,.15);
+      background:rgba(10,10,10,.92); color:#eaeaea; font:12px/1.35 -apple-system,system-ui,Segoe UI,Roboto,Arial;
+      white-space:pre-wrap;
+    `;
+
+    const actions = document.createElement("div");
+    actions.style.cssText = "display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px;";
+
+    const clear = document.createElement("button");
+    clear.textContent = "Limpar logs";
+    clear.style.cssText = "padding:6px 10px;border-radius:10px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.08);color:#fff;font-weight:900;";
+    clear.onclick = () => { __logs.length = 0; __renderDebug(); };
+
+    const copy = document.createElement("button");
+    copy.textContent = "Copiar logs";
+    copy.style.cssText = clear.style.cssText;
+    copy.onclick = async () => {
+      const text = __logs.map(l => `[${l.time}] ${l.level.toUpperCase()} ${l.msg}`).join("\n");
+      try { await navigator.clipboard.writeText(text); alert("Logs copiados ✅"); }
+      catch { alert("iOS bloqueou copiar. Segura no texto e copia manual."); }
+    };
+
+    const copyDiag = document.createElement("button");
+    copyDiag.textContent = "Copiar diagnóstico";
+    copyDiag.style.cssText = clear.style.cssText;
+    copyDiag.onclick = async () => {
+      const diag = await buildDiagnosisReport();
+      try { await navigator.clipboard.writeText(diag); alert("Diagnóstico copiado ✅"); }
+      catch { alert("iOS bloqueou copiar. Vou mostrar na tela; copie manual."); }
+      const body = document.getElementById("rcf-debug-body");
+      if (body) body.textContent = diag;
+      panel.style.display = "block";
+    };
+
+    const fix = document.createElement("button");
+    fix.textContent = "Limpar Cache PWA";
+    fix.style.cssText = clear.style.cssText;
+    fix.onclick = async () => {
+      const ok = confirm("Vai limpar caches + desregistrar Service Worker e recarregar. Continuar?");
+      if (!ok) return;
+      await nukePwaCache();
+      alert("Cache limpo ✅ Recarregando…");
+      location.reload();
+    };
+
+    actions.append(clear, copy, copyDiag, fix);
+    panel.append(actions);
+
+    const body = document.createElement("div");
+    body.id = "rcf-debug-body";
+    panel.append(body);
+
+    btn.onclick = () => {
+      panel.style.display = (panel.style.display === "none") ? "block" : "none";
+      __renderDebug();
+    };
+
+    btn2.onclick = async () => {
+      const diag = await buildDiagnosisReport();
+      const body = document.getElementById("rcf-debug-body");
+      if (body) body.textContent = diag;
+      panel.style.display = "block";
+    };
+
+    document.body.append(btn2, btn, panel);
+  }
+
+  function __renderDebug() {
+    const body = document.getElementById("rcf-debug-body");
+    if (!body) return;
+    body.textContent = __logs.map(l => `[${l.time}] ${l.level.toUpperCase()} ${l.msg}`).join("\n");
+  }
+
+  async function nukePwaCache() {
     try {
-      return JSON.parse(s);
-    } catch {
-      return fallback;
-    }
+      if ("caches" in window) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map((k) => caches.delete(k)));
+      }
+    } catch (e) { console.warn("Falha ao limpar caches:", e); }
+
+    try {
+      if ("serviceWorker" in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map((r) => r.unregister()));
+      }
+    } catch (e) { console.warn("Falha ao desregistrar SW:", e); }
+  }
+
+  async function buildDiagnosisReport() {
+    const lines = [];
+    const add = (k, v) => lines.push(`${k}: ${v}`);
+
+    add("=== RCF DIAGNÓSTICO ===", "");
+    add("URL", location.href);
+    add("UA", navigator.userAgent);
+    add("Hora", new Date().toString());
+
+    // localStorage resumo
+    try {
+      const s = localStorage.getItem(LS.settings) || "";
+      const a = localStorage.getItem(LS.apps) || "";
+      const act = localStorage.getItem(LS.activeAppId) || "";
+      add("LS.settings bytes", s.length);
+      add("LS.apps bytes", a.length);
+      add("LS.activeAppId", act || "(vazio)");
+    } catch (e) { add("localStorage", "ERRO: " + e.message); }
+
+    // apps
+    try {
+      const _apps = loadApps();
+      add("Apps count", _apps.length);
+      const _active = getActiveAppId();
+      const found = _apps.find(x => x && x.id === _active);
+      add("Active exists", found ? "SIM" : "NÃO");
+      if (found) add("Active name/id", `${found.name} / ${found.id}`);
+    } catch (e) { add("Apps parse", "ERRO: " + e.message); }
+
+    // service worker
+    try {
+      add("SW supported", ("serviceWorker" in navigator) ? "SIM" : "NÃO");
+      if ("serviceWorker" in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        add("SW registrations", regs.length);
+      }
+    } catch (e) { add("SW", "ERRO: " + e.message); }
+
+    // caches
+    try {
+      add("Cache API", ("caches" in window) ? "SIM" : "NÃO");
+      if ("caches" in window) {
+        const keys = await caches.keys();
+        add("Caches", keys.join(", ") || "(nenhum)");
+      }
+    } catch (e) { add("Caches", "ERRO: " + e.message); }
+
+    // DOM check
+    const must = [
+      "appsList","statusBox","newName","newId","newTemplate","createAppBtn",
+      "activeAppLabel","filesList","codeArea","previewFrame","genAppSelect",
+      "downloadZipBtn","genStatus","logs","ghUser","ghToken","repoPrefix","pagesBase"
+    ];
+    const missing = must.filter(id => !document.getElementById(id));
+    add("DOM missing IDs", missing.length ? missing.join(", ") : "OK");
+
+    // últimos logs
+    add("---- últimos logs ----", "");
+    const tail = __logs.slice(-40).map(l => `[${l.time}] ${l.level.toUpperCase()} ${l.msg}`);
+    lines.push(tail.join("\n") || "(sem logs)");
+
+    return lines.join("\n");
   }
 
   // ---------- State ----------
@@ -75,10 +283,12 @@
   function setStatus(msg) {
     const el = $("statusBox");
     if (el) el.textContent = msg;
+    console.log("STATUS:", msg);
   }
   function setGenStatus(msg) {
     const el = $("genStatus");
     if (el) el.textContent = msg;
+    console.log("GEN:", msg);
   }
   function log(msg) {
     const el = $("logs");
@@ -86,6 +296,7 @@
     const t = new Date().toLocaleTimeString();
     el.textContent += `[${t}] ${msg}\n`;
     el.scrollTop = el.scrollHeight;
+    console.log("LOG:", msg);
   }
   function clearLogs() {
     const el = $("logs");
@@ -94,7 +305,6 @@
 
   // ---------- Tabs ----------
   const TAB_IDS = ["dashboard", "newapp", "editor", "generator", "settings"];
-
   function showTab(tab) {
     TAB_IDS.forEach((t) => {
       const sec = $(`tab-${t}`);
@@ -113,7 +323,6 @@
       .replace(/--+/g, "-")
       .replace(/^-|-$/g, "");
   }
-
   function validateApp(name, id) {
     const errors = [];
     if (!name || name.trim().length < 2) errors.push("Nome do app muito curto.");
@@ -346,7 +555,6 @@ self.addEventListener("fetch",(e)=>{
     const area = $("codeArea");
     const cur = $("currentFileLabel");
     const frame = $("previewFrame");
-
     if (!fl || !area || !cur || !frame) return;
 
     fl.innerHTML = "";
@@ -358,7 +566,6 @@ self.addEventListener("fetch",(e)=>{
       return;
     }
 
-    // garante arquivo válido
     if (!FILE_ORDER.includes(currentFile)) currentFile = "index.html";
 
     FILE_ORDER.forEach((f) => {
@@ -374,7 +581,6 @@ self.addEventListener("fetch",(e)=>{
 
     cur.textContent = currentFile;
     area.value = app.files[currentFile] ?? "";
-
     refreshPreview(app);
   }
 
@@ -382,13 +588,10 @@ self.addEventListener("fetch",(e)=>{
     const frame = $("previewFrame");
     if (!frame) return;
 
-    // Aqui a gente NÃO “injeta” <html> dentro de <body> (isso quebrava seu preview)
-    // Então vamos montar um documento completo, usando os arquivos do app.
     const html = app.files["index.html"] || "<h1>Sem index.html</h1>";
     const css = app.files["styles.css"] || "";
     const js = app.files["app.js"] || "";
 
-    // Se o index.html já for um documento completo, a gente mantém, mas injeta CSS/JS no final.
     const looksLikeFullDoc = /<!doctype\s+html>/i.test(html) || /<html[\s>]/i.test(html);
 
     const doc = looksLikeFullDoc
@@ -409,19 +612,11 @@ ${html}
   function injectIntoFullHtml(fullHtml, css, js) {
     let out = String(fullHtml);
 
-    // injeta CSS antes de </head>
-    if (/<\/head>/i.test(out)) {
-      out = out.replace(/<\/head>/i, `<style>${css}</style>\n</head>`);
-    } else {
-      out = `<style>${css}</style>\n` + out;
-    }
+    if (/<\/head>/i.test(out)) out = out.replace(/<\/head>/i, `<style>${css}</style>\n</head>`);
+    else out = `<style>${css}</style>\n` + out;
 
-    // injeta JS antes de </body>
-    if (/<\/body>/i.test(out)) {
-      out = out.replace(/<\/body>/i, `<script>${js}<\/script>\n</body>`);
-    } else {
-      out = out + `\n<script>${js}<\/script>\n`;
-    }
+    if (/<\/body>/i.test(out)) out = out.replace(/<\/body>/i, `<script>${js}<\/script>\n</body>`);
+    else out = out + `\n<script>${js}<\/script>\n`;
 
     return out;
   }
@@ -446,11 +641,7 @@ ${html}
     if ($("ghUser")) $("ghUser").value = settings.ghUser || "";
     if ($("ghToken")) $("ghToken").value = settings.ghToken || "";
     if ($("repoPrefix")) $("repoPrefix").value = settings.repoPrefix || "rapp-";
-    if ($("pagesBase")) {
-      $("pagesBase").value =
-        settings.pagesBase ||
-        (settings.ghUser ? `https://${settings.ghUser}.github.io` : "");
-    }
+    if ($("pagesBase")) $("pagesBase").value = settings.pagesBase || (settings.ghUser ? `https://${settings.ghUser}.github.io` : "");
   }
 
   // ---------- ZIP ----------
@@ -479,19 +670,13 @@ ${html}
     URL.revokeObjectURL(url);
   }
 
-  // ---------- GitHub publish (esqueleto seguro) ----------
-  // (deixa preparado, mas não quebra seu fluxo agora)
   function hasGitHubConfigured() {
     return !!(settings.ghUser && settings.ghToken);
   }
 
   // ---------- Wire Events ----------
   function wireTabs() {
-    qsa(".tab").forEach((b) => {
-      b.addEventListener("click", () => showTab(b.dataset.tab));
-    });
-
-    // botões rápidos do dashboard
+    qsa(".tab").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
     $("goNewApp")?.addEventListener("click", () => showTab("newapp"));
     $("goEditor")?.addEventListener("click", () => showTab("editor"));
     $("goGenerator")?.addEventListener("click", () => showTab("generator"));
@@ -501,7 +686,6 @@ ${html}
     const nameEl = $("newName");
     const idEl = $("newId");
     const valEl = $("newAppValidation");
-
     if (!nameEl || !idEl) return;
 
     function updateValidation() {
@@ -516,7 +700,6 @@ ${html}
       if (s !== idEl.value) idEl.value = s;
       updateValidation();
     });
-
     nameEl.addEventListener("input", updateValidation);
 
     $("createAppBtn")?.addEventListener("click", () => {
@@ -524,14 +707,8 @@ ${html}
       const id = sanitizeId(idEl.value);
       const errors = validateApp(name, id);
 
-      if (errors.length) {
-        alert("Corrija antes de salvar:\n\n" + errors.join("\n"));
-        return;
-      }
-      if (pickAppById(id)) {
-        alert("Já existe um app com esse ID.");
-        return;
-      }
+      if (errors.length) return alert("Corrija antes de salvar:\n\n" + errors.join("\n"));
+      if (pickAppById(id)) return alert("Já existe um app com esse ID.");
 
       createApp({
         name,
@@ -569,7 +746,6 @@ ${html}
     $("resetFileBtn")?.addEventListener("click", () => {
       const app = pickAppById(activeAppId);
       if (!app) return alert("Nenhum app ativo.");
-
       if (!confirm(`Resetar ${currentFile} para o padrão do template?`)) return;
 
       app.files[currentFile] = app.baseFiles?.[currentFile] ?? "";
@@ -582,7 +758,6 @@ ${html}
     $("openPreviewBtn")?.addEventListener("click", () => {
       const app = pickAppById(activeAppId);
       if (!app) return;
-
       refreshPreview(app);
       setStatus("Preview atualizado ✅");
     });
@@ -610,7 +785,7 @@ ${html}
         showTab("settings");
         return;
       }
-      alert("Publish ainda não está ligado nesta versão limpa. Primeiro vamos estabilizar Factory 100%.");
+      alert("Publish ainda não está ligado nesta versão estabilizada. Primeiro vamos rodar 100% liso e aí ligamos o publish.");
     });
 
     $("copyLinkBtn")?.addEventListener("click", async () => {
@@ -618,12 +793,8 @@ ${html}
       const link = linkEl?.href || "";
       if (!link || link === location.href) return alert("Ainda não tem link.");
 
-      try {
-        await navigator.clipboard.writeText(link);
-        alert("Link copiado ✅");
-      } catch {
-        alert("Não consegui copiar. Copie manualmente:\n" + link);
-      }
+      try { await navigator.clipboard.writeText(link); alert("Link copiado ✅"); }
+      catch { alert("Não consegui copiar. Copie manualmente:\n" + link); }
     });
   }
 
@@ -632,9 +803,7 @@ ${html}
       settings.ghUser = ($("ghUser")?.value || "").trim();
       settings.ghToken = ($("ghToken")?.value || "").trim();
       settings.repoPrefix = ($("repoPrefix")?.value || "rapp-").trim() || "rapp-";
-      settings.pagesBase =
-        ($("pagesBase")?.value || "").trim() ||
-        (settings.ghUser ? `https://${settings.ghUser}.github.io` : "");
+      settings.pagesBase = ($("pagesBase")?.value || "").trim() || (settings.ghUser ? `https://${settings.ghUser}.github.io` : "");
 
       saveSettings();
       setStatus("Settings salvas ✅");
@@ -677,6 +846,9 @@ ${html}
 
   // ---------- Init ----------
   function init() {
+    console.log("RCF init…");
+    __ensureDebugUI();
+
     wireTabs();
     wireNewApp();
     wireEditor();
@@ -686,12 +858,11 @@ ${html}
     renderAll();
     showTab("dashboard");
     setStatus("Pronto ✅");
+    console.log("RCF pronto ✅");
   }
 
-  // garante depois do DOM
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", init);
-  } else {
-    init();
-  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
+  else init();
+
 })();
+   
