@@ -1,118 +1,97 @@
-export const templates = {
-  home: `
-    <section class="card">
-      <h2>Bem-vindo 👋</h2>
-      <p>Factory interna para criar aplicativos da RControl.</p>
-    </section>
+// app/js/templates.js
+(function () {
+  function esc(s) {
+    return String(s || "").replace(/[&<>"]/g, c => ({
+      "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"
+    }[c]));
+  }
 
-    <div class="actions">
-      <button class="btn primary" data-route="newapp">+ Criar novo app</button>
-      <button class="btn" data-route="generator">⚙️ Gerar / Publicar</button>
-      <button class="btn" data-route="settings">⚙️ Settings</button>
-    </div>
+  function makeBasicPwaFiles(appName, appId) {
+    const title = esc(appName);
+    const theme = "#0b1220";
 
-    <section class="card subtle">
-      <h3>Apps salvos</h3>
-      <div id="appsList" class="list"></div>
-      <p class="hint">Toque em um app pra abrir o Generator já selecionado.</p>
-    </section>
-  `,
+    const indexHtml = `<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>${title}</title>
+  <meta name="theme-color" content="${theme}" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="top">
+    <h1>${title}</h1>
+    <div class="muted">Gerado pelo RControl Factory • ID: ${esc(appId)}</div>
+  </header>
 
-  newApp: `
-    <section class="card">
-      <h2>Criar novo app</h2>
-      <p>Preencha os dados abaixo para gerar a estrutura inicial.</p>
+  <main class="card">
+    <h2>App rodando ✅</h2>
+    <p>Este app é o resultado final (output). A Factory é separada.</p>
+    <button id="btn" class="btn">Clique aqui</button>
+    <div id="out" class="out"></div>
+  </main>
 
-      <form id="newAppForm" class="form">
-        <label class="label">
-          Nome do app
-          <input class="input" name="name" type="text" placeholder="Ex: AirQuotes" required />
-        </label>
+  <script src="app.js"></script>
+  <script>
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("./sw.js").catch(()=>{});
+      });
+    }
+  </script>
+</body>
+</html>`;
 
-        <label class="label">
-          ID do app (sem espaço)
-          <input class="input" name="id" type="text" placeholder="ex: airquotes" required />
-          <small class="hint">Use letras minúsculas, números e hífen.</small>
-        </label>
+    const appJs = `// App gerado (OUTPUT). Não tem engine da Factory aqui.
+(function(){
+  const btn = document.getElementById("btn");
+  const out = document.getElementById("out");
+  if (!btn || !out) return;
+  btn.addEventListener("click", () => {
+    out.textContent = "Funcionando! " + new Date().toLocaleString();
+  });
+})();`;
 
-        <label class="label">
-          Tipo
-          <select class="input" name="type">
-            <option value="pwa" selected>PWA</option>
-            <option value="web">Web</option>
-          </select>
-        </label>
+    const stylesCss = `:root{color-scheme:dark;}
+body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;background:#0b1220;color:#e5e7eb;}
+.top{padding:18px 16px;border-bottom:1px solid rgba(255,255,255,.08);}
+h1{margin:0 0 6px 0;font-size:28px}
+.muted{opacity:.75;font-size:13px}
+.card{margin:16px;padding:16px;border:1px solid rgba(255,255,255,.08);border-radius:14px;background:rgba(255,255,255,.03)}
+.btn{padding:10px 14px;border-radius:10px;border:1px solid rgba(255,255,255,.12);background:rgba(34,197,94,.25);color:#e5e7eb;font-weight:700}
+.out{margin-top:12px;padding:12px;border-radius:12px;border:1px dashed rgba(255,255,255,.18);min-height:44px;display:flex;align-items:center}
+`;
 
-        <button class="btn primary" type="submit">Salvar</button>
-      </form>
+    const manifest = JSON.stringify({
+      name: appName,
+      short_name: appName.slice(0, 12),
+      start_url: "./",
+      display: "standalone",
+      background_color: "#0b1220",
+      theme_color: "#0b1220",
+      icons: []
+    }, null, 2);
 
-      <div class="card subtle">
-        <h3>Dica</h3>
-        <p>Depois vá em <b>Generator</b> para baixar ZIP ou publicar e pegar o link.</p>
-      </div>
-    </section>
-  `,
+    const sw = `// SW simples
+const CACHE="app-cache-v1";
+self.addEventListener("install",(e)=>{
+  e.waitUntil(caches.open(CACHE).then(c=>c.addAll(["./","./index.html","./styles.css","./app.js","./manifest.json"])));
+});
+self.addEventListener("fetch",(e)=>{
+  e.respondWith(caches.match(e.request).then(r=>r||fetch(e.request)));
+});`;
 
-  generator: `
-    <section class="card">
-      <h2>Generator</h2>
-      <p>Escolha um app salvo e baixe o ZIP ou publique para ter um link de teste.</p>
+    return {
+      "index.html": indexHtml,
+      "app.js": appJs,
+      "styles.css": stylesCss,
+      "manifest.json": manifest,
+      "sw.js": sw
+    };
+  }
 
-      <div class="form">
-        <label class="label">
-          App salvo
-          <select id="genSelect" class="input"></select>
-        </label>
-
-        <div class="actions">
-          <button id="btnZip" class="btn primary" type="button">⬇️ Baixar ZIP</button>
-          <button id="btnPublish" class="btn" type="button">🚀 Publicar (GitHub Pages)</button>
-          <button class="btn" data-route="home" type="button">Voltar</button>
-        </div>
-
-        <div id="genStatus" class="card subtle">
-          <b>Status:</b> aguardando…
-        </div>
-
-        <div id="publishResult" class="card subtle" style="display:none;">
-          <h3>Link do app</h3>
-          <p id="publishLinkWrap"></p>
-          <small class="hint">Se for a primeira vez, pode levar alguns segundos pra Pages subir.</small>
-        </div>
-      </div>
-    </section>
-  `,
-
-  settings: `
-    <section class="card">
-      <h2>Settings</h2>
-      <p>Configurações do Factory (local no seu dispositivo).</p>
-
-      <form id="settingsForm" class="form">
-        <label class="label">
-          GitHub username
-          <input class="input" name="ghUser" type="text" placeholder="ex: mateussantana" />
-        </label>
-
-        <label class="label">
-          GitHub Token (PAT)
-          <input class="input" name="ghToken" type="password" placeholder="cola o token aqui" />
-          <small class="hint">Permissão mínima: Repo contents (read/write). Fica salvo só no seu celular.</small>
-        </label>
-
-        <label class="label">
-          Prefixo do repositório
-          <input class="input" name="repoPrefix" type="text" placeholder="ex: rapp-" />
-          <small class="hint">O repo final vira: prefixo + id do app (ex: rapp-airquotes)</small>
-        </label>
-
-        <button class="btn primary" type="submit">Salvar Settings</button>
-      </form>
-
-      <div class="card subtle">
-        <h3>Como pegar o link</h3>
-        <p>Depois de publicar, o link fica no Generator.</p>
-      </div>
-    </section>
-  `
-};
+  window.RCF = window.RCF || {};
+  window.RCF.templates = { makeBasicPwaFiles };
+})();
