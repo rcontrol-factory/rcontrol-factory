@@ -1,443 +1,294 @@
-/* =========================================================
-   RControl Factory — app/js/admin.js
-   - Painel ADMIN (modal) com PIN
-   - Auto-check / reparos rápidos (cache/storage/export/import)
-   - Chat tipo Replit (comandos do engine)
-   - NÃO depende de HTML (auto-injeta UI)
-   ========================================================= */
-
+// app/js/admin.js
 (function () {
   "use strict";
 
-  const PIN_KEY = "rcf_admin_pin_v1";
-  const UNLOCK_KEY = "rcf_admin_unlock_until_v1"; // timestamp ms
-  const DEFAULT_PIN = "1122"; // você troca no próprio painel
+  window.RCF = window.RCF || {};
 
-  function now() { return Date.now(); }
+  const STORE_PIN = "rcf_admin_pin_v1";
+  const STORE_LOCK = "rcf_admin_locked_v1";
+
+  function $(id) { return document.getElementById(id); }
+  function qsa(sel) { return Array.from(document.querySelectorAll(sel)); }
 
   function getPin() {
-    return localStorage.getItem(PIN_KEY) || DEFAULT_PIN;
+    return localStorage.getItem(STORE_PIN) || "";
   }
   function setPin(pin) {
-    localStorage.setItem(PIN_KEY, String(pin || "").trim());
+    localStorage.setItem(STORE_PIN, String(pin || "").trim());
+  }
+  function isLocked() {
+    return (localStorage.getItem(STORE_LOCK) || "1") === "1";
+  }
+  function setLocked(v) {
+    localStorage.setItem(STORE_LOCK, v ? "1" : "0");
   }
 
-  function isUnlocked() {
-    const until = Number(localStorage.getItem(UNLOCK_KEY) || "0");
-    return until && until > now();
-  }
-  function unlock(minutes) {
-    const ms = (Number(minutes || 15) * 60 * 1000);
-    localStorage.setItem(UNLOCK_KEY, String(now() + ms));
-  }
-  function lock() {
-    localStorage.setItem(UNLOCK_KEY, "0");
+  function showTab(tab) {
+    const tabs = ["dashboard", "newapp", "editor", "generator", "settings", "admin"];
+    tabs.forEach((t) => {
+      const sec = $(`tab-${t}`);
+      if (sec) sec.classList.toggle("hidden", t !== tab);
+    });
+    qsa(".tab").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
   }
 
-  function el(tag, props) {
-    const n = document.createElement(tag);
-    if (props) Object.assign(n, props);
-    return n;
+  // ---------- Diagnóstico / Cache ----------
+  async function nukePwaCache() {
+    try {
+      if ("caches" in window) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map((k) => caches.delete(k)));
+      }
+    } catch (e) { console.warn("Falha ao limpar caches:", e); }
+
+    try {
+      if ("serviceWorker" in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map((r) => r.unregister()));
+      }
+    } catch (e) { console.warn("Falha ao desregistrar SW:", e); }
   }
 
-  function cssTextBaseBtn() {
-    return "padding:10px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.08);color:#fff;font-weight:900;";
+  async function buildDiag() {
+    const add = (k, v) => lines.push(`${k}: ${v}`);
+    const lines = [];
+    add("=== RCF DIAGNÓSTICO ===", "");
+    add("URL", location.href);
+    add("UA", navigator.userAgent);
+    add("Hora", new Date().toString());
+
+    // checa módulos
+    add("RCF.engine", window.RCF?.engine ? "SIM" : "NÃO");
+    add("RCF.templates", window.RCF?.templates ? "SIM" : "NÃO");
+    add("RCF.router", window.RCF?.router ? "SIM" : "NÃO");
+    add("RCF.admin", window.RCF?.admin ? "SIM" : "NÃO");
+
+    // cache/sw
+    add("SW supported", ("serviceWorker" in navigator) ? "SIM" : "NÃO");
+    add("Cache API", ("caches" in window) ? "SIM" : "NÃO");
+    if ("caches" in window) {
+      try {
+        const keys = await caches.keys();
+        add("Caches", keys.join(", ") || "(nenhum)");
+      } catch (e) {
+        add("Caches", "ERRO: " + e.message);
+      }
+    }
+
+    return lines.join("\n");
   }
 
-  function ensureAdminButtonInTabs() {
-    // se existir uma área de tabs, tenta criar um botão "Admin 🔒"
-    const tabs = document.querySelector(".tabs") || document.querySelector(".topTabs") || document.body;
+  // ---------- UI: Admin Tab button (NO DUPLICATE) ----------
+  function ensureAdminTabButton() {
+    const tabs = $("tabs");
     if (!tabs) return;
 
-    if (document.getElementById("rcf-admin-tabbtn")) return;
+    // se já existe, não cria outro
+    if (document.getElementById("rcf-admin-tab-btn")) return;
 
-    const b = el("button", { id: "rcf-admin-tabbtn" });
-    b.className = "tab";
-    b.textContent = "Admin 🔒";
-    b.style.marginLeft = "8px";
-    b.onclick = () => openAdmin();
-    try { tabs.appendChild(b); } catch {}
-  }
+    const btn = document.createElement("button");
+    btn.id = "rcf-admin-tab-btn";
+    btn.className = "tab";
+    btn.dataset.tab = "admin";
+    btn.textContent = "Admin 🔒";
 
-  function ensureFloatingButtons() {
-    if (!document.getElementById("rcf-admin-fab")) {
-      const b = el("button", { id: "rcf-admin-fab", textContent: "Admin" });
-      b.style.cssText = `
-        position:fixed; right:132px; bottom:12px; z-index:99999;
-        padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,.2);
-        background:rgba(0,0,0,.55); color:white; font-weight:900;
-      `;
-      b.onclick = () => openAdmin();
-      document.body.appendChild(b);
-    }
+    btn.addEventListener("click", async () => {
+      if (isLocked()) {
+        const pin = prompt("PIN Admin (6 dígitos):");
+        if (!pin) return;
 
-    // Se seu app.js já criou Diag/Logs, beleza. Se não, cria também.
-    if (!document.getElementById("rcf-diag-btn")) {
-      const d = el("button", { id: "rcf-diag-btn", textContent: "Diag" });
-      d.style.cssText = `
-        position:fixed; right:72px; bottom:12px; z-index:99999;
-        padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,.2);
-        background:rgba(0,0,0,.55); color:white; font-weight:900;
-      `;
-      d.onclick = async () => {
-        const rep = await safeDiag();
-        alert("Diagnóstico pronto ✅ (use Admin > Rodar diagnóstico pra ver completo)");
-        // tenta abrir admin e mostrar
-        openAdmin();
-        const out = document.getElementById("rcf-admin-diag-out");
-        if (out) out.textContent = rep;
-      };
-      document.body.appendChild(d);
-    }
+        const saved = getPin();
+        if (!saved) {
+          // primeiro uso: grava PIN
+          setPin(pin);
+          setLocked(false);
+          btn.textContent = "Admin";
+          showTab("admin");
+          return;
+        }
 
-    if (!document.getElementById("rcf-debug-btn")) {
-      const l = el("button", { id: "rcf-debug-btn", textContent: "Logs" });
-      l.style.cssText = `
-        position:fixed; right:12px; bottom:12px; z-index:99999;
-        padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,.2);
-        background:rgba(0,0,0,.55); color:white; font-weight:900;
-      `;
-      l.onclick = () => openAdmin(true);
-      document.body.appendChild(l);
-    }
-  }
-
-  function ensureModal() {
-    if (document.getElementById("rcf-admin-modal")) return;
-
-    const modal = el("div", { id: "rcf-admin-modal" });
-    modal.style.cssText = `
-      position:fixed; inset:12px; z-index:100000;
-      display:none; border-radius:16px;
-      background:rgba(10,10,10,.92);
-      border:1px solid rgba(255,255,255,.14);
-      color:#fff; font-family:-apple-system,system-ui,Segoe UI,Roboto,Arial;
-      overflow:auto;
-    `;
-
-    const header = el("div");
-    header.style.cssText = "display:flex;justify-content:space-between;align-items:center;padding:12px 12px;border-bottom:1px solid rgba(255,255,255,.10);";
-    const title = el("div", { innerHTML: "<strong>ADMIN • RControl Factory</strong>" });
-
-    const hBtns = el("div");
-    hBtns.style.cssText = "display:flex;gap:8px;align-items:center;";
-
-    const lockBtn = el("button", { textContent: "Lock" });
-    lockBtn.style.cssText = cssTextBaseBtn();
-    lockBtn.onclick = () => { lock(); renderLockState(); };
-
-    const closeBtn = el("button", { textContent: "Fechar" });
-    closeBtn.style.cssText = cssTextBaseBtn();
-    closeBtn.onclick = () => closeAdmin();
-
-    hBtns.append(lockBtn, closeBtn);
-    header.append(title, hBtns);
-
-    const body = el("div");
-    body.style.cssText = "padding:12px;";
-
-    // PIN area
-    const pinBox = el("div");
-    pinBox.id = "rcf-admin-pinbox";
-    pinBox.style.cssText = "display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px;";
-
-    const pinInput = el("input");
-    pinInput.id = "rcf-admin-pin";
-    pinInput.placeholder = "PIN";
-    pinInput.type = "password";
-    pinInput.style.cssText = "flex:0 0 120px;padding:10px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.06);color:#fff;font-weight:900;";
-
-    const unlockBtn = el("button", { textContent: "Unlock (15min)" });
-    unlockBtn.style.cssText = cssTextBaseBtn();
-    unlockBtn.onclick = () => {
-      const ok = (pinInput.value || "") === getPin();
-      if (!ok) return alert("PIN errado ❌");
-      unlock(15);
-      pinInput.value = "";
-      renderLockState();
-    };
-
-    const changePinBtn = el("button", { textContent: "Trocar PIN" });
-    changePinBtn.style.cssText = cssTextBaseBtn();
-    changePinBtn.onclick = () => {
-      const ok = prompt("Digite o NOVO PIN (4+ dígitos):", "");
-      if (!ok || ok.trim().length < 4) return alert("PIN inválido.");
-      setPin(ok.trim());
-      alert("PIN atualizado ✅");
-    };
-
-    const lockState = el("span");
-    lockState.id = "rcf-admin-lockstate";
-    lockState.style.cssText = "padding:6px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);font-weight:900;";
-
-    pinBox.append(pinInput, unlockBtn, changePinBtn, lockState);
-
-    // ACTIONS
-    const actionsTitle = el("div", { innerHTML: "<h3 style='margin:10px 0 8px'>Auto-check / Reparos rápidos</h3>" });
-
-    const actions = el("div");
-    actions.style.cssText = "display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;";
-
-    const btnDiag = mkAction("Rodar diagnóstico", async () => {
-      const rep = await safeDiag();
-      const out = document.getElementById("rcf-admin-diag-out");
-      if (out) out.textContent = rep;
+        if (pin !== saved) {
+          alert("PIN incorreto.");
+          return;
+        }
+        setLocked(false);
+        btn.textContent = "Admin";
+      }
+      showTab("admin");
     });
 
-    const btnCache = mkAction("Limpar Cache PWA", async () => {
-      if (!guardUnlocked()) return;
-      if (!confirm("Vai limpar caches + desregistrar SW e recarregar. Continuar?")) return;
-      await safeNukeCache();
+    tabs.appendChild(btn);
+    updateAdminButtonState();
+  }
+
+  function updateAdminButtonState() {
+    const btn = $("rcf-admin-tab-btn");
+    if (!btn) return;
+    btn.textContent = isLocked() ? "Admin 🔒" : "Admin";
+  }
+
+  // ---------- UI: Floating quick buttons (NO DUPLICATE) ----------
+  function ensureFloatingButtons() {
+    // se já existe o container, não cria outro
+    if (document.getElementById("rcf-fabs")) return;
+
+    const box = document.createElement("div");
+    box.id = "rcf-fabs";
+    box.style.cssText = `
+      position:fixed; right:12px; bottom:12px; z-index:99999;
+      display:flex; gap:10px; align-items:center;
+    `;
+
+    function mk(label, onClick) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = label;
+      b.style.cssText = `
+        padding:10px 14px;border-radius:14px;
+        border:1px solid rgba(255,255,255,.18);
+        background:rgba(0,0,0,.45); color:#fff; font-weight:900;
+      `;
+      b.addEventListener("click", onClick);
+      return b;
+    }
+
+    const btnAdmin = mk("Admin", () => {
+      // abre tab admin (vai pedir pin se travado)
+      $("rcf-admin-tab-btn")?.click();
+    });
+
+    const btnDiag = mk("Diag", async () => {
+      const diag = await buildDiag();
+      try {
+        await navigator.clipboard.writeText(diag);
+        alert("Diagnóstico copiado ✅");
+      } catch {
+        alert(diag);
+      }
+    });
+
+    const btnLogs = mk("Logs", () => {
+      // abre/fecha o details de logs se existir
+      const details = document.querySelector("details.card.inner");
+      if (details) details.open = !details.open;
+      else alert("Logs ainda não existem nesta tela.");
+    });
+
+    box.append(btnAdmin, btnDiag, btnLogs);
+    document.body.appendChild(box);
+  }
+
+  // ---------- Wire Admin page buttons ----------
+  function wireAdminPage() {
+    $("adminDiagBtn")?.addEventListener("click", async () => {
+      const out = $("adminOut");
+      if (out) out.textContent = await buildDiag();
+    });
+
+    $("adminCopyDiagBtn")?.addEventListener("click", async () => {
+      const diag = await buildDiag();
+      try {
+        await navigator.clipboard.writeText(diag);
+        alert("Diagnóstico copiado ✅");
+      } catch {
+        alert("iOS bloqueou copiar. Vou mostrar na tela.");
+      }
+      const out = $("adminOut");
+      if (out) out.textContent = diag;
+    });
+
+    $("adminClearPwaBtn")?.addEventListener("click", async () => {
+      const ok = confirm("Vai limpar cache + desregistrar SW e recarregar. Continuar?");
+      if (!ok) return;
+      await nukePwaCache();
       alert("Cache limpo ✅ Recarregando…");
       location.reload();
     });
 
-    const btnReset = mkAction("Reset Storage RCF", async () => {
-      if (!guardUnlocked()) return;
-      if (!confirm("Vai apagar apps/settings locais. Continuar?")) return;
-      safeResetStorage();
-      alert("Storage resetado ✅ Recarregando…");
-      location.reload();
+    $("adminExportBtn")?.addEventListener("click", () => {
+      const data = {};
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        data[k] = localStorage.getItem(k);
+      }
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "rcf-backup.json";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
     });
 
-    const btnExport = mkAction("Export (JSON)", async () => {
-      if (!guardUnlocked()) return;
-      const json = safeExportJson();
-      downloadText("rcf-backup.json", json);
+    $("adminImportBtn")?.addEventListener("click", () => {
+      $("adminImportFile")?.click();
     });
 
-    const btnImport = mkAction("Import (JSON)", async () => {
-      if (!guardUnlocked()) return;
-      const file = await pickFile();
+    $("adminImportFile")?.addEventListener("change", async (e) => {
+      const file = e.target.files?.[0];
       if (!file) return;
-      const text = await file.text();
-      safeImportJson(text);
-      alert("Import OK ✅ Recarregando…");
+      const txt = await file.text();
+      const obj = JSON.parse(txt);
+      Object.keys(obj).forEach((k) => localStorage.setItem(k, obj[k]));
+      alert("Import feito ✅ Recarregando…");
       location.reload();
     });
 
-    actions.append(btnDiag, btnCache, btnReset, btnExport, btnImport);
+    $("adminRepairBtn")?.addEventListener("click", async () => {
+      const out = $("adminOut");
+      const fixes = [];
 
-    const hint = el("div");
-    hint.style.cssText = "opacity:.8;margin:6px 0 12px;font-size:12px;";
-    hint.textContent = "“Auto-corrigir” aqui = ações seguras (cache/storage) + diagnóstico. A IA real a gente liga depois.";
-
-    // DIAG OUTPUT
-    const diagOut = el("pre");
-    diagOut.id = "rcf-admin-diag-out";
-    diagOut.style.cssText = `
-      white-space:pre-wrap; background:rgba(255,255,255,.05);
-      border:1px solid rgba(255,255,255,.12); border-radius:12px;
-      padding:10px; min-height:120px;
-    `;
-
-    // CHAT
-    const chatTitle = el("div", { innerHTML: "<h3 style='margin:14px 0 6px'>Chat (tipo Replit) — comandos do engine</h3>" });
-    const chatHint = el("div");
-    chatHint.style.cssText = "opacity:.8;margin:0 0 10px;font-size:12px;";
-    chatHint.innerHTML = `Exemplos: <code>help</code> • <code>status</code> • <code>list</code> • <code>create app RQuotas</code> • <code>select &lt;id&gt;</code>`;
-
-    const chatRow = el("div");
-    chatRow.style.cssText = "display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;";
-
-    const cmd = el("textarea");
-    cmd.id = "rcf-admin-cmd";
-    cmd.placeholder = "Digite um comando e toque em Executar…";
-    cmd.rows = 2;
-    cmd.style.cssText = `
-      flex:1 1 240px; min-width:220px;
-      padding:10px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.18);
-      background:rgba(255,255,255,.06);color:#fff;font-weight:900;
-    `;
-
-    const runBtn = el("button", { textContent: "Executar" });
-    runBtn.style.cssText = cssTextBaseBtn();
-    runBtn.onclick = () => {
-      if (!guardUnlocked()) return;
-      const out = runEngine(String(cmd.value || ""));
-      const box = document.getElementById("rcf-admin-chat-out");
-      if (!box) return;
-      if (out === "__CLEAR__") box.textContent = "";
-      else box.textContent = (box.textContent ? box.textContent + "\n\n" : "") + out;
-      cmd.value = "";
-    };
-
-    chatRow.append(cmd, runBtn);
-
-    const chatOut = el("pre");
-    chatOut.id = "rcf-admin-chat-out";
-    chatOut.style.cssText = `
-      white-space:pre-wrap; background:rgba(255,255,255,.05);
-      border:1px solid rgba(255,255,255,.12); border-radius:12px;
-      padding:10px; min-height:160px; margin-top:10px;
-    `;
-
-    body.append(
-      pinBox,
-      actionsTitle,
-      actions,
-      hint,
-      diagOut,
-      chatTitle,
-      chatHint,
-      chatRow,
-      chatOut
-    );
-
-    modal.append(header, body);
-    document.body.appendChild(modal);
-
-    renderLockState();
-  }
-
-  function mkAction(label, fn) {
-    const b = el("button", { textContent: label });
-    b.style.cssText = cssTextBaseBtn();
-    b.onclick = fn;
-    return b;
-  }
-
-  function renderLockState() {
-    const st = document.getElementById("rcf-admin-lockstate");
-    if (!st) return;
-    st.textContent = isUnlocked() ? "UNLOCK ✅" : "LOCKED 🔒";
-  }
-
-  function guardUnlocked() {
-    if (isUnlocked()) return true;
-    alert("Admin está bloqueado 🔒 (digite PIN e Unlock).");
-    return false;
-  }
-
-  function openAdmin(forceLogs) {
-    ensureModal();
-    const modal = document.getElementById("rcf-admin-modal");
-    if (!modal) return;
-    modal.style.display = "block";
-    renderLockState();
-
-    if (forceLogs) {
-      // mostra logs no chatOut pra facilitar
-      const out = document.getElementById("rcf-admin-chat-out");
-      const logs = (window.RCF?.debug?.getLogs?.() || []).slice(-60)
-        .map(l => `[${l.time}] ${String(l.level || "").toUpperCase()} ${l.msg}`)
-        .join("\n");
-      if (out) out.textContent = logs || "(sem logs)";
-    }
-  }
-
-  function closeAdmin() {
-    const modal = document.getElementById("rcf-admin-modal");
-    if (modal) modal.style.display = "none";
-  }
-
-  async function safeDiag() {
-    try {
-      if (window.RCF?.debug?.buildDiagnosisReport) {
-        return await window.RCF.debug.buildDiagnosisReport();
+      // auto-repair seguro (não mexe em código remoto)
+      // 1) garante que existe PIN se input estiver preenchido
+      const pinInput = $("adminPin")?.value || "";
+      if (pinInput && pinInput.trim().length >= 4) {
+        setPin(pinInput.trim());
+        fixes.push("PIN salvo.");
       }
-    } catch {}
-    return "Diagnóstico indisponível (RCF.debug não encontrado).";
-  }
 
-  async function safeNukeCache() {
-    try {
-      if (window.RCF?.debug?.nukePwaCache) {
-        await window.RCF.debug.nukePwaCache();
-        return;
+      // 2) remove duplicação visual (se existirem 2 admin tabs por algum bug antigo)
+      // (apaga extras mantendo o primeiro)
+      const adminTabs = qsa("#tabs .tab").filter(b => (b.dataset.tab === "admin"));
+      if (adminTabs.length > 1) {
+        adminTabs.slice(1).forEach(b => b.remove());
+        fixes.push("Removi Admin duplicado (tabs).");
       }
-    } catch {}
-  }
 
-  function safeResetStorage() {
-    const core = window.RCF?.core;
-    if (!core || !core.LS) return;
-
-    try {
-      localStorage.removeItem(core.LS.settings);
-      localStorage.removeItem(core.LS.apps);
-      localStorage.removeItem(core.LS.activeAppId);
-    } catch {}
-  }
-
-  function safeExportJson() {
-    const core = window.RCF?.core;
-    const payload = {
-      version: 1,
-      exportedAt: new Date().toISOString(),
-      settings: null,
-      apps: null,
-      activeAppId: null,
-    };
-
-    try { payload.settings = core ? core.loadSettings() : null; } catch {}
-    try { payload.apps = core ? core.loadApps() : []; } catch {}
-    try { payload.activeAppId = core ? core.getActiveAppId() : ""; } catch {}
-
-    return JSON.stringify(payload, null, 2);
-  }
-
-  function safeImportJson(text) {
-    const core = window.RCF?.core;
-    if (!core || !core.LS) return alert("Core API não encontrado.");
-
-    let data = null;
-    try { data = JSON.parse(String(text || "")); }
-    catch { return alert("JSON inválido."); }
-
-    try {
-      if (data.settings) localStorage.setItem(core.LS.settings, JSON.stringify(data.settings));
-      if (Array.isArray(data.apps)) localStorage.setItem(core.LS.apps, JSON.stringify(data.apps));
-      if (typeof data.activeAppId === "string") localStorage.setItem(core.LS.activeAppId, data.activeAppId);
-    } catch (e) {
-      alert("Falha import: " + e.message);
-    }
-  }
-
-  function runEngine(cmd) {
-    const engine = window.RCF?.engine;
-    const templates = window.RCF?.templates;
-    if (!engine || typeof engine.run !== "function") return "ERRO: engine não disponível.";
-    if (!templates) return "ERRO: templates não disponível.";
-    return engine.run(cmd, templates);
-  }
-
-  function downloadText(filename, text) {
-    const blob = new Blob([String(text || "")], { type: "application/json;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-  }
-
-  function pickFile() {
-    return new Promise((resolve) => {
-      const input = document.createElement("input");
-      input.type = "file";
-      input.accept = "application/json,.json";
-      input.onchange = () => resolve(input.files && input.files[0] ? input.files[0] : null);
-      input.click();
+      if (out) out.textContent = fixes.length ? fixes.map(x => "✅ " + x).join("\n") : "Nada a reparar agora.";
+      updateAdminButtonState();
     });
   }
 
   function init() {
-    ensureAdminButtonInTabs();
-    ensureFloatingButtons();
-    ensureModal();
-    renderLockState();
-  }
+    // evita “duplicar” ao carregar duas vezes (cache antigo / script duplicado)
+    if (window.__RCF_ADMIN_INIT__) return;
+    window.__RCF_ADMIN_INIT__ = true;
 
-  // Public API
-  window.RCF = window.RCF || {};
-  window.RCF.admin = { init, openAdmin, closeAdmin };
+    ensureAdminTabButton();
+    ensureFloatingButtons();
+    wireAdminPage();
+
+    // se settings tem PIN preenchido, salva ao iniciar (opcional)
+    const pinField = $("adminPin");
+    if (pinField && pinField.value && !getPin()) {
+      setPin(pinField.value);
+    }
+    updateAdminButtonState();
+  }
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", init);
   } else {
     init();
   }
+
+  // API (se precisar depois)
+  window.RCF.admin = {
+    buildDiag,
+    nukePwaCache,
+    lock: () => { setLocked(true); updateAdminButtonState(); },
+    unlock: () => { setLocked(false); updateAdminButtonState(); },
+  };
 })();
