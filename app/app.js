@@ -762,3 +762,291 @@ ${html}
     setAiDraft(null);
     return "✅ Draft descartado.";
   }
+   
+     // --------------------- Wire Events (com proteção) ---------------------
+  function wireNewApp() {
+    const nameEl = $("newName");
+    const idEl = $("newId");
+    const valEl = $("newAppValidation");
+    if (!nameEl || !idEl) return;
+
+    function updateValidation() {
+      const name = nameEl.value;
+      const id = sanitizeId(idEl.value);
+      const errors = validateApp(name, id);
+      if (valEl) valEl.textContent = errors.length ? errors.map((e) => `- ${e}`).join("\n") : "OK ✅";
+    }
+
+    idEl.addEventListener("input", () => {
+      const s = sanitizeId(idEl.value);
+      if (s !== idEl.value) idEl.value = s;
+      updateValidation();
+    });
+    nameEl.addEventListener("input", updateValidation);
+
+    $("createAppBtn")?.addEventListener("click", () => {
+      const name = (nameEl.value || "").trim();
+      const id = sanitizeId(idEl.value);
+      const errors = validateApp(name, id);
+
+      if (errors.length) return alert("Corrija antes de salvar:\n\n" + errors.join("\n"));
+      if (pickAppById(id)) return alert("Já existe um app com esse ID.");
+
+      const templateId = $("newTemplate")?.value || "pwa-base";
+      createApp({ name, id, type: "pwa", templateId });
+
+      nameEl.value = "";
+      idEl.value = "";
+      if (valEl) valEl.textContent = "OK ✅";
+
+      setStatus(`App criado: ${name} (${id}) ✅`);
+      renderAppsList();
+      renderEditor();
+      renderGeneratorSelect();
+      showTab("editor");
+    });
+
+    $("cancelNew")?.addEventListener("click", () => showTab("dashboard"));
+  }
+
+  function wireEditor() {
+    $("saveFileBtn")?.addEventListener("click", () => {
+      const app = pickAppById(activeAppId);
+      if (!app) return alert("Nenhum app ativo.");
+
+      app.files[currentFile] = $("codeArea")?.value ?? "";
+      saveApps();
+
+      setStatus(`Salvo: ${currentFile} ✅`);
+      renderEditor();
+    });
+
+    $("resetFileBtn")?.addEventListener("click", () => {
+      const app = pickAppById(activeAppId);
+      if (!app) return alert("Nenhum app ativo.");
+
+      if (!confirm(`Resetar ${currentFile} para o padrão do template?`)) return;
+
+      app.files[currentFile] = app.baseFiles?.[currentFile] ?? "";
+      saveApps();
+
+      setStatus(`Reset: ${currentFile} ✅`);
+      renderEditor();
+    });
+
+    $("openPreviewBtn")?.addEventListener("click", () => {
+      const app = pickAppById(activeAppId);
+      if (!app) return;
+      refreshPreview(app);
+      setStatus("Preview atualizado ✅");
+    });
+  }
+
+  function wireGenerator() {
+    $("genAppSelect")?.addEventListener("change", () => {
+      setActiveAppId($("genAppSelect").value);
+      renderAppsList();
+      renderEditor();
+    });
+
+    $("downloadZipBtn")?.addEventListener("click", async () => {
+      const app = pickAppById($("genAppSelect")?.value || activeAppId);
+      if (!app) return alert("Selecione um app.");
+
+      setGenStatus("Status: gerando ZIP…");
+      await downloadZip(app);
+      setGenStatus("Status: ZIP pronto ✅");
+    });
+
+    $("publishBtn")?.addEventListener("click", () => {
+      alert("Publish entra depois (primeiro Factory 100% liso).");
+    });
+
+    $("copyLinkBtn")?.addEventListener("click", async () => {
+      const linkEl = $("publishedLink");
+      const link = linkEl?.href || "";
+      if (!link || link === location.href) return alert("Ainda não tem link.");
+
+      try { await navigator.clipboard.writeText(link); alert("Link copiado ✅"); }
+      catch { alert("Não consegui copiar. Copie manualmente:\n" + link); }
+    });
+  }
+
+  function wireSettings() {
+    $("saveSettingsBtn")?.addEventListener("click", () => {
+      settings.ghUser = ($("ghUser")?.value || "").trim();
+      settings.ghToken = ($("ghToken")?.value || "").trim();
+      settings.repoPrefix = ($("repoPrefix")?.value || "rapp-").trim() || "rapp-";
+      settings.pagesBase = ($("pagesBase")?.value || "").trim() || (settings.ghUser ? `https://${settings.ghUser}.github.io` : "");
+
+      saveSettings();
+      setStatus("Settings salvas ✅");
+      alert("Settings salvas ✅");
+    });
+
+    $("resetFactoryBtn")?.addEventListener("click", () => {
+      if (!confirm("Tem certeza? Vai apagar apps e settings locais.")) return;
+      localStorage.removeItem(LS.settings);
+      localStorage.removeItem(LS.apps);
+      localStorage.removeItem(LS.activeAppId);
+      localStorage.removeItem(LS.aiDraft);
+
+      settings = loadSettings();
+      apps = [];
+      setActiveAppId("");
+
+      renderAll();
+      alert("Factory resetado ✅");
+    });
+  }
+
+  function wireAdmin() {
+    // unlock
+    $("adminUnlockBtn")?.addEventListener("click", () => {
+      const pin = String($("adminPinInput")?.value || "").trim();
+      if (pin !== getPin()) return alert("PIN errado ❌");
+      unlock(15);
+      $("adminPinInput") && ($("adminPinInput").value = "");
+      renderAdminState();
+      alert("Admin UNLOCK ✅ (15 min)");
+    });
+
+    // diagnóstico
+    $("diagBtn")?.addEventListener("click", async () => {
+      const rep = await buildDiagnosisReport();
+      const out = $("adminOut");
+      if (out) out.textContent = rep;
+    });
+
+    $("copyDiagBtn")?.addEventListener("click", async () => {
+      const rep = await buildDiagnosisReport();
+      try { await navigator.clipboard.writeText(rep); alert("Diagnóstico copiado ✅"); }
+      catch { alert("iOS bloqueou copiar. Copie manualmente do painel."); }
+      const out = $("adminOut");
+      if (out) out.textContent = rep;
+    });
+
+    $("clearPwaBtn")?.addEventListener("click", async () => {
+      if (!guardUnlocked()) return;
+      if (!confirm("Vai limpar cache PWA (caches + service worker). Continuar?")) return;
+      await nukePwaCache();
+      alert("Cache limpo ✅. Abra o site com ?v=1");
+      // não dá reload automático pra não travar no iPhone
+    });
+
+    // backup
+    $("exportBtn")?.addEventListener("click", () => {
+      if (!guardUnlocked()) return;
+      const payload = {
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        settings: loadSettings(),
+        apps: loadApps(),
+        activeAppId: getActiveAppId(),
+      };
+      downloadText("rcf-backup.json", JSON.stringify(payload, null, 2));
+    });
+
+    $("importBtn")?.addEventListener("click", async () => {
+      if (!guardUnlocked()) return;
+      const file = await pickFile();
+      if (!file) return;
+      const text = await file.text();
+      let data = null;
+      try { data = JSON.parse(text); } catch { return alert("JSON inválido."); }
+      try {
+        if (data.settings) localStorage.setItem(LS.settings, JSON.stringify(data.settings));
+        if (Array.isArray(data.apps)) localStorage.setItem(LS.apps, JSON.stringify(data.apps));
+        if (typeof data.activeAppId === "string") localStorage.setItem(LS.activeAppId, data.activeAppId);
+      } catch (e) { return alert("Falha import: " + e.message); }
+      alert("Import OK ✅. Reabra com ?v=1");
+    });
+
+    // IA
+    $("aiRunBtn")?.addEventListener("click", () => {
+      if (!guardUnlocked()) return;
+      const cmd = String($("aiInput")?.value || "").trim();
+      const res = aiRun(cmd);
+      $("aiOut") && ($("aiOut").textContent = res);
+    });
+
+    $("aiClearBtn")?.addEventListener("click", () => {
+      $("aiInput") && ($("aiInput").value = "");
+      $("aiOut") && ($("aiOut").textContent = "—");
+    });
+
+    $("aiApplyBtn")?.addEventListener("click", () => {
+      const res = aiApply();
+      $("aiOut") && ($("aiOut").textContent = res);
+    });
+
+    $("aiDiscardBtn")?.addEventListener("click", () => {
+      const res = aiDiscard();
+      $("aiOut") && ($("aiOut").textContent = res);
+    });
+  }
+
+  // --------------------- Render All ---------------------
+  function renderAll() {
+    try {
+      renderTemplatesSelect();
+      renderAppsList();
+      renderEditor();
+      renderGeneratorSelect();
+      renderSettings();
+      renderAdminState();
+    } catch (e) {
+      logError("renderAll falhou:", e);
+    }
+  }
+
+  // --------------------- Public API (pra próxima fase) ---------------------
+  function exposeApi() {
+    window.RCF = window.RCF || {};
+    window.RCF.factory = {
+      LS,
+      loadSettings: () => loadSettings(),
+      loadApps: () => loadApps(),
+      buildDiagnosisReport,
+      nukePwaCache,
+      lockAdmin,
+    };
+  }
+
+  // --------------------- INIT (FAIL-SAFE) ---------------------
+  function init() {
+    // 1) Sempre liga tabs primeiro (pra não morrer botão)
+    wireTabsFailSafe();
+
+    // 2) resto com proteção (se der erro aqui, tabs continuam funcionando)
+    try {
+      logInfo("RCF init…");
+      renderTemplatesSelect();
+      wireNewApp();
+      wireEditor();
+      wireGenerator();
+      wireSettings();
+      wireAdmin();
+
+      renderAll();
+      showTab("dashboard");
+      exposeApi();
+
+      setStatus("Pronto ✅");
+      logInfo("RCF pronto ✅");
+    } catch (e) {
+      logError("INIT QUEBROU:", e);
+      // mesmo quebrado, deixa dashboard visível e botões de tab vivos
+      showTab("dashboard");
+      setStatus("Pronto ✅ (modo seguro)");
+      alert("⚠️ Rodou em modo seguro (teve erro interno). Vá em Admin → Diagnóstico.");
+    }
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
+
+})();
