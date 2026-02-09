@@ -25,7 +25,7 @@
       <button class="tab" data-tab="editor">Editor</button>
       <button class="tab" data-tab="generator">Generator</button>
       <button class="tab" data-tab="settings">Settings</button>
-      <!-- Admin entra via JS (admin.js) -->
+      <button class="tab" data-tab="admin" id="adminTabBtn" style="display:none">Admin 🔒</button>
     </nav>
   </header>
 
@@ -155,11 +155,6 @@
 
         <div class="statusLine" id="genStatus">Status: aguardando…</div>
 
-        <div class="card inner">
-          <h3>Link do app</h3>
-          <a id="publishedLink" href="#" target="_blank" rel="noreferrer">—</a>
-        </div>
-
         <details class="card inner">
           <summary>Console / Logs</summary>
           <pre class="pre" id="logs"></pre>
@@ -206,43 +201,38 @@
       </div>
     </section>
 
-    <!-- ADMIN (escondida) -->
+    <!-- ADMIN -->
     <section class="panel hidden" id="tab-admin">
       <h2>Admin</h2>
-      <p class="muted">Diagnóstico, backup e auto-repair (só você).</p>
+      <p class="muted">Auto-check, backup e auto-repair (só você).</p>
 
       <div class="card">
         <div class="row wrap">
-          <button class="btn" id="adminDiagBtn">Gerar diagnóstico</button>
+          <button class="btn" id="adminDiagBtn">Rodar diagnóstico</button>
           <button class="btn" id="adminCopyDiagBtn">Copiar diagnóstico</button>
           <button class="btn danger" id="adminClearPwaBtn">Limpar Cache PWA</button>
-        </div>
-      </div>
-
-      <div class="card">
-        <h3>Backup</h3>
-        <div class="row wrap">
-          <button class="btn" id="adminExportBtn">Exportar backup</button>
-          <button class="btn" id="adminImportBtn">Importar backup</button>
+          <button class="btn" id="adminExportBtn">Export (JSON)</button>
+          <button class="btn" id="adminImportBtn">Import (JSON)</button>
           <input id="adminImportFile" type="file" accept="application/json" style="display:none" />
         </div>
-        <div class="muted small">Export salva um JSON do localStorage (apps + settings).</div>
       </div>
 
       <div class="card">
-        <h3>Auto-repair</h3>
+        <h3>Chat (tipo Replit) — comandos do engine</h3>
+        <div class="muted small">help • status • list • create app RQuotas • select &lt;id&gt; • repair</div>
         <div class="row wrap">
-          <button class="btn primary" id="adminRepairBtn">Rodar auto-repair</button>
+          <textarea id="adminCmd" class="textarea" placeholder="Digite um comando..."></textarea>
+          <button class="btn primary" id="adminRunCmdBtn">Executar</button>
         </div>
         <pre class="pre" id="adminOut">—</pre>
       </div>
     </section>
   </main>
 
-    <!-- libs -->
+  <!-- libs -->
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 
-  <!-- módulos (ordem importa) -->
+  <!-- módulos (ordem IMPORTA) -->
   <script src="./js/templates.js"></script>
   <script src="./js/ai.js"></script>
   <script src="./js/router.js"></script>
@@ -253,9 +243,7 @@
 
   <script>
     if ("serviceWorker" in navigator) {
-      window.addEventListener("load", () =>
-        navigator.serviceWorker.register("./sw.js").catch(() => {})
-      );
+      window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js").catch(() => {}));
     }
   </script>
 </body>
