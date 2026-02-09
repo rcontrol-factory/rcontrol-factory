@@ -1,14 +1,20 @@
 /* =========================================================
-   RControl Factory — app/app.js (STABLE / OFFLINE-FIRST)
-   - Sem mexer no core: só este arquivo.
-   - Admin PIN: padrão 1122
-   - Emergência: digitar 0000 no Unlock => reseta PIN pra 1122 e destrava
-   - Seed: cria "RControl Demo" se apps estiver vazio
-   - IA Offline (70%): sugestões + aplicar manual
+   RControl Factory — app/app.js (ROTA 2 / CORE ESTÁVEL)
+   - Offline-first (localStorage)
+   - Tabs: Dashboard / New App / Editor / Generator / Settings / Admin
+   - Preview via iframe srcdoc
+   - ZIP via JSZip (index.html já carrega)
+   - Admin: PIN + Diagnóstico + Backup + Limpar Cache PWA
+   - IA Offline (70%): sugestão -> aplicar -> descartar (NUNCA auto-aplica)
+   - Carrega módulos opcionais em /app/js/* sem quebrar se faltar
    ========================================================= */
 
 (function () {
   "use strict";
+
+  // ========= Anti duplo-init (evita bug de botões duplicados / travar) =========
+  if (window.__RCF_INITED__) return;
+  window.__RCF_INITED__ = true;
 
   // ===================== Storage keys =====================
   const LS = {
@@ -17,9 +23,8 @@
     activeAppId: "rcf_active_app_id_v3",
     adminPin: "rcf_admin_pin_v1",
     adminUnlockUntil: "rcf_admin_unlock_until_v1",
+    pendingAction: "rcf_pending_action_v1",
   };
-
-  const DEFAULT_PIN = "1122";
 
   const DEFAULT_SETTINGS = {
     ghUser: "",
@@ -40,18 +45,10 @@
     try { return JSON.parse(s); } catch { return fallback; }
   }
 
-  function escapeHtml(s) {
-    return String(s ?? "")
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;")
-      .replaceAll("'", "&#039;");
-  }
-
   // ===================== Logs (iPhone friendly) =====================
   const __LOG_MAX = 300;
   const __logs = [];
+
   function pushLog(level, parts) {
     const time = new Date().toISOString().slice(11, 19);
     const msg = (parts || []).map((p) => {
@@ -61,6 +58,7 @@
     __logs.push({ time, level, msg });
     while (__logs.length > __LOG_MAX) __logs.shift();
   }
+
   function logInfo(...a) { pushLog("log", a); }
   function logWarn(...a) { pushLog("warn", a); }
   function logError(...a) { pushLog("error", a); }
@@ -78,17 +76,13 @@
     const data = raw ? safeJsonParse(raw, {}) : {};
     return { ...DEFAULT_SETTINGS, ...(data || {}) };
   }
-  function saveSettings() {
-    localStorage.setItem(LS.settings, JSON.stringify(state.settings));
-  }
+  function saveSettings() { localStorage.setItem(LS.settings, JSON.stringify(state.settings)); }
 
   function loadApps() {
     const raw = localStorage.getItem(LS.apps);
     return raw ? safeJsonParse(raw, []) : [];
   }
-  function saveApps() {
-    localStorage.setItem(LS.apps, JSON.stringify(state.apps));
-  }
+  function saveApps() { localStorage.setItem(LS.apps, JSON.stringify(state.apps)); }
 
   function setActiveAppId(id) {
     state.activeAppId = id || "";
@@ -98,32 +92,13 @@
     return localStorage.getItem(LS.activeAppId) || "";
   }
 
-  // ===================== Admin PIN =====================
-  function getPin() {
-    return localStorage.getItem(LS.adminPin) || DEFAULT_PIN;
-  }
-  function setPin(pin) {
-    localStorage.setItem(LS.adminPin, String(pin || "").trim());
-  }
-  function isUnlocked() {
-    const until = Number(localStorage.getItem(LS.adminUnlockUntil) || "0");
-    return until && until > Date.now();
-  }
-  function unlock(minutes) {
-    const ms = (Number(minutes || 15) * 60 * 1000);
-    localStorage.setItem(LS.adminUnlockUntil, String(Date.now() + ms));
-  }
-  function lockAdmin() {
-    localStorage.setItem(LS.adminUnlockUntil, "0");
-  }
-
   // ===================== State =====================
   const state = {
     settings: loadSettings(),
     apps: loadApps(),
     activeAppId: getActiveAppId(),
     currentFile: "index.html",
-    aiSuggestion: null, // {type, payload}
+    pendingAction: safeJsonParse(localStorage.getItem(LS.pendingAction) || "null", null),
   };
 
   // ===================== UI status =====================
@@ -132,22 +107,23 @@
     if (el) el.textContent = msg;
     logInfo("STATUS:", msg);
   }
-  function setAdminOut(msg) {
-    const el = $("adminOut");
-    if (el) el.textContent = msg || "—";
-  }
-  function setAiOut(msg) {
-    const el = $("aiOut");
-    if (el) el.textContent = msg || "—";
-  }
   function setGenStatus(msg) {
     const el = $("genStatus");
     if (el) el.textContent = msg;
     logInfo("GEN:", msg);
   }
+  function setAdminOut(text) {
+    const el = $("adminOut");
+    if (el) el.textContent = text || "—";
+  }
+  function setAiOut(text) {
+    const el = $("aiOut");
+    if (el) el.textContent = text || "—";
+  }
 
   // ===================== Tabs =====================
   const TAB_IDS = ["dashboard", "newapp", "editor", "generator", "settings", "admin"];
+
   function showTab(tab) {
     TAB_IDS.forEach((t) => {
       const sec = $(`tab-${t}`);
@@ -159,12 +135,14 @@
   // ===================== Validation =====================
   function sanitizeId(raw) {
     return (raw || "")
-      .trim().toLowerCase()
+      .trim()
+      .toLowerCase()
       .replace(/\s+/g, "-")
       .replace(/[^a-z0-9-]/g, "")
       .replace(/--+/g, "-")
       .replace(/^-|-$/g, "");
   }
+
   function validateApp(name, id) {
     const errors = [];
     if (!name || name.trim().length < 2) errors.push("Nome do app muito curto.");
@@ -174,7 +152,7 @@
     return errors;
   }
 
-  // ===================== Templates (base) =====================
+  // ===================== Templates (core) =====================
   function applyVars(text, app) {
     return String(text).replaceAll("{{APP_NAME}}", app.name).replaceAll("{{APP_ID}}", app.id);
   }
@@ -217,8 +195,10 @@
     const appjs = `// {{APP_NAME}} - {{APP_ID}}
 const btn = document.getElementById("btn");
 const out = document.getElementById("out");
+
 btn?.addEventListener("click", () => {
-  out.textContent = "Funcionando! " + new Date().toLocaleString();
+  const now = new Date().toLocaleString();
+  out.textContent = "Funcionando! " + now;
 });`;
 
     const css = `:root{--bg:#0b1220;--card:#0f1a2e;--border:rgba(255,255,255,.1);--text:rgba(255,255,255,.92);--muted:rgba(255,255,255,.65);--green:#19c37d}
@@ -242,6 +222,7 @@ button{background:rgba(25,195,125,.2);border:1px solid rgba(25,195,125,.35);colo
 
     const sw = `const CACHE = "{{APP_ID}}-v1";
 const ASSETS = ["./","./index.html","./styles.css","./app.js","./manifest.json"];
+
 self.addEventListener("install",(e)=>{
   e.waitUntil((async()=>{
     const c=await caches.open(CACHE);
@@ -249,6 +230,7 @@ self.addEventListener("install",(e)=>{
     self.skipWaiting();
   })());
 });
+
 self.addEventListener("activate",(e)=>{
   e.waitUntil((async()=>{
     const keys=await caches.keys();
@@ -256,22 +238,46 @@ self.addEventListener("activate",(e)=>{
     self.clients.claim();
   })());
 });
+
 self.addEventListener("fetch",(e)=>{
   e.respondWith((async()=>{
     const cached=await caches.match(e.request);
     if(cached) return cached;
-    try{ return await fetch(e.request); }
-    catch{ return caches.match("./index.html"); }
+    try{
+      const fresh=await fetch(e.request);
+      return fresh;
+    }catch{
+      return caches.match("./index.html");
+    }
   })());
 });`;
 
     return { "index.html": index, "app.js": appjs, "styles.css": css, "manifest.json": manifest, "sw.js": sw };
   }
 
-  function getTemplates() {
-    return [{ id: "pwa-base", name: "PWA Base (com app.js + styles.css)", files: makePwaBaseTemplateFiles() }];
+  function getTemplatesCore() {
+    return [
+      { id: "pwa-base", name: "PWA Base (com app.js + styles.css)", files: makePwaBaseTemplateFiles() },
+    ];
   }
-     // ===================== App CRUD =====================
+
+  // ============ Módulos externos (se existirem) ============
+  // Se você criou /app/js/templates.catalog.js etc, o core tenta usar,
+  // mas NÃO quebra se não tiver.
+  function getTemplates() {
+    const ext = window.RCF?.templates?.getTemplates;
+    if (typeof ext === "function") {
+      try {
+        const list = ext();
+        if (Array.isArray(list) && list.length) return list;
+      } catch (e) {
+        logWarn("templates externo falhou:", e);
+      }
+    }
+    return getTemplatesCore();
+  }
+
+  // ===================== App CRUD =====================
   function pickAppById(id) {
     return state.apps.find((a) => a && a.id === id) || null;
   }
@@ -284,11 +290,17 @@ self.addEventListener("fetch",(e)=>{
 
   function createApp({ name, id, type, templateId }) {
     const tpl = getTemplates().find((t) => t.id === templateId) || getTemplates()[0];
+
     const files = {};
-    Object.keys(tpl.files).forEach((k) => { files[k] = applyVars(tpl.files[k], { name, id }); });
+    Object.keys(tpl.files).forEach((k) => {
+      files[k] = applyVars(tpl.files[k], { name, id });
+    });
 
     const app = {
-      name, id, type: type || "pwa", templateId,
+      name,
+      id,
+      type,
+      templateId,
       createdAt: Date.now(),
       files,
       baseFiles: { ...files },
@@ -300,48 +312,25 @@ self.addEventListener("fetch",(e)=>{
     return app;
   }
 
-  function seedIfEmpty() {
-    const list = loadApps();
-    if (Array.isArray(list) && list.length) return;
-    // cria demo pra você ver tudo funcionando sempre
-    state.apps = [];
-    createApp({ name: "RControl Demo", id: "rcontrol-demo", type: "pwa", templateId: "pwa-base" });
-    setStatus("Demo criado automaticamente ✅");
-  }
-
-  // ===================== Preview =====================
-  function injectIntoFullHtml(fullHtml, css, js) {
-    let out = String(fullHtml);
-    if (/<\/head>/i.test(out)) out = out.replace(/<\/head>/i, `<style>${css}</style>\n</head>`);
-    else out = `<style>${css}</style>\n` + out;
-    if (/<\/body>/i.test(out)) out = out.replace(/<\/body>/i, `<script>${js}<\/script>\n</body>`);
-    else out = out + `\n<script>${js}<\/script>\n`;
-    return out;
-  }
-
-  function refreshPreview(app) {
-    const frame = $("previewFrame");
-    if (!frame) return;
-
-    const html = app.files["index.html"] || "<h1>Sem index.html</h1>";
-    const css = app.files["styles.css"] || "";
-    const js = app.files["app.js"] || "";
-
-    const looksLikeFullDoc = /<!doctype\s+html>/i.test(html) || /<html[\s>]/i.test(html);
-    const doc = looksLikeFullDoc
-      ? injectIntoFullHtml(html, css, js)
-      : `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><style>${css}</style></head><body>${html}<script>${js}<\/script></body></html>`;
-
-    frame.srcdoc = doc;
-  }
-
   // ===================== Render =====================
+  function renderTemplatesSelect() {
+    const sel = $("newTemplate");
+    if (!sel) return;
+    sel.innerHTML = "";
+    getTemplates().forEach((t) => {
+      const opt = document.createElement("option");
+      opt.value = t.id;
+      opt.textContent = t.name;
+      sel.appendChild(opt);
+    });
+  }
+
   function renderAppsList() {
     ensureActiveApp();
     const root = $("appsList");
     if (!root) return;
-
     root.innerHTML = "";
+
     if (!state.apps.length) {
       root.innerHTML = `<div class="muted">Nenhum app salvo ainda.</div>`;
       return;
@@ -362,8 +351,10 @@ self.addEventListener("fetch",(e)=>{
 
       item.addEventListener("click", () => {
         setActiveAppId(a.id);
-        setStatus(\`App ativo: ${a.name} (${a.id}) ✅\`);
-        renderAll();
+        setStatus(`App ativo: ${a.name} (${a.id}) ✅`);
+        renderAppsList();
+        renderEditor();
+        renderGeneratorSelect();
       });
 
       root.appendChild(item);
@@ -410,6 +401,43 @@ self.addEventListener("fetch",(e)=>{
     refreshPreview(app);
   }
 
+  function refreshPreview(app) {
+    const frame = $("previewFrame");
+    if (!frame) return;
+
+    const html = app.files["index.html"] || "<h1>Sem index.html</h1>";
+    const css = app.files["styles.css"] || "";
+    const js = app.files["app.js"] || "";
+
+    const looksLikeFullDoc = /<!doctype\s+html>/i.test(html) || /<html[\s>]/i.test(html);
+
+    const doc = looksLikeFullDoc
+      ? injectIntoFullHtml(html, css, js)
+      : `<!doctype html>
+<html lang="pt-BR"><head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<style>${css}</style>
+</head><body>
+${html}
+<script>${js}<\/script>
+</body></html>`;
+
+    frame.srcdoc = doc;
+  }
+
+  function injectIntoFullHtml(fullHtml, css, js) {
+    let out = String(fullHtml);
+
+    if (/<\/head>/i.test(out)) out = out.replace(/<\/head>/i, `<style>${css}</style>\n</head>`);
+    else out = `<style>${css}</style>\n` + out;
+
+    if (/<\/body>/i.test(out)) out = out.replace(/<\/body>/i, `<script>${js}<\/script>\n</body>`);
+    else out = out + `\n<script>${js}<\/script>\n`;
+
+    return out;
+  }
+
   function renderGeneratorSelect() {
     ensureActiveApp();
     const sel = $("genAppSelect");
@@ -433,19 +461,17 @@ self.addEventListener("fetch",(e)=>{
     if ($("pagesBase")) $("pagesBase").value = state.settings.pagesBase || (state.settings.ghUser ? `https://${state.settings.ghUser}.github.io` : "");
   }
 
-  function renderAdminState() {
-    const st = $("adminState");
-    if (st) st.textContent = isUnlocked() ? "UNLOCK ✅" : "LOCKED 🔒";
-  }
-
   // ===================== ZIP =====================
   async function downloadZip(app) {
     if (typeof JSZip === "undefined") {
       alert("JSZip não carregou. Verifique o index.html (script do jszip).");
       return;
     }
+
     const zip = new JSZip();
-    Object.entries(app.files).forEach(([path, content]) => zip.file(path, String(content ?? "")));
+    Object.entries(app.files).forEach(([path, content]) => {
+      zip.file(path, String(content ?? ""));
+    });
     zip.file("README.md", `# ${app.name}\n\nGerado pelo RControl Factory.\n`);
 
     const blob = await zip.generateAsync({ type: "blob" });
@@ -461,7 +487,7 @@ self.addEventListener("fetch",(e)=>{
     URL.revokeObjectURL(url);
   }
 
-  // ===================== PWA cache nuke (CUIDADO) =====================
+  // ===================== PWA cache nuke =====================
   async function nukePwaCache() {
     try {
       if ("caches" in window) {
@@ -521,126 +547,56 @@ self.addEventListener("fetch",(e)=>{
       }
     } catch (e) { add("Caches", "ERRO: " + e.message); }
 
+    const must = [
+      "appsList","statusBox","newName","newId","newTemplate","createAppBtn",
+      "activeAppLabel","filesList","codeArea","previewFrame","genAppSelect",
+      "downloadZipBtn","genStatus","ghUser","ghToken","repoPrefix","pagesBase",
+      "adminPinInput","adminUnlockBtn","adminState","diagBtn","copyDiagBtn",
+      "clearPwaBtn","adminOut","exportBtn","importBtn",
+      "aiInput","aiRunBtn","aiClearBtn","aiApplyBtn","aiDiscardBtn","aiOut"
+    ];
+    const missing = must.filter(id => !document.getElementById(id));
+    add("DOM missing IDs", missing.length ? missing.join(", ") : "OK");
+
     add("---- últimos logs ----", "");
-    const tail = __logs.slice(-80).map(l => `[${l.time}] ${String(l.level).toUpperCase()} ${l.msg}`);
+    const tail = __logs.slice(-60).map(l => `[${l.time}] ${String(l.level).toUpperCase()} ${l.msg}`);
     lines.push(tail.join("\n") || "(sem logs)");
+
+    add("---- módulos externos ----", "");
+    add("window.RCF", window.RCF ? "SIM" : "NÃO");
+    add("templates.getTemplates", typeof window.RCF?.templates?.getTemplates === "function" ? "SIM" : "NÃO");
 
     return lines.join("\n");
   }
 
-  // ===================== IA Offline (70%) =====================
-  function aiSuggest(inputRaw) {
-    const input = String(inputRaw || "").trim();
-    if (!input) return { text: "Digite um comando. Ex: help | list | create app AgroControl | select agrocontrol", suggestion: null };
+  // ===================== Admin (PIN) =====================
+ function wireAdmin() {
+    $("adminUnlockBtn")?.addEventListener("click", () => {
+      const pin = String($("adminPinInput")?.value || "").trim();
 
-    const low = input.toLowerCase();
+      // emergência: 0000 reseta PIN pra 1122 e destrava
+      if (pin === "0000") {
+        setPin(DEFAULT_PIN);
+        unlock(15);
+        renderAdminState();
+        alert("PIN resetado para 1122 ✅ (Admin destravado 15min)");
+        $("adminPinInput").value = "";
+        return;
+      }
 
-    if (low === "help") {
-      return {
-        text:
-`Comandos:
-- help
-- status
-- list
-- create app <Nome>   (cria id automático)
-- select <id>
-- export
-- diag`,
-        suggestion: null
-      };
-    }
+      const ok = pin === getPin();
+      if (!ok) {
+        renderAdminState();
+        return alert("PIN errado ❌\nDica: digite 0000 pra resetar o PIN pra 1122.");
+      }
 
-    if (low === "status") {
-      ensureActiveApp();
-      const app = pickAppById(state.activeAppId);
-      return { text: `Apps: ${state.apps.length} | Ativo: ${app ? app.name + " (" + app.id + ")" : "—"} | Admin: ${isUnlocked() ? "UNLOCK" : "LOCKED"}`, suggestion: null };
-    }
+      unlock(15);
+      $("adminPinInput").value = "";
+      renderAdminState();
+      alert("Admin destravado ✅ (15min)");
+    })
 
-    if (low === "list") {
-      const list = state.apps.map(a => `- ${a.name} (${a.id})`).join("\n") || "(vazio)";
-      return { text: list, suggestion: null };
-    }
-
-    if (low.startsWith("create app ")) {
-      const name = input.slice("create app ".length).trim();
-      if (!name) return { text: "Faltou o nome. Ex: create app AgroControl", suggestion: null };
-      const id = sanitizeId(name);
-      if (!id) return { text: "Nome inválido.", suggestion: null };
-      if (pickAppById(id)) return { text: `Já existe app com id ${id}.`, suggestion: null };
-
-      return {
-        text: `Sugestão pronta: criar app "${name}" com id "${id}". (Toque em "Aplicar sugestão")`,
-        suggestion: { type: "createApp", payload: { name, id, type: "pwa", templateId: "pwa-base" } }
-      };
-    }
-
-    if (low.startsWith("select ")) {
-      const id = sanitizeId(input.slice("select ".length));
-      if (!id) return { text: "Faltou o id. Ex: select agrocontrol", suggestion: null };
-      if (!pickAppById(id)) return { text: `Não achei esse id: ${id}`, suggestion: null };
-
-      return {
-        text: `Sugestão pronta: selecionar app ativo "${id}". (Toque em "Aplicar sugestão")`,
-        suggestion: { type: "selectApp", payload: { id } }
-      };
-    }
-
-    if (low === "export") {
-      return {
-        text: `Sugestão pronta: exportar backup JSON. (Toque em "Aplicar sugestão")`,
-        suggestion: { type: "exportBackup", payload: {} }
-      };
-    }
-
-    if (low === "diag") {
-      return {
-        text: `Sugestão pronta: rodar diagnóstico. (Toque em "Aplicar sugestão")`,
-        suggestion: { type: "diag", payload: {} }
-      };
-    }
-
-    return { text: "Não entendi. Digite: help", suggestion: null };
-  }
-
-  async function aiApply(suggestion) {
-    if (!suggestion) return;
-
-    if (suggestion.type === "createApp") {
-      createApp(suggestion.payload);
-      renderAll();
-      showTab("editor");
-      setStatus(`App criado: ${suggestion.payload.name} (${suggestion.payload.id}) ✅`);
-      return;
-    }
-
-    if (suggestion.type === "selectApp") {
-      setActiveAppId(suggestion.payload.id);
-      renderAll();
-      showTab("editor");
-      setStatus(`App ativo: ${suggestion.payload.id} ✅`);
-      return;
-    }
-
-    if (suggestion.type === "exportBackup") {
-      const payload = {
-        version: 1,
-        exportedAt: new Date().toISOString(),
-        settings: loadSettings(),
-        apps: loadApps(),
-        activeAppId: getActiveAppId(),
-      };
-      downloadText("rcf-backup.json", JSON.stringify(payload, null, 2));
-      return;
-    }
-
-    if (suggestion.type === "diag") {
-      const rep = await buildDiagnosisReport();
-      setAdminOut(rep);
-      return;
-    }
-  }
-
-  // ===================== download utils =====================
+  // ===================== Backup =====================
   function downloadText(filename, text) {
     const blob = new Blob([String(text || "")], { type: "application/json;charset=utf-8" });
     const url = URL.createObjectURL(blob);
@@ -663,12 +619,189 @@ self.addEventListener("fetch",(e)=>{
     });
   }
 
+  // ===================== IA Offline (70%) =====================
+  function setPendingAction(actionObjOrNull) {
+    state.pendingAction = actionObjOrNull;
+    if (actionObjOrNull) localStorage.setItem(LS.pendingAction, JSON.stringify(actionObjOrNull));
+    else localStorage.removeItem(LS.pendingAction);
+  }
+
+  function aiHelpText() {
+    return [
+      "IA Offline (70%) — exemplos:",
+      "• help",
+      "• status",
+      "• list",
+      "• create app RQuotas",
+      "• select rquotas",
+      "• fix sw (só sugestão, você aplica)",
+      "",
+      "Regra: ela SEMPRE gera uma sugestão. Só aplica quando você aperta 'Aplicar sugestão'."
+    ].join("\n");
+  }
+
+  function aiPlanFromText(inputRaw) {
+    const input = String(inputRaw || "").trim();
+    if (!input) return { ok:false, msg:"Digite um comando." };
+
+    const lower = input.toLowerCase();
+
+    if (lower === "help" || lower === "ajuda") {
+      return { ok:true, plan:{ title:"Ajuda", steps:[aiHelpText()], apply:null } };
+    }
+
+    if (lower === "status") {
+      const active = pickAppById(state.activeAppId);
+      const s = [
+        `Apps: ${state.apps.length}`,
+        `Ativo: ${active ? (active.name + " (" + active.id + ")") : "—"}`,
+        `Admin: ${isUnlocked() ? "UNLOCK" : "LOCKED"}`
+      ].join("\n");
+      return { ok:true, plan:{ title:"Status", steps:[s], apply:null } };
+    }
+
+    if (lower === "list" || lower === "listar" || lower === "listar apps") {
+      const list = state.apps.map(a => `- ${a.name} (${a.id})`).join("\n") || "(nenhum app salvo)";
+      return { ok:true, plan:{ title:"Lista de apps", steps:[list], apply:null } };
+    }
+
+    // create app <name>
+    if (lower.startsWith("create app ") || lower.startsWith("criar app ")) {
+      const name = input.replace(/^create app\s+/i, "").replace(/^criar app\s+/i, "").trim();
+      const id = sanitizeId(name);
+      const errors = validateApp(name, id);
+      if (errors.length) return { ok:false, msg:"Erro:\n" + errors.join("\n") };
+
+      const plan = {
+        title: "Criar app",
+        steps: [
+          `Vou criar: ${name} (${id})`,
+          "Template: pwa-base",
+          "Depois você pode editar no Editor e gerar ZIP."
+        ],
+        apply: { type:"CREATE_APP", payload:{ name, id, type:"pwa", templateId:"pwa-base" } }
+      };
+      return { ok:true, plan };
+    }
+
+    // select <id>
+    if (lower.startsWith("select ") || lower.startsWith("selecionar ")) {
+      const id = sanitizeId(input.replace(/^select\s+/i, "").replace(/^selecionar\s+/i, "").trim());
+      const found = pickAppById(id);
+      if (!found) return { ok:false, msg:`Não achei app com id: ${id}` };
+      return {
+        ok:true,
+        plan:{
+          title:"Selecionar app",
+          steps:[`Vou selecionar: ${found.name} (${found.id})`],
+          apply:{ type:"SELECT_APP", payload:{ id: found.id } }
+        }
+      };
+    }
+
+    // fix sw (apenas sugestão)
+    if (lower === "fix sw" || lower === "corrigir sw") {
+      return {
+        ok:true,
+        plan:{
+          title:"Sugestão SW",
+          steps:[
+            "Sugestão: quando publicar mudança grande, troque a versão do SW no index.html (v=DATA) e/ou mude CACHE no sw.js.",
+            "Se ainda travar: Admin → Limpar Cache PWA e recarregar."
+          ],
+          apply:null
+        }
+      };
+    }
+
+    // fallback
+    return {
+      ok:true,
+      plan:{
+        title:"Entendi (modo offline)",
+        steps:[
+          "Ainda não reconheço esse comando no modo offline.",
+          "Tente: help | status | list | create app NOME | select ID | fix sw"
+        ],
+        apply:null
+      }
+    };
+  }
+
+  function aiRun() {
+    const input = $("aiInput")?.value || "";
+    const res = aiPlanFromText(input);
+
+    if (!res.ok) {
+      setPendingAction(null);
+      setAiOut(res.msg || "Erro.");
+      return;
+    }
+
+    const plan = res.plan;
+    setPendingAction(plan.apply ? { planTitle: plan.title, apply: plan.apply, createdAt: Date.now() } : null);
+
+    const text = [
+      `✅ ${plan.title}`,
+      "",
+      ...(plan.steps || []),
+      "",
+      plan.apply ? "⚠️ Existe uma sugestão pronta. Aperte 'Aplicar sugestão' pra executar." : "ℹ️ Sem ação para aplicar."
+    ].join("\n");
+
+    setAiOut(text);
+  }
+
+  function aiApply() {
+    if (!state.pendingAction || !state.pendingAction.apply) {
+      alert("Não tem sugestão pendente.");
+      return;
+    }
+
+    const a = state.pendingAction.apply;
+
+    try {
+      if (a.type === "CREATE_APP") {
+        const { name, id, type, templateId } = a.payload || {};
+        if (pickAppById(id)) throw new Error("Já existe um app com esse ID.");
+        createApp({ name, id, type, templateId });
+        renderAppsList();
+        renderEditor();
+        renderGeneratorSelect();
+        setStatus(`App criado: ${name} (${id}) ✅`);
+      }
+
+      if (a.type === "SELECT_APP") {
+        const { id } = a.payload || {};
+        if (!pickAppById(id)) throw new Error("App não encontrado.");
+        setActiveAppId(id);
+        renderAppsList();
+        renderEditor();
+        renderGeneratorSelect();
+        setStatus(`App ativo: ${id} ✅`);
+      }
+
+      setPendingAction(null);
+      setAiOut("✅ Sugestão aplicada com sucesso.");
+    } catch (e) {
+      setAiOut("❌ Falha ao aplicar: " + (e?.message || String(e)));
+    }
+  }
+
+  function aiDiscard() {
+    setPendingAction(null);
+    setAiOut("Descartado ✅");
+  }
+
   // ===================== Wire Events =====================
   function wireTabs() {
     qsa(".tab").forEach((b) => {
       b.addEventListener("click", () => {
         const t = b.dataset.tab;
-        if (t) showTab(t);
+        if (!t) return;
+        showTab(t);
+        // Admin state sempre atualiza quando entra
+        if (t === "admin") renderAdminState();
       });
     });
 
@@ -706,7 +839,8 @@ self.addEventListener("fetch",(e)=>{
       if (pickAppById(id)) return alert("Já existe um app com esse ID.");
 
       createApp({
-        name, id,
+        name,
+        id,
         type: $("newType")?.value || "pwa",
         templateId: $("newTemplate")?.value || "pwa-base",
       });
@@ -716,7 +850,9 @@ self.addEventListener("fetch",(e)=>{
       if (valEl) valEl.textContent = "OK ✅";
 
       setStatus(`App criado: ${name} (${id}) ✅`);
-      renderAll();
+      renderAppsList();
+      renderEditor();
+      renderGeneratorSelect();
       showTab("editor");
     });
 
@@ -738,6 +874,7 @@ self.addEventListener("fetch",(e)=>{
     $("resetFileBtn")?.addEventListener("click", () => {
       const app = pickAppById(state.activeAppId);
       if (!app) return alert("Nenhum app ativo.");
+
       if (!confirm(`Resetar ${state.currentFile} para o padrão do template?`)) return;
 
       app.files[state.currentFile] = app.baseFiles?.[state.currentFile] ?? "";
@@ -758,7 +895,8 @@ self.addEventListener("fetch",(e)=>{
   function wireGenerator() {
     $("genAppSelect")?.addEventListener("change", () => {
       setActiveAppId($("genAppSelect").value);
-      renderAll();
+      renderAppsList();
+      renderEditor();
     });
 
     $("downloadZipBtn")?.addEventListener("click", async () => {
@@ -770,8 +908,8 @@ self.addEventListener("fetch",(e)=>{
       setGenStatus("Status: ZIP pronto ✅");
     });
 
-    $("publishBtn")?.addEventListener("click", () => {
-      alert("Publish fica pra etapa 2. Agora é Factory estável + templates + comandos.");
+    $("publishBtn")?.addEventListener("click", async () => {
+      alert("Publish ainda não está ligado nesta versão (core estável primeiro).");
     });
 
     $("copyLinkBtn")?.addEventListener("click", async () => {
@@ -801,14 +939,13 @@ self.addEventListener("fetch",(e)=>{
       localStorage.removeItem(LS.settings);
       localStorage.removeItem(LS.apps);
       localStorage.removeItem(LS.activeAppId);
-      localStorage.removeItem(LS.adminPin);
-      localStorage.removeItem(LS.adminUnlockUntil);
+      localStorage.removeItem(LS.pendingAction);
 
       state.settings = loadSettings();
       state.apps = [];
       setActiveAppId("");
+      setPendingAction(null);
 
-      seedIfEmpty();
       renderAll();
       alert("Factory resetado ✅");
     });
@@ -817,27 +954,11 @@ self.addEventListener("fetch",(e)=>{
   function wireAdmin() {
     $("adminUnlockBtn")?.addEventListener("click", () => {
       const pin = String($("adminPinInput")?.value || "").trim();
-
-      // emergência: 0000 reseta PIN pra 1122 e destrava
-      if (pin === "0000") {
-        setPin(DEFAULT_PIN);
-        unlock(15);
-        renderAdminState();
-        alert("PIN resetado para 1122 ✅ (Admin destravado 15min)");
-        $("adminPinInput").value = "";
-        return;
-      }
-
-      const ok = pin === getPin();
-      if (!ok) {
-        renderAdminState();
-        return alert("PIN errado ❌\nDica: digite 0000 pra resetar o PIN pra 1122.");
-      }
-
+      if (pin !== getPin()) return alert("PIN errado ❌");
       unlock(15);
       $("adminPinInput").value = "";
       renderAdminState();
-      alert("Admin destravado ✅ (15min)");
+      alert("Admin UNLOCK ✅ (15min)");
     });
 
     $("diagBtn")?.addEventListener("click", async () => {
@@ -848,22 +969,22 @@ self.addEventListener("fetch",(e)=>{
     $("copyDiagBtn")?.addEventListener("click", async () => {
       const rep = await buildDiagnosisReport();
       try { await navigator.clipboard.writeText(rep); alert("Diagnóstico copiado ✅"); }
-      catch { alert("iOS bloqueou copiar. Copie manual."); }
+      catch { alert("iOS bloqueou copiar. Copie manual do texto."); }
       setAdminOut(rep);
     });
 
     $("clearPwaBtn")?.addEventListener("click", async () => {
-      if (!isUnlocked()) return alert("Admin bloqueado 🔒 (Unlock primeiro).");
-      if (!confirm("Vai limpar caches + desregistrar SW e recarregar. Continuar?")) return;
+      if (!guardUnlocked()) return;
+      if (!confirm("Vai limpar cache + desregistrar SW e recarregar. Continuar?")) return;
       await nukePwaCache();
       alert("Cache limpo ✅ Recarregando…");
       location.reload();
     });
 
     $("exportBtn")?.addEventListener("click", () => {
-      if (!isUnlocked()) return alert("Admin bloqueado 🔒 (Unlock primeiro).");
+      if (!guardUnlocked()) return;
       const payload = {
-        version: 1,
+        version: 2,
         exportedAt: new Date().toISOString(),
         settings: loadSettings(),
         apps: loadApps(),
@@ -873,69 +994,43 @@ self.addEventListener("fetch",(e)=>{
     });
 
     $("importBtn")?.addEventListener("click", async () => {
-      if (!isUnlocked()) return alert("Admin bloqueado 🔒 (Unlock primeiro).");
+      if (!guardUnlocked()) return;
       const file = await pickFile();
       if (!file) return;
       const text = await file.text();
       let data = null;
       try { data = JSON.parse(text); } catch { return alert("JSON inválido."); }
-
       try {
         if (data.settings) localStorage.setItem(LS.settings, JSON.stringify(data.settings));
         if (Array.isArray(data.apps)) localStorage.setItem(LS.apps, JSON.stringify(data.apps));
         if (typeof data.activeAppId === "string") localStorage.setItem(LS.activeAppId, data.activeAppId);
       } catch (e) { return alert("Falha import: " + e.message); }
-
       alert("Import OK ✅ Recarregando…");
       location.reload();
     });
 
-    // IA offline
     $("aiRunBtn")?.addEventListener("click", () => {
-      if (!isUnlocked()) return alert("Admin bloqueado 🔒 (Unlock primeiro).");
-      const input = $("aiInput")?.value || "";
-      const res = aiSuggest(input);
-      state.aiSuggestion = res.suggestion || null;
-      setAiOut(res.text);
+      if (!guardUnlocked()) return;
+      aiRun();
     });
-
     $("aiClearBtn")?.addEventListener("click", () => {
-      $("aiInput").value = "";
-      state.aiSuggestion = null;
+      if (!guardUnlocked()) return;
+      if ($("aiInput")) $("aiInput").value = "";
       setAiOut("—");
+      setPendingAction(null);
     });
-
-    $("aiApplyBtn")?.addEventListener("click", async () => {
-      if (!isUnlocked()) return alert("Admin bloqueado 🔒 (Unlock primeiro).");
-      if (!state.aiSuggestion) return alert("Não tem sugestão pra aplicar.");
-      await aiApply(state.aiSuggestion);
-      state.aiSuggestion = null;
-      setAiOut("Aplicado ✅");
+    $("aiApplyBtn")?.addEventListener("click", () => {
+      if (!guardUnlocked()) return;
+      aiApply();
     });
-
     $("aiDiscardBtn")?.addEventListener("click", () => {
-      state.aiSuggestion = null;
-      setAiOut("Descartado ✅");
+      if (!guardUnlocked()) return;
+      aiDiscard();
     });
   }
 
-  function renderTemplatesSelect() {
-    const sel = $("newTemplate");
-    if (!sel) return;
-    sel.innerHTML = "";
-    getTemplates().forEach((t) => {
-      const opt = document.createElement("option");
-      opt.value = t.id;
-      opt.textContent = t.name;
-      sel.appendChild(opt);
-    });
-  }
-
+  // ===================== Render all =====================
   function renderAll() {
-    state.apps = loadApps();
-    state.settings = loadSettings();
-    state.activeAppId = getActiveAppId();
-
     renderTemplatesSelect();
     renderAppsList();
     renderEditor();
@@ -944,12 +1039,68 @@ self.addEventListener("fetch",(e)=>{
     renderAdminState();
   }
 
+  // ===================== Utils =====================
+  function escapeHtml(s) {
+    return String(s ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
+
+  // ===================== Loader de módulos externos =====================
+  async function loadOptionalModules() {
+    // Se você tem esses arquivos, o core tenta carregar.
+    // Se não tiver, segue sem erro.
+    const files = [
+      "./js/core.guard.js",
+      "./js/templates.catalog.js",
+      "./js/templates.js",
+      "./js/router.js",
+      "./js/ai.v2.js",
+      "./js/admin.js",
+    ];
+
+    function loadScript(src) {
+      return new Promise((resolve) => {
+        const s = document.createElement("script");
+        s.src = src;
+        s.async = false; // mantém ordem
+        s.onload = () => resolve(true);
+        s.onerror = () => resolve(false);
+        document.head.appendChild(s);
+      });
+    }
+
+    for (const f of files) {
+      try { await loadScript(f); } catch {}
+    }
+  }
+
+  // ===================== API pública =====================
+  function exposeApi() {
+    window.RCF = window.RCF || {};
+    window.RCF.core = {
+      LS,
+      loadSettings, saveSettings,
+      loadApps, saveApps,
+      getActiveAppId, setActiveAppId,
+      buildDiagnosisReport,
+      nukePwaCache,
+      createApp,
+      pickAppById,
+    };
+  }
+
   // ===================== Init =====================
-  function init() {
+  async function init() {
     logInfo("RCF init…");
 
-    seedIfEmpty();
+    // (1) carrega módulos (se tiver)
+    await loadOptionalModules();
 
+    // (2) wires + render
     wireTabs();
     wireNewApp();
     wireEditor();
@@ -960,11 +1111,21 @@ self.addEventListener("fetch",(e)=>{
     renderAll();
     showTab("dashboard");
 
+    exposeApi();
+
     setStatus("Pronto ✅");
     logInfo("RCF pronto ✅");
+
+    // se tiver ação pendente, deixa avisado no painel IA
+    if (state.pendingAction?.apply) {
+      setAiOut("⚠️ Existe sugestão pendente. Aperte 'Aplicar sugestão' ou 'Descartar'.");
+    }
   }
 
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
-  else init();
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init, { once: true });
+  } else {
+    init();
+  }
 
 })();
