@@ -2,11 +2,11 @@
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>RControl Factory</title>
   <meta name="theme-color" content="#0b1220" />
-  <link rel="manifest" href="./manifest.json" />
-  <link rel="stylesheet" href="./styles.css" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="stylesheet" href="styles.css" />
 </head>
 
 <body>
@@ -25,7 +25,7 @@
       <button class="tab" data-tab="editor">Editor</button>
       <button class="tab" data-tab="generator">Generator</button>
       <button class="tab" data-tab="settings">Settings</button>
-      <button class="tab admin-only hidden" data-tab="admin">Admin</button>
+      <button class="tab" data-tab="admin">Admin 🔒</button>
     </nav>
   </header>
 
@@ -139,7 +139,7 @@
     <!-- GENERATOR -->
     <section class="panel hidden" id="tab-generator">
       <h2>Generator</h2>
-      <p class="muted">Baixe ZIP ou (depois) publique no GitHub Pages para obter link de teste.</p>
+      <p class="muted">Baixe ZIP ou publique no GitHub Pages para obter link de teste.</p>
 
       <div class="card">
         <label class="field">
@@ -149,7 +149,7 @@
 
         <div class="row wrap">
           <button class="btn primary" id="downloadZipBtn">⬇️ Baixar ZIP</button>
-          <button class="btn" id="publishBtn">🚀 Publicar (em breve)</button>
+          <button class="btn" id="publishBtn">🚀 Publicar (GitHub Pages)</button>
           <button class="btn" id="copyLinkBtn">🔗 Copiar link</button>
         </div>
 
@@ -182,25 +182,23 @@
         <label class="field">
           <span>GitHub Token (PAT)</span>
           <input id="ghToken" placeholder="cola o token aqui" />
-          <span class="hint">⚠️ Por enquanto não publicamos por segurança. Depois vamos ligar via Worker seguro.</span>
+          <span class="hint">⚠️ Por enquanto NÃO é seguro guardar token no front. Vamos ligar Worker depois.</span>
         </label>
 
         <label class="field">
           <span>Prefixo do repositório</span>
           <input id="repoPrefix" value="rapp-" />
-          <span class="hint">Repo final vira: prefixo + id do app (ex: rapp-rquotas)</span>
         </label>
 
         <label class="field">
           <span>Base URL do Pages</span>
           <input id="pagesBase" placeholder="https://SEUUSER.github.io" />
-          <span class="hint">Normalmente: https://&lt;username&gt;.github.io</span>
         </label>
 
         <label class="field">
-          <span>Admin PIN (só você)</span>
-          <input id="adminPin" placeholder="ex: 4321" />
-          <span class="hint">Não é segurança real (front-end). Mas bloqueia curioso.</span>
+          <span>Admin PIN (local)</span>
+          <input id="adminPin" placeholder="ex: 1234" />
+          <span class="hint">PIN simples só pra bloquear curioso. Segurança real vem com Worker.</span>
         </label>
       </div>
 
@@ -212,38 +210,41 @@
 
     <!-- ADMIN -->
     <section class="panel hidden" id="tab-admin">
-      <h2>Admin (somente você)</h2>
-      <p class="muted">Auto-correção, diagnóstico, console estilo Replit e ferramentas de manutenção.</p>
+      <h2>Admin 🔒</h2>
+      <p class="muted">Área só sua: diagnóstico, auto-fix, console tipo Replit, export/import do estado.</p>
 
-      <div class="card">
+      <div class="card" id="adminGate">
         <h3>Login</h3>
+        <div class="muted small">Digite seu PIN (defina em Settings).</div>
         <div class="row wrap">
-          <input id="adminPinInput" placeholder="Digite seu PIN" style="max-width:220px" />
+          <input id="adminPinInput" placeholder="PIN" style="max-width:180px" />
           <button class="btn primary" id="adminLoginBtn">Entrar</button>
-          <button class="btn danger" id="adminLogoutBtn">Sair</button>
+          <button class="btn" id="adminLogoutBtn">Sair</button>
         </div>
-        <div class="muted small">Dica: defina o PIN em Settings.</div>
+        <div class="statusLine" id="adminAuthStatus">Status: bloqueado</div>
       </div>
 
-      <div class="card">
-        <h3>Doctor (auto-correção)</h3>
+      <div class="card" id="adminTools" style="display:none;">
+        <h3>Doctor (Auto-correção)</h3>
         <div class="row wrap">
-          <button class="btn" id="doctorRunBtn">Rodar diagnóstico</button>
-          <button class="btn" id="doctorFixStorageBtn">Fix storage</button>
-          <button class="btn" id="doctorFixCacheBtn">Fix cache/PWA</button>
-          <button class="btn" id="doctorResetAppsBtn">Reset apps locais</button>
+          <button class="btn" id="doctorRunBtn">🔎 Rodar diagnóstico</button>
+          <button class="btn" id="doctorFixStorageBtn">🛠 Fix storage</button>
+          <button class="btn" id="doctorFixCacheBtn">🧹 Limpar cache PWA/SW</button>
+          <button class="btn danger" id="doctorNukeBtn">💣 Reset total (local)</button>
+          <button class="btn" id="doctorRepairActiveBtn">🔧 Reparar app ativo</button>
         </div>
         <pre class="pre" id="doctorOut">—</pre>
       </div>
 
-      <div class="card">
+      <div class="card" id="adminConsole" style="display:none;">
         <h3>Console (tipo Replit)</h3>
-        <div class="muted small">Comandos: <code>doctor</code>, <code>fix cache</code>, <code>fix storage</code>, <code>export</code>, <code>import {json}</code>, <code>set active &lt;id&gt;</code>, <code>list</code></div>
+        <div class="muted small">Comandos: <code>doctor</code>, <code>fix cache</code>, <code>fix storage</code>, <code>export state</code>, <code>import state</code></div>
         <div class="row wrap">
-          <input id="adminCmd" placeholder="Digite um comando..." style="flex:1;min-width:220px" />
-          <button class="btn primary" id="adminRunCmdBtn">Executar</button>
+          <input id="adminCmd" placeholder="Digite comando..." style="flex:1;min-width:220px" />
+          <button class="btn primary" id="adminCmdRunBtn">Executar</button>
+          <button class="btn" id="adminCmdClearBtn">Limpar</button>
         </div>
-        <pre class="pre" id="adminConsoleOut">—</pre>
+        <pre class="pre" id="adminCmdOut">—</pre>
       </div>
     </section>
   </main>
@@ -251,11 +252,10 @@
   <!-- libs -->
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 
-  <!-- Cache-buster: aumenta o v quando quiser forçar update -->
-  <script src="./app.js?v=10"></script>
+  <!-- BUST CACHE -->
+  <script src="app.js?v=4"></script>
 
   <script>
-    // Service Worker do Factory (se você tiver sw.js em /app)
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
         navigator.serviceWorker.register("./sw.js").catch(() => {});
