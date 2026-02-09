@@ -5,9 +5,10 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>RControl Factory</title>
   <meta name="theme-color" content="#0b1220" />
-  <link rel="manifest" href="manifest.json" />
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="manifest" href="./manifest.json" />
+  <link rel="stylesheet" href="./styles.css" />
 </head>
+
 <body>
   <header class="topbar">
     <div class="brand">
@@ -24,6 +25,7 @@
       <button class="tab" data-tab="editor">Editor</button>
       <button class="tab" data-tab="generator">Generator</button>
       <button class="tab" data-tab="settings">Settings</button>
+      <button class="tab admin-only hidden" data-tab="admin">Admin</button>
     </nav>
   </header>
 
@@ -42,6 +44,7 @@
       <div class="card">
         <h3>Apps salvos</h3>
         <div id="appsList" class="list"></div>
+        <div class="muted small">Dica: toque em um app para selecionar como “ativo”.</div>
       </div>
 
       <div class="card">
@@ -53,6 +56,7 @@
     <!-- NEW APP -->
     <section class="panel hidden" id="tab-newapp">
       <h2>Criar novo app</h2>
+      <p class="muted">Cria a estrutura inicial e salva localmente. Depois você edita e publica.</p>
 
       <div class="grid2">
         <label class="field">
@@ -61,9 +65,9 @@
         </label>
 
         <label class="field">
-          <span>ID do app (minúsculo)</span>
+          <span>ID do app (sem espaço, minúsculo)</span>
           <input id="newId" placeholder="Ex: rquotas" />
-          <span class="hint">Sem maiúsculas. Só a-z, 0-9 e hífen.</span>
+          <span class="hint">Sem letras maiúsculas. Só a-z, 0-9 e hífen.</span>
         </label>
 
         <label class="field">
@@ -76,6 +80,7 @@
         <label class="field">
           <span>Template</span>
           <select id="newTemplate"></select>
+          <span class="hint">Comece com “PWA Base (com app.js + styles.css)”.</span>
         </label>
       </div>
 
@@ -93,6 +98,7 @@
     <!-- EDITOR -->
     <section class="panel hidden" id="tab-editor">
       <h2>Editor</h2>
+      <p class="muted">Edite os arquivos do app ativo e veja o preview.</p>
 
       <div class="card">
         <div class="row wrap">
@@ -102,8 +108,8 @@
           </div>
 
           <button class="btn" id="openPreviewBtn">👁️ Preview</button>
-          <button class="btn" id="saveFileBtn">💾 Salvar</button>
-          <button class="btn danger" id="resetFileBtn">↩️ Reset</button>
+          <button class="btn" id="saveFileBtn">💾 Salvar arquivo</button>
+          <button class="btn danger" id="resetFileBtn">↩️ Reset arquivo</button>
         </div>
 
         <div class="editorLayout">
@@ -123,6 +129,7 @@
 
       <div class="card">
         <h3>Preview</h3>
+        <div class="muted small">Se der cache, force refresh (Safari: recarregar) ou apague o PWA e instale de novo.</div>
         <div class="previewBox">
           <iframe id="previewFrame" title="Preview"></iframe>
         </div>
@@ -132,6 +139,7 @@
     <!-- GENERATOR -->
     <section class="panel hidden" id="tab-generator">
       <h2>Generator</h2>
+      <p class="muted">Baixe ZIP ou (depois) publique no GitHub Pages para obter link de teste.</p>
 
       <div class="card">
         <label class="field">
@@ -141,7 +149,7 @@
 
         <div class="row wrap">
           <button class="btn primary" id="downloadZipBtn">⬇️ Baixar ZIP</button>
-          <button class="btn" id="publishBtn">🚀 Publicar (GitHub Pages)</button>
+          <button class="btn" id="publishBtn">🚀 Publicar (em breve)</button>
           <button class="btn" id="copyLinkBtn">🔗 Copiar link</button>
         </div>
 
@@ -149,6 +157,7 @@
 
         <div class="card inner">
           <h3>Link do app</h3>
+          <div class="muted small">Quando publicar, o link aparece aqui.</div>
           <a id="publishedLink" href="#" target="_blank" rel="noreferrer">—</a>
         </div>
 
@@ -162,6 +171,7 @@
     <!-- SETTINGS -->
     <section class="panel hidden" id="tab-settings">
       <h2>Settings</h2>
+      <p class="muted">Configurações do Factory (salvas localmente no seu dispositivo).</p>
 
       <div class="grid2">
         <label class="field">
@@ -172,23 +182,68 @@
         <label class="field">
           <span>GitHub Token (PAT)</span>
           <input id="ghToken" placeholder="cola o token aqui" />
-          <span class="hint">Permissões: Contents (read/write) e Pages (read/write)</span>
+          <span class="hint">⚠️ Por enquanto não publicamos por segurança. Depois vamos ligar via Worker seguro.</span>
         </label>
 
         <label class="field">
           <span>Prefixo do repositório</span>
           <input id="repoPrefix" value="rapp-" />
+          <span class="hint">Repo final vira: prefixo + id do app (ex: rapp-rquotas)</span>
         </label>
 
         <label class="field">
           <span>Base URL do Pages</span>
           <input id="pagesBase" placeholder="https://SEUUSER.github.io" />
+          <span class="hint">Normalmente: https://&lt;username&gt;.github.io</span>
+        </label>
+
+        <label class="field">
+          <span>Admin PIN (só você)</span>
+          <input id="adminPin" placeholder="ex: 4321" />
+          <span class="hint">Não é segurança real (front-end). Mas bloqueia curioso.</span>
         </label>
       </div>
 
       <div class="row">
-        <button class="btn primary" id="saveSettingsBtn">Salvar</button>
-        <button class="btn danger" id="resetFactoryBtn">Reset Factory</button>
+        <button class="btn primary" id="saveSettingsBtn">Salvar Settings</button>
+        <button class="btn danger" id="resetFactoryBtn">Reset Factory (limpar local)</button>
+      </div>
+    </section>
+
+    <!-- ADMIN -->
+    <section class="panel hidden" id="tab-admin">
+      <h2>Admin (somente você)</h2>
+      <p class="muted">Auto-correção, diagnóstico, console estilo Replit e ferramentas de manutenção.</p>
+
+      <div class="card">
+        <h3>Login</h3>
+        <div class="row wrap">
+          <input id="adminPinInput" placeholder="Digite seu PIN" style="max-width:220px" />
+          <button class="btn primary" id="adminLoginBtn">Entrar</button>
+          <button class="btn danger" id="adminLogoutBtn">Sair</button>
+        </div>
+        <div class="muted small">Dica: defina o PIN em Settings.</div>
+      </div>
+
+      <div class="card">
+        <h3>Doctor (auto-correção)</h3>
+        <div class="row wrap">
+          <button class="btn" id="doctorRunBtn">Rodar diagnóstico</button>
+          <button class="btn" id="doctorFixStorageBtn">Fix storage</button>
+          <button class="btn" id="doctorFixCacheBtn">Fix cache/PWA</button>
+          <button class="btn" id="doctorResetAppsBtn">Reset apps locais</button>
+        </div>
+        <pre class="pre" id="doctorOut">—</pre>
+      </div>
+
+      <div class="card">
+        <h3>Console (tipo Replit)</h3>
+        <div class="muted small">Comandos: <code>doctor</code>, <code>fix cache</code>, <code>fix storage</code>, <code>export</code>, <code>import {json}</code>, <code>set active &lt;id&gt;</code>, <code>list</code></div>
+        <div class="row wrap">
+          <input id="adminCmd" placeholder="Digite um comando..." style="flex:1;min-width:220px" />
+          <button class="btn primary" id="adminRunCmdBtn">Executar</button>
+        </div>
+        <pre class="pre" id="adminConsoleOut">—</pre>
       </div>
     </section>
   </main>
@@ -196,12 +251,15 @@
   <!-- libs -->
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 
-  <!-- Factory -->
-  <script src="app.js?v=3"></script>
+  <!-- Cache-buster: aumenta o v quando quiser forçar update -->
+  <script src="./app.js?v=10"></script>
 
   <script>
+    // Service Worker do Factory (se você tiver sw.js em /app)
     if ("serviceWorker" in navigator) {
-      window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js").catch(() => {}));
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("./sw.js").catch(() => {});
+      });
     }
   </script>
 </body>
