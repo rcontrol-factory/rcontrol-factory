@@ -1,24 +1,29 @@
 /* =========================================================
-   RControl Factory — app.js (V3 SAFE)
-   - Nunca trava botões (init fail-safe)
-   - Seed automático: cria 1 app demo se storage estiver vazio
-   - Admin: PIN + Diagnóstico + Backup + IA Offline (sem auto-apply)
+   RControl Factory — app/app.js (ROTA 2 / CORE ESTÁVEL)
    - Offline-first (localStorage)
+   - Tabs: Dashboard / New App / Editor / Generator / Settings / Admin
    - Preview via iframe srcdoc
-   - ZIP via JSZip
+   - ZIP via JSZip (index.html já carrega)
+   - Admin: PIN + Diagnóstico + Backup + Limpar Cache PWA
+   - IA Offline (70%): sugestão -> aplicar -> descartar (NUNCA auto-aplica)
+   - Carrega módulos opcionais em /app/js/* sem quebrar se faltar
    ========================================================= */
 
-(() => {
+(function () {
   "use strict";
 
-  // --------------------- Storage Keys ---------------------
+  // ========= Anti duplo-init (evita bug de botões duplicados / travar) =========
+  if (window.__RCF_INITED__) return;
+  window.__RCF_INITED__ = true;
+
+  // ===================== Storage keys =====================
   const LS = {
-    settings: "rcf_settings_v4",
-    apps: "rcf_apps_v4",
-    activeAppId: "rcf_active_app_id_v4",
+    settings: "rcf_settings_v3",
+    apps: "rcf_apps_v3",
+    activeAppId: "rcf_active_app_id_v3",
     adminPin: "rcf_admin_pin_v1",
     adminUnlockUntil: "rcf_admin_unlock_until_v1",
-    aiDraft: "rcf_ai_draft_v1",
+    pendingAction: "rcf_pending_action_v1",
   };
 
   const DEFAULT_SETTINGS = {
@@ -26,11 +31,13 @@
     ghToken: "",
     repoPrefix: "rapp-",
     pagesBase: "",
+    openaiKey: "",
+    openaiModel: "gpt-4.1",
   };
 
   const FILE_ORDER = ["index.html", "app.js", "styles.css", "manifest.json", "sw.js"];
 
-  // --------------------- DOM Helpers ---------------------
+  // ===================== DOM helpers =====================
   const $ = (id) => document.getElementById(id);
   const qsa = (sel) => Array.from(document.querySelectorAll(sel));
 
@@ -38,21 +45,23 @@
     try { return JSON.parse(s); } catch { return fallback; }
   }
 
-  // --------------------- Logs ---------------------
+  // ===================== Logs (iPhone friendly) =====================
   const __LOG_MAX = 300;
   const __logs = [];
-  function pushLog(level, ...parts) {
+
+  function pushLog(level, parts) {
     const time = new Date().toISOString().slice(11, 19);
-    const msg = parts.map(p => {
+    const msg = (parts || []).map((p) => {
       try { return typeof p === "string" ? p : JSON.stringify(p); }
       catch { return String(p); }
     }).join(" ");
     __logs.push({ time, level, msg });
     while (__logs.length > __LOG_MAX) __logs.shift();
   }
-  const logInfo = (...a) => pushLog("log", ...a);
-  const logWarn = (...a) => pushLog("warn", ...a);
-  const logError = (...a) => pushLog("error", ...a);
+
+  function logInfo(...a) { pushLog("log", a); }
+  function logWarn(...a) { pushLog("warn", a); }
+  function logError(...a) { pushLog("error", a); }
 
   window.addEventListener("error", (e) => {
     logError("JS ERROR:", e.message || "Erro", e.filename, e.lineno, e.colno);
@@ -61,37 +70,38 @@
     logError("PROMISE REJECT:", e.reason);
   });
 
-  // --------------------- State ---------------------
-  let settings = loadSettings();
-  let apps = loadApps();
-  let activeAppId = getActiveAppId();
-  let currentFile = "index.html";
-
-  // --------------------- Load / Save ---------------------
+  // ===================== Load/Save =====================
   function loadSettings() {
     const raw = localStorage.getItem(LS.settings);
     const data = raw ? safeJsonParse(raw, {}) : {};
     return { ...DEFAULT_SETTINGS, ...(data || {}) };
   }
-  function saveSettings() {
-    localStorage.setItem(LS.settings, JSON.stringify(settings));
-  }
+  function saveSettings() { localStorage.setItem(LS.settings, JSON.stringify(state.settings)); }
+
   function loadApps() {
     const raw = localStorage.getItem(LS.apps);
     return raw ? safeJsonParse(raw, []) : [];
   }
-  function saveApps() {
-    localStorage.setItem(LS.apps, JSON.stringify(apps));
-  }
+  function saveApps() { localStorage.setItem(LS.apps, JSON.stringify(state.apps)); }
+
   function setActiveAppId(id) {
-    activeAppId = id || "";
-    localStorage.setItem(LS.activeAppId, activeAppId);
+    state.activeAppId = id || "";
+    localStorage.setItem(LS.activeAppId, state.activeAppId);
   }
   function getActiveAppId() {
     return localStorage.getItem(LS.activeAppId) || "";
   }
 
-  // --------------------- UI Status ---------------------
+  // ===================== State =====================
+  const state = {
+    settings: loadSettings(),
+    apps: loadApps(),
+    activeAppId: getActiveAppId(),
+    currentFile: "index.html",
+    pendingAction: safeJsonParse(localStorage.getItem(LS.pendingAction) || "null", null),
+  };
+
+  // ===================== UI status =====================
   function setStatus(msg) {
     const el = $("statusBox");
     if (el) el.textContent = msg;
@@ -102,34 +112,27 @@
     if (el) el.textContent = msg;
     logInfo("GEN:", msg);
   }
+  function setAdminOut(text) {
+    const el = $("adminOut");
+    if (el) el.textContent = text || "—";
+  }
+  function setAiOut(text) {
+    const el = $("aiOut");
+    if (el) el.textContent = text || "—";
+  }
 
-  // --------------------- Tabs (FAIL-SAFE) ---------------------
+  // ===================== Tabs =====================
   const TAB_IDS = ["dashboard", "newapp", "editor", "generator", "settings", "admin"];
 
   function showTab(tab) {
-    try {
-      TAB_IDS.forEach((t) => {
-        const sec = $(`tab-${t}`);
-        if (sec) sec.classList.toggle("hidden", t !== tab);
-      });
-      qsa(".tab").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
-    } catch (e) { logError("showTab falhou:", e); }
-  }
-
-  function wireTabsFailSafe() {
-    qsa(".tab").forEach((b) => {
-      b.addEventListener("click", () => {
-        const t = b.dataset.tab;
-        if (t) showTab(t);
-      });
+    TAB_IDS.forEach((t) => {
+      const sec = $(`tab-${t}`);
+      if (sec) sec.classList.toggle("hidden", t !== tab);
     });
-
-    $("goNewApp")?.addEventListener("click", () => showTab("newapp"));
-    $("goEditor")?.addEventListener("click", () => showTab("editor"));
-    $("goGenerator")?.addEventListener("click", () => showTab("generator"));
+    qsa(".tab").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
   }
 
-  // --------------------- Validation ---------------------
+  // ===================== Validation =====================
   function sanitizeId(raw) {
     return (raw || "")
       .trim()
@@ -149,7 +152,7 @@
     return errors;
   }
 
-  // --------------------- Templates ---------------------
+  // ===================== Templates (core) =====================
   function applyVars(text, app) {
     return String(text).replaceAll("{{APP_NAME}}", app.name).replaceAll("{{APP_ID}}", app.id);
   }
@@ -252,18 +255,36 @@ self.addEventListener("fetch",(e)=>{
     return { "index.html": index, "app.js": appjs, "styles.css": css, "manifest.json": manifest, "sw.js": sw };
   }
 
-  function getTemplates() {
-    return [{ id: "pwa-base", name: "PWA Base (com app.js + styles.css)", files: makePwaBaseTemplateFiles() }];
+  function getTemplatesCore() {
+    return [
+      { id: "pwa-base", name: "PWA Base (com app.js + styles.css)", files: makePwaBaseTemplateFiles() },
+    ];
   }
 
-  // --------------------- App CRUD ---------------------
+  // ============ Módulos externos (se existirem) ============
+  // Se você criou /app/js/templates.catalog.js etc, o core tenta usar,
+  // mas NÃO quebra se não tiver.
+  function getTemplates() {
+    const ext = window.RCF?.templates?.getTemplates;
+    if (typeof ext === "function") {
+      try {
+        const list = ext();
+        if (Array.isArray(list) && list.length) return list;
+      } catch (e) {
+        logWarn("templates externo falhou:", e);
+      }
+    }
+    return getTemplatesCore();
+  }
+
+  // ===================== App CRUD =====================
   function pickAppById(id) {
-    return apps.find((a) => a && a.id === id) || null;
+    return state.apps.find((a) => a && a.id === id) || null;
   }
 
   function ensureActiveApp() {
-    if (activeAppId && pickAppById(activeAppId)) return;
-    if (apps.length) setActiveAppId(apps[0].id);
+    if (state.activeAppId && pickAppById(state.activeAppId)) return;
+    if (state.apps.length) setActiveAppId(state.apps[0].id);
     else setActiveAppId("");
   }
 
@@ -285,39 +306,13 @@ self.addEventListener("fetch",(e)=>{
       baseFiles: { ...files },
     };
 
-    apps.unshift(app);
+    state.apps.unshift(app);
     saveApps();
     setActiveAppId(id);
     return app;
   }
 
-  // --------------------- SEED (se não tiver nada) ---------------------
-  function ensureSeedIfEmpty() {
-    try {
-      if (apps.length) return;
-      // cria um demo automático
-      createApp({
-        name: "RControl Demo",
-        id: "rcontrol-demo",
-        type: "pwa",
-        templateId: "pwa-base",
-      });
-      logInfo("SEED criado: rcontrol-demo");
-    } catch (e) {
-      logError("Falha ao criar SEED:", e);
-    }
-  }
-
-  // --------------------- Render ---------------------
-  function escapeHtml(s) {
-    return String(s ?? "")
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;")
-      .replaceAll("'", "&#039;");
-  }
-
+  // ===================== Render =====================
   function renderTemplatesSelect() {
     const sel = $("newTemplate");
     if (!sel) return;
@@ -336,15 +331,15 @@ self.addEventListener("fetch",(e)=>{
     if (!root) return;
     root.innerHTML = "";
 
-    if (!apps.length) {
+    if (!state.apps.length) {
       root.innerHTML = `<div class="muted">Nenhum app salvo ainda.</div>`;
       return;
     }
 
-    apps.forEach((a) => {
+    state.apps.forEach((a) => {
       const item = document.createElement("div");
       item.className = "item";
-      const isOn = a.id === activeAppId;
+      const isOn = a.id === state.activeAppId;
 
       item.innerHTML = `
         <div>
@@ -360,7 +355,6 @@ self.addEventListener("fetch",(e)=>{
         renderAppsList();
         renderEditor();
         renderGeneratorSelect();
-        showTab("editor");
       });
 
       root.appendChild(item);
@@ -369,7 +363,7 @@ self.addEventListener("fetch",(e)=>{
 
   function renderEditor() {
     ensureActiveApp();
-    const app = pickAppById(activeAppId);
+    const app = pickAppById(state.activeAppId);
 
     const label = $("activeAppLabel");
     if (label) label.textContent = app ? `${app.name} (${app.id})` : "—";
@@ -389,21 +383,21 @@ self.addEventListener("fetch",(e)=>{
       return;
     }
 
-    if (!FILE_ORDER.includes(currentFile)) currentFile = "index.html";
+    if (!FILE_ORDER.includes(state.currentFile)) state.currentFile = "index.html";
 
     FILE_ORDER.forEach((f) => {
       const b = document.createElement("button");
-      b.className = "fileBtn" + (f === currentFile ? " active" : "");
+      b.className = "fileBtn" + (f === state.currentFile ? " active" : "");
       b.textContent = f;
       b.addEventListener("click", () => {
-        currentFile = f;
+        state.currentFile = f;
         renderEditor();
       });
       fl.appendChild(b);
     });
 
-    cur.textContent = currentFile;
-    area.value = app.files[currentFile] ?? "";
+    cur.textContent = state.currentFile;
+    area.value = app.files[state.currentFile] ?? "";
     refreshPreview(app);
   }
 
@@ -422,7 +416,7 @@ self.addEventListener("fetch",(e)=>{
       : `<!doctype html>
 <html lang="pt-BR"><head>
 <meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
 <style>${css}</style>
 </head><body>
 ${html}
@@ -450,16 +444,24 @@ ${html}
     if (!sel) return;
 
     sel.innerHTML = "";
-    apps.forEach((a) => {
+    state.apps.forEach((a) => {
       const opt = document.createElement("option");
       opt.value = a.id;
       opt.textContent = `${a.name} (${a.id})`;
       sel.appendChild(opt);
     });
 
-    if (activeAppId) sel.value = activeAppId;
+    if (state.activeAppId) sel.value = state.activeAppId;
   }
 
+  function renderSettings() {
+    if ($("ghUser")) $("ghUser").value = state.settings.ghUser || "";
+    if ($("ghToken")) $("ghToken").value = state.settings.ghToken || "";
+    if ($("repoPrefix")) $("repoPrefix").value = state.settings.repoPrefix || "rapp-";
+    if ($("pagesBase")) $("pagesBase").value = state.settings.pagesBase || (state.settings.ghUser ? `https://${state.settings.ghUser}.github.io` : "");
+  }
+
+  // ===================== ZIP =====================
   async function downloadZip(app) {
     if (typeof JSZip === "undefined") {
       alert("JSZip não carregou. Verifique o index.html (script do jszip).");
@@ -485,35 +487,7 @@ ${html}
     URL.revokeObjectURL(url);
   }
 
-  function renderSettings() {
-    $("ghUser") && ($("ghUser").value = settings.ghUser || "");
-    $("ghToken") && ($("ghToken").value = settings.ghToken || "");
-    $("repoPrefix") && ($("repoPrefix").value = settings.repoPrefix || "rapp-");
-    $("pagesBase") && ($("pagesBase").value = settings.pagesBase || (settings.ghUser ? `https://${settings.ghUser}.github.io` : ""));
-  }
-
-  // --------------------- Admin: PIN ---------------------
-  const DEFAULT_PIN = "1122";
-  function getPin() { return localStorage.getItem(LS.adminPin) || DEFAULT_PIN; }
-  function isUnlocked() {
-    const until = Number(localStorage.getItem(LS.adminUnlockUntil) || "0");
-    return until && until > Date.now();
-  }
-  function unlock(minutes) {
-    const ms = (Number(minutes || 15) * 60 * 1000);
-    localStorage.setItem(LS.adminUnlockUntil, String(Date.now() + ms));
-  }
-  function renderAdminState() {
-    const st = $("adminState");
-    if (!st) return;
-    st.textContent = isUnlocked() ? "UNLOCK ✅" : "LOCKED 🔒";
-  }
-  function guardUnlocked() {
-    if (isUnlocked()) return true;
-    alert("Admin está bloqueado 🔒 (digite PIN e Unlock).");
-    return false;
-  }
-
+  // ===================== PWA cache nuke =====================
   async function nukePwaCache() {
     try {
       if ("caches" in window) {
@@ -577,20 +551,57 @@ ${html}
       "appsList","statusBox","newName","newId","newTemplate","createAppBtn",
       "activeAppLabel","filesList","codeArea","previewFrame","genAppSelect",
       "downloadZipBtn","genStatus","ghUser","ghToken","repoPrefix","pagesBase",
-      "adminUnlockBtn","adminState"
+      "adminPinInput","adminUnlockBtn","adminState","diagBtn","copyDiagBtn",
+      "clearPwaBtn","adminOut","exportBtn","importBtn",
+      "aiInput","aiRunBtn","aiClearBtn","aiApplyBtn","aiDiscardBtn","aiOut"
     ];
     const missing = must.filter(id => !document.getElementById(id));
     add("DOM missing IDs", missing.length ? missing.join(", ") : "OK");
 
     add("---- últimos logs ----", "");
-    const tail = __logs.slice(-80).map(l => `[${l.time}] ${String(l.level).toUpperCase()} ${l.msg}`);
+    const tail = __logs.slice(-60).map(l => `[${l.time}] ${String(l.level).toUpperCase()} ${l.msg}`);
     lines.push(tail.join("\n") || "(sem logs)");
+
+    add("---- módulos externos ----", "");
+    add("window.RCF", window.RCF ? "SIM" : "NÃO");
+    add("templates.getTemplates", typeof window.RCF?.templates?.getTemplates === "function" ? "SIM" : "NÃO");
 
     return lines.join("\n");
   }
 
-  function downloadText(filename, text, mime = "application/json;charset=utf-8") {
-    const blob = new Blob([String(text || "")], { type: mime });
+  // ===================== Admin (PIN) =====================
+  const DEFAULT_PIN = "1122";
+
+  function getPin() { return localStorage.getItem(LS.adminPin) || DEFAULT_PIN; }
+
+  function isUnlocked() {
+    const until = Number(localStorage.getItem(LS.adminUnlockUntil) || "0");
+    return until && until > Date.now();
+  }
+
+  function unlock(minutes) {
+    const ms = (Number(minutes || 15) * 60 * 1000);
+    localStorage.setItem(LS.adminUnlockUntil, String(Date.now() + ms));
+  }
+
+  function lockAdmin() { localStorage.setItem(LS.adminUnlockUntil, "0"); }
+
+  function renderAdminState() {
+    const st = $("adminState");
+    if (!st) return;
+    st.textContent = isUnlocked() ? "UNLOCK ✅" : "LOCKED 🔒";
+    st.classList.toggle("on", isUnlocked());
+  }
+
+  function guardUnlocked() {
+    if (isUnlocked()) return true;
+    alert("Admin bloqueado 🔒 (digite o PIN e Unlock).");
+    return false;
+  }
+
+  // ===================== Backup =====================
+  function downloadText(filename, text) {
+    const blob = new Blob([String(text || "")], { type: "application/json;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -601,17 +612,207 @@ ${html}
     URL.revokeObjectURL(url);
   }
 
-  function pickFile(accept = "application/json,.json") {
+  function pickFile() {
     return new Promise((resolve) => {
       const input = document.createElement("input");
       input.type = "file";
-      input.accept = accept;
+      input.accept = "application/json,.json";
       input.onchange = () => resolve(input.files && input.files[0] ? input.files[0] : null);
       input.click();
     });
   }
 
-  // --------------------- Wire ---------------------
+  // ===================== IA Offline (70%) =====================
+  function setPendingAction(actionObjOrNull) {
+    state.pendingAction = actionObjOrNull;
+    if (actionObjOrNull) localStorage.setItem(LS.pendingAction, JSON.stringify(actionObjOrNull));
+    else localStorage.removeItem(LS.pendingAction);
+  }
+
+  function aiHelpText() {
+    return [
+      "IA Offline (70%) — exemplos:",
+      "• help",
+      "• status",
+      "• list",
+      "• create app RQuotas",
+      "• select rquotas",
+      "• fix sw (só sugestão, você aplica)",
+      "",
+      "Regra: ela SEMPRE gera uma sugestão. Só aplica quando você aperta 'Aplicar sugestão'."
+    ].join("\n");
+  }
+
+  function aiPlanFromText(inputRaw) {
+    const input = String(inputRaw || "").trim();
+    if (!input) return { ok:false, msg:"Digite um comando." };
+
+    const lower = input.toLowerCase();
+
+    if (lower === "help" || lower === "ajuda") {
+      return { ok:true, plan:{ title:"Ajuda", steps:[aiHelpText()], apply:null } };
+    }
+
+    if (lower === "status") {
+      const active = pickAppById(state.activeAppId);
+      const s = [
+        `Apps: ${state.apps.length}`,
+        `Ativo: ${active ? (active.name + " (" + active.id + ")") : "—"}`,
+        `Admin: ${isUnlocked() ? "UNLOCK" : "LOCKED"}`
+      ].join("\n");
+      return { ok:true, plan:{ title:"Status", steps:[s], apply:null } };
+    }
+
+    if (lower === "list" || lower === "listar" || lower === "listar apps") {
+      const list = state.apps.map(a => `- ${a.name} (${a.id})`).join("\n") || "(nenhum app salvo)";
+      return { ok:true, plan:{ title:"Lista de apps", steps:[list], apply:null } };
+    }
+
+    // create app <name>
+    if (lower.startsWith("create app ") || lower.startsWith("criar app ")) {
+      const name = input.replace(/^create app\s+/i, "").replace(/^criar app\s+/i, "").trim();
+      const id = sanitizeId(name);
+      const errors = validateApp(name, id);
+      if (errors.length) return { ok:false, msg:"Erro:\n" + errors.join("\n") };
+
+      const plan = {
+        title: "Criar app",
+        steps: [
+          `Vou criar: ${name} (${id})`,
+          "Template: pwa-base",
+          "Depois você pode editar no Editor e gerar ZIP."
+        ],
+        apply: { type:"CREATE_APP", payload:{ name, id, type:"pwa", templateId:"pwa-base" } }
+      };
+      return { ok:true, plan };
+    }
+
+    // select <id>
+    if (lower.startsWith("select ") || lower.startsWith("selecionar ")) {
+      const id = sanitizeId(input.replace(/^select\s+/i, "").replace(/^selecionar\s+/i, "").trim());
+      const found = pickAppById(id);
+      if (!found) return { ok:false, msg:`Não achei app com id: ${id}` };
+      return {
+        ok:true,
+        plan:{
+          title:"Selecionar app",
+          steps:[`Vou selecionar: ${found.name} (${found.id})`],
+          apply:{ type:"SELECT_APP", payload:{ id: found.id } }
+        }
+      };
+    }
+
+    // fix sw (apenas sugestão)
+    if (lower === "fix sw" || lower === "corrigir sw") {
+      return {
+        ok:true,
+        plan:{
+          title:"Sugestão SW",
+          steps:[
+            "Sugestão: quando publicar mudança grande, troque a versão do SW no index.html (v=DATA) e/ou mude CACHE no sw.js.",
+            "Se ainda travar: Admin → Limpar Cache PWA e recarregar."
+          ],
+          apply:null
+        }
+      };
+    }
+
+    // fallback
+    return {
+      ok:true,
+      plan:{
+        title:"Entendi (modo offline)",
+        steps:[
+          "Ainda não reconheço esse comando no modo offline.",
+          "Tente: help | status | list | create app NOME | select ID | fix sw"
+        ],
+        apply:null
+      }
+    };
+  }
+
+  function aiRun() {
+    const input = $("aiInput")?.value || "";
+    const res = aiPlanFromText(input);
+
+    if (!res.ok) {
+      setPendingAction(null);
+      setAiOut(res.msg || "Erro.");
+      return;
+    }
+
+    const plan = res.plan;
+    setPendingAction(plan.apply ? { planTitle: plan.title, apply: plan.apply, createdAt: Date.now() } : null);
+
+    const text = [
+      `✅ ${plan.title}`,
+      "",
+      ...(plan.steps || []),
+      "",
+      plan.apply ? "⚠️ Existe uma sugestão pronta. Aperte 'Aplicar sugestão' pra executar." : "ℹ️ Sem ação para aplicar."
+    ].join("\n");
+
+    setAiOut(text);
+  }
+
+  function aiApply() {
+    if (!state.pendingAction || !state.pendingAction.apply) {
+      alert("Não tem sugestão pendente.");
+      return;
+    }
+
+    const a = state.pendingAction.apply;
+
+    try {
+      if (a.type === "CREATE_APP") {
+        const { name, id, type, templateId } = a.payload || {};
+        if (pickAppById(id)) throw new Error("Já existe um app com esse ID.");
+        createApp({ name, id, type, templateId });
+        renderAppsList();
+        renderEditor();
+        renderGeneratorSelect();
+        setStatus(`App criado: ${name} (${id}) ✅`);
+      }
+
+      if (a.type === "SELECT_APP") {
+        const { id } = a.payload || {};
+        if (!pickAppById(id)) throw new Error("App não encontrado.");
+        setActiveAppId(id);
+        renderAppsList();
+        renderEditor();
+        renderGeneratorSelect();
+        setStatus(`App ativo: ${id} ✅`);
+      }
+
+      setPendingAction(null);
+      setAiOut("✅ Sugestão aplicada com sucesso.");
+    } catch (e) {
+      setAiOut("❌ Falha ao aplicar: " + (e?.message || String(e)));
+    }
+  }
+
+  function aiDiscard() {
+    setPendingAction(null);
+    setAiOut("Descartado ✅");
+  }
+
+  // ===================== Wire Events =====================
+  function wireTabs() {
+    qsa(".tab").forEach((b) => {
+      b.addEventListener("click", () => {
+        const t = b.dataset.tab;
+        if (!t) return;
+        showTab(t);
+        // Admin state sempre atualiza quando entra
+        if (t === "admin") renderAdminState();
+      });
+    });
+
+    $("goNewApp")?.addEventListener("click", () => showTab("newapp"));
+    $("goEditor")?.addEventListener("click", () => showTab("editor"));
+    $("goGenerator")?.addEventListener("click", () => showTab("generator"));
+  }
+
   function wireNewApp() {
     const nameEl = $("newName");
     const idEl = $("newId");
@@ -640,8 +841,12 @@ ${html}
       if (errors.length) return alert("Corrija antes de salvar:\n\n" + errors.join("\n"));
       if (pickAppById(id)) return alert("Já existe um app com esse ID.");
 
-      const templateId = $("newTemplate")?.value || "pwa-base";
-      createApp({ name, id, type: "pwa", templateId });
+      createApp({
+        name,
+        id,
+        type: $("newType")?.value || "pwa",
+        templateId: $("newTemplate")?.value || "pwa-base",
+      });
 
       nameEl.value = "";
       idEl.value = "";
@@ -659,26 +864,31 @@ ${html}
 
   function wireEditor() {
     $("saveFileBtn")?.addEventListener("click", () => {
-      const app = pickAppById(activeAppId);
+      const app = pickAppById(state.activeAppId);
       if (!app) return alert("Nenhum app ativo.");
-      app.files[currentFile] = $("codeArea")?.value ?? "";
+
+      app.files[state.currentFile] = $("codeArea")?.value ?? "";
       saveApps();
-      setStatus(`Salvo: ${currentFile} ✅`);
+
+      setStatus(`Salvo: ${state.currentFile} ✅`);
       renderEditor();
     });
 
     $("resetFileBtn")?.addEventListener("click", () => {
-      const app = pickAppById(activeAppId);
+      const app = pickAppById(state.activeAppId);
       if (!app) return alert("Nenhum app ativo.");
-      if (!confirm(`Resetar ${currentFile} para o padrão do template?`)) return;
-      app.files[currentFile] = app.baseFiles?.[currentFile] ?? "";
+
+      if (!confirm(`Resetar ${state.currentFile} para o padrão do template?`)) return;
+
+      app.files[state.currentFile] = app.baseFiles?.[state.currentFile] ?? "";
       saveApps();
-      setStatus(`Reset: ${currentFile} ✅`);
+
+      setStatus(`Reset: ${state.currentFile} ✅`);
       renderEditor();
     });
 
     $("openPreviewBtn")?.addEventListener("click", () => {
-      const app = pickAppById(activeAppId);
+      const app = pickAppById(state.activeAppId);
       if (!app) return;
       refreshPreview(app);
       setStatus("Preview atualizado ✅");
@@ -693,24 +903,35 @@ ${html}
     });
 
     $("downloadZipBtn")?.addEventListener("click", async () => {
-      const app = pickAppById($("genAppSelect")?.value || activeAppId);
+      const app = pickAppById($("genAppSelect")?.value || state.activeAppId);
       if (!app) return alert("Selecione um app.");
+
       setGenStatus("Status: gerando ZIP…");
       await downloadZip(app);
       setGenStatus("Status: ZIP pronto ✅");
     });
 
-    $("publishBtn")?.addEventListener("click", () => {
-      alert("Publish entra depois (primeiro Factory 100% liso).");
+    $("publishBtn")?.addEventListener("click", async () => {
+      alert("Publish ainda não está ligado nesta versão (core estável primeiro).");
+    });
+
+    $("copyLinkBtn")?.addEventListener("click", async () => {
+      const linkEl = $("publishedLink");
+      const link = linkEl?.href || "";
+      if (!link || link === location.href) return alert("Ainda não tem link.");
+
+      try { await navigator.clipboard.writeText(link); alert("Link copiado ✅"); }
+      catch { alert("Não consegui copiar. Copie manualmente:\n" + link); }
     });
   }
 
   function wireSettings() {
     $("saveSettingsBtn")?.addEventListener("click", () => {
-      settings.ghUser = ($("ghUser")?.value || "").trim();
-      settings.ghToken = ($("ghToken")?.value || "").trim();
-      settings.repoPrefix = ($("repoPrefix")?.value || "rapp-").trim() || "rapp-";
-      settings.pagesBase = ($("pagesBase")?.value || "").trim() || (settings.ghUser ? `https://${settings.ghUser}.github.io` : "");
+      state.settings.ghUser = ($("ghUser")?.value || "").trim();
+      state.settings.ghToken = ($("ghToken")?.value || "").trim();
+      state.settings.repoPrefix = ($("repoPrefix")?.value || "rapp-").trim() || "rapp-";
+      state.settings.pagesBase = ($("pagesBase")?.value || "").trim() || (state.settings.ghUser ? `https://${state.settings.ghUser}.github.io` : "");
+
       saveSettings();
       setStatus("Settings salvas ✅");
       alert("Settings salvas ✅");
@@ -721,11 +942,13 @@ ${html}
       localStorage.removeItem(LS.settings);
       localStorage.removeItem(LS.apps);
       localStorage.removeItem(LS.activeAppId);
-      localStorage.removeItem(LS.aiDraft);
-      settings = loadSettings();
-      apps = [];
+      localStorage.removeItem(LS.pendingAction);
+
+      state.settings = loadSettings();
+      state.apps = [];
       setActiveAppId("");
-      ensureSeedIfEmpty();
+      setPendingAction(null);
+
       renderAll();
       alert("Factory resetado ✅");
     });
@@ -734,36 +957,37 @@ ${html}
   function wireAdmin() {
     $("adminUnlockBtn")?.addEventListener("click", () => {
       const pin = String($("adminPinInput")?.value || "").trim();
-      if (pin !== (localStorage.getItem(LS.adminPin) || "1122")) return alert("PIN errado ❌");
+      if (pin !== getPin()) return alert("PIN errado ❌");
       unlock(15);
-      $("adminPinInput") && ($("adminPinInput").value = "");
+      $("adminPinInput").value = "";
       renderAdminState();
-      alert("Admin UNLOCK ✅ (15 min)");
+      alert("Admin UNLOCK ✅ (15min)");
     });
 
     $("diagBtn")?.addEventListener("click", async () => {
       const rep = await buildDiagnosisReport();
-      $("adminOut") && ($("adminOut").textContent = rep);
+      setAdminOut(rep);
     });
 
     $("copyDiagBtn")?.addEventListener("click", async () => {
       const rep = await buildDiagnosisReport();
       try { await navigator.clipboard.writeText(rep); alert("Diagnóstico copiado ✅"); }
-      catch { alert("iOS bloqueou copiar. Copie manualmente do painel."); }
-      $("adminOut") && ($("adminOut").textContent = rep);
+      catch { alert("iOS bloqueou copiar. Copie manual do texto."); }
+      setAdminOut(rep);
     });
 
     $("clearPwaBtn")?.addEventListener("click", async () => {
       if (!guardUnlocked()) return;
-      if (!confirm("Vai limpar cache PWA (caches + service worker). Continuar?")) return;
+      if (!confirm("Vai limpar cache + desregistrar SW e recarregar. Continuar?")) return;
       await nukePwaCache();
-      alert("Cache limpo ✅. Agora abra com ?v=2");
+      alert("Cache limpo ✅ Recarregando…");
+      location.reload();
     });
 
     $("exportBtn")?.addEventListener("click", () => {
       if (!guardUnlocked()) return;
       const payload = {
-        version: 1,
+        version: 2,
         exportedAt: new Date().toISOString(),
         settings: loadSettings(),
         apps: loadApps(),
@@ -784,16 +1008,31 @@ ${html}
         if (Array.isArray(data.apps)) localStorage.setItem(LS.apps, JSON.stringify(data.apps));
         if (typeof data.activeAppId === "string") localStorage.setItem(LS.activeAppId, data.activeAppId);
       } catch (e) { return alert("Falha import: " + e.message); }
-      settings = loadSettings();
-      apps = loadApps();
-      activeAppId = getActiveAppId();
-      ensureSeedIfEmpty();
-      renderAll();
-      alert("Import OK ✅. Abra com ?v=2");
+      alert("Import OK ✅ Recarregando…");
+      location.reload();
+    });
+
+    $("aiRunBtn")?.addEventListener("click", () => {
+      if (!guardUnlocked()) return;
+      aiRun();
+    });
+    $("aiClearBtn")?.addEventListener("click", () => {
+      if (!guardUnlocked()) return;
+      if ($("aiInput")) $("aiInput").value = "";
+      setAiOut("—");
+      setPendingAction(null);
+    });
+    $("aiApplyBtn")?.addEventListener("click", () => {
+      if (!guardUnlocked()) return;
+      aiApply();
+    });
+    $("aiDiscardBtn")?.addEventListener("click", () => {
+      if (!guardUnlocked()) return;
+      aiDiscard();
     });
   }
 
-  // --------------------- Render All ---------------------
+  // ===================== Render all =====================
   function renderAll() {
     renderTemplatesSelect();
     renderAppsList();
@@ -803,43 +1042,93 @@ ${html}
     renderAdminState();
   }
 
-  // --------------------- INIT ---------------------
-  function init() {
-    wireTabsFailSafe(); // sempre primeiro
+  // ===================== Utils =====================
+  function escapeHtml(s) {
+    return String(s ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
 
-    try {
-      logInfo("RCF init…");
+  // ===================== Loader de módulos externos =====================
+  async function loadOptionalModules() {
+    // Se você tem esses arquivos, o core tenta carregar.
+    // Se não tiver, segue sem erro.
+    const files = [
+      "./js/core.guard.js",
+      "./js/templates.catalog.js",
+      "./js/templates.js",
+      "./js/router.js",
+      "./js/ai.v2.js",
+      "./js/admin.js",
+    ];
 
-      // recarrega state
-      settings = loadSettings();
-      apps = loadApps();
-      activeAppId = getActiveAppId();
+    function loadScript(src) {
+      return new Promise((resolve) => {
+        const s = document.createElement("script");
+        s.src = src;
+        s.async = false; // mantém ordem
+        s.onload = () => resolve(true);
+        s.onerror = () => resolve(false);
+        document.head.appendChild(s);
+      });
+    }
 
-      // seed automático
-      ensureSeedIfEmpty();
-
-      // wires
-      wireNewApp();
-      wireEditor();
-      wireGenerator();
-      wireSettings();
-      wireAdmin();
-
-      // render
-      renderAll();
-      showTab("dashboard");
-
-      setStatus("Pronto ✅");
-      logInfo("RCF pronto ✅");
-    } catch (e) {
-      logError("INIT QUEBROU:", e);
-      showTab("dashboard");
-      setStatus("Pronto ✅ (modo seguro)");
-      alert("⚠️ Rodou em modo seguro. Vá em Admin → Diagnóstico.");
+    for (const f of files) {
+      try { await loadScript(f); } catch {}
     }
   }
 
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
-  else init();
+  // ===================== API pública =====================
+  function exposeApi() {
+    window.RCF = window.RCF || {};
+    window.RCF.core = {
+      LS,
+      loadSettings, saveSettings,
+      loadApps, saveApps,
+      getActiveAppId, setActiveAppId,
+      buildDiagnosisReport,
+      nukePwaCache,
+      createApp,
+      pickAppById,
+    };
+  }
+
+  // ===================== Init =====================
+  async function init() {
+    logInfo("RCF init…");
+
+    // (1) carrega módulos (se tiver)
+    await loadOptionalModules();
+
+    // (2) wires + render
+    wireTabs();
+    wireNewApp();
+    wireEditor();
+    wireGenerator();
+    wireSettings();
+    wireAdmin();
+
+    renderAll();
+    showTab("dashboard");
+
+    exposeApi();
+
+    setStatus("Pronto ✅");
+    logInfo("RCF pronto ✅");
+
+    // se tiver ação pendente, deixa avisado no painel IA
+    if (state.pendingAction?.apply) {
+      setAiOut("⚠️ Existe sugestão pendente. Aperte 'Aplicar sugestão' ou 'Descartar'.");
+    }
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init, { once: true });
+  } else {
+    init();
+  }
 
 })();
