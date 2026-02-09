@@ -2,30 +2,14 @@
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>RControl Factory</title>
-  <meta name="theme-color" content="#0b1220" />
-  <link rel="stylesheet" href="styles.css" />
-</head>
-<body>
-  <div id="root"></div>
-
-  <!-- Ordem importa -->
-  <script src="js/ai.js"></script>
-  <script src="js/templates.js"></script>
-  <script src="js/router.js"></script>
-  <script src="app.js"></script>
-</body>
-</html><!doctype html>
-<html lang="pt-BR">
-<head>
-  <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>RControl Factory</title>
   <meta name="theme-color" content="#0b1220" />
+
   <link rel="manifest" href="manifest.json" />
   <link rel="stylesheet" href="styles.css" />
 </head>
+
 <body>
   <header class="topbar">
     <div class="brand">
@@ -228,18 +212,19 @@
 
   <!-- libs -->
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+
+  <!-- Ordem importa -->
+  <script src="js/ai.js"></script>
+  <script src="js/templates.js"></script>
+  <script src="js/router.js"></script>
   <script src="app.js"></script>
+
   <script>
     if ("serviceWorker" in navigator) {
-      window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js").catch(() => {}));
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("./sw.js").catch(() => {});
+      });
     }
   </script>
 </body>
 </html>
-<hr>
-
-<h3>Teste OpenAI</h3>
-
-<button onclick="testOpenAIFromUI()">
-  🚀 Testar OpenAI
-</button>
