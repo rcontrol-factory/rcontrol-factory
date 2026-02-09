@@ -1,11 +1,11 @@
 /* =========================================================
-   RControl Factory — app/app.js (RECOVERY V2 - NO-BUTTON-DEAD)
-   Objetivo:
-   - Nunca travar os botões (fail-safe init)
-   - Bater com o index.html que você mandou (IDs e tabs)
+   RControl Factory — app.js (V3 SAFE)
+   - Nunca trava botões (init fail-safe)
+   - Seed automático: cria 1 app demo se storage estiver vazio
+   - Admin: PIN + Diagnóstico + Backup + IA Offline (sem auto-apply)
    - Offline-first (localStorage)
-   - Editor + Preview + Generator ZIP
-   - Admin: PIN + Diagnóstico + Backup + IA Offline (com aprovação)
+   - Preview via iframe srcdoc
+   - ZIP via JSZip
    ========================================================= */
 
 (() => {
@@ -38,7 +38,7 @@
     try { return JSON.parse(s); } catch { return fallback; }
   }
 
-  // --------------------- Logs (não quebra UI) ---------------------
+  // --------------------- Logs ---------------------
   const __LOG_MAX = 300;
   const __logs = [];
   function pushLog(level, ...parts) {
@@ -49,7 +49,6 @@
     }).join(" ");
     __logs.push({ time, level, msg });
     while (__logs.length > __LOG_MAX) __logs.shift();
-    // não mexe no DOM aqui (pra não travar)
   }
   const logInfo = (...a) => pushLog("log", ...a);
   const logWarn = (...a) => pushLog("warn", ...a);
@@ -77,7 +76,6 @@
   function saveSettings() {
     localStorage.setItem(LS.settings, JSON.stringify(settings));
   }
-
   function loadApps() {
     const raw = localStorage.getItem(LS.apps);
     return raw ? safeJsonParse(raw, []) : [];
@@ -85,7 +83,6 @@
   function saveApps() {
     localStorage.setItem(LS.apps, JSON.stringify(apps));
   }
-
   function setActiveAppId(id) {
     activeAppId = id || "";
     localStorage.setItem(LS.activeAppId, activeAppId);
@@ -110,21 +107,16 @@
   const TAB_IDS = ["dashboard", "newapp", "editor", "generator", "settings", "admin"];
 
   function showTab(tab) {
-    // FAIL-SAFE: mesmo se algo falhar, os botões de tab continuam vivos
     try {
       TAB_IDS.forEach((t) => {
         const sec = $(`tab-${t}`);
         if (sec) sec.classList.toggle("hidden", t !== tab);
       });
-      // marca active nos botões
       qsa(".tab").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
-    } catch (e) {
-      logError("showTab falhou:", e);
-    }
+    } catch (e) { logError("showTab falhou:", e); }
   }
 
   function wireTabsFailSafe() {
-    // tabs topo
     qsa(".tab").forEach((b) => {
       b.addEventListener("click", () => {
         const t = b.dataset.tab;
@@ -132,7 +124,6 @@
       });
     });
 
-    // botões do dashboard (se existirem)
     $("goNewApp")?.addEventListener("click", () => showTab("newapp"));
     $("goEditor")?.addEventListener("click", () => showTab("editor"));
     $("goGenerator")?.addEventListener("click", () => showTab("generator"));
@@ -261,21 +252,8 @@ self.addEventListener("fetch",(e)=>{
     return { "index.html": index, "app.js": appjs, "styles.css": css, "manifest.json": manifest, "sw.js": sw };
   }
 
-  function makePwaEmptyTemplateFiles() {
-    return {
-      "index.html": `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>{{APP_NAME}}</title></head><body><h1>{{APP_NAME}}</h1><p>ID: {{APP_ID}}</p></body></html>`,
-      "app.js": `// {{APP_NAME}}`,
-      "styles.css": `body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial}`,
-      "manifest.json": `{"name":"{{APP_NAME}}","short_name":"{{APP_NAME}}","start_url":"./","display":"standalone","background_color":"#0b1220","theme_color":"#0b1220","icons":[]}`,
-      "sw.js": `self.addEventListener("fetch",()=>{});`,
-    };
-  }
-
   function getTemplates() {
-    return [
-      { id: "pwa-base", name: "PWA Base (com app.js + styles.css)", files: makePwaBaseTemplateFiles() },
-      { id: "pwa-empty", name: "PWA Vazia (minimal)", files: makePwaEmptyTemplateFiles() },
-    ];
+    return [{ id: "pwa-base", name: "PWA Base (com app.js + styles.css)", files: makePwaBaseTemplateFiles() }];
   }
 
   // --------------------- App CRUD ---------------------
@@ -313,7 +291,24 @@ self.addEventListener("fetch",(e)=>{
     return app;
   }
 
-  // --------------------- Render: Apps List ---------------------
+  // --------------------- SEED (se não tiver nada) ---------------------
+  function ensureSeedIfEmpty() {
+    try {
+      if (apps.length) return;
+      // cria um demo automático
+      createApp({
+        name: "RControl Demo",
+        id: "rcontrol-demo",
+        type: "pwa",
+        templateId: "pwa-base",
+      });
+      logInfo("SEED criado: rcontrol-demo");
+    } catch (e) {
+      logError("Falha ao criar SEED:", e);
+    }
+  }
+
+  // --------------------- Render ---------------------
   function escapeHtml(s) {
     return String(s ?? "")
       .replaceAll("&", "&amp;")
@@ -371,7 +366,7 @@ self.addEventListener("fetch",(e)=>{
       root.appendChild(item);
     });
   }
-  // --------------------- Editor + Preview ---------------------
+
   function renderEditor() {
     ensureActiveApp();
     const app = pickAppById(activeAppId);
@@ -449,7 +444,6 @@ ${html}
     return out;
   }
 
-  // --------------------- Generator ---------------------
   function renderGeneratorSelect() {
     ensureActiveApp();
     const sel = $("genAppSelect");
@@ -491,7 +485,6 @@ ${html}
     URL.revokeObjectURL(url);
   }
 
-  // --------------------- Settings ---------------------
   function renderSettings() {
     $("ghUser") && ($("ghUser").value = settings.ghUser || "");
     $("ghToken") && ($("ghToken").value = settings.ghToken || "");
@@ -499,15 +492,9 @@ ${html}
     $("pagesBase") && ($("pagesBase").value = settings.pagesBase || (settings.ghUser ? `https://${settings.ghUser}.github.io` : ""));
   }
 
-  // --------------------- Admin: PIN / Unlock ---------------------
+  // --------------------- Admin: PIN ---------------------
   const DEFAULT_PIN = "1122";
-
-  function getPin() {
-    return localStorage.getItem(LS.adminPin) || DEFAULT_PIN;
-  }
-  function setPin(pin) {
-    localStorage.setItem(LS.adminPin, String(pin || "").trim());
-  }
+  function getPin() { return localStorage.getItem(LS.adminPin) || DEFAULT_PIN; }
   function isUnlocked() {
     const until = Number(localStorage.getItem(LS.adminUnlockUntil) || "0");
     return until && until > Date.now();
@@ -515,9 +502,6 @@ ${html}
   function unlock(minutes) {
     const ms = (Number(minutes || 15) * 60 * 1000);
     localStorage.setItem(LS.adminUnlockUntil, String(Date.now() + ms));
-  }
-  function lockAdmin() {
-    localStorage.setItem(LS.adminUnlockUntil, "0");
   }
   function renderAdminState() {
     const st = $("adminState");
@@ -530,7 +514,6 @@ ${html}
     return false;
   }
 
-  // --------------------- Diagnóstico / Backup ---------------------
   async function nukePwaCache() {
     try {
       if ("caches" in window) {
@@ -594,7 +577,7 @@ ${html}
       "appsList","statusBox","newName","newId","newTemplate","createAppBtn",
       "activeAppLabel","filesList","codeArea","previewFrame","genAppSelect",
       "downloadZipBtn","genStatus","ghUser","ghToken","repoPrefix","pagesBase",
-      "adminUnlockBtn","adminState","aiRunBtn","aiApplyBtn"
+      "adminUnlockBtn","adminState"
     ];
     const missing = must.filter(id => !document.getElementById(id));
     add("DOM missing IDs", missing.length ? missing.join(", ") : "OK");
@@ -628,142 +611,7 @@ ${html}
     });
   }
 
-  // --------------------- IA Offline (70%) ---------------------
-  // Ela NÃO aplica sozinha: cria um "draft" (patch) e você aplica se quiser.
-  function setAiDraft(draft) {
-    localStorage.setItem(LS.aiDraft, JSON.stringify(draft || null));
-  }
-  function getAiDraft() {
-    return safeJsonParse(localStorage.getItem(LS.aiDraft) || "null", null);
-  }
-
-  function aiHelp() {
-    return [
-      "IA Offline — comandos:",
-      "- help",
-      "- status",
-      "- list",
-      "- select <id>",
-      "- create app <nome> (usa o template escolhido no New App)",
-      "- fix buttons (verifica IDs do DOM e sugere correção)",
-      "- show draft (mostra a sugestão atual)",
-      "",
-      "Dica: você pode colar código e pedir: 'encaixar isso no app.js do app ativo'.",
-    ].join("\n");
-  }
-
-  function aiStatus() {
-    const active = pickAppById(activeAppId);
-    return [
-      "Engine: OK",
-      `Apps: ${apps.length}`,
-      active ? `Ativo: ${active.name} (${active.id})` : "Ativo: (nenhum)",
-      "Draft: " + (getAiDraft() ? "SIM" : "NÃO"),
-    ].join("\n");
-  }
-
-  function aiList() {
-    if (!apps.length) return "Nenhum app salvo ainda.";
-    return ["Apps salvos:"].concat(apps.map(a => `- ${a.name} (${a.id})`)).join("\n");
-  }
-
-  function aiSelect(id) {
-    const ok = apps.some(a => a.id === id);
-    if (!ok) return `ERRO: App não encontrado: ${id}`;
-    setActiveAppId(id);
-    renderAppsList();
-    renderEditor();
-    renderGeneratorSelect();
-    return `✅ App ativo: ${id}`;
-  }
-
-  function aiCreateFromName(name) {
-    const n = String(name || "").trim();
-    if (!n) return "ERRO: Informe um nome. Ex: create app RQuotas";
-
-    // cria um id automático seguro
-    const id = sanitizeId(n) || ("app-" + Date.now().toString(36));
-    if (pickAppById(id)) return "ERRO: Já existe um app com esse ID: " + id;
-
-    const templateId = $("newTemplate")?.value || "pwa-base";
-    createApp({ name: n, id, type: "pwa", templateId });
-
-    renderAppsList();
-    renderEditor();
-    renderGeneratorSelect();
-    showTab("editor");
-    return `✅ App criado: ${n} (${id})`;
-  }
-
-  function aiFixButtons() {
-    // isso não muda código do Factory; só faz check e cria draft informativo
-    const ids = [
-      "goNewApp","goEditor","goGenerator",
-      "createAppBtn","saveFileBtn","resetFileBtn","downloadZipBtn",
-      "adminUnlockBtn","aiRunBtn","aiApplyBtn"
-    ];
-    const missing = ids.filter(id => !document.getElementById(id));
-    const report = [
-      "Check botões:",
-      missing.length ? ("FALTANDO IDs: " + missing.join(", ")) : "OK ✅ (IDs principais existem)",
-      "",
-      "Se botões 'morrem', causa nº1 é erro JS no init.",
-      "Este app.js já tem fail-safe pra não morrer.",
-    ].join("\n");
-
-    setAiDraft({
-      kind: "info",
-      createdAt: Date.now(),
-      message: report
-    });
-    return report + "\n\n✅ Draft criado (aperta 'show draft' pra ver).";
-  }
-
-  function aiShowDraft() {
-    const d = getAiDraft();
-    if (!d) return "Sem draft.";
-    return typeof d.message === "string" ? d.message : JSON.stringify(d, null, 2);
-  }
-
-  function aiRun(inputRaw) {
-    const raw = String(inputRaw || "").trim();
-    const lower = raw.toLowerCase();
-
-    if (!raw) return aiHelp();
-    if (lower === "help") return aiHelp();
-    if (lower === "status") return aiStatus();
-    if (lower === "list") return aiList();
-    if (lower.startsWith("select ")) return aiSelect(raw.split(/\s+/)[1] || "");
-    if (lower.startsWith("create app ")) return aiCreateFromName(raw.replace(/^create\s+app\s+/i, ""));
-    if (lower === "fix buttons") return aiFixButtons();
-    if (lower === "show draft") return aiShowDraft();
-
-    // default: cria um draft “info” com o que entendeu
-    const msg = [
-      "Comando não reconhecido.",
-      "Digite: help",
-      "",
-      "Se você colar código + pedido, eu consigo sugerir ações (draft).",
-    ].join("\n");
-    setAiDraft({ kind: "info", createdAt: Date.now(), message: msg });
-    return msg;
-  }
-
-  // aplicar draft (por enquanto só draft tipo info — no próximo passo a gente liga patch em arquivos)
-  function aiApply() {
-    if (!guardUnlocked()) return;
-    const d = getAiDraft();
-    if (!d) return "Sem draft para aplicar.";
-    // nesta versão, draft é informativo (não altera arquivos). segurança máxima.
-    return "✅ Draft aplicado (modo seguro): nenhuma alteração automática foi feita.";
-  }
-
-  function aiDiscard() {
-    setAiDraft(null);
-    return "✅ Draft descartado.";
-  }
-   
-     // --------------------- Wire Events (com proteção) ---------------------
+  // --------------------- Wire ---------------------
   function wireNewApp() {
     const nameEl = $("newName");
     const idEl = $("newId");
@@ -813,10 +661,8 @@ ${html}
     $("saveFileBtn")?.addEventListener("click", () => {
       const app = pickAppById(activeAppId);
       if (!app) return alert("Nenhum app ativo.");
-
       app.files[currentFile] = $("codeArea")?.value ?? "";
       saveApps();
-
       setStatus(`Salvo: ${currentFile} ✅`);
       renderEditor();
     });
@@ -824,12 +670,9 @@ ${html}
     $("resetFileBtn")?.addEventListener("click", () => {
       const app = pickAppById(activeAppId);
       if (!app) return alert("Nenhum app ativo.");
-
       if (!confirm(`Resetar ${currentFile} para o padrão do template?`)) return;
-
       app.files[currentFile] = app.baseFiles?.[currentFile] ?? "";
       saveApps();
-
       setStatus(`Reset: ${currentFile} ✅`);
       renderEditor();
     });
@@ -852,7 +695,6 @@ ${html}
     $("downloadZipBtn")?.addEventListener("click", async () => {
       const app = pickAppById($("genAppSelect")?.value || activeAppId);
       if (!app) return alert("Selecione um app.");
-
       setGenStatus("Status: gerando ZIP…");
       await downloadZip(app);
       setGenStatus("Status: ZIP pronto ✅");
@@ -860,15 +702,6 @@ ${html}
 
     $("publishBtn")?.addEventListener("click", () => {
       alert("Publish entra depois (primeiro Factory 100% liso).");
-    });
-
-    $("copyLinkBtn")?.addEventListener("click", async () => {
-      const linkEl = $("publishedLink");
-      const link = linkEl?.href || "";
-      if (!link || link === location.href) return alert("Ainda não tem link.");
-
-      try { await navigator.clipboard.writeText(link); alert("Link copiado ✅"); }
-      catch { alert("Não consegui copiar. Copie manualmente:\n" + link); }
     });
   }
 
@@ -878,7 +711,6 @@ ${html}
       settings.ghToken = ($("ghToken")?.value || "").trim();
       settings.repoPrefix = ($("repoPrefix")?.value || "rapp-").trim() || "rapp-";
       settings.pagesBase = ($("pagesBase")?.value || "").trim() || (settings.ghUser ? `https://${settings.ghUser}.github.io` : "");
-
       saveSettings();
       setStatus("Settings salvas ✅");
       alert("Settings salvas ✅");
@@ -890,51 +722,44 @@ ${html}
       localStorage.removeItem(LS.apps);
       localStorage.removeItem(LS.activeAppId);
       localStorage.removeItem(LS.aiDraft);
-
       settings = loadSettings();
       apps = [];
       setActiveAppId("");
-
+      ensureSeedIfEmpty();
       renderAll();
       alert("Factory resetado ✅");
     });
   }
 
   function wireAdmin() {
-    // unlock
     $("adminUnlockBtn")?.addEventListener("click", () => {
       const pin = String($("adminPinInput")?.value || "").trim();
-      if (pin !== getPin()) return alert("PIN errado ❌");
+      if (pin !== (localStorage.getItem(LS.adminPin) || "1122")) return alert("PIN errado ❌");
       unlock(15);
       $("adminPinInput") && ($("adminPinInput").value = "");
       renderAdminState();
       alert("Admin UNLOCK ✅ (15 min)");
     });
 
-    // diagnóstico
     $("diagBtn")?.addEventListener("click", async () => {
       const rep = await buildDiagnosisReport();
-      const out = $("adminOut");
-      if (out) out.textContent = rep;
+      $("adminOut") && ($("adminOut").textContent = rep);
     });
 
     $("copyDiagBtn")?.addEventListener("click", async () => {
       const rep = await buildDiagnosisReport();
       try { await navigator.clipboard.writeText(rep); alert("Diagnóstico copiado ✅"); }
       catch { alert("iOS bloqueou copiar. Copie manualmente do painel."); }
-      const out = $("adminOut");
-      if (out) out.textContent = rep;
+      $("adminOut") && ($("adminOut").textContent = rep);
     });
 
     $("clearPwaBtn")?.addEventListener("click", async () => {
       if (!guardUnlocked()) return;
       if (!confirm("Vai limpar cache PWA (caches + service worker). Continuar?")) return;
       await nukePwaCache();
-      alert("Cache limpo ✅. Abra o site com ?v=1");
-      // não dá reload automático pra não travar no iPhone
+      alert("Cache limpo ✅. Agora abra com ?v=2");
     });
 
-    // backup
     $("exportBtn")?.addEventListener("click", () => {
       if (!guardUnlocked()) return;
       const payload = {
@@ -959,94 +784,62 @@ ${html}
         if (Array.isArray(data.apps)) localStorage.setItem(LS.apps, JSON.stringify(data.apps));
         if (typeof data.activeAppId === "string") localStorage.setItem(LS.activeAppId, data.activeAppId);
       } catch (e) { return alert("Falha import: " + e.message); }
-      alert("Import OK ✅. Reabra com ?v=1");
-    });
-
-    // IA
-    $("aiRunBtn")?.addEventListener("click", () => {
-      if (!guardUnlocked()) return;
-      const cmd = String($("aiInput")?.value || "").trim();
-      const res = aiRun(cmd);
-      $("aiOut") && ($("aiOut").textContent = res);
-    });
-
-    $("aiClearBtn")?.addEventListener("click", () => {
-      $("aiInput") && ($("aiInput").value = "");
-      $("aiOut") && ($("aiOut").textContent = "—");
-    });
-
-    $("aiApplyBtn")?.addEventListener("click", () => {
-      const res = aiApply();
-      $("aiOut") && ($("aiOut").textContent = res);
-    });
-
-    $("aiDiscardBtn")?.addEventListener("click", () => {
-      const res = aiDiscard();
-      $("aiOut") && ($("aiOut").textContent = res);
+      settings = loadSettings();
+      apps = loadApps();
+      activeAppId = getActiveAppId();
+      ensureSeedIfEmpty();
+      renderAll();
+      alert("Import OK ✅. Abra com ?v=2");
     });
   }
 
   // --------------------- Render All ---------------------
   function renderAll() {
-    try {
-      renderTemplatesSelect();
-      renderAppsList();
-      renderEditor();
-      renderGeneratorSelect();
-      renderSettings();
-      renderAdminState();
-    } catch (e) {
-      logError("renderAll falhou:", e);
-    }
+    renderTemplatesSelect();
+    renderAppsList();
+    renderEditor();
+    renderGeneratorSelect();
+    renderSettings();
+    renderAdminState();
   }
 
-  // --------------------- Public API (pra próxima fase) ---------------------
-  function exposeApi() {
-    window.RCF = window.RCF || {};
-    window.RCF.factory = {
-      LS,
-      loadSettings: () => loadSettings(),
-      loadApps: () => loadApps(),
-      buildDiagnosisReport,
-      nukePwaCache,
-      lockAdmin,
-    };
-  }
-
-  // --------------------- INIT (FAIL-SAFE) ---------------------
+  // --------------------- INIT ---------------------
   function init() {
-    // 1) Sempre liga tabs primeiro (pra não morrer botão)
-    wireTabsFailSafe();
+    wireTabsFailSafe(); // sempre primeiro
 
-    // 2) resto com proteção (se der erro aqui, tabs continuam funcionando)
     try {
       logInfo("RCF init…");
-      renderTemplatesSelect();
+
+      // recarrega state
+      settings = loadSettings();
+      apps = loadApps();
+      activeAppId = getActiveAppId();
+
+      // seed automático
+      ensureSeedIfEmpty();
+
+      // wires
       wireNewApp();
       wireEditor();
       wireGenerator();
       wireSettings();
       wireAdmin();
 
+      // render
       renderAll();
       showTab("dashboard");
-      exposeApi();
 
       setStatus("Pronto ✅");
       logInfo("RCF pronto ✅");
     } catch (e) {
       logError("INIT QUEBROU:", e);
-      // mesmo quebrado, deixa dashboard visível e botões de tab vivos
       showTab("dashboard");
       setStatus("Pronto ✅ (modo seguro)");
-      alert("⚠️ Rodou em modo seguro (teve erro interno). Vá em Admin → Diagnóstico.");
+      alert("⚠️ Rodou em modo seguro. Vá em Admin → Diagnóstico.");
     }
   }
 
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", init);
-  } else {
-    init();
-  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
+  else init();
 
 })();
