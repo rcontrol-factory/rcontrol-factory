@@ -1,32 +1,138 @@
-export function commandRisk(cmd, args, state) {
-  const c = (cmd || "").toLowerCase();
+/* =========================================================
+  RControl Factory — policy.js (FULL) v2.1
+  - Regras de aplicação de bundles/overrides ("Mãe")
+  - Modos: FREE | CONDITIONAL | BLOCKED
+  - Default recomendado:
+      CONDITIONAL: /app/app.js , /app/index.html
+      BLOCKED: /sw.js, /manifest.json, /index.html (raiz), etc
+      FREE: /app/js/* , /core/ui_* , /core/diagnostics.js , /core/logger.js ...
+  - Normaliza paths e protege contra paths maliciosos
+========================================================= */
 
-  // SEMPRE SEGUROS (não mudam nada)
-  if (["help", "list", "show", "diag"].includes(c)) return "SAFE";
+(function () {
+  "use strict";
 
-  // SEGUROS (mudam pouco, reversível)
-  if (["select", "set", "write", "create"].includes(c)) return "SAFE";
+  const DEFAULT_POLICY = {
+    version: "2.1",
+    updatedAt: new Date().toISOString(),
 
-  // ARRISCADOS (mudanças grandes / deploy)
-  if (["apply", "generator", "publish"].includes(c)) return "RISKY";
+    // IMPORTANTÍSSIMO: regras avaliadas em ordem (primeiro match ganha)
+    rules: [
+      // ---------- BLOCKED (nunca via bundle) ----------
+      { mode: "BLOCKED", match: "/sw.js" },
+      { mode: "BLOCKED", match: "/manifest.json" },
+      { mode: "BLOCKED", match: "/index.html" }, // raiz do site (se existir)
 
-  // PERIGOSOS (destrutivo / limpeza / reset / cache / sw)
-  if (["reset", "delete", "clearcache", "wipe", "cleanlogs"].includes(c)) return "DANGEROUS";
+      // ---------- CONDITIONAL (pede confirmação) ----------
+      { mode: "CONDITIONAL", match: "/app/app.js" },
+      { mode: "CONDITIONAL", match: "/app/index.html" },
 
-  return "RISKY";
-}
+      // ---------- FREE (auto) ----------
+      { mode: "FREE", prefix: "/app/js/" },
+      { mode: "FREE", prefix: "/core/" }, // permite core em geral (ui_*, diagnostics, logger...)
+    ],
 
-export function fileRisk(filePath) {
-  const f = (filePath || "").toLowerCase();
+    // fallback se não bater em nada
+    fallbackMode: "CONDITIONAL"
+  };
 
-  // arquivos sensíveis: PWA / cache / segurança
-  if (["sw.js", "manifest.json"].includes(f)) return "DANGEROUS";
+  const KEY = "rcf:policy_v2";
 
-  // sensíveis médios
-  if (["index.html"].includes(f)) return "RISKY";
+  function safeParseJSON(s, fallback) {
+    try { return JSON.parse(s); } catch { return fallback; }
+  }
 
-  // geralmente ok
-  if (["styles.css", "app.js"].includes(f)) return "SAFE";
+  function normPath(p) {
+    let s = String(p || "").trim();
 
-  return "RISKY";
-}
+    // bloqueia URL externa (não é path)
+    if (/^https?:\/\//i.test(s)) return null;
+
+    // garante começar com "/"
+    if (!s.startsWith("/")) s = "/" + s;
+
+    // remove query/hash
+    s = s.split("?")[0].split("#")[0];
+
+    // normaliza barras duplicadas
+    s = s.replace(/\/{2,}/g, "/");
+
+    // remove "/./"
+    s = s.replace(/\/\.\//g, "/");
+
+    // bloqueia ".." (path traversal)
+    if (s.includes("..")) return null;
+
+    return s;
+  }
+
+  function ruleMatches(rule, path) {
+    if (!rule || !path) return false;
+
+    if (rule.match) {
+      return path === rule.match;
+    }
+    if (rule.prefix) {
+      return path.startsWith(rule.prefix);
+    }
+    if (rule.regex) {
+      try {
+        const re = new RegExp(rule.regex);
+        return re.test(path);
+      } catch {
+        return false;
+      }
+    }
+    return false;
+  }
+
+  function loadPolicy() {
+    const raw = localStorage.getItem(KEY);
+    if (!raw) return DEFAULT_POLICY;
+    const p = safeParseJSON(raw, null);
+    if (!p || !p.rules) return DEFAULT_POLICY;
+    return p;
+  }
+
+  function savePolicy(p) {
+    const obj = p && p.rules ? p : DEFAULT_POLICY;
+    obj.updatedAt = new Date().toISOString();
+    localStorage.setItem(KEY, JSON.stringify(obj));
+    return obj;
+  }
+
+  function classify(path) {
+    const p = loadPolicy();
+    const n = normPath(path);
+    if (!n) return { ok: false, path: null, mode: "BLOCKED", reason: "Path inválido (URL externa ou '..')." };
+
+    for (const r of (p.rules || [])) {
+      if (ruleMatches(r, n)) {
+        return { ok: true, path: n, mode: r.mode || "CONDITIONAL", rule: r };
+      }
+    }
+    return { ok: true, path: n, mode: p.fallbackMode || "CONDITIONAL", rule: null };
+  }
+
+  function explainMode(mode) {
+    if (mode === "FREE") return "LIVRE (auto-aplica)";
+    if (mode === "CONDITIONAL") return "CONDICIONAL (pede aprovação)";
+    return "BLOQUEADO (nunca aplica)";
+  }
+
+  // API pública
+  window.RCF_POLICY = {
+    key: KEY,
+    DEFAULT_POLICY,
+    load: loadPolicy,
+    save: savePolicy,
+    normPath,
+    classify,
+    explainMode,
+  };
+
+  // garante policy salva 1x
+  if (!localStorage.getItem(KEY)) {
+    savePolicy(DEFAULT_POLICY);
+  }
+})();
