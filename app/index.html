@@ -25,14 +25,14 @@
     </div>
 
     <div class="tabs">
-      <button class="tab active" data-view="dashboard">Dashboard</button>
-      <button class="tab" data-view="newapp">New App</button>
-      <button class="tab" data-view="editor">Editor</button>
-      <button class="tab" data-view="generator">Generator</button>
+      <button class="tab active" data-view="dashboard" type="button">Dashboard</button>
+      <button class="tab" data-view="newapp" type="button">New App</button>
+      <button class="tab" data-view="editor" type="button">Editor</button>
+      <button class="tab" data-view="generator" type="button">Generator</button>
 
-      <button class="tab" data-view="agent">Agente</button>
-      <button class="tab" data-view="settings">Settings</button>
-      <button class="tab" data-view="admin">Admin</button>
+      <button class="tab" data-view="agent" type="button">Agente</button>
+      <button class="tab" data-view="settings" type="button">Settings</button>
+      <button class="tab" data-view="admin" type="button">Admin</button>
 
       <div class="spacer"></div>
 
@@ -89,10 +89,10 @@
 
         <div class="form">
           <div class="row">
-            <input id="newAppName" placeholder="Nome (ex: AgroControl)" />
+            <input id="newAppName" placeholder="Nome (ex: Meu App)" />
           </div>
           <div class="row">
-            <input id="newAppSlug" placeholder="Slug (ex: agrocontrol)" />
+            <input id="newAppSlug" placeholder="Slug (ex: meu-app)" />
           </div>
           <div class="row">
             <button class="btn primary" id="btnDoCreateApp" type="button">Criar</button>
@@ -149,7 +149,7 @@
         <p class="hint">Você dá comandos. Ele monta uma sugestão (patch) e você aprova.</p>
 
         <div class="cmd">
-          <input id="agentCmd" placeholder="Digite um comando... (ex: help, create AgroControl agrocontrol)" />
+          <input id="agentCmd" placeholder="Digite um comando... (ex: help, list, show)" />
         </div>
 
         <div class="row">
@@ -191,11 +191,11 @@
       </div>
     </section>
 
-    <!-- DIAGNOSTICS (FALTAVA) -->
+    <!-- DIAGNOSTICS -->
     <section class="view" id="view-diagnostics">
       <div class="card">
         <h2>DIAG • Diagnóstico</h2>
-        <p class="hint">Painel de diagnóstico rápido do Factory (logs, storage, integridade). (stub)</p>
+        <p class="hint">Painel de diagnóstico rápido do Factory (logs, storage, integridade).</p>
 
         <div class="row">
           <button class="btn primary" id="btnDiagRun" type="button">Executar diagnóstico</button>
@@ -206,11 +206,11 @@
       </div>
     </section>
 
-    <!-- LOGS (FALTAVA) -->
+    <!-- LOGS -->
     <section class="view" id="view-logs">
       <div class="card">
         <h2>LOGS • Registro</h2>
-        <p class="hint">Visualização dedicada dos logs do Factory. (stub)</p>
+        <p class="hint">Visualização dedicada dos logs do Factory.</p>
 
         <div class="row">
           <button class="btn" id="btnLogsRefresh" type="button">Atualizar</button>
@@ -218,7 +218,8 @@
           <button class="btn danger" id="btnLogsClear" type="button">Limpar</button>
         </div>
 
-        <pre class="mono" id="logsOut">Logs...</pre>
+        <!-- IMPORTANTE: ID alinhado com o ui_bindings.js novo -->
+        <pre class="mono" id="logsViewBox">Logs...</pre>
       </div>
     </section>
 
