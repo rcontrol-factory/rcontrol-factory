@@ -1,6 +1,6 @@
 {
   "name": "RControl Factory",
-  "short_name": "RC Factory",
+  "short_name": "RCF",
   "start_url": ".",
   "display": "standalone",
   "background_color": "#0b1220",
