@@ -16,7 +16,11 @@
       <div class="brand-text">
         <div class="title">RControl Factory</div>
         <div class="subtitle">Factory interna • PWA • Offline-first</div>
-        <div class="subtitle"><a href="#" style="color:rgba(255,255,255,.65);text-decoration:none;">Privacidade</a> • <a href="#" style="color:rgba(255,255,255,.65);text-decoration:none;">Termos</a></div>
+        <div class="subtitle">
+          <a href="#" style="color:rgba(255,255,255,.65);text-decoration:none;">Privacidade</a>
+          •
+          <a href="#" style="color:rgba(255,255,255,.65);text-decoration:none;">Termos</a>
+        </div>
       </div>
     </div>
 
@@ -36,7 +40,7 @@
         <span class="ok" id="statusText">OK ✅</span>
       </div>
 
-      <button class="gear" id="btnOpenTools" aria-label="Ferramentas">⚙️</button>
+      <button class="gear" id="btnOpenTools" aria-label="Ferramentas" type="button">⚙️</button>
     </div>
   </header>
 
@@ -49,15 +53,15 @@
         <p>Crie apps e publique depois (primeiro vamos estabilizar).</p>
 
         <div class="row">
-          <button class="btn primary" id="btnCreateNewApp">+ Criar novo app</button>
-          <button class="btn ghost" id="btnOpenEditor">Abrir Editor</button>
-          <button class="btn ghost" id="btnExportBackup">Exportar backup</button>
+          <button class="btn primary" id="btnCreateNewApp" type="button">+ Criar novo app</button>
+          <button class="btn ghost" id="btnOpenEditor" type="button">Abrir Editor</button>
+          <button class="btn ghost" id="btnExportBackup" type="button">Exportar backup</button>
         </div>
 
         <div class="row">
-          <button class="btn" data-view="agent">Agente</button>
-          <button class="btn" data-view="admin">Admin</button>
-          <button class="btn" id="btnOpenTools2">Ferramentas</button>
+          <button class="btn" data-view="agent" type="button">Agente</button>
+          <button class="btn" data-view="admin" type="button">Admin</button>
+          <button class="btn" id="btnOpenTools2" type="button">Ferramentas</button>
         </div>
       </div>
 
@@ -91,8 +95,8 @@
             <input id="newAppSlug" placeholder="Slug (ex: agrocontrol)" />
           </div>
           <div class="row">
-            <button class="btn primary" id="btnDoCreateApp">Criar</button>
-            <button class="btn ghost" id="btnAutoSlug">Gerar slug</button>
+            <button class="btn primary" id="btnDoCreateApp" type="button">Criar</button>
+            <button class="btn ghost" id="btnAutoSlug" type="button">Gerar slug</button>
           </div>
         </div>
 
@@ -108,8 +112,8 @@
 
         <div class="row">
           <div class="status-pill"><span class="ok" id="activeAppText">Sem app ativo ✅</span></div>
-          <button class="btn ok" id="btnSaveFile">Salvar arquivo</button>
-          <button class="btn danger" id="btnResetFile">Reset arquivo</button>
+          <button class="btn ok" id="btnSaveFile" type="button">Salvar arquivo</button>
+          <button class="btn danger" id="btnResetFile" type="button">Reset arquivo</button>
         </div>
 
         <div class="files" id="filesList">
@@ -131,8 +135,8 @@
         <h2>Generator</h2>
         <p class="hint">Gera ZIP/Export (stub). Vamos ligar isso depois.</p>
         <div class="row">
-          <button class="btn primary" id="btnGenZip">Gerar ZIP</button>
-          <button class="btn ghost" id="btnGenPreview">Preview</button>
+          <button class="btn primary" id="btnGenZip" type="button">Gerar ZIP</button>
+          <button class="btn ghost" id="btnGenPreview" type="button">Preview</button>
         </div>
         <pre class="mono small" id="genOut"></pre>
       </div>
@@ -149,10 +153,10 @@
         </div>
 
         <div class="row">
-          <button class="btn primary" id="btnAgentRun">Executar</button>
-          <button class="btn ghost" id="btnAgentClear">Limpar</button>
-          <button class="btn ok" id="btnAgentApprove">Aprovar sugestão</button>
-          <button class="btn danger" id="btnAgentDiscard">Descartar sugestão</button>
+          <button class="btn primary" id="btnAgentRun" type="button">Executar</button>
+          <button class="btn ghost" id="btnAgentClear" type="button">Limpar</button>
+          <button class="btn ok" id="btnAgentApprove" type="button">Aprovar sugestão</button>
+          <button class="btn danger" id="btnAgentDiscard" type="button">Descartar sugestão</button>
         </div>
 
         <h2>Resultado</h2>
@@ -176,28 +180,60 @@
         <p class="hint">Ajuda a atualizar a Factory (corrigir UI, melhorar ações). Você aprova manualmente.</p>
 
         <div class="row">
-          <button class="btn primary" id="btnAdminDiag">Executar</button>
-          <button class="btn ghost" id="btnAdminClear">Limpar</button>
-          <button class="btn ok" id="btnAdminApply">Aplicar sugestão</button>
-          <button class="btn danger" id="btnAdminDiscard">Descartar</button>
+          <button class="btn primary" id="btnAdminDiag" type="button">Executar</button>
+          <button class="btn ghost" id="btnAdminClear" type="button">Limpar</button>
+          <button class="btn ok" id="btnAdminApply" type="button">Aplicar sugestão</button>
+          <button class="btn danger" id="btnAdminDiscard" type="button">Descartar</button>
         </div>
 
         <h2>Plano + Sugestão</h2>
         <pre class="mono" id="adminOut">Pronto.</pre>
       </div>
     </section>
+
+    <!-- DIAGNOSTICS (FALTAVA) -->
+    <section class="view" id="view-diagnostics">
+      <div class="card">
+        <h2>DIAG • Diagnóstico</h2>
+        <p class="hint">Painel de diagnóstico rápido do Factory (logs, storage, integridade). (stub)</p>
+
+        <div class="row">
+          <button class="btn primary" id="btnDiagRun" type="button">Executar diagnóstico</button>
+          <button class="btn ghost" id="btnDiagClear" type="button">Limpar</button>
+        </div>
+
+        <pre class="mono" id="diagOut">Pronto.</pre>
+      </div>
+    </section>
+
+    <!-- LOGS (FALTAVA) -->
+    <section class="view" id="view-logs">
+      <div class="card">
+        <h2>LOGS • Registro</h2>
+        <p class="hint">Visualização dedicada dos logs do Factory. (stub)</p>
+
+        <div class="row">
+          <button class="btn" id="btnLogsRefresh" type="button">Atualizar</button>
+          <button class="btn" id="btnLogsCopy" type="button">Copiar</button>
+          <button class="btn danger" id="btnLogsClear" type="button">Limpar</button>
+        </div>
+
+        <pre class="mono" id="logsOut">Logs...</pre>
+      </div>
+    </section>
+
   </main>
 
   <!-- TOOLS DRAWER -->
   <aside class="tools" id="toolsDrawer" aria-hidden="true">
     <div class="tools-head">
       <b>Ferramentas</b>
-      <button class="btn small" id="btnCloseTools">Fechar</button>
+      <button class="btn small" id="btnCloseTools" type="button">Fechar</button>
     </div>
     <div class="tools-body">
       <div class="row">
-        <button class="btn" id="btnClearLogs">Limpar logs</button>
-        <button class="btn" id="btnCopyLogs">Copiar logs</button>
+        <button class="btn" id="btnClearLogs" type="button">Limpar logs</button>
+        <button class="btn" id="btnCopyLogs" type="button">Copiar logs</button>
       </div>
       <pre class="mono small" id="logsBox">Logs...</pre>
     </div>
@@ -205,10 +241,10 @@
 
   <!-- DOCK -->
   <div class="dock" id="dock">
-    <button class="dockbtn" data-view="agent">Agent</button>
-    <button class="dockbtn" data-view="admin">Admin</button>
-    <button class="dockbtn" data-view="diagnostics">Diag</button>
-    <button class="dockbtn" data-view="logs">Logs</button>
+    <button class="dockbtn" data-view="agent" type="button">Agent</button>
+    <button class="dockbtn" data-view="admin" type="button">Admin</button>
+    <button class="dockbtn" data-view="diagnostics" type="button">Diag</button>
+    <button class="dockbtn" data-view="logs" type="button">Logs</button>
   </div>
 
   <!-- CORE (ordem importa) -->
