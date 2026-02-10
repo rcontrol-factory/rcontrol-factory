@@ -1,81 +1,77 @@
 /* =========================================================
-  RControl Factory — core/logger.js (FULL)
-  - Logger único compartilhado (core + app)
-  - Salva em localStorage: "rcf:logs" (array de linhas)
-  - Exponibiliza window.RCF_LOGGER:
-      push(level,msg), clear(), getText(), dump(), getAll()
+  RControl Factory — core/logger.js (BASE v1.0)
+  - Logger único do Core (window.RCF_LOGGER)
+  - Usa localStorage chave: "rcf:logs"
+  - Compatível com app.js (que já grava em rcf:logs)
 ========================================================= */
-
 (function () {
   "use strict";
 
   const KEY = "rcf:logs";
-  const MAX = 400;
+  const MAX = 600;
 
-  function safeParse(s, fb) {
-    try { return JSON.parse(s); } catch { return fb; }
+  function safeText(v) {
+    return (v === undefined || v === null) ? "" : String(v);
   }
 
-  function getAll() {
+  function readArr() {
     try {
       const raw = localStorage.getItem(KEY);
-      const arr = safeParse(raw, []);
-      return Array.isArray(arr) ? arr : [];
+      if (!raw) return [];
+      const arr = JSON.parse(raw);
+      return Array.isArray(arr) ? arr.map(safeText) : [];
     } catch {
       return [];
     }
   }
 
-  function setAll(arr) {
+  function writeArr(arr) {
     try { localStorage.setItem(KEY, JSON.stringify(arr)); } catch {}
   }
 
-  function stamp() {
+  function timeStamp() {
     try { return new Date().toLocaleString(); } catch { return new Date().toISOString(); }
   }
 
-  function push(level, msg) {
-    const line = `[${stamp()}] ${String(msg ?? "")}`;
-    const logs = getAll();
-    logs.push(line);
-    while (logs.length > MAX) logs.shift();
-    setAll(logs);
+  const LOGGER = {
+    key: KEY,
+    max: MAX,
 
-    // espelha em UI (se existir)
-    const toolsBox = document.getElementById("logsBox");
-    if (toolsBox) toolsBox.textContent = logs.join("\n");
+    push(level, msg) {
+      const line = `[${timeStamp()}] ${safeText(msg)}`;
+      const arr = readArr();
+      arr.push(line);
+      while (arr.length > LOGGER.max) arr.shift();
+      writeArr(arr);
+      try { console.log("[RCF]", level || "log", msg); } catch {}
+      return line;
+    },
 
-    const viewBox = document.getElementById("logsOut");
-    if (viewBox) viewBox.textContent = logs.join("\n");
+    log(msg) { return LOGGER.push("log", msg); },
+    warn(msg) { return LOGGER.push("warn", msg); },
+    error(msg) { return LOGGER.push("error", msg); },
 
-    try { console.log("[RCF]", level || "log", msg); } catch {}
-    return line;
-  }
+    clear() {
+      writeArr([]);
+      try { console.log("[RCF] logs cleared"); } catch {}
+    },
 
-  function clear() {
-    setAll([]);
-    const toolsBox = document.getElementById("logsBox");
-    if (toolsBox) toolsBox.textContent = "";
-    const viewBox = document.getElementById("logsOut");
-    if (viewBox) viewBox.textContent = "";
-  }
+    getLines() {
+      return readArr();
+    },
 
-  function getText() {
-    return getAll().join("\n");
-  }
+    getText() {
+      return readArr().join("\n");
+    },
 
-  // API global
-  window.RCF_LOGGER = {
-    push,
-    clear,
-    getText,
-    dump: getText,
-    getAll
+    dump() {
+      return LOGGER.getText();
+    }
   };
 
-  // log de boot (só se ainda não tiver nada, pra não “encher”)
-  try {
-    const existing = getAll();
-    if (!existing.length) push("log", "core/logger.js pronto ✅");
-  } catch {}
+  // Expose
+  window.RCF_LOGGER = LOGGER;
+
+  // marca que carregou
+  LOGGER.log("core/logger.js carregado ✅ (BASE v1.0)");
 })();
