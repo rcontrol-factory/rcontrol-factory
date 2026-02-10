@@ -1,1 +1,5 @@
-
+{
+  "files": {
+    "/core/TESTE.txt": "OK — bundle aplicado em {{DATE}}"
+  }
+}
