@@ -1,8 +1,9 @@
 /* =========================================================
-  RControl Factory — core/ui_bindings.js (FULL / FIXED)
+  RControl Factory — core/ui_bindings.js (BASE / FIX LOGS)
   - Liga UI (Agent/Admin/Diag/Logs/Tools) ao core
   - iOS-safe: click + touchend (evita double fire)
-  - Não depende de "AgroControl" nem exemplos
+  - Logs: usa #logsOut (view) + #logsBox (drawer)
+  - Fallback: lê localStorage "rcf:logs" (app.js atual)
 ========================================================= */
 
 (function () {
@@ -10,10 +11,7 @@
 
   // ---------- helpers ----------
   function $(id) { return document.getElementById(id); }
-
-  function safeText(v) {
-    return (v === undefined || v === null) ? "" : String(v);
-  }
+  function safeText(v) { return (v === undefined || v === null) ? "" : String(v); }
 
   // Evita "duplo clique" (touch + click) no iOS
   const TAP_GUARD_MS = 450;
@@ -25,17 +23,15 @@
     const handler = (e) => {
       const now = Date.now();
       if (now - _lastTapAt < TAP_GUARD_MS) {
-        // ignora o segundo evento (double fire)
         try { e.preventDefault(); e.stopPropagation(); } catch {}
         return;
       }
       _lastTapAt = now;
 
       try { e.preventDefault(); e.stopPropagation(); } catch {}
-      fn(e);
+      try { fn(e); } catch {}
     };
 
-    // click + touchend (touchstart pode bloquear scroll/inputs)
     el.addEventListener("click", handler, { passive: false });
     el.addEventListener("touchend", handler, { passive: false });
   }
@@ -58,11 +54,8 @@
     if (!handler) {
       res = "ERRO: core/commands.js não carregou (RCF_COMMANDS.handle não existe).";
     } else {
-      try {
-        res = handler(String(cmd || "").trim(), ctx);
-      } catch (err) {
-        res = "ERRO ao executar comando: " + (err && err.message ? err.message : String(err));
-      }
+      try { res = handler(String(cmd || "").trim(), ctx); }
+      catch (err) { res = "ERRO ao executar comando: " + (err?.message || String(err)); }
     }
 
     if (outEl) outEl.textContent = safeText(res);
@@ -70,24 +63,41 @@
   }
 
   // ---------- logger integration ----------
-  function loggerGetText() {
-    // tenta vários formatos possíveis
-    const L = window.RCF_LOGGER;
+  function readLocalLogsFallback() {
+    // app.js atual: Storage prefix "rcf:" e bufKey "logs"
+    try {
+      const raw = localStorage.getItem("rcf:logs");
+      if (!raw) return "";
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) return arr.map(safeText).join("\n");
+      return safeText(arr);
+    } catch {
+      return "";
+    }
+  }
 
-    if (!L) return "";
-    if (typeof L.getText === "function") return safeText(L.getText());
-    if (typeof L.dump === "function") return safeText(L.dump());
-    if (Array.isArray(L.lines)) return L.lines.map(safeText).join("\n");
-    if (Array.isArray(L.buffer)) return L.buffer.map(safeText).join("\n");
-    return "";
+  function loggerGetText() {
+    const L = window.RCF_LOGGER;
+    if (L) {
+      if (typeof L.getText === "function") return safeText(L.getText());
+      if (typeof L.dump === "function") return safeText(L.dump());
+      if (Array.isArray(L.lines)) return L.lines.map(safeText).join("\n");
+      if (Array.isArray(L.buffer)) return L.buffer.map(safeText).join("\n");
+    }
+    // fallback pro Logger do app.js (localStorage)
+    return readLocalLogsFallback();
   }
 
   function loggerClear() {
     const L = window.RCF_LOGGER;
-    if (!L) return;
-    if (typeof L.clear === "function") return L.clear();
-    if (Array.isArray(L.lines)) L.lines.length = 0;
-    if (Array.isArray(L.buffer)) L.buffer.length = 0;
+    if (L) {
+      if (typeof L.clear === "function") { L.clear(); return; }
+      if (Array.isArray(L.lines)) L.lines.length = 0;
+      if (Array.isArray(L.buffer)) L.buffer.length = 0;
+      return;
+    }
+    // fallback pro app.js
+    try { localStorage.setItem("rcf:logs", JSON.stringify([])); } catch {}
   }
 
   function loggerPush(level, msg) {
@@ -95,7 +105,6 @@
     if (L && typeof L.push === "function") {
       try { L.push(level || "log", msg); } catch {}
     } else {
-      // fallback silencioso
       try { console.log("[RCF]", msg); } catch {}
     }
   }
@@ -106,7 +115,7 @@
     let rep = "";
     if (P && typeof P.applyAll === "function") {
       try { rep = P.applyAll(); }
-      catch (e) { rep = "ERRO applyAll: " + safeText(e && e.message ? e.message : e); }
+      catch (e) { rep = "ERRO applyAll: " + safeText(e?.message || e); }
     } else {
       rep = "Patchset não disponível (RCF_PATCHSET.applyAll não existe).";
     }
@@ -119,7 +128,7 @@
     let rep = "";
     if (P && typeof P.clear === "function") {
       try { P.clear(); rep = "Patches descartados ✅"; }
-      catch (e) { rep = "ERRO clear: " + safeText(e && e.message ? e.message : e); }
+      catch (e) { rep = "ERRO clear: " + safeText(e?.message || e); }
     } else {
       rep = "Patchset não disponível (RCF_PATCHSET.clear não existe).";
     }
@@ -129,22 +138,13 @@
 
   // ---------- DIAG report ----------
   async function buildDiagReport() {
-    // tenta o core/diagnostics.js primeiro
     const D = window.RCF_DIAGNOSTICS;
-    if (D && typeof D.buildReport === "function") {
-      return await D.buildReport();
-    }
-    if (D && typeof D.run === "function") {
-      return await D.run();
-    }
+    if (D && typeof D.buildReport === "function") return await D.buildReport();
+    if (D && typeof D.run === "function") return await D.run();
 
-    // fallback: factory diagnosis (se existir)
     const F = window.RCF && window.RCF.factory;
-    if (F && typeof F.buildDiagnosisReport === "function") {
-      return await F.buildDiagnosisReport();
-    }
+    if (F && typeof F.buildDiagnosisReport === "function") return await F.buildDiagnosisReport();
 
-    // fallback simples
     const info = [];
     info.push("DIAG (fallback) ✅");
     info.push("—");
@@ -158,7 +158,7 @@
 
   // ---------- bindings ----------
   function bindAgent() {
-    const input = $("agentCmd");      // ✅ ID real do seu HTML
+    const input = $("agentCmd");
     const out = $("agentOut");
 
     const btnRun = $("btnAgentRun");
@@ -166,10 +166,7 @@
     const btnApprove = $("btnAgentApprove");
     const btnDiscard = $("btnAgentDiscard");
 
-    if (btnRun && input) {
-      bindTap(btnRun, () => runCommand(input.value, out));
-    }
-
+    if (btnRun && input) bindTap(btnRun, () => runCommand(input.value, out));
     if (btnClear && input) {
       bindTap(btnClear, () => {
         input.value = "";
@@ -177,15 +174,9 @@
       });
     }
 
-    // Aprovar/Descartar (patchset)
-    if (btnApprove) {
-      bindTap(btnApprove, () => patchApplyAll(out));
-    }
-    if (btnDiscard) {
-      bindTap(btnDiscard, () => patchClear(out));
-    }
+    if (btnApprove) bindTap(btnApprove, () => patchApplyAll(out));
+    if (btnDiscard) bindTap(btnDiscard, () => patchClear(out));
 
-    // Enter executa (sem shift) — e não quebra colagem grande
     if (input) {
       input.addEventListener("keydown", (e) => {
         if (e.key === "Enter" && !e.shiftKey) {
@@ -199,10 +190,10 @@
   function bindAdmin() {
     const out = $("adminOut");
 
-    const btnDiag = $("btnAdminDiag");       // ✅ ID real
-    const btnClear = $("btnAdminClear");     // ✅ ID real
-    const btnApply = $("btnAdminApply");     // ✅ ID real
-    const btnDiscard = $("btnAdminDiscard"); // ✅ ID real (ANTES estava errado)
+    const btnDiag = $("btnAdminDiag");
+    const btnClear = $("btnAdminClear");
+    const btnApply = $("btnAdminApply");
+    const btnDiscard = $("btnAdminDiscard");
 
     if (btnDiag) {
       bindTap(btnDiag, async () => {
@@ -211,19 +202,9 @@
       });
     }
 
-    if (btnClear) {
-      bindTap(btnClear, () => {
-        if (out) out.textContent = "Limpo.";
-      });
-    }
-
-    if (btnApply) {
-      bindTap(btnApply, () => patchApplyAll(out));
-    }
-
-    if (btnDiscard) {
-      bindTap(btnDiscard, () => patchClear(out));
-    }
+    if (btnClear) bindTap(btnClear, () => { if (out) out.textContent = "Limpo."; });
+    if (btnApply) bindTap(btnApply, () => patchApplyAll(out));
+    if (btnDiscard) bindTap(btnDiscard, () => patchClear(out));
   }
 
   function bindDiagnosticsView() {
@@ -238,22 +219,17 @@
       });
     }
 
-    if (btnClear) {
-      bindTap(btnClear, () => {
-        if (out) out.textContent = "Pronto.";
-      });
-    }
+    if (btnClear) bindTap(btnClear, () => { if (out) out.textContent = "Pronto."; });
   }
 
   function bindLogsViewAndTools() {
-    const logsViewBox = $("logsViewBox"); // view logs
-    const toolsLogsBox = $("logsBox");    // drawer ferramentas
+    const logsViewBox = $("logsOut"); // ✅ ID real do HTML
+    const toolsLogsBox = $("logsBox"); // ✅ drawer
 
     const btnRefresh = $("btnLogsRefresh");
     const btnCopy = $("btnLogsCopy");
     const btnClear = $("btnLogsClear");
 
-    // tools drawer
     const btnClearLogs = $("btnClearLogs");
     const btnCopyLogs = $("btnCopyLogs");
 
@@ -265,18 +241,11 @@
 
     const copy = async () => {
       const text = loggerGetText() || "";
-      try {
-        await navigator.clipboard.writeText(text);
-        alert("Logs copiados ✅");
-      } catch {
-        alert("iOS bloqueou copiar. Abra Ferramentas (⚙️) e copie manual.");
-      }
+      try { await navigator.clipboard.writeText(text); alert("Logs copiados ✅"); }
+      catch { alert("iOS bloqueou copiar. Copie manual pelo drawer (⚙️)."); }
     };
 
-    const clear = () => {
-      loggerClear();
-      refresh();
-    };
+    const clear = () => { loggerClear(); refresh(); };
 
     if (btnRefresh) bindTap(btnRefresh, refresh);
     if (btnCopy) bindTap(btnCopy, copy);
@@ -285,12 +254,10 @@
     if (btnClearLogs) bindTap(btnClearLogs, clear);
     if (btnCopyLogs) bindTap(btnCopyLogs, copy);
 
-    // Atualiza uma vez ao iniciar (pra não ficar “Logs...”)
-    refresh();
+    refresh(); // já inicia preenchido
   }
 
   function init() {
-    // iOS: garante que a página registra toque (sem travar scroll)
     document.body.addEventListener("touchstart", () => {}, { passive: true });
 
     bindAgent();
@@ -298,12 +265,10 @@
     bindDiagnosticsView();
     bindLogsViewAndTools();
 
-    loggerPush("log", "core/ui_bindings.js carregado ✅ (fixed)");
+    loggerPush("log", "core/ui_bindings.js carregado ✅ (logs fix)");
   }
 
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", init);
-  } else {
-    init();
-  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
+  else init();
+
 })();
