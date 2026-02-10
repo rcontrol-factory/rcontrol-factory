@@ -1,278 +1,400 @@
 /* core/commands.js
- * RControl Factory — Command Router (Replit-like básico)
- * - Offline-first (sem LLM)
- * - Comandos: help, list, create NOME [SLUG], select SLUG
- * - Texto natural: "cria um app chamado AgroControl"
- * - Atalho: digitar só um slug existente => auto-select
- * - Auto-slug: se digitar nome sem slug => slugify automático
- *
- * Observação: este arquivo é "standalone" (1 arquivo só) para facilitar colar no celular.
- */
+   RControl Factory - Core Commands (single-file, no imports)
+   - create/select/open/set file/write/show/apply/help
+   - auto-slug
+   - write mode: "write" enters capture until "/end"
+   - safe/auto modes supported via ctx.flags
+*/
 
 (function () {
+  "use strict";
+
   // ---------- Helpers ----------
   function nowISO() {
-    try {
-      return new Date().toISOString();
-    } catch (_) {
-      return "" + Date.now();
-    }
+    try { return new Date().toISOString(); } catch { return "" + Date.now(); }
   }
 
-  function slugify(str) {
-    return String(str || "")
+  function isStr(x) { return typeof x === "string"; }
+
+  function trim(s) { return (s || "").toString().trim(); }
+
+  function slugify(name) {
+    const s = trim(name)
       .toLowerCase()
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // remove acentos
       .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "");
+      .replace(/^-+|-+$/g, "")
+      .replace(/--+/g, "-");
+    return s || "app";
   }
 
-  function ok(result, extra) {
-    return Object.assign({ ok: true, result: result || "" }, extra || {});
+  function validSlug(slug) {
+    const s = trim(slug);
+    // permite: letras, números, hífen. 2..40 chars
+    return /^[a-z0-9][a-z0-9-]{1,39}$/.test(s);
   }
 
-  function fail(msg, extra) {
-    return Object.assign({ ok: false, error: msg || "Erro." }, extra || {});
-  }
-
-  // Storage de apps (mínimo). Se o projeto já tem storage próprio, isso ainda funciona,
-  // porque aqui a gente só mantém uma lista simples para select/create não quebrar.
-  const STORE_KEY_APPS = "RCF_APPS_V1";
-  const STORE_KEY_ACTIVE = "RCF_ACTIVE_APP_V1";
-
-  function loadApps() {
-    try {
-      const raw = localStorage.getItem(STORE_KEY_APPS);
-      const arr = raw ? JSON.parse(raw) : [];
-      return Array.isArray(arr) ? arr : [];
-    } catch (_) {
-      return [];
-    }
-  }
-
-  function saveApps(apps) {
-    try {
-      localStorage.setItem(STORE_KEY_APPS, JSON.stringify(apps || []));
-      return true;
-    } catch (_) {
-      return false;
-    }
-  }
-
-  function setActive(slug) {
-    try {
-      localStorage.setItem(STORE_KEY_ACTIVE, slug || "");
-      return true;
-    } catch (_) {
-      return false;
-    }
-  }
-
-  function getActive() {
-    try {
-      return localStorage.getItem(STORE_KEY_ACTIVE) || "";
-    } catch (_) {
-      return "";
-    }
-  }
-
-  function ensureUniqueSlug(desired, apps) {
-    let slug = desired;
-    if (!slug) return "";
-    if (!apps.includes(slug)) return slug;
-    let i = 2;
-    while (apps.includes(slug + "-" + i)) i++;
-    return slug + "-" + i;
-  }
-
-  // ---------- Commands (API) ----------
-  function help() {
-    const text =
-      "Comandos:\n" +
-      "- help\n" +
-      "- list\n" +
-      "- create NOME [SLUG]\n" +
-      "- select SLUG\n\n" +
-      "Atalhos:\n" +
-      "- Se digitar só um slug existente -> auto select\n" +
-      "- Se digitar um nome (ex: AgroControl) -> sugere create\n" +
-      "- Texto natural: 'cria um app chamado AgroControl'";
-    return ok(text);
-  }
-
-  function list() {
-    const apps = loadApps();
-    const active = getActive();
-    if (!apps.length) return ok("Nenhum app ainda.");
-    const lines = apps.map((s) => (s === active ? `* ${s} (ativo)` : `- ${s}`));
-    return ok(lines.join("\n"), { apps, active });
-  }
-
-  function create(name, slug) {
-    const apps = loadApps();
-    const cleanName = String(name || "").trim();
-    let cleanSlug = String(slug || "").trim();
-
-    if (!cleanName) return fail("Nome inválido.");
-
-    if (!cleanSlug) cleanSlug = slugify(cleanName);
-    if (!cleanSlug) return fail("Nome/slug inválidos.");
-
-    // slug seguro (min/max)
-    if (!/^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/.test(cleanSlug)) {
-      // permitir slug curto tipo "a" ou "ab"
-      if (!/^[a-z0-9-]{1,64}$/.test(cleanSlug)) {
-        return fail("Slug inválido (use letras/números e hífen).");
+  function splitArgsPreserveQuotes(line) {
+    // split simples: suporta "texto com espaço"
+    const out = [];
+    let cur = "";
+    let q = null;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (q) {
+        if (ch === q) { q = null; continue; }
+        cur += ch;
+        continue;
       }
+      if (ch === '"' || ch === "'") { q = ch; continue; }
+      if (/\s/.test(ch)) {
+        if (cur) { out.push(cur); cur = ""; }
+        continue;
+      }
+      cur += ch;
     }
-
-    cleanSlug = ensureUniqueSlug(cleanSlug, apps);
-
-    apps.push(cleanSlug);
-    saveApps(apps);
-    setActive(cleanSlug);
-
-    return ok(`Criado: ${cleanName} (${cleanSlug})`, {
-      created: { name: cleanName, slug: cleanSlug },
-      apps,
-      active: cleanSlug,
-    });
+    if (cur) out.push(cur);
+    return out;
   }
 
-  function select(slug) {
-    const apps = loadApps();
-    const s = String(slug || "").trim();
-    if (!s) return fail("Slug vazio.");
-    if (!apps.includes(s)) return fail("App não encontrado.");
-    setActive(s);
-    return ok(`App ativo: ${s}`, { active: s });
+  function asPatch(op, data) {
+    return { op: op, ...data };
   }
 
-  // ---------- NLP / Router ----------
-  function parseNaturalCreate(text) {
-    const lower = text.toLowerCase();
+  // ---------- Global State (write mode / pending patch) ----------
+  const G = (typeof window !== "undefined") ? window : globalThis;
+
+  if (!G.RCF_STATE) {
+    G.RCF_STATE = {
+      writeMode: false,
+      writeTargetFile: writeDefaultFile(),
+      writeBuffer: "",
+      lastCmd: "",
+    };
+  }
+
+  function writeDefaultFile() {
+    // arquivo padrão pro Agent escrever (ajusta se você usa outro)
+    return "app.js";
+  }
+
+  function logInfo(msg) {
+    try {
+      if (G.RCF_LOG && typeof G.RCF_LOG.info === "function") return G.RCF_LOG.info(msg);
+    } catch {}
+    // fallback
+    try { console.log("[RCF]", msg); } catch {}
+  }
+
+  // ctx esperado (se existir no app):
+  // ctx = {
+  //   app: { activeSlug, apps: [...] },
+  //   editor: { currentFile },
+  //   flags: { mode: "safe"|"auto", autoApplySafe: true/false }
+  //   api: { listApps, selectApp, createApp, openEditor, setFile, getFile, writeFile, applyPatchset }
+  // }
+  function getMode(ctx) {
+    const m = ctx && ctx.flags && ctx.flags.mode;
+    return (m === "auto") ? "auto" : "safe";
+  }
+
+  function getCurrentFile(ctx) {
+    const f = ctx && ctx.editor && ctx.editor.currentFile;
+    return trim(f) || G.RCF_STATE.writeTargetFile || writeDefaultFile();
+  }
+
+  function setCurrentFile(ctx, file) {
+    const f = trim(file);
+    if (!f) return false;
+    G.RCF_STATE.writeTargetFile = f;
+    if (ctx && ctx.editor) ctx.editor.currentFile = f;
+    // se tiver API
+    try {
+      if (ctx && ctx.api && typeof ctx.api.setFile === "function") ctx.api.setFile(f);
+    } catch {}
+    return true;
+  }
+
+  function uiResult(ok, message, patchset, meta) {
+    return {
+      ok: !!ok,
+      message: message || "",
+      patchset: patchset || [],
+      meta: meta || {},
+      ts: nowISO()
+    };
+  }
+
+  // ---------- NLP (bem simples offline) ----------
+  function nlpRoute(text) {
+    const t = trim(text).toLowerCase();
 
     // exemplos: "cria um app chamado AgroControl"
-    // "criar app agrocontrol"
-    // "create agrocontrol"
-    let m =
-      lower.match(/^(create|criar|cria)\s+(um\s+)?(app|aplicativo)\s+(chamado\s+)?(.+)$/) ||
-      lower.match(/^(create|criar|cria)\s+(.+)$/);
-
-    if (!m) return null;
-
-    // nome fica no último grupo
-    const rawName = (m[m.length - 1] || "").trim();
-    if (!rawName) return null;
-
-    return { name: rawName };
+    if (/(cria|criar|create).*(app|aplicativo)/.test(t)) return "create_nl";
+    if (/(abrir|open).*(editor)/.test(t)) return "open_editor";
+    if (/(listar|list)/.test(t)) return "list";
+    if (/^help$|^ajuda$/.test(t)) return "help";
+    return null;
   }
 
-  function route(input) {
-    const text = String(input || "").trim();
-    const lower = text.toLowerCase();
+  // ---------- Core Router ----------
+  async function runCommand(input, ctx) {
+    const raw = (input == null) ? "" : String(input);
+    const line = trim(raw);
 
-    if (!text) return fail("Digite um comando.");
+    if (!line) return uiResult(true, "Digite um comando. Use: help");
 
-    // comandos diretos
-    if (lower === "help") return help();
-    if (lower === "list") return list();
+    G.RCF_STATE.lastCmd = line;
 
+    // WRITE MODE: captura até /end
+    if (G.RCF_STATE.writeMode) {
+      if (line === "/end") {
+        const target = G.RCF_STATE.writeTargetFile || getCurrentFile(ctx);
+        const content = G.RCF_STATE.writeBuffer;
+
+        G.RCF_STATE.writeMode = false;
+        G.RCF_STATE.writeBuffer = "";
+
+        const ps = [asPatch("FILE_WRITE", { file: target, content })];
+
+        const mode = getMode(ctx);
+        if (mode === "auto") {
+          // tentar aplicar direto se existir API
+          try {
+            if (ctx && ctx.api && typeof ctx.api.writeFile === "function") {
+              await ctx.api.writeFile(target, content);
+              logInfo(`AUTO APPLY FILE_WRITE -> ${target} (${content.length} chars)`);
+              return uiResult(true, `✅ Escrevi no arquivo: ${target} (auto)`, [], { applied: true });
+            }
+          } catch (e) {
+            return uiResult(false, `Erro ao aplicar auto-write: ${e && e.message ? e.message : e}`, ps, { applied: false });
+          }
+        }
+
+        // safe: vira patch pendente
+        return uiResult(true, `📝 WRITE MODE finalizado. Patch pendente para: ${target}`, ps, { applied: false });
+      }
+
+      // ainda capturando
+      G.RCF_STATE.writeBuffer += raw + "\n";
+      return uiResult(true, `...capturando (${G.RCF_STATE.writeBuffer.length} chars). Envie /end para finalizar.`);
+    }
+
+    // comandos curtos
+    const args = splitArgsPreserveQuotes(line);
+    const cmd = (args[0] || "").toLowerCase();
+
+    // NLP fallback
+    const nlp = nlpRoute(line);
+
+    // ----- HELP -----
+    if (cmd === "help" || cmd === "ajuda" || nlp === "help") {
+      const msg =
+`Comandos:
+- help
+- list
+- create NOME [SLUG]
+- select SLUG
+- open editor
+- set file NOME_ARQUIVO
+- write   (entra em WRITE MODE; finalize com /end)
+- show    (mostra arquivo atual)
+- apply   (aplica patch pendente)
+Dicas:
+- Se você digitar só "AgroControl", eu tento entender (create).
+- create sem slug -> slug automático.
+- Modo: safe (pede apply) / auto (aplica ações seguras).`;
+      return uiResult(true, msg);
+    }
+
+    // ----- LIST -----
+    if (cmd === "list" || cmd === "listar" || nlp === "list") {
+      try {
+        if (ctx && ctx.api && typeof ctx.api.listApps === "function") {
+          const apps = await ctx.api.listApps();
+          const names = (apps || []).map(a => `${a.slug}${a.active ? " (ativo)" : ""}`);
+          return uiResult(true, `Apps: ${names.join(", ") || "(nenhum)"}`);
+        }
+      } catch (e) {
+        return uiResult(false, `Erro no list: ${e && e.message ? e.message : e}`);
+      }
+      return uiResult(true, "List: API não conectada. (Sem listagem no modo offline simples)");
+    }
+
+    // ----- OPEN EDITOR -----
+    if ((cmd === "open" && (args[1] || "").toLowerCase() === "editor") || nlp === "open_editor") {
+      try {
+        if (ctx && ctx.api && typeof ctx.api.openEditor === "function") {
+          await ctx.api.openEditor();
+          return uiResult(true, "✅ Editor aberto.");
+        }
+      } catch (e) {
+        return uiResult(false, `Erro ao abrir editor: ${e && e.message ? e.message : e}`);
+      }
+      return uiResult(true, "Open editor: OK (sem API).");
+    }
+
+    // ----- SET FILE -----
+    if (cmd === "set" && (args[1] || "").toLowerCase() === "file") {
+      const file = args.slice(2).join(" ");
+      if (!trim(file)) return uiResult(false, "Use: set file NOME_ARQUIVO");
+      setCurrentFile(ctx, file);
+      return uiResult(true, `✅ Arquivo atual: ${trim(file)}`);
+    }
+
+    // ----- SHOW -----
+    if (cmd === "show") {
+      const file = getCurrentFile(ctx);
+      try {
+        if (ctx && ctx.api && typeof ctx.api.getFile === "function") {
+          const content = await ctx.api.getFile(file);
+          const head = (content || "").slice(0, 2000);
+          return uiResult(true, `📄 ${file} (prévia até 2000 chars):\n\n${head}`);
+        }
+      } catch (e) {
+        return uiResult(false, `Erro show: ${e && e.message ? e.message : e}`);
+      }
+      return uiResult(true, `Arquivo atual: ${file} (sem API para ler conteúdo).`);
+    }
+
+    // ----- WRITE (enter capture mode) -----
+    if (cmd === "write") {
+      // write pode receber "write no arquivo X" (opcional)
+      // exemplos: "write app.js" ou "write file app.js"
+      let target = "";
+      if (args.length >= 2) {
+        if ((args[1] || "").toLowerCase() === "file") target = args.slice(2).join(" ");
+        else target = args.slice(1).join(" ");
+      }
+      target = trim(target) || getCurrentFile(ctx);
+
+      setCurrentFile(ctx, target);
+
+      G.RCF_STATE.writeMode = true;
+      G.RCF_STATE.writeTargetFile = target;
+      G.RCF_STATE.writeBuffer = "";
+
+      return uiResult(true, `📝 WRITE MODE ativo para: ${target}\nCole o texto/código agora. Finalize com: /end`);
+    }
+
+    // ----- APPLY (se seu app guarda patch pendente em algum lugar) -----
+    if (cmd === "apply") {
+      try {
+        if (ctx && ctx.api && typeof ctx.api.applyPatchset === "function") {
+          const res = await ctx.api.applyPatchset();
+          return uiResult(true, `✅ Patch aplicado. ${res ? "(ok)" : ""}`);
+        }
+      } catch (e) {
+        return uiResult(false, `Erro apply: ${e && e.message ? e.message : e}`);
+      }
+      return uiResult(true, "Apply: (sem API de patchset conectada).");
+    }
+
+    // ----- CREATE -----
     // create NOME [SLUG]
-    // Aceita: create Nome slug
-    // Se vier só "create AgroControl" -> auto slug
-    if (/^(create|criar|cria)\b/.test(lower)) {
-      // tenta natural primeiro
-      const nat = parseNaturalCreate(text);
-      if (nat) return create(nat.name, "");
+    if (cmd === "create" || nlp === "create_nl") {
+      // se NLP: tenta extrair nome
+      let name = "";
+      let slug = "";
 
-      // split
-      const parts = text.split(/\s+/);
-      // parts[0]=create
-      if (parts.length < 2) return fail("Use: create NOME [SLUG]");
-
-      // se tiver 3+ tokens, pode ser "create Nome slug" OU "create Nome Composto ..."
-      // Estratégia: se o último token parece slug (só letras/números/-), usa como slug.
-      const last = parts[parts.length - 1];
-      const maybeSlug = /^[a-z0-9-]+$/i.test(last);
-
-      if (parts.length >= 3 && maybeSlug) {
-        const name = parts.slice(1, parts.length - 1).join(" ");
-        const slug = slugify(last);
-        return create(name, slug);
+      if (cmd === "create") {
+        name = args[1] || "";
+        slug = args[2] || "";
+        // se o nome tiver espaço e veio como "create 'Agro Control'"
+        if (args.length > 3 && !slug) {
+          // se user fez create Agro Control
+          name = args.slice(1).join(" ");
+          slug = "";
+        }
       } else {
-        const name = parts.slice(1).join(" ");
-        return create(name, "");
+        // NLP: pega última palavra "chamado X"
+        const m = raw.match(/(chamado|chamada|named)\s+(.+)$/i);
+        name = m ? trim(m[2]) : raw;
+      }
+
+      name = trim(name);
+      if (!name) return uiResult(false, "Use: create NOME [SLUG]");
+
+      if (!slug) slug = slugify(name);
+      slug = slugify(slug); // garante formato
+      if (!validSlug(slug)) {
+        slug = slugify(slug);
+      }
+
+      if (!validSlug(slug)) {
+        return uiResult(false, `Nome/slug inválidos. Sugestão de slug: ${slugify(name)}`);
+      }
+
+      try {
+        if (ctx && ctx.api && typeof ctx.api.createApp === "function") {
+          await ctx.api.createApp(name, slug);
+          return uiResult(true, `✅ App criado: ${name} (${slug})`);
+        }
+      } catch (e) {
+        return uiResult(false, `Erro create: ${e && e.message ? e.message : e}`);
+      }
+
+      // fallback safe patch (se não tiver API)
+      const ps = [asPatch("APP_CREATE", { name, slug })];
+      return uiResult(true, `🧩 Patch pendente para criar app: ${name} (${slug})`, ps);
+    }
+
+    // ----- SELECT -----
+    if (cmd === "select") {
+      const slug = slugify(args[1] || "");
+      if (!validSlug(slug)) return uiResult(false, "Use: select SLUG");
+      try {
+        if (ctx && ctx.api && typeof ctx.api.selectApp === "function") {
+          await ctx.api.selectApp(slug);
+          return uiResult(true, `✅ App ativo: ${slug}`);
+        }
+      } catch (e) {
+        return uiResult(false, `Erro select: ${e && e.message ? e.message : e}`);
+      }
+      const ps = [asPatch("APP_SELECT", { slug })];
+      return uiResult(true, `🧩 Patch pendente: selecionar ${slug}`, ps);
+    }
+
+    // ----- Atalho: se digitar só um nome/slug sem comando -----
+    // Ex: "agrocontrol" -> tenta select; se não existir, sugere create
+    if (args.length === 1) {
+      const token = trim(args[0]);
+      if (!token) return uiResult(true, "Use: help");
+
+      // se parece slug, tenta select
+      const candidate = slugify(token);
+      if (validSlug(candidate)) {
+        // tenta API de apps pra ver se existe
+        try {
+          if (ctx && ctx.api && typeof ctx.api.listApps === "function") {
+            const apps = await ctx.api.listApps();
+            const exists = (apps || []).some(a => a.slug === candidate);
+            if (exists) {
+              if (typeof ctx.api.selectApp === "function") {
+                await ctx.api.selectApp(candidate);
+                return uiResult(true, `✅ App ativo: ${candidate}`);
+              }
+              return uiResult(true, `🧩 Patch pendente: selecionar ${candidate}`, [asPatch("APP_SELECT", { slug: candidate })]);
+            }
+          }
+        } catch {}
+
+        // se não achou, oferece create
+        return uiResult(true, `Não encontrei "${candidate}". Quer criar? Use: create "${token}" ${candidate}`);
       }
     }
 
-    // select SLUG
-    if (/^select\b/.test(lower)) {
-      const parts = text.split(/\s+/);
-      if (parts.length < 2) return fail("Use: select SLUG");
-      return select(parts[1]);
-    }
-
-    // Atalho: se digitar só um slug existente -> auto select
-    const apps = loadApps();
-    const guessSlug = slugify(text);
-
-    if (apps.includes(text)) {
-      return select(text);
-    }
-    if (apps.includes(guessSlug)) {
-      return select(guessSlug);
-    }
-
-    // Se parece nome -> sugere create
-    return ok(`Entendi: "${text}". Quer criar um app com esse nome?`, {
-      suggestion: `create ${text}`,
-    });
+    return uiResult(false, "Comando não reconhecido. Use: help");
   }
 
-  // ---------- Exports ----------
-  // A Factory pode chamar executeCommand(input, state) ou algo parecido.
-  // A gente deixa compatível:
-  function executeCommand(input /*, state */) {
-    try {
-      const res = route(input);
-      // Padroniza resposta para UI:
-      // - se UI usa res.result
-      // - se UI usa res.error
-      return res;
-    } catch (e) {
-      return fail("Falha ao executar comando.", { detail: String(e && e.message ? e.message : e) });
-    }
-  }
+  // ---------- Public API ----------
+  // Compat: expõe um objeto global fácil do app.js chamar
+  G.RCF_COMMANDS = {
+    run: runCommand
+  };
 
-  // Exporta no window e também como módulo se existir
-  // (para ambientes que usam import/export)
-  try {
-    // eslint-disable-next-line no-undef
-    if (typeof window !== "undefined") {
-      window.RCF_Commands = window.RCF_Commands || {};
-      window.RCF_Commands.executeCommand = executeCommand;
-      window.RCF_Commands.help = help;
-      window.RCF_Commands.list = list;
-      window.RCF_Commands.create = create;
-      window.RCF_Commands.select = select;
-    }
-  } catch (_) {}
+  // alias bem direto (se seu app chama assim)
+  G.runCoreCommand = runCommand;
 
-  // Para quem importa como módulo
-  try {
-    // eslint-disable-next-line no-undef
-    if (typeof exports !== "undefined") {
-      // CommonJS-like
-      exports.executeCommand = executeCommand;
-      exports.help = help;
-      exports.list = list;
-      exports.create = create;
-      exports.select = select;
-    }
-  } catch (_) {}
-
-  // Se o projeto usar ES Modules, ele não vai ler isso aqui via export.
-  // Mas a maioria do seu UI pode chamar window.RCF_Commands.executeCommand().
+  logInfo("core/commands.js carregado ✅");
 })();
