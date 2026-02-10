@@ -1,190 +1,276 @@
-/* ===== FIX: esconder dock inferior (Agent/Admin/Diag/Logs) ===== */
-.bottom-dock, #bottomDock, .dock, .nav-bottom, .fabbar {
-  display: none !important;
-}
 :root{
   --bg:#0b1220;
-  --card:#0f1a2e;
-  --border:rgba(255,255,255,.10);
-  --text:rgba(255,255,255,.92);
-  --muted:rgba(255,255,255,.65);
-  --green:#19c37d;
-  --red:#ff5d5d;
+  --bg2:#0f1a2c;
+  --card:#0e1727cc;
+  --stroke:#1e2b44;
+  --text:#e8eefc;
+  --muted:#9fb0d0;
+  --ok:#1ed760;
+  --danger:#ff4d4d;
+  --pill:#121c30;
+  --pill2:#16233c;
 }
 
 *{box-sizing:border-box}
+html,body{height:100%}
 body{
   margin:0;
-  background:var(--bg);
+  font-family: -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Arial;
+  background: radial-gradient(1200px 700px at 20% 10%, #132744 0%, var(--bg) 55%);
   color:var(--text);
-  font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;
 }
 
-.top{
-  padding:14px;
-  border-bottom:1px solid var(--border);
-  position:sticky;
-  top:0;
-  background:linear-gradient(180deg, rgba(11,18,32,.98), rgba(11,18,32,.90));
-  z-index:5;
-}
-
-.brand{display:flex;gap:10px;align-items:center}
-.dot{width:10px;height:10px;border-radius:50%;background:var(--green)}
-.title{font-weight:900}
-.sub{color:var(--muted);font-size:12px}
-
-.tabs{
-  margin-top:10px;
-  display:flex;
-  gap:8px;
-  flex-wrap:wrap;
-}
-
-.tab{
-  border:1px solid var(--border);
-  background:rgba(255,255,255,.04);
-  color:var(--text);
-  padding:8px 12px;
-  border-radius:12px;
-  font-weight:900;
-}
-
-.tab.active{
-  background:rgba(25,195,125,.18);
-  border-color:rgba(25,195,125,.35);
-}
-
-.wrap{max-width:980px;margin:14px auto;padding:0 14px}
-.panel{
-  background:rgba(255,255,255,.02);
-  border:1px solid var(--border);
-  border-radius:16px;
-  padding:14px;
-  margin-bottom:14px;
-}
-.hidden{display:none}
-
-.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-.row.wrap{align-items:stretch}
-
-.btn{
-  background:rgba(25,195,125,.18);
-  border:1px solid rgba(25,195,125,.35);
-  color:var(--text);
-  padding:10px 12px;
-  border-radius:12px;
-  font-weight:900;
-}
-.btn.ghost{background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.12)}
-.btn.danger{background:rgba(255,93,93,.14);border-color:rgba(255,93,93,.35)}
-
-.input,.select,.textarea{
-  width:100%;
-  background:rgba(255,255,255,.06);
-  border:1px solid rgba(255,255,255,.12);
-  color:var(--text);
-  padding:10px 12px;
-  border-radius:12px;
-  font-weight:700;
-}
-.select{max-width:260px}
-.textarea{min-height:240px;font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace}
-.textarea.mini{min-height:120px}
-
-.muted{color:var(--muted);font-size:12px}
-.status{
-  padding:12px;
-  border-radius:12px;
-  border:1px dashed rgba(255,255,255,.20);
-  min-height:44px;
-}
-
-.list{display:flex;flex-direction:column;gap:10px}
-.item{
-  display:flex;justify-content:space-between;align-items:center;
-  padding:12px;border:1px solid var(--border);
-  border-radius:14px;background:rgba(255,255,255,.03);
-}
-.meta{color:var(--muted);font-size:12px}
-
-.badge{
-  padding:6px 10px;border-radius:999px;
-  border:1px solid rgba(255,255,255,.14);
-  background:rgba(255,255,255,.06);
-  font-weight:900;
-}
-.badge.on{border-color:rgba(25,195,125,.35);background:rgba(25,195,125,.18)}
-
-.files{display:flex;flex-direction:column;gap:8px}
-.fileBtn{
-  text-align:left;
-  padding:10px 12px;
-  border-radius:12px;
-  border:1px solid rgba(255,255,255,.12);
-  background:rgba(255,255,255,.04);
-  color:var(--text);
-  font-weight:900;
-}
-.fileBtn.active{border-color:rgba(25,195,125,.35);background:rgba(25,195,125,.18)}
-
-.preview{
-  width:100%;
-  height:520px;
-  border-radius:14px;
-  border:1px solid rgba(255,255,255,.10);
-  background:#0b1220;
-}
-
-.pre{
-  white-space:pre-wrap;
-  background:rgba(255,255,255,.05);
-  border:1px solid rgba(255,255,255,.12);
-  border-radius:12px;
-  padding:10px;
-  min-height:90px;
-}
-
-.card{
-  margin-top:10px;
-  padding:12px;
-  border-radius:14px;
-  border:1px solid rgba(255,255,255,.10);
-  background:rgba(255,255,255,.03);
-}
-
-.grid{
-  display:grid;
-  grid-template-columns: 1fr;
-  gap:10px;
-  margin:10px 0;
-}
-.lbl{color:var(--muted);font-size:12px}
-.pill{
-  border:1px solid rgba(255,255,255,.14);
-  background:rgba(255,255,255,.06);
-  padding:8px 10px;
-  border-radius:999px;
-}
-/* ===== FIX: topbar sempre clicável ===== */
-.header, header, .topbar, #topbar, .nav-top {
+/* TOPBAR: sempre clicável */
+.topbar{
   position: sticky;
   top: 0;
   z-index: 9999;
   pointer-events: auto;
+  padding: 18px 16px 12px;
+  backdrop-filter: blur(10px);
+  background: linear-gradient(180deg, rgba(11,18,32,.92), rgba(11,18,32,.60));
+  border-bottom: 1px solid rgba(30,43,68,.7);
 }
 
-.header * , header * , .topbar * , #topbar * , .nav-top * {
-  pointer-events: auto;
+.brand{display:flex;gap:10px;align-items:flex-start}
+.dot{width:10px;height:10px;border-radius:50%;background:#2eea7a;display:inline-block;margin-top:6px}
+.brandTitle{font-weight:800;font-size:20px}
+.brandSub{color:var(--muted);font-size:12px;margin-top:2px}
+.brandLinks{margin-top:4px;font-size:12px}
+.brandLinks a{color:#bcd0ff;text-decoration:none}
+.brandLinks a:hover{text-decoration:underline}
+
+.navTop{
+  margin-top:12px;
+  display:flex;
+  flex-wrap:wrap;
+  gap:10px;
+  align-items:center;
+}
+.spacer{flex:1}
+
+.pill{
+  background: var(--pill);
+  border: 1px solid rgba(30,43,68,.85);
+  color: var(--text);
+  padding:10px 14px;
+  border-radius:14px;
+  font-weight:700;
+}
+.pill:active{transform:scale(.98)}
+.pill:hover{background:var(--pill2)}
+
+.badge{
+  border:1px solid rgba(30,43,68,.9);
+  padding:8px 12px;
+  border-radius:999px;
+  font-weight:800;
+  background: rgba(18,28,48,.75);
+}
+.badge.ok{color:var(--ok)}
+
+.iconBtn{
+  border:1px solid rgba(30,43,68,.9);
+  background: rgba(18,28,48,.75);
+  color: var(--text);
+  padding:8px 12px;
+  border-radius:12px;
+  font-size:16px;
+}
+.iconBtn:active{transform:scale(.98)}
+
+.main{
+  padding: 18px 16px 90px;
+  max-width: 980px;
+  margin: 0 auto;
 }
 
-/* Qualquer overlay invisível não pode bloquear clique */
-.overlay, .modal-backdrop, .glass, .sheet, .floating-layer {
-  pointer-events: none;
+.card{
+  border:1px solid rgba(30,43,68,.7);
+  background: var(--card);
+  border-radius: 18px;
+  padding: 18px;
+  box-shadow: 0 10px 35px rgba(0,0,0,.35);
+}
+.hidden{display:none !important}
+
+h1{margin:0 0 6px 0;font-size:34px}
+.muted{color:var(--muted)}
+.small{font-size:12px}
+
+.row{
+  display:flex;
+  gap:10px;
+  flex-wrap:wrap;
+  margin-top: 14px;
 }
 
-/* Quando um modal estiver realmente aberto, ele volta a aceitar clique */
-.overlay.is-open, .modal-backdrop.is-open, .sheet.is-open {
-  pointer-events: auto;
+.btn{
+  border:1px solid rgba(30,43,68,.9);
+  background: rgba(18,28,48,.85);
+  color: var(--text);
+  padding: 12px 14px;
+  border-radius: 14px;
+  font-weight:800;
+}
+.btn.sm{padding:8px 10px;border-radius:12px;font-weight:800}
+.btn:active{transform:scale(.98)}
+.btn:hover{background: rgba(22,35,60,.85)}
+.btn.primary{background: rgba(19,90,75,.65); border-color: rgba(31,146,120,.55)}
+.btn.primary:hover{background: rgba(19,90,75,.82)}
+.btn.danger{background: rgba(120,20,20,.55); border-color: rgba(255,77,77,.4)}
+.btn.ok{background: rgba(20,120,50,.55); border-color: rgba(30,230,90,.3)}
+
+.sectionTitle{
+  margin-top: 18px;
+  font-weight:900;
+  font-size:18px;
+}
+
+.statusBox{
+  margin-top:10px;
+  border: 1px dashed rgba(30,43,68,.9);
+  border-radius: 14px;
+  padding: 14px;
+  font-weight:900;
+}
+
+.list{
+  margin-top:10px;
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+
+.listItem{
+  border:1px solid rgba(30,43,68,.8);
+  background: rgba(18,28,48,.65);
+  border-radius: 16px;
+  padding: 12px 14px;
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:12px;
+}
+.listItem strong{display:block}
+.tag{
+  padding:8px 12px;
+  border-radius:999px;
+  background: rgba(19,90,75,.55);
+  border:1px solid rgba(31,146,120,.45);
+  font-weight:900;
+}
+.pillBox{
+  display:flex;
+  gap:10px;
+  flex-wrap:wrap;
+  align-items:center;
+  margin-top: 10px;
+}
+
+.formRow{margin-top:12px;display:flex;flex-direction:column;gap:8px}
+input,select,textarea{
+  width:100%;
+  border:1px solid rgba(30,43,68,.9);
+  background: rgba(10,16,30,.75);
+  color: var(--text);
+  border-radius: 14px;
+  padding: 12px 12px;
+  font-weight:700;
+}
+textarea{min-height:120px;resize:vertical}
+.hint{margin-top:8px;color:var(--muted);font-size:12px}
+
+.editorGrid{
+  margin-top:14px;
+  display:grid;
+  gap:12px;
+  grid-template-columns: 260px 1fr;
+}
+@media (max-width:820px){
+  .editorGrid{grid-template-columns:1fr}
+}
+#fileEditor{
+  min-height: 320px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+}
+
+/* Modal */
+.modalOverlay{
+  position:fixed;
+  inset:0;
+  background: rgba(0,0,0,.55);
   z-index: 10000;
+  display:flex;
+  align-items:flex-start;
+  justify-content:center;
+  padding: 18px;
+  pointer-events:auto;
+}
+.modal{
+  width:min(980px, 100%);
+  border:1px solid rgba(30,43,68,.9);
+  background: rgba(11,18,32,.92);
+  border-radius: 18px;
+  overflow:hidden;
+  box-shadow: 0 18px 60px rgba(0,0,0,.55);
+}
+.modalHead{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:12px;
+  padding: 14px 14px;
+  border-bottom:1px solid rgba(30,43,68,.7);
+  background: rgba(14,23,39,.85);
+}
+.modalTitle{font-weight:950;font-size:16px}
+.modalBody{padding: 14px}
+.pre{
+  margin:0;
+  padding:12px;
+  background: rgba(8,12,22,.75);
+  border:1px solid rgba(30,43,68,.8);
+  border-radius: 14px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color:#dfe8ff;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+.cardMini{
+  margin-top:12px;
+  border:1px solid rgba(30,43,68,.7);
+  background: rgba(18,28,48,.45);
+  border-radius: 16px;
+  padding: 12px;
+}
+
+/* Tools panel */
+.toolsPanel{
+  position: fixed;
+  right: 12px;
+  top: 100px;
+  width: min(520px, calc(100% - 24px));
+  z-index: 10001;
+  border:1px solid rgba(30,43,68,.9);
+  background: rgba(11,18,32,.95);
+  border-radius: 18px;
+  overflow:hidden;
+  box-shadow: 0 18px 60px rgba(0,0,0,.55);
+}
+.toolsHead{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  padding: 12px 12px;
+  border-bottom:1px solid rgba(30,43,68,.7);
+  background: rgba(14,23,39,.85);
+}
+.toolsBody{padding: 12px}
+
+/* Remover qualquer dock inferior, caso exista em versões antigas */
+.bottom-dock, #bottomDock, .dock, .nav-bottom, .fabbar{
+  display:none !important;
 }
