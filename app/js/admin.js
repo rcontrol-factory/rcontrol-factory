@@ -1,15 +1,15 @@
 /* =========================================================
-  RControl Factory — core/admin.js (FULL) — MÃE ALWAYS RENDER
-  - A Mãe nunca some: renderiza no mount (#rcfMotherMount) e re-tenta via MutationObserver
-  - Botões clicáveis: CAPTURE delegation (touchend/click/pointerup)
+  RControl Factory — app/js/admin.js (FULL) — MÃE ALWAYS RENDER
+  - Renderiza a seção "MAINTENANCE • Self-Update (Mãe)" dentro do Admin
+  - NÃO some: usa mount fixo (se existir) + tenta de novo via MutationObserver
+  - Botões sempre clicáveis: captura touchend/click/pointerup (capture=true)
 ========================================================= */
 
 (function () {
   "use strict";
 
   const $ = (id) => document.getElementById(id);
-
-  function safeText(v) { return (v === undefined || v === null) ? "" : String(v); }
+  const safeText = (v) => (v === undefined || v === null) ? "" : String(v);
 
   function setStatus(text) {
     const el = $("statusText");
@@ -28,7 +28,7 @@
     } catch {}
   }
 
-  // storage
+  // ----- storage -----
   const KEY_BUNDLE = "rcf:mother_bundle";
   const KEY_BUNDLE_AT = "rcf:mother_bundle_at";
 
@@ -49,21 +49,17 @@
     try { localStorage.removeItem(KEY_BUNDLE_AT); } catch {}
   }
 
-  // render
+  // ----- render -----
   function renderMotherCard() {
-    // se já existe, ok
     if ($("motherMaintCard")) return true;
 
     const adminView = $("view-admin");
+    if (!adminView) return false;
+
+    // mount opcional (se você colocar no HTML)
     const mount = $("rcfMotherMount");
-
-    // se não existe Admin ainda, não dá pra render agora
-    if (!adminView && !mount) return false;
-
     const host = mount || adminView;
-    if (!host) return false;
 
-    // força clique
     host.style.pointerEvents = "auto";
     host.style.position = "relative";
     host.style.zIndex = "999";
@@ -119,7 +115,7 @@
 
     host.appendChild(card);
 
-    // força pointer-events em tudo
+    // força click em tudo dentro
     try {
       card.querySelectorAll("*").forEach((el) => {
         if (el && el.style) {
@@ -130,13 +126,12 @@
       });
     } catch {}
 
-    // marca carregamento
+    // feedback
     const adminOut = $("adminOut");
     if (adminOut) {
-      adminOut.textContent = (adminOut.textContent || "Pronto.") + "\n\nMAE v1.3 ✅ render OK";
+      adminOut.textContent = (adminOut.textContent || "Pronto.") + "\n\nMAE v1.3 ✅ render OK (app/js/admin.js)";
     }
 
-    // se já existe bundle, mostra status
     const saved = loadBundle();
     if (saved) {
       const at = localStorage.getItem(KEY_BUNDLE_AT) || "";
@@ -146,7 +141,7 @@
     return true;
   }
 
-  // actions
+  // ----- actions -----
   async function applyFromFile() {
     setStatus("Aplicando bundle…");
     writeOut("motherMaintOut", "Carregando /import/mother_bundle.json …");
@@ -207,8 +202,8 @@
     log("MAE: rollback");
   }
 
-  // CAPTURE delegation
-  function getBtnId(ev) {
+  // ----- capture delegation (mata overlay que bloqueia clique) -----
+  function closestBtnId(ev) {
     try {
       const t = ev.target;
       const btn = t && t.closest ? t.closest("#btnMotherApplyFile,#btnMotherApplyPasted,#btnMotherRollback") : null;
@@ -218,12 +213,12 @@
 
   function installCapture() {
     const handler = (ev) => {
-      const id = getBtnId(ev);
+      const id = closestBtnId(ev);
       if (!id) return;
 
       try { ev.preventDefault(); ev.stopPropagation(); } catch {}
 
-      // garante render (caso sumiu)
+      // garante render, caso tenha sumido
       renderMotherCard();
 
       if (id === "btnMotherApplyFile") return applyFromFile();
@@ -237,12 +232,10 @@
   }
 
   function installObserver() {
-    // se o adminView/mount aparecer depois (ou for recriado), re-renderiza
     const obs = new MutationObserver(() => {
       if ($("motherMaintCard")) return;
       renderMotherCard();
     });
-
     obs.observe(document.documentElement, { childList: true, subtree: true });
   }
 
@@ -250,11 +243,10 @@
     installCapture();
     installObserver();
 
-    // tenta render agora, se não der, o observer resolve depois
     renderMotherCard();
 
     setStatus("OK ✅");
-    log("MAE v1.3 carregado (admin.js)");
+    log("MAE v1.3 carregado (app/js/admin.js)");
   }
 
   if (document.readyState === "loading") {
