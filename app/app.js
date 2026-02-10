@@ -4,6 +4,12 @@
    - Offline-friendly: sem dependências externas, storage local
    - PATCH pending + Approve/Discard
    - WRITE MODE: cola 200+ linhas sem truncar (modal) /end
+
+   Patch (2026-02-10):
+   ✅ Logs view (#logsViewBox) agora recebe logs (igual Ferramentas #logsBox)
+   ✅ Botões do DIAG view e LOGS view agora funcionam
+   ✅ Remove exemplos “AgroControl” do help/placeholder
+   ✅ Create melhora: aceita nome com espaços / "aspas"
 */
 
 (() => {
@@ -29,6 +35,10 @@
   const safeJsonParse = (s, fallback) => {
     try { return JSON.parse(s); } catch { return fallback; }
   };
+
+  function safeJsonStringify(obj) {
+    try { return JSON.stringify(obj); } catch { return String(obj); }
+  }
 
   // -----------------------------
   // Storage (localStorage wrapper)
@@ -60,6 +70,17 @@
   const Logger = {
     bufKey: "logs",
     max: 400,
+
+    _mirrorUI(logs) {
+      // Drawer (Ferramentas)
+      const boxDrawer = $("#logsBox");
+      if (boxDrawer) boxDrawer.textContent = logs.join("\n");
+
+      // LOGS view (página)
+      const boxView = $("#logsViewBox");
+      if (boxView) boxView.textContent = logs.join("\n");
+    },
+
     write(...args) {
       const msg = args
         .map(a => (typeof a === "string" ? a : safeJsonStringify(a)))
@@ -71,24 +92,20 @@
       while (logs.length > this.max) logs.shift();
       Storage.set(this.bufKey, logs);
 
-      // UI mirror
-      const box = $("#logsBox");
-      if (box) box.textContent = logs.join("\n");
+      this._mirrorUI(logs);
+
       try { console.log("[RCF]", ...args); } catch {}
     },
+
     clear() {
       Storage.set(this.bufKey, []);
-      const box = $("#logsBox");
-      if (box) box.textContent = "";
+      this._mirrorUI([]);
     },
+
     getAll() {
       return Storage.get(this.bufKey, []);
     }
   };
-
-  function safeJsonStringify(obj) {
-    try { return JSON.stringify(obj); } catch { return String(obj); }
-  }
 
   // -----------------------------
   // iOS / Touch Fix
@@ -96,14 +113,13 @@
   function bindTap(el, fn) {
     if (!el) return;
 
-    // pointerup is best on modern Safari, but keep touchend/click fallbacks
     let last = 0;
     const handler = (ev) => {
       const t = Date.now();
       if (ev.type === "click" && (t - last) < 350) return;
       last = t;
 
-      // important for iOS: prevent ghost click + overlay weirdness
+      // iOS: evita ghost click
       if (ev.type === "touchend") ev.preventDefault();
 
       try { fn(ev); } catch (e) { Logger.write("tap err:", e?.message || e); }
@@ -118,8 +134,6 @@
     el.addEventListener("click", handler, { passive: true });
   }
 
-  // catch-all: if some overlay is blocking, it will still not click;
-  // we keep a diagnostic helper to detect top element at touch point.
   function diagnoseTouchOverlay(x, y) {
     const el = document.elementFromPoint(x, y);
     if (!el) return { ok: false, msg: "elementFromPoint vazio" };
@@ -142,7 +156,7 @@
     cfg: Storage.get("cfg", {
       mode: "safe",       // "safe" | "auto"
       autoApplySafe: true,
-      writeMode: "modal"  // modal recommended
+      writeMode: "modal"
     }),
 
     apps: Storage.get("apps", []),
@@ -154,8 +168,8 @@
     }),
 
     pending: Storage.get("pending", {
-      patch: null,    // patchset object
-      source: null    // "agent" | "admin"
+      patch: null,
+      source: null
     })
   };
 
@@ -167,11 +181,16 @@
   }
 
   // -----------------------------
-  // UI: Views + Drawer + Dock
+  // UI: Views + Drawer
   // -----------------------------
   function setStatusPill(text) {
     const el = $("#statusText");
     if (el) el.textContent = text;
+  }
+
+  function refreshLogsViews() {
+    const logs = Logger.getAll();
+    Logger._mirrorUI(logs);
   }
 
   function setView(name) {
@@ -187,6 +206,9 @@
     if (view) view.classList.add("active");
 
     $$(`[data-view="${name}"]`).forEach(b => b.classList.add("active"));
+
+    // quando entra em logs/diag, atualiza UI
+    if (name === "logs") refreshLogsViews();
 
     Logger.write("view:", name);
   }
@@ -402,7 +424,6 @@
       const r = applyOp(op);
       resLines.push(r.ok ? `✅ ${r.msg}` : `❌ ${r.msg}`);
       if (!r.ok) {
-        // stop on first hard failure
         Logger.write("patch op fail:", op, r.msg);
         return { ok: false, msg: resLines.join("\n") };
       }
@@ -418,7 +439,6 @@
 
     const type = op.type;
 
-    // FILE_WRITE: write into active app file (or specified app)
     if (type === "FILE_WRITE") {
       const slug = op.slug || State.active.appSlug;
       const fname = op.file || State.active.file;
@@ -436,7 +456,6 @@
       return { ok: true, msg: `FILE_WRITE ${slug}/${fname} (${content.length} chars)` };
     }
 
-    // APP_CREATE
     if (type === "APP_CREATE") {
       const name = op.name;
       const slug = op.slug;
@@ -444,20 +463,17 @@
       return r.ok ? { ok: true, msg: `APP_CREATE ${r.msg}` } : { ok: false, msg: `APP_CREATE ${r.msg}` };
     }
 
-    // APP_SELECT
     if (type === "APP_SELECT") {
       const slug = slugify(op.slug || "");
       const ok = setActiveApp(slug);
       return ok ? { ok: true, msg: `APP_SELECT ${slug}` } : { ok: false, msg: `APP_SELECT falhou (${slug})` };
     }
 
-    // VIEW_SET
     if (type === "VIEW_SET") {
       setView(op.view);
       return { ok: true, msg: `VIEW_SET ${op.view}` };
     }
 
-    // CONFIG_SET
     if (type === "CONFIG_SET") {
       if (op.key) State.cfg[op.key] = op.value;
       saveAll();
@@ -481,6 +497,40 @@
   // -----------------------------
   // Agent: Router (comandos + NLP offline)
   // -----------------------------
+  function parseCreateArgs(raw) {
+    // aceita:
+    // create "Meu App" meu-app
+    // create Meu App meu-app
+    // create Meu App   (slug auto)
+    const s = String(raw || "").trim();
+
+    // quoted
+    const qm = s.match(/^create\s+"([^"]+)"\s*([a-z0-9-]+)?/i);
+    if (qm) {
+      const name = qm[1].trim();
+      const slug = (qm[2] || "").trim();
+      return { name, slug };
+    }
+
+    const rest = s.replace(/^create\s+/i, "").trim();
+    if (!rest) return { name: "", slug: "" };
+
+    const parts = rest.split(/\s+/);
+
+    // se último token parece slug (tem - ou é todo [a-z0-9-])
+    const last = parts[parts.length - 1] || "";
+    const looksSlug = /^[a-z0-9-]{2,}$/.test(last) && (last.includes("-") || parts.length >= 2);
+
+    if (looksSlug && parts.length >= 2) {
+      const slug = last;
+      const name = parts.slice(0, -1).join(" ").trim();
+      return { name, slug };
+    }
+
+    // sem slug explícito
+    return { name: rest, slug: "" };
+  }
+
   const Agent = {
     help() {
       return [
@@ -490,8 +540,9 @@
         "- help",
         "- list",
         "- create NOME [SLUG]",
+        "- create \"NOME COM ESPAÇO\" [SLUG]",
         "- select SLUG",
-        "- open editor | open dashboard | open admin | open agent",
+        "- open editor | open dashboard | open admin | open agent | open logs | open diagnostics",
         "- set file NOMEARQ (ex: app.js)",
         "- write   (abre WRITE MODE para colar texto grande)",
         "- write <<< ... >>>  (modo inline)",
@@ -501,8 +552,8 @@
         "- discard (descarta patch pendente do Agent)",
         "",
         "Atalhos:",
-        "- se digitar só um slug existente => auto select",
-        "- se digitar texto natural: “cria um app chamado AgroControl” => create",
+        "- digitar só um slug existente => auto select",
+        "- texto natural: “cria um app chamado Meu App” => create",
       ].join("\n");
     },
 
@@ -523,11 +574,8 @@
       ].join("\n");
     },
 
-    // Decide auto vs safe
     commitOrPend(source, title, ops, risk = "low") {
       const ps = makePatchset(source, title, ops);
-
-      // Auto mode only applies low risk ops; safe mode always pending
       const canAuto = (State.cfg.mode === "auto" && risk === "low");
       if (canAuto) {
         const r = applyPatchset(ps);
@@ -541,15 +589,13 @@
     parseNatural(text) {
       const t = String(text || "").trim();
 
-      // cria um app chamado X
-      let m = t.match(/cria(?:r)?\s+um\s+app\s+chamado\s+([a-z0-9 _-]+)/i);
+      let m = t.match(/cria(?:r)?\s+um\s+app\s+chamado\s+(.+)/i);
       if (m) {
         const name = m[1].trim();
         return { intent: "create", name, slug: "" };
       }
 
-      // cria app X
-      m = t.match(/cria(?:r)?\s+app\s+([a-z0-9 _-]+)/i);
+      m = t.match(/cria(?:r)?\s+app\s+(.+)/i);
       if (m) {
         const name = m[1].trim();
         return { intent: "create", name, slug: "" };
@@ -568,7 +614,6 @@
         return;
       }
 
-      // shortcut: single token slug existing => select
       if (/^[a-z0-9-]{2,}$/.test(cmd)) {
         const slug = slugify(cmd);
         if (State.apps.some(a => a.slug === slug)) {
@@ -578,7 +623,6 @@
         }
       }
 
-      // NLP fallback
       const nlp = this.parseNatural(cmd);
       if (nlp) {
         if (nlp.intent === "create") {
@@ -617,7 +661,10 @@
           "settings": "settings",
           "generator": "generator",
           "new app": "newapp",
-          "newapp": "newapp"
+          "newapp": "newapp",
+          "logs": "logs",
+          "diag": "diagnostics",
+          "diagnostics": "diagnostics"
         };
         const view = viewMap[target] || target;
         const r = this.commitOrPend("agent", `Open ${view}`, [{ type: "VIEW_SET", view }], "low");
@@ -626,10 +673,9 @@
       }
 
       if (lower.startsWith("create ")) {
-        // create NOME [SLUG]
-        const parts = cmd.split(/\s+/).slice(1);
-        const name = parts[0] ? String(parts[0]).trim() : "";
-        const slug = parts[1] ? String(parts[1]).trim() : slugify(name);
+        const parsed = parseCreateArgs(cmd);
+        const name = parsed.name;
+        const slug = slugify(parsed.slug || name);
 
         if (!name) { out && (out.textContent = "Nome inválido"); return; }
 
@@ -660,7 +706,6 @@
         return;
       }
 
-      // WRITE MODE (inline)
       if (lower.startsWith("write <<<")) {
         const end = cmd.lastIndexOf(">>>");
         if (end === -1) { out && (out.textContent = "Formato inválido. Use: write <<< ... >>>"); return; }
@@ -677,7 +722,6 @@
         return;
       }
 
-      // WRITE MODE (modal)
       if (lower === "write") {
         openWriteModal();
         out && (out.textContent = "WRITE MODE aberto. Cole o texto e finalize com /end (ou clique salvar).");
@@ -690,7 +734,6 @@
           const r = applyPatchset(State.pending.patch);
           out && (out.textContent = r.msg);
           clearPendingPatch();
-          // refresh editor if file write
           refreshAfterPatch();
         } else {
           out && (out.textContent = "Sem patch pendente do Agent.");
@@ -717,9 +760,8 @@
   // -----------------------------
   const Admin = {
     diagnostics() {
-      const touchHint = "Se botão não clica: provável overlay com pointer-events. Teste tocando e veja Diag.";
+      const touchHint = "Se botão não clica: provável overlay com pointer-events. Veja logs e teste Diag.";
       const info = {
-        mode: "private",
         cfg: State.cfg,
         apps: State.apps.length,
         active: State.active.appSlug || "-",
@@ -729,14 +771,6 @@
         hint: touchHint
       };
       return "RCF DIAGNÓSTICO\n" + JSON.stringify(info, null, 2);
-    },
-
-    proposeFixForTouchOverlay(sampleX = 20, sampleY = 20) {
-      const d = diagnoseTouchOverlay(sampleX, sampleY);
-      const ops = [
-        { type: "VIEW_SET", view: State.active.view || "dashboard" }
-      ];
-      return makePatchset("admin", "Diagnóstico (touch overlay)", ops);
     }
   };
 
@@ -775,8 +809,8 @@
       <div style="padding:12px;border-bottom:1px solid rgba(255,255,255,.10);display:flex;gap:10px;align-items:center;justify-content:space-between">
         <div style="font-weight:800">WRITE MODE</div>
         <div style="display:flex;gap:8px">
-          <button class="btn small" id="wmCancel">Cancelar</button>
-          <button class="btn small ok" id="wmSave">Salvar</button>
+          <button class="btn small" id="wmCancel" type="button">Cancelar</button>
+          <button class="btn small ok" id="wmSave" type="button">Salvar</button>
         </div>
       </div>
       <div style="padding:12px">
@@ -806,7 +840,6 @@
 
     const txt = $("#wmText");
     txt.addEventListener("keydown", (ev) => {
-      // /end on its own line
       if (ev.key === "Enter") {
         const value = txt.value || "";
         const lastLine = value.split("\n").slice(-1)[0].trim();
@@ -830,7 +863,6 @@
     txt.value = "";
     m.style.display = "flex";
     setStatusPill("WRITE MODE ✅");
-    // focus
     setTimeout(() => { try { txt.focus(); } catch {} }, 50);
   }
 
@@ -882,20 +914,19 @@
   }
 
   function refreshAfterPatch() {
-    // re-render current app/editor
     const app = getActiveApp();
     if (app) {
       renderAppsList();
       renderFilesList();
       if (State.active.file) openFile(State.active.file);
     }
+    refreshLogsViews();
   }
 
   // -----------------------------
   // Bind UI (buttons, tabs, dock)
   // -----------------------------
   function bindUI() {
-    // Guarantee body allows taps
     document.body.style.pointerEvents = "auto";
 
     // data-view navigation
@@ -906,8 +937,8 @@
     bindTap($("#btnOpenTools2"), () => openTools(true));
     bindTap($("#btnCloseTools"), () => openTools(false));
 
-    // Logs buttons
-    bindTap($("#btnClearLogs"), () => { Logger.clear(); uiMsg("#logsBox", ""); });
+    // Drawer logs buttons
+    bindTap($("#btnClearLogs"), () => { Logger.clear(); });
     bindTap($("#btnCopyLogs"), async () => {
       const txt = Logger.getAll().join("\n");
       try { await navigator.clipboard.writeText(txt); } catch {}
@@ -915,11 +946,40 @@
       setTimeout(() => setStatusPill("OK ✅"), 800);
     });
 
+    // LOGS view buttons (NOVO)
+    bindTap($("#btnLogsRefresh"), () => {
+      refreshLogsViews();
+      setStatusPill("Logs atualizados ✅");
+      setTimeout(() => setStatusPill("OK ✅"), 600);
+    });
+    bindTap($("#btnLogsClear"), () => {
+      Logger.clear();
+      uiMsg("#logsViewBox", "");
+      setStatusPill("Logs limpos ✅");
+      setTimeout(() => setStatusPill("OK ✅"), 600);
+    });
+    bindTap($("#btnLogsCopy"), async () => {
+      const txt = Logger.getAll().join("\n");
+      try { await navigator.clipboard.writeText(txt); } catch {}
+      setStatusPill("Logs copiados ✅");
+      setTimeout(() => setStatusPill("OK ✅"), 800);
+    });
+
+    // DIAG view buttons (NOVO)
+    bindTap($("#btnDiagRun"), () => {
+      uiMsg("#diagOut", Admin.diagnostics());
+      setStatusPill("Diag OK ✅");
+      setTimeout(() => setStatusPill("OK ✅"), 700);
+    });
+    bindTap($("#btnDiagClear"), () => {
+      uiMsg("#diagOut", "Pronto.");
+      setStatusPill("OK ✅");
+    });
+
     // Dashboard
     bindTap($("#btnCreateNewApp"), () => setView("newapp"));
     bindTap($("#btnOpenEditor"), () => setView("editor"));
     bindTap($("#btnExportBackup"), () => {
-      // simple export (apps JSON)
       const payload = JSON.stringify({ apps: State.apps, cfg: State.cfg, active: State.active }, null, 2);
       try { navigator.clipboard.writeText(payload); } catch {}
       uiMsg("#statusHint", "Backup copiado (JSON) — (clipboard).");
@@ -1009,7 +1069,7 @@
       }
     });
 
-    // Bonus: tap on status pill runs quick touch diag (optional)
+    // Bonus: tap no status pill faz touch diag (log)
     bindTap($("#statusPill"), (ev) => {
       const x = (ev.changedTouches && ev.changedTouches[0] && ev.changedTouches[0].clientX) || 20;
       const y = (ev.changedTouches && ev.changedTouches[0] && ev.changedTouches[0].clientY) || 20;
@@ -1022,9 +1082,8 @@
   // Boot
   // -----------------------------
   function hydrateUIFromState() {
-    // logs show
-    const box = $("#logsBox");
-    if (box) box.textContent = Logger.getAll().join("\n");
+    // logs show (drawer + logs view)
+    refreshLogsViews();
 
     renderAppsList();
 
@@ -1037,7 +1096,6 @@
       if (text) text.textContent = "Sem app ativo ✅";
     }
 
-    // restore pending patch display
     if (State.pending.patch) {
       setStatusPill("Patch pendente ✅");
       if (State.pending.source === "agent") uiMsg("#agentOut", formatPatchset(State.pending.patch));
@@ -1046,24 +1104,17 @@
       setStatusPill("OK ✅");
     }
 
-    // set view
     setView(State.active.view || "dashboard");
 
-    // Show current mode on agent output (small)
     if ($("#agentOut") && !$("#agentOut").textContent.trim()) {
       uiMsg("#agentOut", `Pronto. mode=${State.cfg.mode}`);
     }
   }
 
   function init() {
-    // Make sure app is clickable:
     document.documentElement.style.pointerEvents = "auto";
     document.body.style.pointerEvents = "auto";
 
-    // Kill common overlay pointer capture (defensive)
-    // (If you have overlays in CSS, they must be pointer-events:none)
-    // Here we enforce for pseudo elements through CSS is not possible from JS,
-    // but we can ensure our buttons receive pointer-events.
     $$("button, a, .tab, .btn, .dockbtn").forEach(el => {
       el.style.pointerEvents = "auto";
       el.style.touchAction = "manipulation";
