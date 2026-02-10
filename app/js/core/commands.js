@@ -373,6 +373,21 @@ self.addEventListener("activate", (e) => {
 });`;
 }
 
+function slugify(s){
+  return String(s)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g,"-")
+    .replace(/^-+|-+$/g,"");
+}
+function isValidSlug(s){
+  return /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(String(s));
+}
+function isValidName(s){
+  return String(s).trim().length >= 2;
+}
+
+
 /* ------------------ UTIL ------------------ */
 
 function deepClone(obj) {
