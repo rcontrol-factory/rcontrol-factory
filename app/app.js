@@ -664,3 +664,101 @@ function boot() {
 }
 
 boot();
+// ===== RCF Agent Router (WRITE MODE) — integração mínima =====
+(function () {
+  if (!window.RCF_AgentRouter || !window.RCF_AgentRouter.createRouter) {
+    console.warn("RCF_AgentRouter não carregou. Verifique /app/js/agent.router.js no index.html.");
+    return;
+  }
+
+  // Contexto mínimo (adapte se você já tem patch queue/apply):
+  const agentCtx = {
+    getCurrentFilePath() {
+      // Tenta pegar um "arquivo atual" se existir no app.
+      // Ajuste esses nomes se o seu app usa outra variável.
+      return (window.RCF_CURRENT_FILE || window.currentFile || "").toString();
+    },
+    getFlags() {
+      // Ajuste se você tem toggles reais:
+      return {
+        auto: !!window.RCF_AGENT_AUTO, // true => aplica direto quando seguro
+        safe: !!window.RCF_AGENT_SAFE  // true => sempre pendente
+      };
+    },
+    queuePatch(patch) {
+      window.RCF_PATCH_QUEUE = window.RCF_PATCH_QUEUE || [];
+      window.RCF_PATCH_QUEUE.push(patch);
+      // Se você tiver UI de patch, aqui pode atualizar.
+      console.log("PATCH pendente:", patch);
+    },
+    async applyPatch(patch) {
+      // Se você já tem função de aplicar patch, conecte aqui:
+      if (typeof window.RCF_applyPatch === "function") {
+        return await window.RCF_applyPatch(patch);
+      }
+      // Sem applyPatch real -> força pendente
+      throw new Error("applyPatch não disponível");
+    },
+    log(msg) {
+      console.log("[AGENT]", msg);
+    }
+  };
+
+  const router = window.RCF_AgentRouter.createRouter(agentCtx);
+  window.RCF_AGENT_ROUTER = router; // debug
+
+  // Helper para escrever resultado no painel "Resultado"
+  function setAgentResult(text) {
+    // Você pode adaptar para seu componente real.
+    const el = document.querySelector("#agentResult, [data-agent-result], .agentResult");
+    if (el) el.textContent = String(text || "");
+  }
+
+  // Executar (botão)
+  async function onAgentExecute() {
+    const inputEl =
+      document.querySelector("#agentInput") ||
+      document.querySelector("[data-agent-input]") ||
+      document.querySelector("textarea[name='agentInput']") ||
+      document.querySelector("input[name='agentInput']");
+
+    const cmd = inputEl ? inputEl.value : "";
+    const res = await router.handleInput(cmd);
+
+    if (res && res.ok) setAgentResult(res.result || "OK");
+    else setAgentResult((res && res.error) ? res.error : "Erro");
+
+    // Se quiser limpar input quando não estiver em WRITE:
+    const st = router.getState();
+    if (inputEl && st.mode !== "WRITE") inputEl.value = "";
+  }
+
+  // Tenta bindar no botão existente
+  const execBtn =
+    document.querySelector("#agentExecuteBtn") ||
+    document.querySelector("[data-agent-execute]");
+
+  if (execBtn) {
+    execBtn.addEventListener("click", function (e) {
+      e.preventDefault();
+      onAgentExecute();
+    }, { passive: false });
+  } else {
+    // fallback: expõe função global
+    window.RCF_AGENT_EXECUTE = onAgentExecute;
+  }
+
+  // Botão opcional “Colar/Inserir no arquivo atual”
+  // Se existir um botão com id agentPasteBtn, ele vai abrir prompt e inserir.
+  const pasteBtn = document.querySelector("#agentPasteBtn") || document.querySelector("[data-agent-paste]");
+  if (pasteBtn) {
+    pasteBtn.addEventListener("click", async function (e) {
+      e.preventDefault();
+      const big = prompt("Cole aqui o texto/código (grande). Depois OK.");
+      if (big == null) return;
+      const res = await router.pasteIntoCurrentFile(big);
+      if (res && res.ok) setAgentResult(res.result || "OK");
+      else setAgentResult((res && res.error) ? res.error : "Erro");
+    }, { passive: false });
+  }
+})();
