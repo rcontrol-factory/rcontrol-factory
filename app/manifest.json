@@ -1,7 +1,7 @@
 {
   "name": "RControl Factory",
-  "short_name": "RCFactory",
-  "start_url": "./",
+  "short_name": "RC Factory",
+  "start_url": ".",
   "display": "standalone",
   "background_color": "#0b1220",
   "theme_color": "#0b1220",
