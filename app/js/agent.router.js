@@ -1,27 +1,48 @@
-// NLP offline simples (sem LLM)
-export function parseIntent(input, context = {}) {
-  const text = input.trim();
-  const lower = text.toLowerCase();
+import { parseIntent, slugify } from "./agent.nlp.js";
+import * as Commands from "../../core/commands.js";
 
-  // comandos diretos
-  if (/^help$/.test(lower)) return { action: "help" };
-  if (/^list$/.test(lower)) return { action: "list" };
-
-  // create
-  let m = lower.match(/^(create|criar|cria)\s+(.*)$/);
-  if (m) {
-    return { action: "create", name: m[2].trim() };
+export async function routeAgentCommand(input, state) {
+  if (!input || !input.trim()) {
+    return { error: "Digite um comando." };
   }
 
-  // texto solto → pode ser slug ou nome
-  return { action: "guess", value: text };
-}
+  const intent = parseIntent(input, state);
 
-// slugify simples e seguro
-export function slugify(str) {
-  return str
-    .toLowerCase()
-    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
+  switch (intent.action) {
+    case "help":
+      return Commands.help();
+
+    case "list":
+      return Commands.list();
+
+    case "create": {
+      const name = intent.name;
+      const slug = slugify(name);
+
+      if (!slug) {
+        return { error: "Nome inválido para criar app." };
+      }
+
+      return Commands.create(name, slug);
+    }
+
+    case "guess": {
+      const value = intent.value;
+      const slug = slugify(value);
+
+      // se slug existir → auto-select
+      if (state.apps && state.apps.includes(slug)) {
+        return Commands.select(slug);
+      }
+
+      // se parece nome → sugerir create
+      return {
+        info: `Entendi "${value}". Quer criar um app com esse nome?`,
+        suggestion: `create ${value}`
+      };
+    }
+
+    default:
+      return { error: "Comando não reconhecido." };
+  }
 }
