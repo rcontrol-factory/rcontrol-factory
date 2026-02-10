@@ -6,7 +6,7 @@
    - WRITE MODE: cola 200+ linhas sem truncar (modal) /end
 
    Patch (2026-02-10):
-   ✅ Logs view (#logsViewBox) agora recebe logs (igual Ferramentas #logsBox)
+   ✅ Logs view (#logsOut / #logsViewBox) agora recebe logs (igual Ferramentas #logsBox)
    ✅ Botões do DIAG view e LOGS view agora funcionam
    ✅ Remove exemplos “AgroControl” do help/placeholder
    ✅ Create melhora: aceita nome com espaços / "aspas"
@@ -65,20 +65,24 @@
   };
 
   // -----------------------------
-  // Logger
+  // Logger  ✅ FIXED (logsOut + logsViewBox + logsBox)
   // -----------------------------
   const Logger = {
     bufKey: "logs",
     max: 400,
 
     _mirrorUI(logs) {
+      const text = logs.join("\n");
+
       // Drawer (Ferramentas)
       const boxDrawer = $("#logsBox");
-      if (boxDrawer) boxDrawer.textContent = logs.join("\n");
+      if (boxDrawer) boxDrawer.textContent = text;
 
-      // LOGS view (página)
-      const boxView = $("#logsViewBox");
-      if (boxView) boxView.textContent = logs.join("\n");
+      // LOGS view (página) — suporta IDs novos e legado
+      const boxViewNew = $("#logsOut");       // ✅ recomendado (Logs • Registro)
+      const boxViewOld = $("#logsViewBox");   // suporte legado
+      if (boxViewNew) boxViewNew.textContent = text;
+      if (boxViewOld) boxViewOld.textContent = text;
     },
 
     write(...args) {
@@ -498,13 +502,8 @@
   // Agent: Router (comandos + NLP offline)
   // -----------------------------
   function parseCreateArgs(raw) {
-    // aceita:
-    // create "Meu App" meu-app
-    // create Meu App meu-app
-    // create Meu App   (slug auto)
     const s = String(raw || "").trim();
 
-    // quoted
     const qm = s.match(/^create\s+"([^"]+)"\s*([a-z0-9-]+)?/i);
     if (qm) {
       const name = qm[1].trim();
@@ -517,7 +516,6 @@
 
     const parts = rest.split(/\s+/);
 
-    // se último token parece slug (tem - ou é todo [a-z0-9-])
     const last = parts[parts.length - 1] || "";
     const looksSlug = /^[a-z0-9-]{2,}$/.test(last) && (last.includes("-") || parts.length >= 2);
 
@@ -527,7 +525,6 @@
       return { name, slug };
     }
 
-    // sem slug explícito
     return { name: rest, slug: "" };
   }
 
@@ -946,7 +943,7 @@
       setTimeout(() => setStatusPill("OK ✅"), 800);
     });
 
-    // LOGS view buttons (NOVO)
+    // LOGS view buttons
     bindTap($("#btnLogsRefresh"), () => {
       refreshLogsViews();
       setStatusPill("Logs atualizados ✅");
@@ -954,6 +951,8 @@
     });
     bindTap($("#btnLogsClear"), () => {
       Logger.clear();
+      // ✅ limpa os dois possíveis IDs
+      uiMsg("#logsOut", "");
       uiMsg("#logsViewBox", "");
       setStatusPill("Logs limpos ✅");
       setTimeout(() => setStatusPill("OK ✅"), 600);
@@ -965,7 +964,7 @@
       setTimeout(() => setStatusPill("OK ✅"), 800);
     });
 
-    // DIAG view buttons (NOVO)
+    // DIAG view buttons
     bindTap($("#btnDiagRun"), () => {
       uiMsg("#diagOut", Admin.diagnostics());
       setStatusPill("Diag OK ✅");
