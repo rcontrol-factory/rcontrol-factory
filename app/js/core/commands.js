@@ -78,3 +78,56 @@ diag`;
           createdAt: new Date().toISOString(),
           files: {
             "index.html": "<!doctype html><html><head><meta charset='utf-8'><title>"+name+"</title><link rel='stylesheet' href='styles.css'></head><body><div id='app'></div><script type='module' src='
+      case "show": {
+        if (!state.activeSlug) throw new Error("Sem app ativo.");
+        const app = ensureApp(state, state.activeSlug);
+        out.text = JSON.stringify(app.files, null, 2);
+        break;
+      }
+
+      case "diag": {
+        const diag = runDiagnostic(state);
+        state.lastDiag = diag;
+
+        // tenta gerar sugestão automática
+        const suggestion = autoFixSuggestion(state);
+        state.pendingPatch = suggestion || null;
+
+        out.text =
+          "RCF DIAGNÓSTICO\n" +
+          JSON.stringify(diag, null, 2) +
+          (suggestion
+            ? "\n\nSugestão gerada: " + suggestion.title
+            : "\n\nNenhuma sugestão automática.");
+        break;
+      }
+
+      case "apply": {
+        if (!state.pendingPatch) {
+          out.text = "Nenhum patch pendente.";
+          break;
+        }
+        if (!state.activeSlug) throw new Error("Sem app ativo.");
+
+        const app = ensureApp(state, state.activeSlug);
+        const next = applyPatch(app, state.pendingPatch);
+
+        state.apps[state.activeSlug] = next;
+        state.pendingPatch = null;
+
+        out.text = "Patch aplicado com sucesso ✅";
+        break;
+      }
+
+      default:
+        throw new Error(`Comando não reconhecido. Use: help`);
+    }
+  } catch (err) {
+    out.ok = false;
+    out.text = err.message;
+  }
+
+  saveState(state);
+  out.state = state;
+  return out;
+}
