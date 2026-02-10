@@ -46,18 +46,31 @@ export function executeCommand(inputRaw, state) {
         return out;
 
       case "create": {
-        // create NOME SLUG
-        const name = args[0];
-        const slug = args[1];
-        if (!name || !slug) throw new Error("Use: create NOME SLUG");
-        if (state.apps[slug]) throw new Error(`Já existe app com slug: ${slug}`);
+  // Aceita:
+  // create NOME SLUG
+  // create NOME   (gera slug automático)
+  // create "Nome com espaço"   (se você quiser implementar quotes depois)
 
-        state.apps[slug] = createEmptyApp(name, slug);
-        state.activeSlug = slug;
+  const name = args[0];
+  let slug = args[1];
 
-        out.text = `App criado ✅\nname: ${name}\nslug: ${slug}\nativo: ${slug}`;
-        return out;
-      }
+  if (!name) throw new Error("Use: create NOME [SLUG]");
+
+  // Se não passou slug, cria automático estilo Replit
+  if (!slug) slug = slugify(name);
+
+  // validações
+  if (!isValidName(name) || !isValidSlug(slug)) {
+    throw new Error(`Nome/slug inválidos (name: ${name}, slug: ${slug})`);
+  }
+  if (state.apps[slug]) throw new Error(`Já existe app com slug: ${slug}`);
+
+  state.apps[slug] = createEmptyApp(name, slug);
+  state.activeSlug = slug;
+
+  out.text = `App criado ✅\nname: ${name}\nslug: ${slug}\nativo: ${slug}`;
+  return out;
+}
 
       case "select": {
         const slug = args[0];
