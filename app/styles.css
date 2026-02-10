@@ -16,6 +16,8 @@
 
 *{ box-sizing:border-box; }
 html,body{ height:100%; }
+html{ -webkit-text-size-adjust: 100%; }
+
 body{
   margin:0;
   font-family:var(--ui);
@@ -23,15 +25,30 @@ body{
               radial-gradient(800px 400px at 90% 20%, rgba(72,120,255,.10), transparent 55%),
               var(--bg);
   color:var(--text);
+
+  /* iOS: evita bugs de empilhamento/overlay */
+  position: relative;
+  isolation: isolate;
 }
 
+/* ===========================
+   TOP BAR
+   =========================== */
 .topbar{
   position: sticky;
   top:0;
-  z-index: 50;
+
+  /* Sobe bem o topo pra ninguém cobrir */
+  z-index: 1000;
+
   background: linear-gradient(to bottom, rgba(7,11,18,.92), rgba(7,11,18,.70));
   backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+
   border-bottom: 1px solid var(--line);
+
+  /* garante toque */
+  pointer-events: auto;
 }
 
 .brand{
@@ -39,6 +56,7 @@ body{
   gap:12px;
   padding: 14px 16px 6px;
   align-items:center;
+  pointer-events: auto;
 }
 .dot{
   width:12px;height:12px;border-radius:50%;
@@ -55,9 +73,11 @@ body{
   align-items:center;
   flex-wrap: wrap;
   position: relative;
+  pointer-events: auto;
 }
 .spacer{ flex:1; }
 
+/* Botões/abas */
 .tab, .btn, .dockbtn, .gear{
   border:1px solid var(--line);
   background: rgba(255,255,255,.03);
@@ -67,6 +87,10 @@ body{
   cursor:pointer;
   user-select:none;
   -webkit-tap-highlight-color: transparent;
+
+  /* iOS */
+  pointer-events: auto;
+  touch-action: manipulation;
 }
 
 .tab.active{
@@ -87,13 +111,22 @@ body{
   border-radius:999px;
   border:1px solid var(--line);
   background: rgba(255,255,255,.03);
+  pointer-events: auto;
 }
 .status-pill .ok{ font-size:14px; }
 
+/* ===========================
+   CONTEÚDO
+   =========================== */
 .container{
   max-width: 980px;
   margin: 14px auto 110px;
   padding: 0 12px;
+
+  /* garante que a área do app receba touch */
+  position: relative;
+  z-index: 1;
+  pointer-events: auto;
 }
 
 .card{
@@ -103,6 +136,10 @@ body{
   box-shadow: var(--shadow);
   padding: 16px;
   margin-bottom: 14px;
+
+  position: relative;
+  z-index: 1;
+  pointer-events: auto;
 }
 
 .hero h1{ margin: 0 0 6px; font-size: 36px; }
@@ -167,6 +204,7 @@ h2{ margin-top: 12px; }
   align-items:center;
 }
 
+/* views */
 .view{ display:none; }
 .view.active{ display:block; }
 
@@ -197,6 +235,9 @@ textarea{
   border: 1px solid var(--line);
   background: rgba(255,255,255,.02);
   cursor:pointer;
+
+  pointer-events: auto;
+  touch-action: manipulation;
 }
 .file-item.active{
   border-color: rgba(22,199,132,.45);
@@ -237,9 +278,14 @@ textarea{
   border-radius: 14px;
   padding: 12px;
   margin: 10px 0 0;
+
+  pointer-events: auto;
 }
 .mono.small{ font-size: 12px; }
 
+/* ===========================
+   TOOLS DRAWER
+   =========================== */
 .tools{
   position: fixed;
   top: 12px;
@@ -251,10 +297,16 @@ textarea{
   border-radius: var(--radius);
   box-shadow: var(--shadow);
   display:none;
-  z-index: 100;
+  z-index: 2000;
   overflow:hidden;
+
+  /* quando fechado, não pode capturar toque por acidente */
+  pointer-events: none;
 }
-.tools.open{ display:block; }
+.tools.open{
+  display:block;
+  pointer-events: auto;
+}
 .tools-head{
   padding: 12px;
   display:flex;
@@ -264,6 +316,9 @@ textarea{
 }
 .tools-body{ padding: 12px; }
 
+/* ===========================
+   DOCK
+   =========================== */
 .dock{
   position: fixed;
   left: 50%;
@@ -276,50 +331,26 @@ textarea{
   border:1px solid var(--line);
   background: rgba(0,0,0,.35);
   backdrop-filter: blur(10px);
-  z-index: 40;
+  -webkit-backdrop-filter: blur(10px);
+
+  /* sobe acima de tudo */
+  z-index: 1500;
+
+  pointer-events: auto;
 }
 .dock.hidden{ display:none; }
 
-/* IMPORTANTE: garante clique no topo (se algum overlay estiver pegando o toque) */
-.topbar, .tabs, .tab, .gear, .status-pill{
-  pointer-events: auto;
-}
-
-/* Switch */
-.switch{ position:relative; width:44px; height:26px; display:inline-block; }
-.switch input{ display:none; }
-.slider{
-  position:absolute; inset:0;
-  border-radius:999px;
-  background: rgba(255,255,255,.18);
-  border:1px solid var(--line);
-  transition: .2s;
-}
-.slider::after{
-  content:"";
-  position:absolute;
-  width:20px;height:20px;
-  top:2px; left:2px;
-  border-radius:50%;
-  background: rgba(255,255,255,.90);
-  transition:.2s;
-}
-.switch input:checked + .slider{
-  background: rgba(22,199,132,.25);
-  border-color: rgba(22,199,132,.45);
-}
-.switch input:checked + .slider::after{ transform: translateX(18px); }/* ===========================
+/* ===========================
    iOS FIX: toque não clica
-   (camada invisível por cima)
    =========================== */
 
-/* 1) Nunca deixe pseudo-elementos bloquear toque */
+/* Nunca deixe pseudo-elementos bloquear toque */
 *::before,
 *::after {
   pointer-events: none !important;
 }
 
-/* 2) Backgrounds/overlays comuns não podem capturar touch */
+/* overlays clássicos não podem capturar touch */
 .bg,
 .background,
 .backdrop,
@@ -334,7 +365,7 @@ textarea{
   pointer-events: none !important;
 }
 
-/* 3) Garantir que botões/links recebam toque no iOS */
+/* botões e links: sempre clicáveis no iOS */
 button,
 a,
 .tab,
@@ -346,12 +377,40 @@ a,
   -webkit-tap-highlight-color: transparent;
 }
 
-/* 4) Se tiver algum container full-screen cobrindo tudo (caso clássico) */
+/* containers principais: nunca “desliga” pointer events */
 main,
 header,
 section,
 nav,
 #app,
-#root {
+#root,
+.container,
+.card {
   pointer-events: auto;
 }
+
+/* Switch */
+.switch{ position:relative; width:44px; height:26px; display:inline-block; }
+.switch input{ display:none; }
+.slider{
+  position:absolute; inset:0;
+  border-radius:999px;
+  background: rgba(255,255,255,.18);
+  border:1px solid var(--line);
+  transition: .2s;
+  pointer-events: auto;
+}
+.slider::after{
+  content:"";
+  position:absolute;
+  width:20px;height:20px;
+  top:2px; left:2px;
+  border-radius:50%;
+  background: rgba(255,255,255,.90);
+  transition:.2s;
+}
+.switch input:checked + .slider{
+  background: rgba(22,199,132,.25);
+  border-color: rgba(22,199,132,.45);
+}
+.switch input:checked + .slider::after{ transform: translateX(18px); }
