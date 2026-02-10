@@ -1,8 +1,8 @@
 /* =========================================================
-  RControl Factory — core/mother_selfupdate.js
+  RControl Factory — core/mother_selfupdate.js (FULL / iOS TAP FIX)
   - Self-update da Mãe via Service Worker overrides (RCF_VFS)
-  - Lê pacote de /import/mother_bundle.json (ou cola no textarea)
-  - Auto-aplica "safe" e pede confirmação só se for crítico
+  - Lê /import/mother_bundle.json (ou bundle colado)
+  - iOS-safe tap: click + touchend (passive:false) + stopPropagation
 ========================================================= */
 (() => {
   "use strict";
@@ -15,7 +15,6 @@
 
   function isCriticalPath(path) {
     const p = String(path || "");
-    // crítico = qualquer coisa que quebra boot/rotas/override
     return (
       p === "/index.html" ||
       p === "/app.js" ||
@@ -34,13 +33,59 @@
     return "text/plain; charset=utf-8";
   }
 
+  // -------- iOS tap binding (hard) --------
+  const TAP_GUARD_MS = 450;
+  let _lastTapAt = 0;
+
+  function forceClickable(el) {
+    if (!el) return;
+    try {
+      el.style.pointerEvents = "auto";
+      el.style.touchAction = "manipulation";
+      el.style.webkitTapHighlightColor = "transparent";
+      el.style.userSelect = "none";
+    } catch {}
+  }
+
+  function bindTap(el, fn) {
+    if (!el) return;
+
+    forceClickable(el);
+
+    const handler = (e) => {
+      const now = Date.now();
+      if (now - _lastTapAt < TAP_GUARD_MS) {
+        try { e.preventDefault(); e.stopPropagation(); } catch {}
+        return;
+      }
+      _lastTapAt = now;
+
+      try { e.preventDefault(); e.stopPropagation(); } catch {}
+      try { fn(e); } catch (err) {
+        try { console.log("[RCF] mother_selfupdate tap err:", err); } catch {}
+      }
+    };
+
+    // remove possíveis binds antigos
+    try {
+      el.onclick = null;
+      el.ontouchend = null;
+    } catch {}
+
+    el.addEventListener("click", handler, { passive: false });
+    el.addEventListener("touchend", handler, { passive: false });
+
+    // fallback (quando safari ignora listener por algum motivo)
+    try { el.onclick = (e) => handler(e || window.event); } catch {}
+  }
+
   async function applyBundle(bundle, opts = {}) {
     const out = $id("adminOut");
     const statusText = $id("statusText");
 
     const VFS = window.RCF_VFS;
     if (!VFS || typeof VFS.put !== "function") {
-      const msg = "❌ RCF_VFS não está disponível. Confere se /core/vfs_overrides.js foi carregado e se o SW está ativo.";
+      const msg = "❌ RCF_VFS não está disponível. Confere se core/vfs_overrides.js carregou e se o SW está ativo.";
       if (out) out.textContent = msg;
       if (statusText) statusText.textContent = "Erro ❌";
       return;
@@ -48,7 +93,7 @@
 
     const files = bundle && (bundle.files || bundle.overrides || bundle);
     if (!files || typeof files !== "object") {
-      const msg = "❌ Bundle inválido. Precisa ser JSON com { files: { \"/app.js\": \"...\" } }";
+      const msg = "❌ Bundle inválido. Use { \"files\": { \"/app.js\": \"...\" } }";
       if (out) out.textContent = msg;
       if (statusText) statusText.textContent = "Erro ❌";
       return;
@@ -66,15 +111,8 @@
     }
 
     const autoConfirmCritical = !!opts.autoConfirmCritical;
-
-    let report = [];
-    report.push("SELF-UPDATE (MÃE) ✅");
-    report.push("—");
-    report.push(`Arquivos no pacote: ${entries.length}`);
-    report.push("");
-
-    // Se tiver crítico e não tiver autoConfirmCritical, pede confirmação
     const critical = entries.filter(([p]) => isCriticalPath(p));
+
     if (critical.length && !autoConfirmCritical) {
       const preview = critical.slice(0, 8).map(([p]) => "• " + p).join("\n");
       const ok = confirm(
@@ -93,6 +131,12 @@
 
     if (statusText) statusText.textContent = "Aplicando... ✅";
 
+    const report = [];
+    report.push("SELF-UPDATE (MÃE) ✅");
+    report.push("—");
+    report.push(`Arquivos no pacote: ${entries.length}`);
+    report.push("");
+
     for (const [path, content] of entries) {
       try {
         await VFS.put(path, content, defaultContentType(path));
@@ -104,7 +148,7 @@
 
     report.push("");
     report.push("Pronto. Agora recarregue a página para ver o efeito.");
-    report.push("Dica: se algo der ruim, use 'Rollback overrides' no Admin.");
+    report.push("Se algo der ruim: Rollback overrides no Admin.");
 
     if (out) out.textContent = report.join("\n");
     if (statusText) statusText.textContent = "OK ✅";
@@ -171,25 +215,23 @@
     }
   }
 
-  function bindTap(el, fn) {
-    if (!el) return;
-    let last = 0;
-    const h = (ev) => {
-      const t = Date.now();
-      if (ev.type === "click" && (t - last) < 350) return;
-      last = t;
-      try { fn(ev); } catch {}
-    };
-    el.addEventListener("pointerup", h, { passive: true });
-    el.addEventListener("touchend", (ev) => { try { ev.preventDefault(); } catch {} h(ev); }, { passive: false });
-    el.addEventListener("click", h, { passive: true });
-  }
-
   function init() {
-    // Botões Maintenance no ADMIN
-    bindTap($id("btnMotherApplyImport"), onApplyFromImport);
-    bindTap($id("btnMotherApplyPaste"), onApplyFromPaste);
-    bindTap($id("btnMotherRollback"), onRollback);
+    // garante que nada "cancela" os taps no body
+    try { document.body.addEventListener("touchstart", () => {}, { passive: true }); } catch {}
+
+    const b1 = $id("btnMotherApplyImport");
+    const b2 = $id("btnMotherApplyPaste");
+    const b3 = $id("btnMotherRollback");
+
+    // força clique sempre
+    forceClickable(b1); forceClickable(b2); forceClickable(b3);
+
+    bindTap(b1, onApplyFromImport);
+    bindTap(b2, onApplyFromPaste);
+    bindTap(b3, onRollback);
+
+    // logzinho pra saber que carregou
+    try { console.log("[RCF] mother_selfupdate.js loaded ✅"); } catch {}
   }
 
   if (document.readyState === "loading") {
