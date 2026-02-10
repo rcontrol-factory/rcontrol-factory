@@ -344,11 +344,10 @@ textarea{
    iOS FIX: toque não clica
    =========================== */
 
-/* Nunca deixe pseudo-elementos bloquear toque */
-*::before,
-*::after {
-  pointer-events: none !important;
-}
+/* ✅ REMOVIDO: regra global que quebrava cliques:
+   *::before, *::after { pointer-events:none !important; }
+   Em vez disso, restringimos só para overlays conhecidos.
+*/
 
 /* overlays clássicos não podem capturar touch */
 .bg,
@@ -361,8 +360,22 @@ textarea{
 #bg,
 #background,
 #overlay,
-#backdrop {
-  pointer-events: none !important;
+#backdrop,
+.tools,
+.tools *::before,
+.tools *::after,
+.dock *::before,
+.dock *::after,
+.topbar *::before,
+.topbar *::after {
+  pointer-events: none;
+}
+
+/* IMPORTANTÍSSIMO:
+   Drawer aberto precisa clicar — então reativa no estado open */
+.tools.open,
+.tools.open *{
+  pointer-events: auto;
 }
 
 /* botões e links: sempre clicáveis no iOS */
@@ -414,10 +427,12 @@ nav,
   border-color: rgba(22,199,132,.45);
 }
 .switch input:checked + .slider::after{ transform: translateX(18px); }
-/* ===== MAE: iOS click fix (no text selection / no overlay) ===== */
+
+/* ===== MAE: garante clique no box da mãe (se existir) ===== */
 #rcfMotherBox, #rcfMotherBox * {
-  -webkit-user-select: none !important;
-  user-select: none !important;
+  -webkit-user-select: none;
+  user-select: none;
+  pointer-events: auto;
 }
 
 #rcfMotherBox textarea {
