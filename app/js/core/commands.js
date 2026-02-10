@@ -1,6 +1,6 @@
-/* CoreCommands.js
+/* core/commands.js
    - Auto-apply SAFE commands (Replit-like)
-   - Require approval only for risky/dangerous operations or sensitive files
+   - Approval only for risky/dangerous operations or sensitive files
    - Keeps pendingPatch in state for UI buttons (Aprovar/Descartar/Aplicar)
 */
 
@@ -30,11 +30,8 @@ export function executeCommand(inputRaw, state) {
     const [cmdToken, ...restArr] = input.split(" ");
     const cmd = (cmdToken || "").toLowerCase();
     const rest = restArr.join(" ").trim();
-
-    // helper to read args
     const args = restArr.map(s => s.trim()).filter(Boolean);
 
-    // routing
     switch (cmd) {
       case "help":
         out.text = helpText();
@@ -95,7 +92,6 @@ export function executeCommand(inputRaw, state) {
       }
 
       case "show": {
-        // show current file content
         ensureActive(state);
         const app = ensureApp(state, state.activeSlug);
 
@@ -108,11 +104,7 @@ export function executeCommand(inputRaw, state) {
       }
 
       case "write": {
-        // write (cola texto)
-        // em muitos UIs, "write ..." vem tudo após o comando
-        // Aqui suportamos 2 formas:
-        // 1) write <texto...>
-        // 2) write (sem texto) -> erro
+        // write <texto...>
         ensureActive(state);
         const app = ensureApp(state, state.activeSlug);
 
@@ -145,7 +137,6 @@ export function executeCommand(inputRaw, state) {
       }
 
       case "apply": {
-        // aplica o patch pendente
         ensureActive(state);
         const app = ensureApp(state, state.activeSlug);
 
@@ -154,7 +145,6 @@ export function executeCommand(inputRaw, state) {
           return out;
         }
 
-        // se for perigoso, ainda assim exige que você tenha decidido aplicar
         state.apps[state.activeSlug] = applyPatch(app, state.pendingPatch);
         const title = state.pendingPatch.title;
         state.pendingPatch = null;
@@ -164,14 +154,12 @@ export function executeCommand(inputRaw, state) {
       }
 
       case "discard": {
-        // descarta patch pendente
         state.pendingPatch = null;
         out.text = "Patch descartado ✅";
         return out;
       }
 
       default: {
-        // tenta tratar como "pedido solto" -> não reconhecido
         out.text = "Comando não reconhecido. Use: help";
         return out;
       }
@@ -186,16 +174,11 @@ export function executeCommand(inputRaw, state) {
       command: inputRaw
     };
 
-    // aqui você pode plugar autoFixSuggestion() depois, se quiser
-    if (state.settings?.requireApprovalOnError) {
-      // por enquanto só registra o erro e deixa a UI mostrar alerta/erro.
-    }
-
     return out;
   }
 }
 
-/* ------------------ POLICY (dentro do mesmo arquivo) ------------------ */
+/* ------------------ POLICY ------------------ */
 
 function commandRisk(cmd, args, state) {
   const c = (cmd || "").toLowerCase();
@@ -206,7 +189,7 @@ function commandRisk(cmd, args, state) {
   // SEGUROS (mudança pequena)
   if (["select", "set", "write", "create", "open"].includes(c)) return "SAFE";
 
-  // ARRISCADOS / PERIGOSOS (não usados aqui ainda, mas prontos)
+  // ARRISCADOS / PERIGOSOS (futuros)
   if (["publish", "generator"].includes(c)) return "RISKY";
   if (["reset", "delete", "clearcache", "wipe"].includes(c)) return "DANGEROUS";
 
@@ -270,7 +253,6 @@ function applyPatch(app, patch) {
       cloned.files[patch.file] = String(patch.content ?? "");
       return cloned;
     }
-
     default:
       throw new Error(`Tipo de patch não suportado: ${patch.type}`);
   }
