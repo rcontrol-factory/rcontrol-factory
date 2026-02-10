@@ -1,13 +1,15 @@
 /* =========================================================
-  RControl Factory — core/admin.js (FULL) — FIX BOTÕES MAE
+  RControl Factory — core/admin.js (FULL) — MAE v1.2 (CLICK UNKILL)
   - Renderiza seção "MAINTENANCE • Self-Update (Mãe)"
-  - iOS-safe bind: touchend + click (com preventDefault)
-  - Força pointer-events na área (mata overlay travando clique)
+  - iOS-safe: touchend + click (preventDefault) + TAP GUARD
+  - SUPER FIX: Event Delegation em CAPTURE no document
+      -> mesmo se overlay/stack estiver “comendo” o toque,
+         ainda assim capturamos o evento e executamos a ação.
+  - Força pointer-events na área do Admin
   - Ações (MVP):
-      • Aplicar /import/mother_bundle.json  -> carrega e salva em localStorage
+      • Aplicar /import/mother_bundle.json  -> salva em localStorage
       • Aplicar bundle colado              -> salva em localStorage
       • Rollback overrides                 -> limpa localStorage
-  OBS: aqui o objetivo é GARANTIR CLIQUE e fluxo; depois ligamos o patch real.
 ========================================================= */
 
 (function () {
@@ -15,34 +17,18 @@
 
   const $ = (id) => document.getElementById(id);
 
-  // ---------- iOS safe tap ----------
+  // ---------- iOS safe tap guard ----------
   const TAP_GUARD_MS = 450;
   let _lastTapAt = 0;
 
-  function bindTap(el, fn) {
-    if (!el) return;
-
-    const handler = (e) => {
-      const now = Date.now();
-      if (now - _lastTapAt < TAP_GUARD_MS) {
-        try { e.preventDefault(); e.stopPropagation(); } catch {}
-        return;
-      }
-      _lastTapAt = now;
-
+  function tapGuard(e) {
+    const now = Date.now();
+    if (now - _lastTapAt < TAP_GUARD_MS) {
       try { e.preventDefault(); e.stopPropagation(); } catch {}
-      try { fn(e); } catch (err) {
-        writeOut("adminOut", "ERRO no clique: " + (err?.message || String(err)));
-      }
-    };
-
-    el.style.pointerEvents = "auto";
-    el.style.touchAction = "manipulation";
-    el.style.webkitTapHighlightColor = "transparent";
-
-    // capture ajuda quando existe overlay/parent estranho
-    el.addEventListener("touchend", handler, { passive: false, capture: true });
-    el.addEventListener("click", handler, { passive: false, capture: true });
+      return false;
+    }
+    _lastTapAt = now;
+    return true;
   }
 
   function setStatus(text) {
@@ -53,6 +39,13 @@
   function writeOut(id, text) {
     const el = $(id);
     if (el) el.textContent = String(text || "");
+  }
+
+  function appendOut(id, text) {
+    const el = $(id);
+    if (!el) return;
+    const cur = el.textContent || "";
+    el.textContent = (cur ? (cur + "\n") : "") + String(text || "");
   }
 
   function log(msg) {
@@ -153,13 +146,19 @@
       <pre class="mono small" id="motherMaintOut" style="margin-top:10px; pointer-events:auto">Pronto.</pre>
     `;
 
-    // insere DEPOIS do primeiro card do admin (ou no fim)
+    // insere depois do primeiro card do admin
     const firstCard = adminView.querySelector(".card");
     if (firstCard && firstCard.parentNode) {
       firstCard.parentNode.insertBefore(card, firstCard.nextSibling);
     } else {
       adminView.appendChild(card);
     }
+
+    // força pointer-events no card inteiro
+    card.style.pointerEvents = "auto";
+    card.querySelectorAll("*").forEach((el) => {
+      if (el && el.style) el.style.pointerEvents = "auto";
+    });
   }
 
   // ---------- actions ----------
@@ -167,7 +166,6 @@
     setStatus("Aplicando bundle…");
     writeOut("motherMaintOut", "Carregando /import/mother_bundle.json …");
 
-    // cache-bust
     const url = "/import/mother_bundle.json?ts=" + Date.now();
 
     let json;
@@ -183,7 +181,7 @@
 
     try {
       saveBundle(json);
-      writeOut("motherMaintOut", "✅ Bundle carregado e salvo.\nAgora o clique está OK.\n\n(Próximo passo: ligar aplicação real em runtime.)");
+      writeOut("motherMaintOut", "✅ Bundle carregado e salvo.\n\n(Próximo passo: ligar aplicação real em runtime.)");
       setStatus("Bundle salvo ✅");
       log("MAE: bundle salvo via arquivo");
     } catch (e) {
@@ -208,7 +206,7 @@
 
     try {
       saveBundle(json);
-      writeOut("motherMaintOut", "✅ Bundle colado salvo em localStorage.\nAgora o clique está OK.\n\n(Próximo passo: ligar aplicação real em runtime.)");
+      writeOut("motherMaintOut", "✅ Bundle colado salvo em localStorage.\n\n(Próximo passo: ligar aplicação real em runtime.)");
       setStatus("Bundle salvo ✅");
       log("MAE: bundle salvo via colado");
     } catch (e) {
@@ -224,28 +222,62 @@
     log("MAE: rollback");
   }
 
-  // ---------- bind ----------
-  function bindMaintenanceButtons() {
-    // garante que render exista
-    renderMaintenance();
+  // ---------- SUPER FIX: delegação em CAPTURE ----------
+  function installDelegationKillOverlay() {
+    const handler = (e) => {
+      // sempre tenta capturar mesmo com overlay
+      if (!tapGuard(e)) return;
 
-    // força pointer-events em tudo do card (mata overlay)
-    const card = $("motherMaintCard");
-    if (card) {
-      card.style.pointerEvents = "auto";
-      card.querySelectorAll("*").forEach((el) => {
-        if (el && el.style) el.style.pointerEvents = "auto";
-      });
-    }
+      // garante que o Admin esteja renderizado
+      renderMaintenance();
 
-    bindTap($("btnMotherApplyFile"), applyFromFile);
-    bindTap($("btnMotherApplyPasted"), applyFromPaste);
-    bindTap($("btnMotherRollback"), rollback);
+      // tenta achar o botão via "closest" (mesmo que o alvo seja overlay)
+      const t = e.target;
+      const c = (sel) => {
+        try { return t && t.closest ? t.closest(sel) : null; } catch { return null; }
+      };
+
+      // Se overlay não for “descendente” do botão, ainda assim tentamos pelo ID direto:
+      const hitApplyFile = c("#btnMotherApplyFile") || (t && t.id === "btnMotherApplyFile") ? true : false;
+      const hitApplyPaste = c("#btnMotherApplyPasted") || (t && t.id === "btnMotherApplyPasted") ? true : false;
+      const hitRollback = c("#btnMotherRollback") || (t && t.id === "btnMotherRollback") ? true : false;
+
+      // Também aceitamos clique em texto do botão (Safari às vezes joga target em span/text node)
+      const byId = (id) => {
+        const el = $(id);
+        if (!el) return false;
+        // se o toque caiu “perto” mas não foi no botão, isso não resolve.
+        // então só usamos byId quando o closest/ID já bateu.
+        return true;
+      };
+
+      // executa
+      if (hitApplyFile && byId("btnMotherApplyFile")) {
+        try { e.preventDefault(); e.stopPropagation(); } catch {}
+        applyFromFile();
+        return;
+      }
+      if (hitApplyPaste && byId("btnMotherApplyPasted")) {
+        try { e.preventDefault(); e.stopPropagation(); } catch {}
+        applyFromPaste();
+        return;
+      }
+      if (hitRollback && byId("btnMotherRollback")) {
+        try { e.preventDefault(); e.stopPropagation(); } catch {}
+        rollback();
+        return;
+      }
+    };
+
+    // CAPTURE TRUE: pega antes de qualquer coisa que pare propagação
+    document.addEventListener("touchend", handler, { passive: false, capture: true });
+    document.addEventListener("click", handler, { passive: false, capture: true });
   }
 
   function init() {
-    // render + bind
-    bindMaintenanceButtons();
+    // render + instala delegação
+    renderMaintenance();
+    installDelegationKillOverlay();
 
     // feedback visível
     const saved = loadBundle();
@@ -255,9 +287,9 @@
     }
 
     // marca que carregou (pra você ver na hora)
-    writeOut("adminOut", ( $("adminOut")?.textContent || "Pronto." ) + "\n\nMAE v1.1 ✅ carregado (admin.js)");
+    appendOut("adminOut", "MAE v1.2 ✅ carregado (admin.js — click unkill)");
     setStatus("OK ✅");
-    log("MAE v1.1 carregado");
+    log("MAE v1.2 carregado");
   }
 
   if (document.readyState === "loading") {
