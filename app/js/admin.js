@@ -1,22 +1,21 @@
 /* =========================================================
-  RControl Factory — core/admin.js (FULL)
-  Admin UI + Maintenance Self-Update (Mãe)
-  - Renderiza seção MAINTENANCE dentro do #view-admin
-  - iOS-safe bindTap (click + touchend, sem duplo-fire)
-  - Botões:
-      - Aplicar /import/mother_bundle.json
-      - Rollback overrides
-      - Aplicar bundle colado
-  - Armazena overrides em localStorage: rcf:mother_overrides
+  RControl Factory — core/admin.js (FULL) — MAE v1.1
+  Fix iOS: botões MAINTENANCE não clicavam (viravam seleção de texto)
+  - Renderiza MAINTENANCE com IDs fixos
+  - bindTap agressivo: pointerup + touchend + click
+  - user-select none via CSS (ver patch no styles.css)
+  - Mostra "MAE v1.1" na tela pra confirmar que carregou (cache/SW)
 ========================================================= */
 
 (() => {
   "use strict";
 
-  // ---------- helpers ----------
+  const VERSION = "MAE v1.1 ✅ carregado";
+
   const $ = (sel, root = document) => root.querySelector(sel);
 
-  const TAP_GUARD_MS = 450;
+  // iOS: evita duplo-fire + melhora clique
+  const TAP_GUARD_MS = 420;
   let _lastTapAt = 0;
 
   function bindTap(el, fn) {
@@ -30,38 +29,47 @@
       }
       _lastTapAt = now;
 
-      try { e.preventDefault(); e.stopPropagation(); } catch {}
+      // iOS: impede seleção / menu de copiar interferir
+      try { e.preventDefault(); } catch {}
+      try { e.stopPropagation(); } catch {}
+
       try { fn(e); } catch (err) { log("admin tap err:", err?.message || String(err)); }
     };
 
-    // iOS: precisa dos dois
-    el.addEventListener("click", handler, { passive: false });
+    // mais agressivo (iOS às vezes ignora click)
+    el.addEventListener("pointerup", handler, { passive: false });
     el.addEventListener("touchend", handler, { passive: false });
+    el.addEventListener("click", handler, { passive: false });
 
-    // garante que o elemento aceite toque
+    // garante toque
     try {
       el.style.pointerEvents = "auto";
       el.style.touchAction = "manipulation";
       el.style.webkitTapHighlightColor = "transparent";
+      el.style.webkitUserSelect = "none";
+      el.style.userSelect = "none";
     } catch {}
   }
 
   function log(...args) {
-    // Se tiver logger core, usa. Se não, console.
-    const L = window.RCF_LOGGER;
-    if (L && typeof L.push === "function") {
-      try { L.push("log", args.map(String).join(" ")); } catch {}
-      return;
-    }
-    if (window.RCF && typeof window.RCF.log === "function") {
-      try { window.RCF.log(...args); return; } catch {}
-    }
+    // usa logger do app.js se existir
+    try {
+      if (window.RCF && typeof window.RCF.log === "function") {
+        window.RCF.log(...args);
+        return;
+      }
+    } catch {}
     try { console.log("[RCF][ADMIN]", ...args); } catch {}
   }
 
   function setStatus(text) {
     const el = $("#statusText");
     if (el) el.textContent = text;
+  }
+
+  function out(text) {
+    const el = $("#motherOut");
+    if (el) el.textContent = String(text ?? "");
   }
 
   function getOverrides() {
@@ -81,23 +89,25 @@
     return String(str || "").replace(/\{\{DATE\}\}/g, new Date().toLocaleString());
   }
 
-  // ---------- UI render ----------
   function ensureMaintenanceUI() {
     const view = $("#view-admin");
     if (!view) return null;
 
-    // já existe?
-    if ($("#rcfMotherBox", view)) return $("#rcfMotherBox", view);
+    // se já existe, só retorna
+    const existing = $("#rcfMotherBox", view);
+    if (existing) return existing;
 
-    // injeta depois do card principal (o primeiro .card do admin)
-    const card = $(".card", view);
-    if (!card) return null;
+    // injeta logo depois do primeiro card do admin
+    const firstCard = $(".card", view);
+    if (!firstCard) return null;
 
     const box = document.createElement("div");
     box.id = "rcfMotherBox";
     box.className = "card";
     box.innerHTML = `
       <h2>MAINTENANCE • Self-Update (Mãe)</h2>
+      <div class="hint" style="margin-top:-6px;margin-bottom:10px">${VERSION}</div>
+
       <p class="hint">
         Aplica overrides por cima do site (no iPhone) via Service Worker.
         Se quebrar, use Rollback.
@@ -109,7 +119,8 @@
       </div>
 
       <div style="margin-top:10px" class="hint">Ou cole um bundle JSON aqui:</div>
-      <textarea id="motherBundleText" spellcheck="false" style="
+
+      <textarea id="motherBundleText" spellcheck="false" class="mono" style="
         width:100%;
         min-height:140px;
         margin-top:8px;
@@ -118,7 +129,6 @@
         color: rgba(255,255,255,.92);
         border-radius: 12px;
         padding: 12px;
-        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
         font-size: 13px;
         line-height: 1.45;
         outline: none;
@@ -135,12 +145,10 @@
       <pre class="mono" id="motherOut">Pronto.</pre>
     `;
 
-    // coloca logo abaixo do primeiro card do admin
-    card.insertAdjacentElement("afterend", box);
+    firstCard.insertAdjacentElement("afterend", box);
     return box;
   }
 
-  // ---------- Apply / Rollback ----------
   async function fetchBundleJSON(url) {
     const res = await fetch(url, { cache: "no-store" });
     if (!res.ok) throw new Error(`fetch falhou: ${res.status}`);
@@ -164,7 +172,6 @@
   }
 
   async function notifySW(bundle) {
-    // tenta avisar o SW (se estiver ativo)
     try {
       if (navigator.serviceWorker && navigator.serviceWorker.controller) {
         navigator.serviceWorker.controller.postMessage({
@@ -175,11 +182,6 @@
       }
     } catch {}
     return false;
-  }
-
-  function out(text) {
-    const el = $("#motherOut");
-    if (el) el.textContent = String(text ?? "");
   }
 
   async function applyBundle(bundle, sourceLabel) {
@@ -200,7 +202,7 @@
       `✅ Bundle aplicado (${sourceLabel})\n` +
       `files: ${Object.keys(norm.files).length}\n` +
       `sw: ${swOk ? "OK" : "NOK (sem controller ainda)"}\n\n` +
-      `Dica: se o SW ainda não estiver controlando, feche o PWA e abra de novo.`
+      `Se não aplicar na hora: feche o PWA e abra de novo.`
     );
 
     setStatus("Override aplicado ✅");
@@ -213,11 +215,9 @@
     setStatus("Rollback ✅");
     log("MAE rollback");
 
-    // opcional: força reload pra voltar ao normal
     try { location.reload(); } catch {}
   }
 
-  // ---------- Bind ----------
   function bindMaintenanceButtons() {
     const btnFile = $("#btnMotherApplyFile");
     const btnRollback = $("#btnMotherRollback");
@@ -263,17 +263,12 @@
 
     bindMaintenanceButtons();
 
-    // mostra se já existe override salvo
     const existing = getOverrides();
     if (existing && existing.files) {
-      out(
-        `ℹ️ Existe override salvo.\nfiles: ${Object.keys(existing.files).length}\n` +
-        `Use Rollback se quiser remover.`
-      );
-      log("MAE existing overrides:", Object.keys(existing.files).length);
+      out(`ℹ️ Existe override salvo.\nfiles: ${Object.keys(existing.files).length}\nUse Rollback se quiser remover.`);
     }
 
-    log("core/admin.js loaded ✅ (maintenance bound)");
+    log("core/admin.js loaded ✅", VERSION);
   }
 
   if (document.readyState === "loading") {
