@@ -1,24 +1,27 @@
 /* =========================================================
-  RControl Factory — core/ui_bindings.js (v1.1 / LOGS FIX)
-  - Foco: DIAG + LOGS + Ferramentas (drawer)
-  - iOS-safe: click + touchend (tap guard)
-  - LOGS: tenta 3 fontes (localStorage rcf:logs, RCF_LOGGER, fallback DOM)
+  RControl Factory — core/ui_bindings.js (FULL / FIX LOGS)
+  - Liga UI (Agent/Admin/Diag/Logs/Tools) ao core
+  - iOS-safe: click + touchend (evita double fire)
+  - FIX: Logs view usa #logsOut (do seu index.html)
+  - FIX: fallback lê localStorage rcf:logs (compatível com app.js)
 ========================================================= */
 
 (function () {
   "use strict";
 
+  // ---------- helpers ----------
   function $(id) { return document.getElementById(id); }
-  function safeText(v) { return (v === undefined || v === null) ? "" : String(v); }
 
-  // Evita double fire (touch+click)
+  function safeText(v) {
+    return (v === undefined || v === null) ? "" : String(v);
+  }
+
+  // Evita "duplo clique" (touch + click) no iOS
   const TAP_GUARD_MS = 450;
   let _lastTapAt = 0;
 
   function bindTap(el, fn) {
     if (!el) return;
-    if (el.__rcfTapBound) return; // evita bind duplicado
-    el.__rcfTapBound = true;
 
     const handler = (e) => {
       const now = Date.now();
@@ -29,86 +32,191 @@
       _lastTapAt = now;
 
       try { e.preventDefault(); e.stopPropagation(); } catch {}
-      try { fn(e); } catch (err) {
-        try { console.log("[RCF] tap err:", err); } catch {}
-      }
+      fn(e);
     };
 
     el.addEventListener("click", handler, { passive: false });
     el.addEventListener("touchend", handler, { passive: false });
   }
 
-  // ---------- LOG SOURCES ----------
-  function getLogsFromLocalStorage() {
-    // app.js: localStorage["rcf:logs"] = JSON.stringify(array)
+  function getCtx() {
+    return window.RCF_STATE || (window.RCF_STATE = {
+      autoMode: false,
+      safeMode: true,
+      currentFile: "index.html"
+    });
+  }
+
+  function runCommand(cmd, outEl) {
+    const ctx = getCtx();
+    const handler = window.RCF_COMMANDS && typeof window.RCF_COMMANDS.handle === "function"
+      ? window.RCF_COMMANDS.handle
+      : null;
+
+    let res = "";
+    if (!handler) {
+      res = "ERRO: core/commands.js não carregou (RCF_COMMANDS.handle não existe).";
+    } else {
+      try {
+        res = handler(String(cmd || "").trim(), ctx);
+      } catch (err) {
+        res = "ERRO ao executar comando: " + (err && err.message ? err.message : String(err));
+      }
+    }
+
+    if (outEl) outEl.textContent = safeText(res);
+    return res;
+  }
+
+  // ---------- logger integration ----------
+  function readLogsFromLocalStorageFallback() {
+    // compatível com app.js (Storage prefix rcf:)
     try {
       const raw = localStorage.getItem("rcf:logs");
       if (!raw) return "";
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) return parsed.map(safeText).join("\n");
-      return safeText(parsed);
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) return arr.map(safeText).join("\n");
+      return "";
     } catch {
       return "";
     }
   }
 
-  function getLogsFromRCFLogger() {
+  function loggerGetText() {
+    // tenta vários formatos possíveis
     const L = window.RCF_LOGGER;
-    if (!L) return "";
-    try {
+
+    if (L) {
       if (typeof L.getText === "function") return safeText(L.getText());
       if (typeof L.dump === "function") return safeText(L.dump());
       if (Array.isArray(L.lines)) return L.lines.map(safeText).join("\n");
       if (Array.isArray(L.buffer)) return L.buffer.map(safeText).join("\n");
-      return "";
-    } catch {
-      return "";
     }
+
+    // fallback (quando core/logger não conversa com app.js)
+    return readLogsFromLocalStorageFallback();
   }
 
-  function clearLogs() {
-    // limpa o mesmo lugar do app.js
+  function loggerClear() {
+    const L = window.RCF_LOGGER;
+    if (L) {
+      if (typeof L.clear === "function") return L.clear();
+      if (Array.isArray(L.lines)) L.lines.length = 0;
+      if (Array.isArray(L.buffer)) L.buffer.length = 0;
+    }
+
+    // fallback: limpa logs do app.js
     try { localStorage.setItem("rcf:logs", JSON.stringify([])); } catch {}
-    // se existir logger separado, limpa também
-    try {
-      const L = window.RCF_LOGGER;
-      if (L && typeof L.clear === "function") L.clear();
-      if (L && Array.isArray(L.lines)) L.lines.length = 0;
-      if (L && Array.isArray(L.buffer)) L.buffer.length = 0;
-    } catch {}
   }
 
-  function setStatus(text) {
-    const el = $("statusText");
-    if (el) el.textContent = safeText(text);
-  }
-
-  // ---------- DIAG ----------
-  async function buildDiagReport() {
-    const info = [];
-    info.push("RCF DIAGNÓSTICO");
-    info.push("{");
-    try {
-      const state = (window.RCF && window.RCF.state) ? window.RCF.state : null;
-      if (state) {
-        info.push('  "cfg": ' + JSON.stringify(state.cfg || {}, null, 2).split("\n").join("\n  "));
-        info.push('  , "apps": ' + safeText((state.apps || []).length));
-        info.push('  , "active": ' + JSON.stringify(state.active?.appSlug || "_"));
-        info.push('  , "file": ' + JSON.stringify(state.active?.file || "_"));
-        info.push('  , "view": ' + JSON.stringify(state.active?.view || "_"));
-      } else {
-        info.push('  "state": "window.RCF.state não disponível"');
-      }
-    } catch {
-      info.push('  "state": "erro ao ler state"');
+  function loggerPush(level, msg) {
+    const L = window.RCF_LOGGER;
+    if (L && typeof L.push === "function") {
+      try { L.push(level || "log", msg); } catch {}
+    } else {
+      try { console.log("[RCF]", msg); } catch {}
     }
-    info.push('  , "ua": ' + JSON.stringify(navigator.userAgent));
-    info.push('  , "hint": "Se botão não clica: provável overlay com pointer-events. Veja logs e teste Diag."');
-    info.push("}");
+  }
+
+  // ---------- Patchset integration ----------
+  function patchApplyAll(outEl) {
+    const P = window.RCF_PATCHSET;
+    let rep = "";
+    if (P && typeof P.applyAll === "function") {
+      try { rep = P.applyAll(); }
+      catch (e) { rep = "ERRO applyAll: " + safeText(e && e.message ? e.message : e); }
+    } else {
+      rep = "Patchset não disponível (RCF_PATCHSET.applyAll não existe).";
+    }
+    if (outEl) outEl.textContent = safeText(rep || "OK ✅");
+    return rep;
+  }
+
+  function patchClear(outEl) {
+    const P = window.RCF_PATCHSET;
+    let rep = "";
+    if (P && typeof P.clear === "function") {
+      try { P.clear(); rep = "Patches descartados ✅"; }
+      catch (e) { rep = "ERRO clear: " + safeText(e && e.message ? e.message : e); }
+    } else {
+      rep = "Patchset não disponível (RCF_PATCHSET.clear não existe).";
+    }
+    if (outEl) outEl.textContent = safeText(rep);
+    return rep;
+  }
+
+  // ---------- DIAG report ----------
+  async function buildDiagReport() {
+    const D = window.RCF_DIAGNOSTICS;
+    if (D && typeof D.buildReport === "function") return await D.buildReport();
+    if (D && typeof D.run === "function") return await D.run();
+
+    const F = window.RCF && window.RCF.factory;
+    if (F && typeof F.buildDiagnosisReport === "function") return await F.buildDiagnosisReport();
+
+    const info = [];
+    info.push("DIAG (fallback) ✅");
+    info.push("—");
+    info.push("RCF_COMMANDS: " + (!!window.RCF_COMMANDS));
+    info.push("RCF_PATCHSET: " + (!!window.RCF_PATCHSET));
+    info.push("RCF_LOGGER: " + (!!window.RCF_LOGGER));
+    info.push("navigator.onLine: " + (typeof navigator !== "undefined" ? navigator.onLine : "n/a"));
+    info.push("ua: " + (typeof navigator !== "undefined" ? navigator.userAgent : "n/a"));
     return info.join("\n");
   }
 
-  // ---------- BINDINGS ----------
+  // ---------- bindings ----------
+  function bindAgent() {
+    const input = $("agentCmd");
+    const out = $("agentOut");
+
+    const btnRun = $("btnAgentRun");
+    const btnClear = $("btnAgentClear");
+    const btnApprove = $("btnAgentApprove");
+    const btnDiscard = $("btnAgentDiscard");
+
+    if (btnRun && input) bindTap(btnRun, () => runCommand(input.value, out));
+
+    if (btnClear && input) {
+      bindTap(btnClear, () => {
+        input.value = "";
+        if (out) out.textContent = "Limpo.";
+      });
+    }
+
+    if (btnApprove) bindTap(btnApprove, () => patchApplyAll(out));
+    if (btnDiscard) bindTap(btnDiscard, () => patchClear(out));
+
+    if (input) {
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          runCommand(input.value, out);
+        }
+      });
+    }
+  }
+
+  function bindAdmin() {
+    const out = $("adminOut");
+
+    const btnDiag = $("btnAdminDiag");
+    const btnClear = $("btnAdminClear");
+    const btnApply = $("btnAdminApply");
+    const btnDiscard = $("btnAdminDiscard");
+
+    if (btnDiag) {
+      bindTap(btnDiag, async () => {
+        const rep = await buildDiagReport();
+        if (out) out.textContent = safeText(rep);
+      });
+    }
+
+    if (btnClear) bindTap(btnClear, () => { if (out) out.textContent = "Limpo."; });
+    if (btnApply) bindTap(btnApply, () => patchApplyAll(out));
+    if (btnDiscard) bindTap(btnDiscard, () => patchClear(out));
+  }
+
   function bindDiagnosticsView() {
     const out = $("diagOut");
     const btnRun = $("btnDiagRun");
@@ -118,61 +226,37 @@
       bindTap(btnRun, async () => {
         const rep = await buildDiagReport();
         if (out) out.textContent = safeText(rep);
-        setStatus("Diag atualizado ✅");
-        setTimeout(() => setStatus("OK ✅"), 900);
       });
     }
 
-    if (btnClear) {
-      bindTap(btnClear, () => {
-        if (out) out.textContent = "Pronto.";
-        setStatus("OK ✅");
-      });
-    }
+    if (btnClear) bindTap(btnClear, () => { if (out) out.textContent = "Pronto."; });
   }
 
   function bindLogsViewAndTools() {
-    // IDs reais do seu index.html:
-    const logsViewBox = $("logsOut");  // <pre id="logsOut">
-    const toolsLogsBox = $("logsBox"); // <pre id="logsBox">
+    // ✅ IDs REAIS do seu HTML
+    const logsViewBox = $("logsOut"); // view logs
+    const toolsLogsBox = $("logsBox"); // drawer ferramentas
 
     const btnRefresh = $("btnLogsRefresh");
     const btnCopy = $("btnLogsCopy");
     const btnClear = $("btnLogsClear");
 
-    // tools drawer
     const btnClearLogs = $("btnClearLogs");
     const btnCopyLogs = $("btnCopyLogs");
 
-    function resolveLogsText() {
-      // 1) localStorage (fonte do app.js)
-      let t = getLogsFromLocalStorage();
-      if (t && t.trim()) return t;
-
-      // 2) RCF_LOGGER (se houver)
-      t = getLogsFromRCFLogger();
-      if (t && t.trim()) return t;
-
-      // 3) fallback DOM (se drawer já tiver algo)
-      t = toolsLogsBox ? safeText(toolsLogsBox.textContent) : "";
-      if (t && t.trim() && t.trim() !== "Logs...") return t;
-
-      return "";
-    }
-
     const refresh = () => {
-      const text = resolveLogsText();
-      const finalText = (text && text.trim()) ? text : "(sem logs ainda)";
+      const text = loggerGetText() || "Logs...";
+      if (logsViewBox) logsViewBox.textContent = text;
+      if (toolsLogsBox) toolsLogsBox.textContent = text;
 
-      if (logsViewBox) logsViewBox.textContent = finalText;
-      if (toolsLogsBox) toolsLogsBox.textContent = finalText;
-
-      setStatus("Logs atualizados ✅");
-      setTimeout(() => setStatus("OK ✅"), 900);
+      // opcional: status pill
+      const st = $("statusText");
+      if (st) st.textContent = "Logs atualizados ✅";
+      setTimeout(() => { if (st) st.textContent = "OK ✅"; }, 900);
     };
 
     const copy = async () => {
-      const text = resolveLogsText() || "";
+      const text = loggerGetText() || "";
       try {
         await navigator.clipboard.writeText(text);
         alert("Logs copiados ✅");
@@ -182,7 +266,7 @@
     };
 
     const clear = () => {
-      clearLogs();
+      loggerClear();
       refresh();
     };
 
@@ -193,15 +277,19 @@
     if (btnClearLogs) bindTap(btnClearLogs, clear);
     if (btnCopyLogs) bindTap(btnCopyLogs, copy);
 
-    // primeira carga
+    // Atualiza uma vez ao iniciar
     refresh();
   }
 
   function init() {
     document.body.addEventListener("touchstart", () => {}, { passive: true });
+
+    bindAgent();
+    bindAdmin();
     bindDiagnosticsView();
     bindLogsViewAndTools();
-    try { console.log("[RCF] ui_bindings v1.1 loaded ✅"); } catch {}
+
+    loggerPush("log", "core/ui_bindings.js carregado ✅ (logs fix)");
   }
 
   if (document.readyState === "loading") {
