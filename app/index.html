@@ -237,6 +237,32 @@
     <button class="dockbtn" data-view="settings">Logs</button>
   </div>
 
-  <script src="app.js"></script>
+<!-- CORE (ordem importa) -->
+<script src="core/logger.js"></script>
+<script src="core/storage.js"></script>
+<script src="core/errors.js"></script>
+<script src="core/policy.js"></script>
+<script src="core/risk.js"></script>
+
+<script src="core/snapshot.js"></script>
+<script src="core/patch.js"></script>
+<script src="core/patchset.js"></script>
+
+<script src="core/diagnostics.js"></script>
+<script src="core/commands.js"></script>
+
+<script src="core/ui_safety.js"></script>
+<script src="core/ui_bindings.js"></script>
+
+<script src="core/selfheal.js"></script>
+<script src="core/autofix.js"></script>
+<!-- se você tiver os dois (autoFix.js e autofix.js), escolha 1 e apague o outro depois -->
+
+<!-- se existirem -->
+<script src="core/admin.js"></script>
+<script src="core/ai.builder.js"></script>
+
+<!-- APP (por último) -->
+<script src="app.js"></script>
 </body>
 </html>
