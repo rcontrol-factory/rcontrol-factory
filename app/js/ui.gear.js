@@ -1,51 +1,47 @@
 (() => {
-  // RCF UI Gear v4 (FULL FIX)
-  // - Mata o dock/painel flutuante inferior (remove do DOM)
-  // - Conserta clique dos botões superiores (roteador próprio por data-tab)
-  // - Engrenagem no topo com ferramentas escondidas
-  // - Evita duplicação de barras
+  // RCF UI Gear v5 (FULL FORCE)
+  // Objetivo:
+  // 1) Remover (na força) o DOCK inferior "Agent Admin Diag Logs"
+  // 2) Remover o painel de logs/diagnóstico flutuante, se existir
+  // 3) Garantir que os botões superiores sempre cliquem
+  // 4) Manter engrenagem no topo com ferramentas escondidas
 
   const qs  = (s) => document.querySelector(s);
   const qsa = (s) => Array.from(document.querySelectorAll(s));
   const byId = (id) => document.getElementById(id);
 
   function injectCSS() {
-    if (byId("rcf-ui-v4-style")) return;
+    if (byId("rcf-ui-v5-style")) return;
     const st = document.createElement("style");
-    st.id = "rcf-ui-v4-style";
+    st.id = "rcf-ui-v5-style";
     st.textContent = `
-      /* Prioridade máxima pro header/tabs clicarem sempre */
-      header.top, header.top * { pointer-events: auto !important; }
-      header.top { position: sticky; top: 0; z-index: 9998 !important; }
+      header.top{ position:sticky; top:0; z-index:9998 !important; }
+      header.top *{ pointer-events:auto !important; }
+      nav.tabs{ position:relative; z-index:9999 !important; }
+      nav.tabs .tab{ pointer-events:auto !important; }
 
-      /* Se algum overlay invisível estiver pegando toque */
-      .rcf-pointer-none { pointer-events: none !important; }
+      /* qualquer coisa que a gente marcar pra matar some */
+      [data-rcf-kill="1"]{ display:none !important; }
 
-      /* Barra de ferramentas do topo */
+      /* Evita que algum overlay invisível pegue toque */
+      .rcf-pointer-none{ pointer-events:none !important; }
+
+      /* Barra das ferramentas do topo */
       #rcf-gearbar{
         position: sticky;
         top: 0;
-        z-index: 9999 !important;
-        backdrop-filter: blur(8px);
+        z-index: 10000 !important;
+        backdrop-filter: blur(10px);
       }
-
-      /* Esconde qualquer coisa que a gente marcar como dock inferior */
-      [data-rcf-kill="bottomdock"]{ display:none !important; }
-
-      /* Deixa as tabs “clicáveis” e acima de tudo */
-      nav.tabs { position: relative; z-index: 9999 !important; }
-      nav.tabs .tab { pointer-events:auto !important; }
     `;
     document.head.appendChild(st);
   }
 
-  // --------- ROTEADOR PRÓPRIO (faz as tabs de cima funcionarem SEM core) ----------
+  // ---------------- ROTEADOR PRÓPRIO (fallback) ----------------
   function showTab(tabName) {
-    // Botões do header: .tab[data-tab="dashboard|newapp|editor|generator|settings|admin|agent..."]
     const tabs = qsa('button.tab[data-tab]');
     tabs.forEach(b => b.classList.toggle("active", b.getAttribute("data-tab") === tabName));
 
-    // Panels: #tab-dashboard, #tab-newapp, #tab-editor, #tab-generator, #tab-settings, #tab-admin
     const panels = qsa('section.panel[id^="tab-"]');
     panels.forEach(p => p.classList.add("hidden"));
 
@@ -57,85 +53,113 @@
     const buttons = qsa('nav.tabs button.tab[data-tab]');
     if (!buttons.length) return;
 
-    // Se o core já colocou listeners, ok. Mas a gente força o nosso também.
     buttons.forEach(btn => {
       btn.onclick = (e) => {
         e.preventDefault();
         e.stopPropagation();
         const tab = btn.getAttribute("data-tab");
-        // tenta core primeiro, se existir
         try { window.RCF?.router?.go?.(tab); } catch(e){}
-        // fallback garantido
         showTab(tab);
       };
     });
   }
 
-  // --------- DETECTA E REMOVE O DOCK / PAINEL DE BAIXO ----------
-  function isFixedNearBottom(el) {
+  // ---------------- DETECÇÃO FORTE DO DOCK INFERIOR ----------------
+  function norm(s){ return (s || "").trim().toLowerCase(); }
+
+  function hasDockButtons(el) {
+    // procura botões com textos "agent", "admin", "diag", "logs"
+    const btns = qsa("button").filter(b => el.contains(b));
+    const texts = btns.map(b => norm(b.innerText));
+    const need = ["agent","admin","diag","logs"];
+    let hit = 0;
+    for (const w of need) if (texts.includes(w)) hit++;
+    return hit >= 3; // às vezes um pode estar oculto, mas 3 já confirma
+  }
+
+  function nearBottom(el) {
     try {
-      const cs = getComputedStyle(el);
-      if (cs.position !== "fixed") return false;
-      const bottom = parseFloat(cs.bottom || "9999");
-      const height = parseFloat(cs.height || "0");
-      return bottom <= 40 && height >= 38;
-    } catch(e) {
-      return false;
-    }
+      const r = el.getBoundingClientRect();
+      // se encosta no final da tela ou fica muito próximo
+      return r.bottom > (window.innerHeight - 12) && r.top > (window.innerHeight * 0.55);
+    } catch(e){ return false; }
   }
 
-  function textHits(el) {
-    const t = (el.innerText || "").toLowerCase();
-    const words = ["agent", "agente", "admin", "diag", "logs", "limpar cache", "copiar diagnóstico", "copiar logs", "log rcf"];
-    let c = 0;
-    for (const w of words) if (t.includes(w)) c++;
-    return c;
+  function killElement(el) {
+    if (!el || el === document.body || el === document.documentElement) return false;
+    el.setAttribute("data-rcf-kill","1");
+    try { el.remove(); } catch(e){ el.style.display="none"; }
+    return true;
   }
 
-  function killBottomDockOnce() {
+  function killBottomDockHard() {
+    // 1) Primeiro tenta achar o container mais óbvio: um bloco perto do fundo com botões agent/admin/diag/logs
     const all = qsa("body *");
-    let killed = 0;
-
     for (const el of all) {
-      // pega o navzinho de baixo (Agent/Admin/Diag/Logs)
-      if (isFixedNearBottom(el) && textHits(el) >= 2) {
-        el.setAttribute("data-rcf-kill", "bottomdock");
-        // remove de verdade (melhor que só esconder)
-        try { el.remove(); killed++; } catch(e){ el.style.display="none"; }
-        continue;
-      }
+      if (!nearBottom(el)) continue;
+      if (!hasDockButtons(el)) continue;
 
-      // pega o painel maior de logs (o retângulo grande)
-      const t = (el.innerText || "").toLowerCase();
-      if (isFixedNearBottom(el) && t.includes("log rcf") && (t.includes("copiar") || t.includes("limpar"))) {
-        el.setAttribute("data-rcf-kill", "bottomdock");
-        try { el.remove(); killed++; } catch(e){ el.style.display="none"; }
-        continue;
+      // sobe até achar um "container" que não seja pequeno demais
+      let cur = el;
+      for (let i=0;i<6;i++){
+        const p = cur.parentElement;
+        if (!p) break;
+        const r = p.getBoundingClientRect();
+        if (r.height < 44) break; // não sobe demais
+        cur = p;
       }
+      return killElement(cur);
     }
 
-    return killed;
+    // 2) Fallback: se tiver QUALQUER elemento perto do fundo com 2+ palavras chaves, mata
+    const keywords = ["limpar logs","copiar logs","copiar diagnóstico","limpar cache pwa","log rcf"];
+    for (const el of all) {
+      if (!nearBottom(el)) continue;
+      const t = norm(el.innerText);
+      let k = 0;
+      for (const w of keywords) if (t.includes(w)) k++;
+      if (k >= 2) return killElement(el);
+    }
+
+    return false;
   }
 
-  function keepKillingBottomDock() {
-    // roda algumas vezes porque o core pode recriar depois do load
-    killBottomDockOnce();
-    setTimeout(killBottomDockOnce, 300);
-    setTimeout(killBottomDockOnce, 900);
-    setTimeout(killBottomDockOnce, 1800);
+  // Remove também overlays/chat flutuantes que ficam por cima e roubam clique
+  function killOverlaysStealingClicks() {
+    const overlays = qsa("body *").filter(el => {
+      try {
+        const cs = getComputedStyle(el);
+        if (cs.position !== "fixed") return false;
+        const r = el.getBoundingClientRect();
+        // overlays grandes
+        if (r.width < (window.innerWidth * 0.7)) return false;
+        if (r.height < (window.innerHeight * 0.18)) return false;
+        const t = norm(el.innerText);
+        // se contém coisas de logs/diag, é overlay de ferramentas antigas
+        return t.includes("copiar") && (t.includes("diagnóstico") || t.includes("logs") || t.includes("cache pwa"));
+      } catch(e){ return false; }
+    });
+
+    overlays.forEach(killElement);
   }
 
-  // --------- GEAR + DRAWER (ferramentas escondidas) ----------
+  function keepKilling() {
+    // roda várias vezes porque o core pode recriar depois
+    killBottomDockHard();
+    killOverlaysStealingClicks();
+    setTimeout(() => { killBottomDockHard(); killOverlaysStealingClicks(); }, 250);
+    setTimeout(() => { killBottomDockHard(); killOverlaysStealingClicks(); }, 700);
+    setTimeout(() => { killBottomDockHard(); killOverlaysStealingClicks(); }, 1300);
+    setTimeout(() => { killBottomDockHard(); killOverlaysStealingClicks(); }, 2200);
+  }
+
+  // ---------------- GEAR + DRAWER (Ferramentas escondidas) ----------------
   function ensureDrawer() {
     if (byId("rcf-drawer")) return;
 
     const overlay = document.createElement("div");
     overlay.id = "rcf-drawer";
-    overlay.style.cssText = `
-      position:fixed; inset:0; z-index:10000;
-      background:rgba(0,0,0,.55);
-      display:none;
-    `;
+    overlay.style.cssText = `position:fixed; inset:0; z-index:12000; background:rgba(0,0,0,.55); display:none;`;
 
     const panel = document.createElement("div");
     panel.style.cssText = `
@@ -148,28 +172,27 @@
       padding:14px;
     `;
 
-    const top = document.createElement("div");
-    top.style.cssText = "display:flex; align-items:center; gap:10px;";
+    const rowTop = document.createElement("div");
+    rowTop.style.cssText = "display:flex; align-items:center; gap:10px;";
 
     const title = document.createElement("div");
     title.innerHTML = `
       <div style="font-weight:1000;font-size:16px;">⚙️ Ferramentas</div>
-      <div style="opacity:.8;font-size:12px;margin-top:2px;">Tudo que é “manutenção” fica aqui, sem poluir a tela.</div>
+      <div style="opacity:.8;font-size:12px;margin-top:2px;">Manutenção escondida aqui. Tela fica limpa.</div>
     `;
 
     const close = document.createElement("button");
     close.type = "button";
     close.textContent = "Fechar";
     close.style.cssText = `
-      margin-left:auto;
-      padding:10px 12px; border-radius:12px;
+      margin-left:auto; padding:10px 12px; border-radius:12px;
       border:1px solid rgba(255,255,255,.14);
       background:rgba(255,255,255,.06);
       color:#fff; font-weight:900;
     `;
     close.onclick = () => toggleDrawer(false);
 
-    top.append(title, close);
+    rowTop.append(title, close);
 
     const grid = document.createElement("div");
     grid.style.cssText = "display:flex; flex-wrap:wrap; gap:10px; margin-top:12px;";
@@ -188,31 +211,12 @@
       return b;
     };
 
-    // Atalhos
-    const bAgent = mkBtn("Abrir Agent", () => {
-      try { window.RCF?.ui?.openAgent?.(); return; } catch(e){}
-      const t = qs('button.tab[data-tab="agent"]');
-      if (t) t.click(); else showTab("dashboard");
-    });
+    const bKillDock = mkBtn("Matar barra de baixo (agora)", () => keepKilling());
+    const bOpenAdmin = mkBtn("Abrir Admin", () => { const t = qs('button.tab[data-tab="admin"]'); if (t) t.click(); else showTab("admin"); });
+    const bOpenAgent = mkBtn("Abrir Agent", () => { const t = qs('button.tab[data-tab="agent"]'); if (t) t.click(); });
+    const bReload = mkBtn("Recarregar", () => location.reload());
 
-    const bAdmin = mkBtn("Abrir Admin", () => {
-      const t = qs('button.tab[data-tab="admin"]');
-      if (t) t.click(); else showTab("admin");
-    });
-
-    const bDiag = mkBtn("Copiar diagnóstico", () => {
-      try { window.RCF?.factory?.copyDiag?.(); } catch(e){}
-    });
-
-    const bClear = mkBtn("Limpar Cache PWA (reload)", async () => {
-      if (!confirm("Limpar cache PWA e recarregar?")) return;
-      try { await window.RCF?.factory?.nukePwaCache?.(); } catch(e){}
-      location.reload();
-    });
-
-    const bKillDock = mkBtn("Matar barra de baixo", () => keepKillingBottomDock());
-
-    grid.append(bAgent, bAdmin, bDiag, bClear, bKillDock);
+    grid.append(bKillDock, bOpenAgent, bOpenAdmin, bReload);
 
     const note = document.createElement("div");
     note.style.cssText = `
@@ -221,15 +225,11 @@
       background:rgba(255,255,255,.04);
       font-size:12px; opacity:.9;
     `;
-    note.textContent =
-      "Agora a tela fica limpa. Logs/Diag só por engrenagem. Próximo passo: INBOX DE PATCH (auto-encaixe de código + assets).";
+    note.textContent = "Se a barra de baixo reaparecer, ela está sendo recriada pelo core — este v5 mata automaticamente.";
 
-    panel.append(top, grid, note);
+    panel.append(rowTop, grid, note);
     overlay.appendChild(panel);
-
-    overlay.addEventListener("click", (e) => {
-      if (e.target === overlay) toggleDrawer(false);
-    });
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) toggleDrawer(false); });
 
     document.body.appendChild(overlay);
   }
@@ -241,12 +241,11 @@
   }
 
   function ensureGearBar() {
-    // remove duplicatas
-    const old = byId("rcf-gearbar");
-    if (old) old.remove();
-
     const header = qs("header.top");
     if (!header) return;
+
+    const old = byId("rcf-gearbar");
+    if (old) old.remove();
 
     const bar = document.createElement("div");
     bar.id = "rcf-gearbar";
@@ -263,6 +262,23 @@
 
     const right = document.createElement("div");
     right.style.cssText = "margin-left:auto; display:flex; align-items:center; gap:10px;";
+
+    const mk = (label, fn) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = label;
+      b.style.cssText = `
+        padding:10px 12px; border-radius:12px;
+        border:1px solid rgba(255,255,255,.14);
+        background:rgba(255,255,255,.06);
+        color:#fff; font-weight:900;
+      `;
+      b.onclick = fn;
+      return b;
+    };
+
+    const bAgent = mk("Agent", () => { const t = qs('button.tab[data-tab="agent"]'); if (t) t.click(); });
+    const bAdmin = mk("Admin", () => { const t = qs('button.tab[data-tab="admin"]'); if (t) t.click(); else showTab("admin"); });
 
     const ok = document.createElement("span");
     ok.textContent = "OK ✅";
@@ -284,35 +300,8 @@
     `;
     gear.onclick = () => toggleDrawer(true);
 
-    // Botões mínimos no topo
-    const mkTopBtn = (label, fn) => {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.textContent = label;
-      b.style.cssText = `
-        padding:10px 12px; border-radius:12px;
-        border:1px solid rgba(255,255,255,.14);
-        background:rgba(255,255,255,.06);
-        color:#fff; font-weight:900;
-      `;
-      b.onclick = fn;
-      return b;
-    };
-
-    const bAgent = mkTopBtn("Agent", () => {
-      try { window.RCF?.ui?.openAgent?.(); return; } catch(e){}
-      const t = qs('button.tab[data-tab="agent"]');
-      if (t) t.click(); else showTab("dashboard");
-    });
-
-    const bAdmin = mkTopBtn("Admin", () => {
-      const t = qs('button.tab[data-tab="admin"]');
-      if (t) t.click(); else showTab("admin");
-    });
-
     left.append(bAgent, bAdmin);
     right.append(ok, gear);
-
     bar.append(left, right);
 
     header.appendChild(bar);
@@ -321,19 +310,22 @@
 
   function init() {
     injectCSS();
-
-    // garante que as tabs de cima funcionem
     wireTopTabsForce();
-
-    // cria engrenagem e limpa duplicação
     ensureGearBar();
+    keepKilling();
 
-    // mata a barra de baixo (várias passadas)
-    keepKillingBottomDock();
-
-    // se o core recriar, a gente mata de novo
-    const mo = new MutationObserver(() => killBottomDockOnce());
+    // Se o core recriar depois, a gente mata de novo
+    const mo = new MutationObserver(() => {
+      killBottomDockHard();
+      killOverlaysStealingClicks();
+    });
     mo.observe(document.body, { childList: true, subtree: true });
+
+    // Loop de segurança: a cada 2s garante que não voltou
+    setInterval(() => {
+      killBottomDockHard();
+      killOverlaysStealingClicks();
+    }, 2000);
   }
 
   if (document.readyState === "loading") {
