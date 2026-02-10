@@ -308,4 +308,50 @@ textarea{
   background: rgba(22,199,132,.25);
   border-color: rgba(22,199,132,.45);
 }
-.switch input:checked + .slider::after{ transform: translateX(18px); }
+.switch input:checked + .slider::after{ transform: translateX(18px); }/* ===========================
+   iOS FIX: toque não clica
+   (camada invisível por cima)
+   =========================== */
+
+/* 1) Nunca deixe pseudo-elementos bloquear toque */
+*::before,
+*::after {
+  pointer-events: none !important;
+}
+
+/* 2) Backgrounds/overlays comuns não podem capturar touch */
+.bg,
+.background,
+.backdrop,
+.blur,
+.glass,
+.overlay,
+.vignette,
+#bg,
+#background,
+#overlay,
+#backdrop {
+  pointer-events: none !important;
+}
+
+/* 3) Garantir que botões/links recebam toque no iOS */
+button,
+a,
+.tab,
+.fileBtn,
+.dockbtn,
+.btn {
+  pointer-events: auto !important;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* 4) Se tiver algum container full-screen cobrindo tudo (caso clássico) */
+main,
+header,
+section,
+nav,
+#app,
+#root {
+  pointer-events: auto;
+}
