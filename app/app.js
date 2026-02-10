@@ -1,922 +1,1090 @@
-/* =========================================================
-   RControl Factory — app.js (RECOVERY FULL / STABLE)
-   - Offline-first (localStorage)
-   - Dashboard / New App / Editor / Generator / Settings / Admin(tab)
-   - Preview via iframe srcdoc
-   - ZIP via JSZip (lib no index.html)
-   - Diagnóstico + Cache PWA + Backup
-   - Integra core/commands.js + core/ui_bindings.js (Replit-like Agent)
-   ========================================================= */
+/* RControl Factory — app.js (FULL)
+   - Replit-like Agent Builder + Admin Self-Healing (base)
+   - iOS Safari touch fix (sem clique travado)
+   - Offline-friendly: sem dependências externas, storage local
+   - PATCH pending + Approve/Discard
+   - WRITE MODE: cola 200+ linhas sem truncar (modal) /end
+*/
 
-(function () {
+(() => {
   "use strict";
 
-  // ===================== Storage keys =====================
-  const LS = {
-    settings: "rcf_settings_v3",
-    apps: "rcf_apps_v3",
-    activeAppId: "rcf_active_app_id_v3",
-    adminPin: "rcf_admin_pin_v1",
-    adminUnlockUntil: "rcf_admin_unlock_until_v1",
-  };
+  // -----------------------------
+  // Utils
+  // -----------------------------
+  const $ = (sel, root = document) => root.querySelector(sel);
+  const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
-  const DEFAULT_SETTINGS = {
-    ghUser: "",
-    ghToken: "",
-    repoPrefix: "rapp-",
-    pagesBase: "",
-    openaiKey: "",
-    openaiModel: "gpt-4.1",
-  };
+  const nowISO = () => new Date().toISOString();
 
-  const FILE_ORDER = ["index.html", "app.js", "styles.css", "manifest.json", "sw.js"];
-
-  // ===================== DOM helpers =====================
-  const $ = (id) => document.getElementById(id);
-  const qsa = (sel) => Array.from(document.querySelectorAll(sel));
-
-  function safeJsonParse(s, fallback) {
-    try { return JSON.parse(s); } catch { return fallback; }
-  }
-
-  // ===================== State =====================
-  let settings = loadSettings();
-  let apps = loadApps();
-  let activeAppId = getActiveAppId();
-  let currentFile = "index.html";
-
-  // Agent shared state (usado pelo core/commands.js)
-  window.RCF_STATE = window.RCF_STATE || { autoMode: false, safeMode: true, currentFile: "index.html" };
-
-  // ===================== Logs (iPhone friendly) =====================
-  const __LOG_MAX = 300;
-  const __logs = [];
-
-  function pushLog(level, parts) {
-    const time = new Date().toISOString().slice(11, 19);
-    const msg = (parts || []).map((p) => {
-      try { return (typeof p === "string") ? p : JSON.stringify(p); }
-      catch { return String(p); }
-    }).join(" ");
-    __logs.push({ time, level, msg });
-    while (__logs.length > __LOG_MAX) __logs.shift();
-  }
-
-  function logInfo(...a) { pushLog("log", a); }
-  function logWarn(...a) { pushLog("warn", a); }
-  function logError(...a) { pushLog("error", a); }
-
-  window.addEventListener("error", (e) => {
-    logError("JS ERROR:", e.message || "Erro", e.filename, e.lineno, e.colno);
-  });
-  window.addEventListener("unhandledrejection", (e) => {
-    logError("PROMISE REJECT:", e.reason);
-  });
-
-  // ===================== Load/Save =====================
-  function loadSettings() {
-    const raw = localStorage.getItem(LS.settings);
-    const data = raw ? safeJsonParse(raw, {}) : {};
-    return { ...DEFAULT_SETTINGS, ...(data || {}) };
-  }
-  function saveSettings() {
-    localStorage.setItem(LS.settings, JSON.stringify(settings));
-  }
-
-  function loadApps() {
-    const raw = localStorage.getItem(LS.apps);
-    return raw ? safeJsonParse(raw, []) : [];
-  }
-  function saveApps() {
-    localStorage.setItem(LS.apps, JSON.stringify(apps));
-  }
-
-  function setActiveAppId(id) {
-    activeAppId = id || "";
-    localStorage.setItem(LS.activeAppId, activeAppId);
-  }
-  function getActiveAppId() {
-    return localStorage.getItem(LS.activeAppId) || "";
-  }
-
-  // ===================== UI status =====================
-  function setStatus(msg) {
-    const el = $("statusBox");
-    if (el) el.textContent = msg;
-    logInfo("STATUS:", msg);
-  }
-  function setGenStatus(msg) {
-    const el = $("genStatus");
-    if (el) el.textContent = msg;
-    logInfo("GEN:", msg);
-  }
-
-  // ===================== Tabs =====================
-  // ⚠️ inclui ADMIN porque seu index.html tem essa aba
-  const TAB_IDS = ["dashboard", "newapp", "editor", "generator", "settings", "admin"];
-
-  function showTab(tab) {
-    TAB_IDS.forEach((t) => {
-      const sec = $(`tab-${t}`);
-      if (sec) sec.classList.toggle("hidden", t !== tab);
-    });
-    qsa(".tab").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
-  }
-
-  // ===================== Validation =====================
-  function sanitizeId(raw) {
-    return (raw || "")
+  const slugify = (str) => {
+    return String(str || "")
       .trim()
       .toLowerCase()
-      .replace(/\s+/g, "-")
-      .replace(/[^a-z0-9-]/g, "")
-      .replace(/--+/g, "-")
-      .replace(/^-|-$/g, "");
-  }
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+  };
 
-  function validateApp(name, id) {
-    const errors = [];
-    if (!name || name.trim().length < 2) errors.push("Nome do app muito curto.");
-    if (!id || id.length < 2) errors.push("ID do app muito curto.");
-    if (/[A-Z]/.test(id)) errors.push("ID não pode ter letra maiúscula.");
-    if (!/^[a-z0-9-]+$/.test(id)) errors.push("ID só pode ter a-z, 0-9 e hífen.");
-    return errors;
-  }
+  const safeJsonParse = (s, fallback) => {
+    try { return JSON.parse(s); } catch { return fallback; }
+  };
 
-  // ===================== Templates =====================
-  function applyVars(text, app) {
-    return String(text).replaceAll("{{APP_NAME}}", app.name).replaceAll("{{APP_ID}}", app.id);
-  }
-
-  function makePwaBaseTemplateFiles() {
-    const index = `<!doctype html>
-<html lang="pt-BR">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>{{APP_NAME}}</title>
-  <meta name="theme-color" content="#0b1220" />
-  <link rel="manifest" href="manifest.json" />
-  <link rel="stylesheet" href="styles.css" />
-</head>
-<body>
-  <header class="top">
-    <h1>{{APP_NAME}}</h1>
-    <div class="muted">Gerado pelo RControl Factory • ID: {{APP_ID}}</div>
-  </header>
-
-  <main class="wrap">
-    <div class="card">
-      <h2>App rodando ✅</h2>
-      <p>Agora edite <code>app.js</code> e <code>styles.css</code>.</p>
-      <button id="btn">Clique aqui</button>
-      <div id="out" class="out"></div>
-    </div>
-  </main>
-
-  <script src="app.js"></script>
-  <script>
-    if ("serviceWorker" in navigator) {
-      window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js").catch(() => {}));
+  // -----------------------------
+  // Storage (localStorage wrapper)
+  // -----------------------------
+  const Storage = {
+    prefix: "rcf:",
+    get(key, fallback) {
+      try {
+        const v = localStorage.getItem(this.prefix + key);
+        if (v == null) return fallback;
+        return safeJsonParse(v, fallback);
+      } catch {
+        return fallback;
+      }
+    },
+    set(key, value) {
+      try {
+        localStorage.setItem(this.prefix + key, JSON.stringify(value));
+      } catch {}
+    },
+    del(key) {
+      try { localStorage.removeItem(this.prefix + key); } catch {}
     }
-  </script>
-</body>
-</html>`;
+  };
 
-    const appjs = `// {{APP_NAME}} - {{APP_ID}}
-const btn = document.getElementById("btn");
-const out = document.getElementById("out");
+  // -----------------------------
+  // Logger
+  // -----------------------------
+  const Logger = {
+    bufKey: "logs",
+    max: 400,
+    write(...args) {
+      const msg = args
+        .map(a => (typeof a === "string" ? a : safeJsonStringify(a)))
+        .join(" ");
 
-btn?.addEventListener("click", () => {
-  const now = new Date().toLocaleString();
-  out.textContent = "Funcionando! " + now;
-});`;
+      const line = `[${new Date().toLocaleString()}] ${msg}`;
+      const logs = Storage.get(this.bufKey, []);
+      logs.push(line);
+      while (logs.length > this.max) logs.shift();
+      Storage.set(this.bufKey, logs);
 
-    const css = `:root{--bg:#0b1220;--card:#0f1a2e;--border:rgba(255,255,255,.1);--text:rgba(255,255,255,.92);--muted:rgba(255,255,255,.65);--green:#19c37d}
-*{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial}
-.top{padding:16px 14px;border-bottom:1px solid var(--border)}
-.wrap{max-width:900px;margin:16px auto;padding:0 14px}
-.card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px}
-.muted{color:var(--muted);font-size:12px}
-button{background:rgba(25,195,125,.2);border:1px solid rgba(25,195,125,.35);color:var(--text);padding:10px 12px;border-radius:12px;font-weight:700}
-.out{margin-top:10px;padding:10px;border:1px dashed rgba(255,255,255,.2);border-radius:12px;min-height:24px}`;
-
-    const manifest = `{
-  "name": "{{APP_NAME}}",
-  "short_name": "{{APP_NAME}}",
-  "start_url": "./",
-  "display": "standalone",
-  "background_color": "#0b1220",
-  "theme_color": "#0b1220",
-  "icons": []
-}`;
-
-    const sw = `const CACHE = "{{APP_ID}}-v1";
-const ASSETS = ["./","./index.html","./styles.css","./app.js","./manifest.json"];
-
-self.addEventListener("install",(e)=>{
-  e.waitUntil((async()=>{
-    const c=await caches.open(CACHE);
-    await c.addAll(ASSETS);
-    self.skipWaiting();
-  })());
-});
-
-self.addEventListener("activate",(e)=>{
-  e.waitUntil((async()=>{
-    const keys=await caches.keys();
-    await Promise.all(keys.map(k=>k!==CACHE?caches.delete(k):null));
-    self.clients.claim();
-  })());
-});
-
-self.addEventListener("fetch",(e)=>{
-  e.respondWith((async()=>{
-    const cached=await caches.match(e.request);
-    if(cached) return cached;
-    try{
-      const fresh=await fetch(e.request);
-      return fresh;
-    }catch{
-      return caches.match("./index.html");
+      // UI mirror
+      const box = $("#logsBox");
+      if (box) box.textContent = logs.join("\n");
+      try { console.log("[RCF]", ...args); } catch {}
+    },
+    clear() {
+      Storage.set(this.bufKey, []);
+      const box = $("#logsBox");
+      if (box) box.textContent = "";
+    },
+    getAll() {
+      return Storage.get(this.bufKey, []);
     }
-  })());
-});`;
+  };
 
-    return { "index.html": index, "app.js": appjs, "styles.css": css, "manifest.json": manifest, "sw.js": sw };
+  function safeJsonStringify(obj) {
+    try { return JSON.stringify(obj); } catch { return String(obj); }
   }
 
-  function makePwaEmptyTemplateFiles() {
+  // -----------------------------
+  // iOS / Touch Fix
+  // -----------------------------
+  function bindTap(el, fn) {
+    if (!el) return;
+
+    // pointerup is best on modern Safari, but keep touchend/click fallbacks
+    let last = 0;
+    const handler = (ev) => {
+      const t = Date.now();
+      if (ev.type === "click" && (t - last) < 350) return;
+      last = t;
+
+      // important for iOS: prevent ghost click + overlay weirdness
+      if (ev.type === "touchend") ev.preventDefault();
+
+      try { fn(ev); } catch (e) { Logger.write("tap err:", e?.message || e); }
+    };
+
+    el.style.pointerEvents = "auto";
+    el.style.touchAction = "manipulation";
+    el.style.webkitTapHighlightColor = "transparent";
+
+    el.addEventListener("pointerup", handler, { passive: true });
+    el.addEventListener("touchend", handler, { passive: false });
+    el.addEventListener("click", handler, { passive: true });
+  }
+
+  // catch-all: if some overlay is blocking, it will still not click;
+  // we keep a diagnostic helper to detect top element at touch point.
+  function diagnoseTouchOverlay(x, y) {
+    const el = document.elementFromPoint(x, y);
+    if (!el) return { ok: false, msg: "elementFromPoint vazio" };
+    const cs = window.getComputedStyle(el);
     return {
-      "index.html": `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>{{APP_NAME}}</title></head><body><h1>{{APP_NAME}}</h1><p>ID: {{APP_ID}}</p></body></html>`,
-      "app.js": `// {{APP_NAME}}`,
-      "styles.css": `body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial}`,
-      "manifest.json": `{"name":"{{APP_NAME}}","short_name":"{{APP_NAME}}","start_url":"./","display":"standalone","background_color":"#0b1220","theme_color":"#0b1220","icons":[]}`,
-      "sw.js": `self.addEventListener("fetch",()=>{});`,
+      ok: true,
+      tag: el.tagName,
+      id: el.id || "",
+      cls: el.className || "",
+      z: cs.zIndex,
+      pos: cs.position,
+      pe: cs.pointerEvents
     };
   }
 
-  function getTemplates() {
-    return [
-      { id: "pwa-base", name: "PWA Base (com app.js + styles.css)", files: makePwaBaseTemplateFiles() },
-      { id: "pwa-empty", name: "PWA Vazia (minimal)", files: makePwaEmptyTemplateFiles() },
-    ];
+  // -----------------------------
+  // State Model
+  // -----------------------------
+  const State = {
+    cfg: Storage.get("cfg", {
+      mode: "safe",       // "safe" | "auto"
+      autoApplySafe: true,
+      writeMode: "modal"  // modal recommended
+    }),
+
+    apps: Storage.get("apps", []),
+
+    active: Storage.get("active", {
+      appSlug: null,
+      file: null,
+      view: "dashboard"
+    }),
+
+    pending: Storage.get("pending", {
+      patch: null,    // patchset object
+      source: null    // "agent" | "admin"
+    })
+  };
+
+  function saveAll() {
+    Storage.set("cfg", State.cfg);
+    Storage.set("apps", State.apps);
+    Storage.set("active", State.active);
+    Storage.set("pending", State.pending);
   }
 
-  // ===================== App CRUD =====================
-  function pickAppById(id) {
-    return apps.find((a) => a && a.id === id) || null;
+  // -----------------------------
+  // UI: Views + Drawer + Dock
+  // -----------------------------
+  function setStatusPill(text) {
+    const el = $("#statusText");
+    if (el) el.textContent = text;
   }
 
-  function ensureActiveApp() {
-    if (activeAppId && pickAppById(activeAppId)) return;
-    if (apps.length) setActiveAppId(apps[0].id);
-    else setActiveAppId("");
+  function setView(name) {
+    if (!name) return;
+
+    State.active.view = name;
+    saveAll();
+
+    $$(".view").forEach(v => v.classList.remove("active"));
+    $$("[data-view]").forEach(b => b.classList.remove("active"));
+
+    const view = $(`#view-${CSS.escape(name)}`);
+    if (view) view.classList.add("active");
+
+    $$(`[data-view="${name}"]`).forEach(b => b.classList.add("active"));
+
+    Logger.write("view:", name);
   }
 
-  function createApp({ name, id, type, templateId }) {
-    const tpl = getTemplates().find((t) => t.id === templateId) || getTemplates()[0];
+  function openTools(open) {
+    const d = $("#toolsDrawer");
+    if (!d) return;
+    if (open) d.classList.add("open");
+    else d.classList.remove("open");
+  }
 
-    const files = {};
-    Object.keys(tpl.files).forEach((k) => {
-      files[k] = applyVars(tpl.files[k], { name, id });
-    });
+  // -----------------------------
+  // Apps / Editor
+  // -----------------------------
+  function getActiveApp() {
+    if (!State.active.appSlug) return null;
+    return State.apps.find(a => a.slug === State.active.appSlug) || null;
+  }
+
+  function setActiveApp(slug) {
+    const app = State.apps.find(a => a.slug === slug);
+    if (!app) return false;
+
+    State.active.appSlug = slug;
+    State.active.file = State.active.file || Object.keys(app.files || {})[0] || null;
+    saveAll();
+
+    const text = $("#activeAppText");
+    if (text) text.textContent = `App ativo: ${app.name} (${app.slug}) ✅`;
+
+    renderAppsList();
+    renderFilesList();
+    if (State.active.file) openFile(State.active.file);
+
+    return true;
+  }
+
+  function ensureAppFiles(app) {
+    if (!app.files) app.files = {};
+    if (typeof app.files !== "object") app.files = {};
+  }
+
+  function createApp(name, slugMaybe) {
+    const nameClean = String(name || "").trim();
+    if (!nameClean) return { ok: false, msg: "Nome inválido" };
+
+    let slug = slugify(slugMaybe || nameClean);
+    if (!slug) return { ok: false, msg: "Slug inválido" };
+
+    if (State.apps.some(a => a.slug === slug)) {
+      return { ok: false, msg: "Slug já existe" };
+    }
 
     const app = {
-      name,
-      id,
-      type,
-      templateId,
-      createdAt: Date.now(),
-      files,
-      baseFiles: { ...files },
+      name: nameClean,
+      slug,
+      createdAt: nowISO(),
+      files: {
+        "index.html": `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${nameClean}</title></head><body><h1>${nameClean}</h1><script src="app.js"></script></body></html>`,
+        "styles.css": `body{font-family:system-ui;margin:0;padding:24px;background:#0b1220;color:#fff}`,
+        "app.js": `console.log("${nameClean}");`
+      }
     };
 
-    apps.unshift(app);
-    saveApps();
-    setActiveAppId(id);
-    return app;
-  }
+    State.apps.push(app);
+    saveAll();
+    renderAppsList();
+    setActiveApp(slug);
 
-  // ===================== Render =====================
-  function renderTemplatesSelect() {
-    const sel = $("newTemplate");
-    if (!sel) return;
-    sel.innerHTML = "";
-    getTemplates().forEach((t) => {
-      const opt = document.createElement("option");
-      opt.value = t.id;
-      opt.textContent = t.name;
-      sel.appendChild(opt);
-    });
+    Logger.write("app created:", slug);
+    return { ok: true, msg: `✅ App criado: ${nameClean} (${slug})` };
   }
 
   function renderAppsList() {
-    ensureActiveApp();
-    const root = $("appsList");
-    if (!root) return;
-    root.innerHTML = "";
+    const box = $("#appsList");
+    if (!box) return;
 
-    if (!apps.length) {
-      root.innerHTML = `<div class="muted">Nenhum app salvo ainda.</div>`;
+    if (!State.apps.length) {
+      box.innerHTML = `<div class="hint">Nenhum app salvo ainda.</div>`;
       return;
     }
 
-    apps.forEach((a) => {
-      const item = document.createElement("div");
-      item.className = "item";
-      const isOn = a.id === activeAppId;
-
-      item.innerHTML = `
+    box.innerHTML = "";
+    State.apps.forEach(app => {
+      const row = document.createElement("div");
+      row.className = "app-item";
+      row.innerHTML = `
         <div>
-          <strong>${escapeHtml(a.name)}</strong>
-          <div class="meta">${escapeHtml(a.id)} • ${escapeHtml(a.type || "pwa")}</div>
+          <div style="font-weight:800">${escapeHtml(app.name)}</div>
+          <div class="hint">${escapeHtml(app.slug)}</div>
         </div>
-        <span class="badge ${isOn ? "on" : ""}">${isOn ? "ativo" : "selecionar"}</span>
+        <div class="row">
+          <button class="btn small" data-act="select" data-slug="${escapeAttr(app.slug)}">Selecionar</button>
+          <button class="btn small" data-act="edit" data-slug="${escapeAttr(app.slug)}">Editor</button>
+        </div>
       `;
+      box.appendChild(row);
+    });
 
-      item.addEventListener("click", () => {
-        setActiveAppId(a.id);
-        setStatus(\`App ativo: ${a.name} (${a.id}) ✅\`);
-        renderAppsList();
-        renderEditor();
-        renderGeneratorSelect();
+    $$('[data-act="select"]', box).forEach(btn => {
+      bindTap(btn, () => setActiveApp(btn.getAttribute("data-slug")));
+    });
+    $$('[data-act="edit"]', box).forEach(btn => {
+      bindTap(btn, () => {
+        setActiveApp(btn.getAttribute("data-slug"));
+        setView("editor");
       });
-
-      root.appendChild(item);
     });
   }
 
-  function renderEditor() {
-    ensureActiveApp();
-    const app = pickAppById(activeAppId);
+  function renderFilesList() {
+    const box = $("#filesList");
+    if (!box) return;
 
-    const label = $("activeAppLabel");
-    if (label) label.textContent = app ? `${app.name} (${app.id})` : "—";
-
-    const fl = $("filesList");
-    const area = $("codeArea");
-    const cur = $("currentFileLabel");
-    const frame = $("previewFrame");
-    if (!fl || !area || !cur || !frame) return;
-
-    fl.innerHTML = "";
-
+    const app = getActiveApp();
     if (!app) {
-      area.value = "";
-      cur.textContent = "—";
-      frame.srcdoc = `<p style="font-family:system-ui;padding:12px">Sem app ativo</p>`;
+      box.innerHTML = `<div class="hint">Selecione um app para ver arquivos.</div>`;
       return;
     }
 
-    if (!FILE_ORDER.includes(currentFile)) currentFile = "index.html";
-    window.RCF_STATE.currentFile = currentFile;
-
-    FILE_ORDER.forEach((f) => {
-      const b = document.createElement("button");
-      b.className = "fileBtn" + (f === currentFile ? " active" : "");
-      b.textContent = f;
-      b.addEventListener("click", () => {
-        currentFile = f;
-        window.RCF_STATE.currentFile = currentFile;
-        renderEditor();
-      });
-      fl.appendChild(b);
-    });
-
-    cur.textContent = currentFile;
-    area.value = app.files[currentFile] ?? "";
-    refreshPreview(app);
-  }
-
-  function refreshPreview(app) {
-    const frame = $("previewFrame");
-    if (!frame) return;
-
-    const html = app.files["index.html"] || "<h1>Sem index.html</h1>";
-    const css = app.files["styles.css"] || "";
-    const js = app.files["app.js"] || "";
-
-    const looksLikeFullDoc = /<!doctype\s+html>/i.test(html) || /<html[\s>]/i.test(html);
-
-    const doc = looksLikeFullDoc
-      ? injectIntoFullHtml(html, css, js)
-      : `<!doctype html>
-<html lang="pt-BR"><head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<style>${css}</style>
-</head><body>
-${html}
-<script>${js}<\/script>
-</body></html>`;
-
-    frame.srcdoc = doc;
-  }
-
-  function injectIntoFullHtml(fullHtml, css, js) {
-    let out = String(fullHtml);
-
-    if (/<\/head>/i.test(out)) out = out.replace(/<\/head>/i, `<style>${css}</style>\n</head>`);
-    else out = `<style>${css}</style>\n` + out;
-
-    if (/<\/body>/i.test(out)) out = out.replace(/<\/body>/i, `<script>${js}<\/script>\n</body>`);
-    else out = out + `\n<script>${js}<\/script>\n`;
-
-    return out;
-  }
-
-  function renderGeneratorSelect() {
-    ensureActiveApp();
-    const sel = $("genAppSelect");
-    if (!sel) return;
-
-    sel.innerHTML = "";
-    apps.forEach((a) => {
-      const opt = document.createElement("option");
-      opt.value = a.id;
-      opt.textContent = `${a.name} (${a.id})`;
-      sel.appendChild(opt);
-    });
-
-    if (activeAppId) sel.value = activeAppId;
-  }
-
-  function renderSettings() {
-    if ($("ghUser")) $("ghUser").value = settings.ghUser || "";
-    if ($("ghToken")) $("ghToken").value = settings.ghToken || "";
-    if ($("repoPrefix")) $("repoPrefix").value = settings.repoPrefix || "rapp-";
-    if ($("pagesBase")) $("pagesBase").value = settings.pagesBase || (settings.ghUser ? `https://${settings.ghUser}.github.io` : "");
-  }
-
-  // ===================== ZIP =====================
-  async function downloadZip(app) {
-    if (typeof JSZip === "undefined") {
-      alert("JSZip não carregou. Verifique o index.html (script do jszip).");
+    ensureAppFiles(app);
+    const files = Object.keys(app.files);
+    if (!files.length) {
+      box.innerHTML = `<div class="hint">App sem arquivos.</div>`;
       return;
     }
 
-    const zip = new JSZip();
-    Object.entries(app.files).forEach(([path, content]) => {
-      zip.file(path, String(content ?? ""));
+    box.innerHTML = "";
+    files.forEach(fname => {
+      const item = document.createElement("div");
+      item.className = "file-item" + (State.active.file === fname ? " active" : "");
+      item.textContent = fname;
+      bindTap(item, () => openFile(fname));
+      box.appendChild(item);
     });
-    zip.file("README.md", `# ${app.name}\n\nGerado pelo RControl Factory.\n`);
-
-    const blob = await zip.generateAsync({ type: "blob" });
-    const url = URL.createObjectURL(blob);
-
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${app.id}.zip`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-
-    URL.revokeObjectURL(url);
   }
 
-  function hasGitHubConfigured() {
-    return !!(settings.ghUser && settings.ghToken);
+  function openFile(fname) {
+    const app = getActiveApp();
+    if (!app) return false;
+
+    ensureAppFiles(app);
+    if (!(fname in app.files)) return false;
+
+    State.active.file = fname;
+    saveAll();
+
+    const head = $("#editorHead");
+    if (head) head.textContent = `Arquivo atual: ${fname}`;
+
+    const ta = $("#fileContent");
+    if (ta) ta.value = String(app.files[fname] ?? "");
+
+    renderFilesList();
+    return true;
   }
 
-  // ===================== PWA cache nuke =====================
-  async function nukePwaCache() {
-    try {
-      if ("caches" in window) {
-        const keys = await caches.keys();
-        await Promise.all(keys.map((k) => caches.delete(k)));
-      }
-    } catch (e) { logWarn("Falha ao limpar caches:", e); }
+  function saveFile() {
+    const app = getActiveApp();
+    if (!app) return uiMsg("#editorOut", "⚠️ Sem app ativo.");
 
-    try {
-      if ("serviceWorker" in navigator) {
-        const regs = await navigator.serviceWorker.getRegistrations();
-        await Promise.all(regs.map((r) => r.unregister()));
-      }
-    } catch (e) { logWarn("Falha ao desregistrar SW:", e); }
+    const fname = State.active.file;
+    if (!fname) return uiMsg("#editorOut", "⚠️ Sem arquivo ativo.");
+
+    const ta = $("#fileContent");
+    ensureAppFiles(app);
+    app.files[fname] = ta ? String(ta.value || "") : "";
+
+    saveAll();
+    uiMsg("#editorOut", "✅ Arquivo salvo.");
+    Logger.write("file saved:", app.slug, fname);
   }
 
-  async function buildDiagnosisReport() {
-    const lines = [];
-    const add = (k, v) => lines.push(`${k}: ${v}`);
-
-    add("=== RCF DIAGNÓSTICO ===", "");
-    add("URL", location.href);
-    add("UA", navigator.userAgent);
-    add("Hora", new Date().toString());
-
-    try {
-      const s = localStorage.getItem(LS.settings) || "";
-      const a = localStorage.getItem(LS.apps) || "";
-      const act = localStorage.getItem(LS.activeAppId) || "";
-      add("LS.settings bytes", s.length);
-      add("LS.apps bytes", a.length);
-      add("LS.activeAppId", act || "(vazio)");
-    } catch (e) { add("localStorage", "ERRO: " + e.message); }
-
-    try {
-      const _apps = loadApps();
-      add("Apps count", _apps.length);
-      const _active = getActiveAppId();
-      const found = _apps.find(x => x && x.id === _active);
-      add("Active exists", found ? "SIM" : "NÃO");
-      if (found) add("Active name/id", `${found.name} / ${found.id}`);
-    } catch (e) { add("Apps parse", "ERRO: " + e.message); }
-
-    try {
-      add("SW supported", ("serviceWorker" in navigator) ? "SIM" : "NÃO");
-      if ("serviceWorker" in navigator) {
-        const regs = await navigator.serviceWorker.getRegistrations();
-        add("SW registrations", regs.length);
-      }
-    } catch (e) { add("SW", "ERRO: " + e.message); }
-
-    try {
-      add("Cache API", ("caches" in window) ? "SIM" : "NÃO");
-      if ("caches" in window) {
-        const keys = await caches.keys();
-        add("Caches", keys.join(", ") || "(nenhum)");
-      }
-    } catch (e) { add("Caches", "ERRO: " + e.message); }
-
-    add("---- últimos logs ----", "");
-    const tail = __logs.slice(-60).map(l => `[${l.time}] ${String(l.level).toUpperCase()} ${l.msg}`);
-    lines.push(tail.join("\n") || "(sem logs)");
-
-    // módulos externos
-    add("---- core modules ----", "");
-    add("RCF_COMMANDS", window.RCF_COMMANDS ? "SIM" : "NÃO");
-    add("RCF_PATCHSET", window.RCF_PATCHSET ? "SIM" : "NÃO");
-
-    return lines.join("\n");
+  // -----------------------------
+  // PATCHSET (pendente) + Apply
+  // -----------------------------
+  function makePatchset(source, title, ops) {
+    return {
+      id: "ps_" + Math.random().toString(16).slice(2),
+      createdAt: nowISO(),
+      source,
+      title: title || "Patch",
+      ops: Array.isArray(ops) ? ops : []
+    };
   }
 
-  // ===================== Admin (tab) =====================
-  const DEFAULT_PIN = "000"; // você disse que 000 funcionou
-  function getPin() {
-    return localStorage.getItem(LS.adminPin) || DEFAULT_PIN;
-  }
-  function setPin(pin) {
-    localStorage.setItem(LS.adminPin, String(pin || "").trim());
-  }
-  function isUnlocked() {
-    const until = Number(localStorage.getItem(LS.adminUnlockUntil) || "0");
-    return until && until > Date.now();
-  }
-  function unlock(minutes) {
-    const ms = (Number(minutes || 15) * 60 * 1000);
-    localStorage.setItem(LS.adminUnlockUntil, String(Date.now() + ms));
-  }
-  function renderAdminState() {
-    const el = $("adminState");
-    if (!el) return;
-    el.textContent = isUnlocked() ? "UNLOCK ✅" : "LOCKED 🔒";
-  }
+  function setPendingPatch(source, patchset) {
+    State.pending.patch = patchset;
+    State.pending.source = source;
+    saveAll();
 
-  function guardAdmin() {
-    if (isUnlocked()) return true;
-    alert("Admin bloqueado 🔒 (digite o PIN e desbloqueie)");
-    return false;
-  }
-
-  // ===================== Wire Events =====================
-  function wireTabs() {
-    qsa(".tab").forEach((b) => {
-      b.addEventListener("click", () => {
-        const t = b.dataset.tab;
-        if (t) showTab(t);
-      });
-    });
-
-    $("goNewApp")?.addEventListener("click", () => showTab("newapp"));
-    $("goEditor")?.addEventListener("click", () => showTab("editor"));
-    $("goGenerator")?.addEventListener("click", () => showTab("generator"));
-  }
-
-  function wireNewApp() {
-    const nameEl = $("newName");
-    const idEl = $("newId");
-    const valEl = $("newAppValidation");
-    if (!nameEl || !idEl) return;
-
-    function updateValidation() {
-      const name = nameEl.value;
-      const id = sanitizeId(idEl.value);
-      const errors = validateApp(name, id);
-      if (valEl) valEl.textContent = errors.length ? errors.map((e) => `- ${e}`).join("\n") : "OK ✅";
+    if (source === "agent") {
+      uiMsg("#agentOut", formatPatchset(patchset));
+    } else if (source === "admin") {
+      uiMsg("#adminOut", formatPatchset(patchset));
     }
 
-    idEl.addEventListener("input", () => {
-      const s = sanitizeId(idEl.value);
-      if (s !== idEl.value) idEl.value = s;
-      updateValidation();
-    });
-    nameEl.addEventListener("input", updateValidation);
-
-    $("createAppBtn")?.addEventListener("click", () => {
-      const name = (nameEl.value || "").trim();
-      const id = sanitizeId(idEl.value);
-      const errors = validateApp(name, id);
-
-      if (errors.length) return alert("Corrija antes de salvar:\n\n" + errors.join("\n"));
-      if (pickAppById(id)) return alert("Já existe um app com esse ID.");
-
-      createApp({
-        name,
-        id,
-        type: $("newType")?.value || "pwa",
-        templateId: $("newTemplate")?.value || "pwa-base",
-      });
-
-      nameEl.value = "";
-      idEl.value = "";
-      if (valEl) valEl.textContent = "OK ✅";
-
-      setStatus(`App criado: ${name} (${id}) ✅`);
-      renderAppsList();
-      renderEditor();
-      renderGeneratorSelect();
-      showTab("editor");
-    });
-
-    $("cancelNew")?.addEventListener("click", () => showTab("dashboard"));
+    setStatusPill("Patch pendente ✅");
   }
 
-  function wireEditor() {
-    $("saveFileBtn")?.addEventListener("click", () => {
-      const app = pickAppById(activeAppId);
-      if (!app) return alert("Nenhum app ativo.");
-
-      app.files[currentFile] = $("codeArea")?.value ?? "";
-      saveApps();
-
-      setStatus(`Salvo: ${currentFile} ✅`);
-      renderEditor();
-    });
-
-    $("resetFileBtn")?.addEventListener("click", () => {
-      const app = pickAppById(activeAppId);
-      if (!app) return alert("Nenhum app ativo.");
-
-      if (!confirm(`Resetar ${currentFile} para o padrão do template?`)) return;
-
-      app.files[currentFile] = app.baseFiles?.[currentFile] ?? "";
-      saveApps();
-
-      setStatus(`Reset: ${currentFile} ✅`);
-      renderEditor();
-    });
-
-    $("openPreviewBtn")?.addEventListener("click", () => {
-      const app = pickAppById(activeAppId);
-      if (!app) return;
-      refreshPreview(app);
-      setStatus("Preview atualizado ✅");
-    });
+  function clearPendingPatch() {
+    State.pending.patch = null;
+    State.pending.source = null;
+    saveAll();
+    setStatusPill("OK ✅");
   }
 
-  function wireGenerator() {
-    $("genAppSelect")?.addEventListener("change", () => {
-      setActiveAppId($("genAppSelect").value);
-      renderAppsList();
-      renderEditor();
-    });
+  function applyPatchset(patchset) {
+    if (!patchset || !Array.isArray(patchset.ops)) return { ok: false, msg: "Patch inválido" };
 
-    $("downloadZipBtn")?.addEventListener("click", async () => {
-      const app = pickAppById($("genAppSelect")?.value || activeAppId);
-      if (!app) return alert("Selecione um app.");
+    const resLines = [];
+    for (const op of patchset.ops) {
+      const r = applyOp(op);
+      resLines.push(r.ok ? `✅ ${r.msg}` : `❌ ${r.msg}`);
+      if (!r.ok) {
+        // stop on first hard failure
+        Logger.write("patch op fail:", op, r.msg);
+        return { ok: false, msg: resLines.join("\n") };
+      }
+    }
 
-      setGenStatus("Status: gerando ZIP…");
-      await downloadZip(app);
-      setGenStatus("Status: ZIP pronto ✅");
-    });
+    saveAll();
+    Logger.write("patch applied:", patchset.id);
+    return { ok: true, msg: resLines.join("\n") };
+  }
 
-    $("publishBtn")?.addEventListener("click", async () => {
-      if (!hasGitHubConfigured()) {
-        alert("Configure GitHub username + token em Settings primeiro.");
-        showTab("settings");
+  function applyOp(op) {
+    if (!op || typeof op !== "object") return { ok: false, msg: "Op inválida" };
+
+    const type = op.type;
+
+    // FILE_WRITE: write into active app file (or specified app)
+    if (type === "FILE_WRITE") {
+      const slug = op.slug || State.active.appSlug;
+      const fname = op.file || State.active.file;
+      const content = String(op.content ?? "");
+
+      if (!slug) return { ok: false, msg: "Sem app (slug) para FILE_WRITE" };
+      if (!fname) return { ok: false, msg: "Sem arquivo para FILE_WRITE" };
+
+      const app = State.apps.find(a => a.slug === slug);
+      if (!app) return { ok: false, msg: `App não encontrado: ${slug}` };
+
+      ensureAppFiles(app);
+      app.files[fname] = content;
+
+      return { ok: true, msg: `FILE_WRITE ${slug}/${fname} (${content.length} chars)` };
+    }
+
+    // APP_CREATE
+    if (type === "APP_CREATE") {
+      const name = op.name;
+      const slug = op.slug;
+      const r = createApp(name, slug);
+      return r.ok ? { ok: true, msg: `APP_CREATE ${r.msg}` } : { ok: false, msg: `APP_CREATE ${r.msg}` };
+    }
+
+    // APP_SELECT
+    if (type === "APP_SELECT") {
+      const slug = slugify(op.slug || "");
+      const ok = setActiveApp(slug);
+      return ok ? { ok: true, msg: `APP_SELECT ${slug}` } : { ok: false, msg: `APP_SELECT falhou (${slug})` };
+    }
+
+    // VIEW_SET
+    if (type === "VIEW_SET") {
+      setView(op.view);
+      return { ok: true, msg: `VIEW_SET ${op.view}` };
+    }
+
+    // CONFIG_SET
+    if (type === "CONFIG_SET") {
+      if (op.key) State.cfg[op.key] = op.value;
+      saveAll();
+      return { ok: true, msg: `CONFIG_SET ${op.key}` };
+    }
+
+    return { ok: false, msg: `Tipo de op desconhecido: ${type}` };
+  }
+
+  function formatPatchset(ps) {
+    const ops = ps.ops.map((o, i) => `${i+1}) ${o.type} ${o.slug ? o.slug : ""} ${o.file ? o.file : ""}`.trim()).join("\n");
+    return [
+      `PATCHSET: ${ps.title}`,
+      `id: ${ps.id}`,
+      `source: ${ps.source}`,
+      `createdAt: ${ps.createdAt}`,
+      `ops:\n${ops || "(vazio)"}`
+    ].join("\n");
+  }
+
+  // -----------------------------
+  // Agent: Router (comandos + NLP offline)
+  // -----------------------------
+  const Agent = {
+    help() {
+      return [
+        "AGENT HELP (Replit-like)",
+        "",
+        "Comandos:",
+        "- help",
+        "- list",
+        "- create NOME [SLUG]",
+        "- select SLUG",
+        "- open editor | open dashboard | open admin | open agent",
+        "- set file NOMEARQ (ex: app.js)",
+        "- write   (abre WRITE MODE para colar texto grande)",
+        "- write <<< ... >>>  (modo inline)",
+        "- show (mostra app/arquivo atual)",
+        "- mode auto | mode safe",
+        "- apply (aplica patch pendente do Agent)",
+        "- discard (descarta patch pendente do Agent)",
+        "",
+        "Atalhos:",
+        "- se digitar só um slug existente => auto select",
+        "- se digitar texto natural: “cria um app chamado AgroControl” => create",
+      ].join("\n");
+    },
+
+    list() {
+      if (!State.apps.length) return "(vazio)";
+      return State.apps.map(a => `${a.slug} — ${a.name}`).join("\n");
+    },
+
+    show() {
+      const app = getActiveApp();
+      const file = State.active.file;
+      return [
+        `mode: ${State.cfg.mode}`,
+        `apps: ${State.apps.length}`,
+        `active app: ${app ? `${app.name} (${app.slug})` : "-"}`,
+        `active file: ${file || "-"}`,
+        `view: ${State.active.view}`
+      ].join("\n");
+    },
+
+    // Decide auto vs safe
+    commitOrPend(source, title, ops, risk = "low") {
+      const ps = makePatchset(source, title, ops);
+
+      // Auto mode only applies low risk ops; safe mode always pending
+      const canAuto = (State.cfg.mode === "auto" && risk === "low");
+      if (canAuto) {
+        const r = applyPatchset(ps);
+        return { ok: r.ok, msg: (r.ok ? "AUTO ✅\n" : "AUTO ❌\n") + r.msg };
+      } else {
+        setPendingPatch(source, ps);
+        return { ok: true, msg: "Patch pendente. Clique em Aprovar sugestão." };
+      }
+    },
+
+    parseNatural(text) {
+      const t = String(text || "").trim();
+
+      // cria um app chamado X
+      let m = t.match(/cria(?:r)?\s+um\s+app\s+chamado\s+([a-z0-9 _-]+)/i);
+      if (m) {
+        const name = m[1].trim();
+        return { intent: "create", name, slug: "" };
+      }
+
+      // cria app X
+      m = t.match(/cria(?:r)?\s+app\s+([a-z0-9 _-]+)/i);
+      if (m) {
+        const name = m[1].trim();
+        return { intent: "create", name, slug: "" };
+      }
+
+      return null;
+    },
+
+    route(cmdRaw) {
+      const cmd = String(cmdRaw || "").trim();
+      const out = $("#agentOut");
+      const input = $("#agentCmd");
+
+      if (!cmd) {
+        if (out) out.textContent = "Comando vazio.";
         return;
       }
-      alert("Publish ainda não está ligado nesta versão. Primeiro estabilizar 100%.");
-    });
 
-    $("copyLinkBtn")?.addEventListener("click", async () => {
-      const linkEl = $("publishedLink");
-      const link = linkEl?.href || "";
-      if (!link || link === location.href) return alert("Ainda não tem link.");
+      // shortcut: single token slug existing => select
+      if (/^[a-z0-9-]{2,}$/.test(cmd)) {
+        const slug = slugify(cmd);
+        if (State.apps.some(a => a.slug === slug)) {
+          const r = this.commitOrPend("agent", `Select ${slug}`, [{ type: "APP_SELECT", slug }], "low");
+          if (out) out.textContent = r.msg;
+          return;
+        }
+      }
 
-      try { await navigator.clipboard.writeText(link); alert("Link copiado ✅"); }
-      catch { alert("Não consegui copiar. Copie manualmente:\n" + link); }
-    });
-  }
+      // NLP fallback
+      const nlp = this.parseNatural(cmd);
+      if (nlp) {
+        if (nlp.intent === "create") {
+          const name = nlp.name;
+          const slug = slugify(nlp.slug || name);
+          const r = this.commitOrPend("agent", `Create app ${name}`, [{ type: "APP_CREATE", name, slug }], "low");
+          if (out) out.textContent = r.msg;
+          return;
+        }
+      }
 
-  function wireSettings() {
-    $("saveSettingsBtn")?.addEventListener("click", () => {
-      settings.ghUser = ($("ghUser")?.value || "").trim();
-      settings.ghToken = ($("ghToken")?.value || "").trim();
-      settings.repoPrefix = ($("repoPrefix")?.value || "rapp-").trim() || "rapp-";
-      settings.pagesBase = ($("pagesBase")?.value || "").trim() || (settings.ghUser ? `https://${settings.ghUser}.github.io` : "");
-      saveSettings();
-      setStatus("Settings salvas ✅");
-      alert("Settings salvas ✅");
-    });
+      const lower = cmd.toLowerCase();
 
-    $("resetFactoryBtn")?.addEventListener("click", () => {
-      if (!confirm("Tem certeza? Vai apagar apps e settings locais.")) return;
-      localStorage.removeItem(LS.settings);
-      localStorage.removeItem(LS.apps);
-      localStorage.removeItem(LS.activeAppId);
+      if (lower === "help") { out && (out.textContent = this.help()); return; }
+      if (lower === "list") { out && (out.textContent = this.list()); return; }
+      if (lower === "show") { out && (out.textContent = this.show()); return; }
 
-      settings = loadSettings();
-      apps = [];
-      setActiveAppId("");
+      if (lower === "mode auto") {
+        const r = this.commitOrPend("agent", "Set mode auto", [{ type: "CONFIG_SET", key: "mode", value: "auto" }], "low");
+        out && (out.textContent = r.msg);
+        return;
+      }
+      if (lower === "mode safe") {
+        const r = this.commitOrPend("agent", "Set mode safe", [{ type: "CONFIG_SET", key: "mode", value: "safe" }], "low");
+        out && (out.textContent = r.msg);
+        return;
+      }
 
-      renderAll();
-      alert("Factory resetado ✅");
-    });
-  }
+      if (lower.startsWith("open ")) {
+        const target = lower.replace("open ", "").trim();
+        const viewMap = {
+          "editor": "editor",
+          "dashboard": "dashboard",
+          "admin": "admin",
+          "agent": "agent",
+          "settings": "settings",
+          "generator": "generator",
+          "new app": "newapp",
+          "newapp": "newapp"
+        };
+        const view = viewMap[target] || target;
+        const r = this.commitOrPend("agent", `Open ${view}`, [{ type: "VIEW_SET", view }], "low");
+        out && (out.textContent = r.msg);
+        return;
+      }
 
-  function wireAdminTab() {
-    // unlock
-    $("adminUnlockBtn")?.addEventListener("click", () => {
-      const v = String($("adminPinInput")?.value || "");
-      if (v !== getPin()) return alert("PIN errado ❌");
-      unlock(15);
-      if ($("adminPinInput")) $("adminPinInput").value = "";
-      renderAdminState();
-      alert("Admin UNLOCK ✅ (15min)");
-    });
+      if (lower.startsWith("create ")) {
+        // create NOME [SLUG]
+        const parts = cmd.split(/\s+/).slice(1);
+        const name = parts[0] ? String(parts[0]).trim() : "";
+        const slug = parts[1] ? String(parts[1]).trim() : slugify(name);
 
-    // diagnóstico
-    $("diagBtn")?.addEventListener("click", async () => {
-      const out = $("adminOut");
-      if (!out) return;
-      out.textContent = await buildDiagnosisReport();
-    });
+        if (!name) { out && (out.textContent = "Nome inválido"); return; }
 
-    $("copyDiagBtn")?.addEventListener("click", async () => {
-      const out = $("adminOut");
-      const txt = String(out?.textContent || "");
-      try { await navigator.clipboard.writeText(txt); alert("Diagnóstico copiado ✅"); }
-      catch { alert("iOS bloqueou copiar. Selecione e copie manual."); }
-    });
+        const r = this.commitOrPend("agent", `Create app ${name}`, [{ type: "APP_CREATE", name, slug }], "low");
+        out && (out.textContent = r.msg);
+        return;
+      }
 
-    $("clearPwaBtn")?.addEventListener("click", async () => {
-      if (!guardAdmin()) return;
-      if (!confirm("Vai limpar caches + desregistrar SW e recarregar. Continuar?")) return;
-      await nukePwaCache();
-      alert("Cache limpo ✅");
-      location.reload();
-    });
+      if (lower.startsWith("select ")) {
+        const slug = slugify(cmd.split(/\s+/).slice(1).join(" "));
+        const r = this.commitOrPend("agent", `Select ${slug}`, [{ type: "APP_SELECT", slug }], "low");
+        out && (out.textContent = r.msg);
+        return;
+      }
 
-    // backup export/import (simplão)
-    $("exportBtn")?.addEventListener("click", () => {
-      if (!guardAdmin()) return;
-      const payload = {
-        version: 1,
-        exportedAt: new Date().toISOString(),
-        settings: loadSettings(),
-        apps: loadApps(),
-        activeAppId: getActiveAppId(),
+      if (lower.startsWith("set file ")) {
+        const fname = cmd.replace(/set file\s+/i, "").trim();
+        if (!fname) { out && (out.textContent = "Arquivo inválido"); return; }
+
+        const app = getActiveApp();
+        if (!app) { out && (out.textContent = "Sem app ativo"); return; }
+
+        ensureAppFiles(app);
+        if (!(fname in app.files)) app.files[fname] = "";
+        saveAll();
+        openFile(fname);
+        out && (out.textContent = `OK. arquivo ativo: ${fname}`);
+        return;
+      }
+
+      // WRITE MODE (inline)
+      if (lower.startsWith("write <<<")) {
+        const end = cmd.lastIndexOf(">>>");
+        if (end === -1) { out && (out.textContent = "Formato inválido. Use: write <<< ... >>>"); return; }
+        const content = cmd.slice(cmd.indexOf("<<<") + 3, end);
+
+        const app = getActiveApp();
+        if (!app) { out && (out.textContent = "Sem app ativo"); return; }
+        const file = State.active.file;
+        if (!file) { out && (out.textContent = "Sem arquivo ativo. Use: set file ..."); return; }
+
+        const op = { type: "FILE_WRITE", slug: app.slug, file, content };
+        const r = this.commitOrPend("agent", `Write ${file}`, [op], "low");
+        out && (out.textContent = r.msg);
+        return;
+      }
+
+      // WRITE MODE (modal)
+      if (lower === "write") {
+        openWriteModal();
+        out && (out.textContent = "WRITE MODE aberto. Cole o texto e finalize com /end (ou clique salvar).");
+        if (input) input.value = "";
+        return;
+      }
+
+      if (lower === "apply") {
+        if (State.pending.patch && State.pending.source === "agent") {
+          const r = applyPatchset(State.pending.patch);
+          out && (out.textContent = r.msg);
+          clearPendingPatch();
+          // refresh editor if file write
+          refreshAfterPatch();
+        } else {
+          out && (out.textContent = "Sem patch pendente do Agent.");
+        }
+        return;
+      }
+
+      if (lower === "discard") {
+        if (State.pending.patch && State.pending.source === "agent") {
+          clearPendingPatch();
+          out && (out.textContent = "Patch descartado.");
+        } else {
+          out && (out.textContent = "Sem patch pendente do Agent.");
+        }
+        return;
+      }
+
+      out && (out.textContent = "Comando não reconhecido. Use: help");
+    }
+  };
+
+  // -----------------------------
+  // Admin: Self-heal base (stub)
+  // -----------------------------
+  const Admin = {
+    diagnostics() {
+      const touchHint = "Se botão não clica: provável overlay com pointer-events. Teste tocando e veja Diag.";
+      const info = {
+        mode: "private",
+        cfg: State.cfg,
+        apps: State.apps.length,
+        active: State.active.appSlug || "-",
+        file: State.active.file || "-",
+        view: State.active.view || "-",
+        ua: navigator.userAgent,
+        hint: touchHint
       };
-      downloadText("rcf-backup.json", JSON.stringify(payload, null, 2));
+      return "RCF DIAGNÓSTICO\n" + JSON.stringify(info, null, 2);
+    },
+
+    proposeFixForTouchOverlay(sampleX = 20, sampleY = 20) {
+      const d = diagnoseTouchOverlay(sampleX, sampleY);
+      const ops = [
+        { type: "VIEW_SET", view: State.active.view || "dashboard" }
+      ];
+      return makePatchset("admin", "Diagnóstico (touch overlay)", ops);
+    }
+  };
+
+  // -----------------------------
+  // WRITE MODE modal (/end)
+  // -----------------------------
+  function ensureWriteModal() {
+    if ($("#rcfWriteModal")) return;
+
+    const modal = document.createElement("div");
+    modal.id = "rcfWriteModal";
+    modal.style.cssText = `
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,.55);
+      z-index: 9999;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 14px;
+    `;
+
+    const card = document.createElement("div");
+    card.style.cssText = `
+      width: min(900px, 100%);
+      max-height: 85vh;
+      background: rgba(11,18,32,.97);
+      border: 1px solid rgba(255,255,255,.12);
+      border-radius: 16px;
+      box-shadow: 0 20px 60px rgba(0,0,0,.45);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    `;
+
+    card.innerHTML = `
+      <div style="padding:12px;border-bottom:1px solid rgba(255,255,255,.10);display:flex;gap:10px;align-items:center;justify-content:space-between">
+        <div style="font-weight:800">WRITE MODE</div>
+        <div style="display:flex;gap:8px">
+          <button class="btn small" id="wmCancel">Cancelar</button>
+          <button class="btn small ok" id="wmSave">Salvar</button>
+        </div>
+      </div>
+      <div style="padding:12px">
+        <div class="hint" style="margin-bottom:8px">
+          Cole seu texto grande aqui. Finalize com <b>/end</b> numa linha, ou clique <b>Salvar</b>.
+        </div>
+        <textarea id="wmText" spellcheck="false" style="
+          width:100%;
+          min-height:48vh;
+          max-height:60vh;
+          resize: vertical;
+          border:1px solid rgba(255,255,255,.10);
+          background: rgba(0,0,0,.22);
+          color: rgba(255,255,255,.92);
+          border-radius: 12px;
+          padding: 12px;
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+          font-size: 13px;
+          line-height: 1.45;
+          outline: none;
+        " placeholder="Cole aqui..."></textarea>
+      </div>
+    `;
+
+    modal.appendChild(card);
+    document.body.appendChild(modal);
+
+    const txt = $("#wmText");
+    txt.addEventListener("keydown", (ev) => {
+      // /end on its own line
+      if (ev.key === "Enter") {
+        const value = txt.value || "";
+        const lastLine = value.split("\n").slice(-1)[0].trim();
+        if (lastLine === "/end") {
+          ev.preventDefault();
+          txt.value = value.replace(/\n\/end\s*$/, "");
+          writeModalSave();
+        }
+      }
     });
 
-    $("importBtn")?.addEventListener("click", async () => {
-      if (!guardAdmin()) return;
-      const file = await pickFile();
-      if (!file) return;
-      const text = await file.text();
-      let data = null;
-      try { data = JSON.parse(text); } catch { return alert("JSON inválido."); }
-      try {
-        if (data.settings) localStorage.setItem(LS.settings, JSON.stringify(data.settings));
-        if (Array.isArray(data.apps)) localStorage.setItem(LS.apps, JSON.stringify(data.apps));
-        if (typeof data.activeAppId === "string") localStorage.setItem(LS.activeAppId, data.activeAppId);
-      } catch (e) { return alert("Falha import: " + e.message); }
-      alert("Import OK ✅ Recarregando…");
-      location.reload();
-    });
-
-    // agent buttons (se core/ui_bindings.js existir ele também liga, mas aqui garante)
-    $("aiRunBtn")?.addEventListener("click", () => {
-      const inp = $("aiInput");
-      const out = $("aiOut");
-      const cmd = String(inp?.value || "").trim();
-      if (!cmd) return;
-      const res = window.RCF_COMMANDS?.handle ? window.RCF_COMMANDS.handle(cmd, window.RCF_STATE) : "ERRO: core/commands.js não carregou.";
-      if (out) out.textContent = String(res || "");
-    });
-
-    $("aiClearBtn")?.addEventListener("click", () => {
-      if ($("aiInput")) $("aiInput").value = "";
-    });
-
-    $("aiApplyBtn")?.addEventListener("click", () => {
-      const out = $("aiOut");
-      const rep = window.RCF_PATCHSET?.applyAll ? window.RCF_PATCHSET.applyAll() : "Sem patchset.";
-      if (out) out.textContent = String(rep || "");
-      // atualiza tela
-      apps = loadApps();
-      activeAppId = getActiveAppId();
-      renderAppsList();
-      renderEditor();
-      renderGeneratorSelect();
-    });
-
-    $("aiDiscardBtn")?.addEventListener("click", () => {
-      window.RCF_PATCHSET?.clear?.();
-      const out = $("aiOut");
-      if (out) out.textContent = "(patches descartados)";
-    });
+    bindTap($("#wmCancel"), () => closeWriteModal());
+    bindTap($("#wmSave"), () => writeModalSave());
   }
 
-  // ===================== Render all =====================
-  function renderAll() {
-    renderTemplatesSelect();
-    renderAppsList();
-    renderEditor();
-    renderGeneratorSelect();
-    renderSettings();
-    renderAdminState();
+  function openWriteModal() {
+    ensureWriteModal();
+    const m = $("#rcfWriteModal");
+    const txt = $("#wmText");
+    if (!m || !txt) return;
+    txt.value = "";
+    m.style.display = "flex";
+    setStatusPill("WRITE MODE ✅");
+    // focus
+    setTimeout(() => { try { txt.focus(); } catch {} }, 50);
   }
 
-  // ===================== Utils =====================
+  function closeWriteModal() {
+    const m = $("#rcfWriteModal");
+    if (!m) return;
+    m.style.display = "none";
+    setStatusPill("OK ✅");
+  }
+
+  function writeModalSave() {
+    const txt = $("#wmText");
+    const content = txt ? String(txt.value || "") : "";
+
+    const app = getActiveApp();
+    if (!app) {
+      uiMsg("#agentOut", "❌ Sem app ativo. Selecione/crie um app.");
+      closeWriteModal();
+      return;
+    }
+    const file = State.active.file;
+    if (!file) {
+      uiMsg("#agentOut", "❌ Sem arquivo ativo. Use: set file ...");
+      closeWriteModal();
+      return;
+    }
+
+    const op = { type: "FILE_WRITE", slug: app.slug, file, content };
+    const r = Agent.commitOrPend("agent", `Write ${file}`, [op], "low");
+    uiMsg("#agentOut", r.msg);
+
+    closeWriteModal();
+    refreshAfterPatch();
+  }
+
+  // -----------------------------
+  // UI helpers
+  // -----------------------------
+  function uiMsg(sel, text) {
+    const el = $(sel);
+    if (el) el.textContent = String(text ?? "");
+  }
+
   function escapeHtml(s) {
-    return String(s ?? "")
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;")
-      .replaceAll("'", "&#039;");
+    return String(s).replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
+  }
+  function escapeAttr(s) {
+    return escapeHtml(s).replace(/'/g, "&#39;");
   }
 
-  function downloadText(filename, text) {
-    const blob = new Blob([String(text || "")], { type: "application/json;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+  function refreshAfterPatch() {
+    // re-render current app/editor
+    const app = getActiveApp();
+    if (app) {
+      renderAppsList();
+      renderFilesList();
+      if (State.active.file) openFile(State.active.file);
+    }
   }
 
-  function pickFile() {
-    return new Promise((resolve) => {
-      const input = document.createElement("input");
-      input.type = "file";
-      input.accept = "application/json,.json";
-      input.onchange = () => resolve(input.files && input.files[0] ? input.files[0] : null);
-      input.click();
+  // -----------------------------
+  // Bind UI (buttons, tabs, dock)
+  // -----------------------------
+  function bindUI() {
+    // Guarantee body allows taps
+    document.body.style.pointerEvents = "auto";
+
+    // data-view navigation
+    $$("[data-view]").forEach(btn => bindTap(btn, () => setView(btn.getAttribute("data-view"))));
+
+    // Tools drawer
+    bindTap($("#btnOpenTools"), () => openTools(true));
+    bindTap($("#btnOpenTools2"), () => openTools(true));
+    bindTap($("#btnCloseTools"), () => openTools(false));
+
+    // Logs buttons
+    bindTap($("#btnClearLogs"), () => { Logger.clear(); uiMsg("#logsBox", ""); });
+    bindTap($("#btnCopyLogs"), async () => {
+      const txt = Logger.getAll().join("\n");
+      try { await navigator.clipboard.writeText(txt); } catch {}
+      setStatusPill("Logs copiados ✅");
+      setTimeout(() => setStatusPill("OK ✅"), 800);
+    });
+
+    // Dashboard
+    bindTap($("#btnCreateNewApp"), () => setView("newapp"));
+    bindTap($("#btnOpenEditor"), () => setView("editor"));
+    bindTap($("#btnExportBackup"), () => {
+      // simple export (apps JSON)
+      const payload = JSON.stringify({ apps: State.apps, cfg: State.cfg, active: State.active }, null, 2);
+      try { navigator.clipboard.writeText(payload); } catch {}
+      uiMsg("#statusHint", "Backup copiado (JSON) — (clipboard).");
+      Logger.write("backup copied");
+    });
+
+    // New App
+    bindTap($("#btnAutoSlug"), () => {
+      const n = ($("#newAppName")?.value || "");
+      const s = slugify(n);
+      const inSlug = $("#newAppSlug");
+      if (inSlug) inSlug.value = s;
+    });
+
+    bindTap($("#btnDoCreateApp"), () => {
+      const name = ($("#newAppName")?.value || "");
+      const slug = ($("#newAppSlug")?.value || "");
+      const r = createApp(name, slug);
+      uiMsg("#newAppOut", r.msg);
+      if (r.ok) {
+        setStatusPill("OK ✅");
+        setView("editor");
+      } else {
+        setStatusPill("Nome/slug inválidos ✅");
+      }
+    });
+
+    // Editor
+    bindTap($("#btnSaveFile"), () => saveFile());
+    bindTap($("#btnResetFile"), () => {
+      const app = getActiveApp();
+      if (!app || !State.active.file) return uiMsg("#editorOut", "⚠️ Selecione app e arquivo.");
+      ensureAppFiles(app);
+      app.files[State.active.file] = "";
+      saveAll();
+      openFile(State.active.file);
+      uiMsg("#editorOut", "⚠️ Arquivo resetado (limpo).");
+    });
+
+    // Generator stubs
+    bindTap($("#btnGenZip"), () => uiMsg("#genOut", "ZIP (stub)."));
+    bindTap($("#btnGenPreview"), () => uiMsg("#genOut", "Preview (stub)."));
+
+    // Agent
+    bindTap($("#btnAgentRun"), () => Agent.route($("#agentCmd")?.value || ""));
+    bindTap($("#btnAgentClear"), () => { if ($("#agentCmd")) $("#agentCmd").value = ""; uiMsg("#agentOut", "Pronto."); });
+
+    bindTap($("#btnAgentApprove"), () => {
+      if (State.pending.patch && State.pending.source === "agent") {
+        const r = applyPatchset(State.pending.patch);
+        uiMsg("#agentOut", r.msg);
+        clearPendingPatch();
+        refreshAfterPatch();
+      } else {
+        uiMsg("#agentOut", "Sem patch pendente do Agent.");
+      }
+    });
+
+    bindTap($("#btnAgentDiscard"), () => {
+      if (State.pending.patch && State.pending.source === "agent") {
+        clearPendingPatch();
+        uiMsg("#agentOut", "Patch descartado.");
+      } else {
+        uiMsg("#agentOut", "Sem patch pendente do Agent.");
+      }
+    });
+
+    // Admin
+    bindTap($("#btnAdminDiag"), () => uiMsg("#adminOut", Admin.diagnostics()));
+    bindTap($("#btnAdminClear"), () => uiMsg("#adminOut", "Limpo."));
+    bindTap($("#btnAdminApply"), () => {
+      if (State.pending.patch && State.pending.source === "admin") {
+        const r = applyPatchset(State.pending.patch);
+        uiMsg("#adminOut", r.msg);
+        clearPendingPatch();
+        refreshAfterPatch();
+      } else {
+        uiMsg("#adminOut", "Sem patch pendente do Admin.");
+      }
+    });
+    bindTap($("#btnAdminDiscard"), () => {
+      if (State.pending.patch && State.pending.source === "admin") {
+        clearPendingPatch();
+        uiMsg("#adminOut", "Patch descartado.");
+      } else {
+        uiMsg("#adminOut", "Sem patch pendente do Admin.");
+      }
+    });
+
+    // Bonus: tap on status pill runs quick touch diag (optional)
+    bindTap($("#statusPill"), (ev) => {
+      const x = (ev.changedTouches && ev.changedTouches[0] && ev.changedTouches[0].clientX) || 20;
+      const y = (ev.changedTouches && ev.changedTouches[0] && ev.changedTouches[0].clientY) || 20;
+      const d = diagnoseTouchOverlay(x, y);
+      Logger.write("touch diag:", d);
     });
   }
 
-  // ===================== Init =====================
+  // -----------------------------
+  // Boot
+  // -----------------------------
+  function hydrateUIFromState() {
+    // logs show
+    const box = $("#logsBox");
+    if (box) box.textContent = Logger.getAll().join("\n");
+
+    renderAppsList();
+
+    const app = getActiveApp();
+    if (app) {
+      setActiveApp(app.slug);
+      if (State.active.file) openFile(State.active.file);
+    } else {
+      const text = $("#activeAppText");
+      if (text) text.textContent = "Sem app ativo ✅";
+    }
+
+    // restore pending patch display
+    if (State.pending.patch) {
+      setStatusPill("Patch pendente ✅");
+      if (State.pending.source === "agent") uiMsg("#agentOut", formatPatchset(State.pending.patch));
+      if (State.pending.source === "admin") uiMsg("#adminOut", formatPatchset(State.pending.patch));
+    } else {
+      setStatusPill("OK ✅");
+    }
+
+    // set view
+    setView(State.active.view || "dashboard");
+
+    // Show current mode on agent output (small)
+    if ($("#agentOut") && !$("#agentOut").textContent.trim()) {
+      uiMsg("#agentOut", `Pronto. mode=${State.cfg.mode}`);
+    }
+  }
+
   function init() {
-    logInfo("RCF init…");
-    wireTabs();
-    wireNewApp();
-    wireEditor();
-    wireGenerator();
-    wireSettings();
-    wireAdminTab();
+    // Make sure app is clickable:
+    document.documentElement.style.pointerEvents = "auto";
+    document.body.style.pointerEvents = "auto";
 
-    renderAll();
-    showTab("dashboard");
+    // Kill common overlay pointer capture (defensive)
+    // (If you have overlays in CSS, they must be pointer-events:none)
+    // Here we enforce for pseudo elements through CSS is not possible from JS,
+    // but we can ensure our buttons receive pointer-events.
+    $$("button, a, .tab, .btn, .dockbtn").forEach(el => {
+      el.style.pointerEvents = "auto";
+      el.style.touchAction = "manipulation";
+    });
 
-    setStatus("Pronto ✅");
-    logInfo("RCF pronto ✅");
+    ensureWriteModal();
+    bindUI();
+    hydrateUIFromState();
+
+    Logger.write("RCF app.js FULL init ok — mode:", State.cfg.mode);
   }
 
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", init);
+    document.addEventListener("DOMContentLoaded", init, { passive: true });
   } else {
     init();
-       // ===================== iOS click fallback =====================
-  (function enableIOSClickFallback(){
-    // Se o clique não disparar por algum bug do iOS, tenta converter touch em click
-    let moved = false;
+  }
 
-    window.addEventListener("touchmove", () => { moved = true; }, { passive: true });
-
-    window.addEventListener("touchend", (e) => {
-      try {
-        if (moved) { moved = false; return; }
-
-        const t = e.changedTouches && e.changedTouches[0];
-        if (!t) return;
-
-        const el = document.elementFromPoint(t.clientX, t.clientY);
-        if (!el) return;
-
-        const clickable = el.closest("button, a, .tab, .btn, .dockbtn, .fileBtn");
-        if (clickable) clickable.click();
-      } catch {}
-    }, { passive: true });
+  // Expose minimal API for debugging
+  window.RCF = window.RCF || {};
+  window.RCF.state = State;
+  window.RCF.log = (...a) => Logger.write(...a);
 
 })();
-// (fim do arquivo) — Parte 2 vazia de propósito.
-// Se você colou a Parte 1 inteira, já está completo.
-// Esta Parte 2 existe só pra garantir que o chat não cortou o final do arquivo.
