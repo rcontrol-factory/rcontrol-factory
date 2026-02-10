@@ -1,1 +1,428 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#070b12" />
+  <title>RControl Factory</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="styles.css" />
+</head>
 
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="dot"></div>
+      <div class="brand-text">
+        <div class="title">RControl Factory</div>
+        <div class="subtitle">Factory interna • PWA • Offline-first</div>
+        <div class="subtitle">
+          <a href="#" style="color:rgba(255,255,255,.65);text-decoration:none;">Privacidade</a>
+          •
+          <a href="#" style="color:rgba(255,255,255,.65);text-decoration:none;">Termos</a>
+        </div>
+      </div>
+    </div>
+
+    <div class="tabs">
+      <button class="tab active" data-view="dashboard" type="button">Dashboard</button>
+      <button class="tab" data-view="newapp" type="button">New App</button>
+      <button class="tab" data-view="editor" type="button">Editor</button>
+      <button class="tab" data-view="generator" type="button">Generator</button>
+
+      <button class="tab" data-view="agent" type="button">Agente</button>
+      <button class="tab" data-view="import" type="button">Import</button>
+      <button class="tab" data-view="settings" type="button">Settings</button>
+      <button class="tab" data-view="admin" type="button">Admin</button>
+
+      <div class="spacer"></div>
+
+      <div class="status-pill" id="statusPill">
+        <span class="ok" id="statusText">OK ✅</span>
+      </div>
+
+      <button class="gear" id="btnOpenTools" aria-label="Ferramentas" type="button">⚙️</button>
+    </div>
+  </header>
+
+  <main class="container" id="app">
+
+    <!-- DASHBOARD -->
+    <section class="view active" id="view-dashboard">
+      <div class="card hero">
+        <h1>Bem-vindo 👋</h1>
+        <p>Crie apps e publique depois (primeiro vamos estabilizar).</p>
+
+        <div class="row">
+          <button class="btn primary" id="btnCreateNewApp" type="button">+ Criar novo app</button>
+          <button class="btn ghost" id="btnOpenEditor" type="button">Abrir Editor</button>
+          <button class="btn ghost" id="btnExportBackup" type="button">Exportar backup</button>
+        </div>
+
+        <div class="row">
+          <button class="btn" data-view="agent" type="button">Agente</button>
+          <button class="btn" data-view="import" type="button">Import</button>
+          <button class="btn" data-view="admin" type="button">Admin</button>
+          <button class="btn" id="btnOpenTools2" type="button">Ferramentas</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Apps salvos</h2>
+        <div class="apps" id="appsList">
+          <div class="hint">Nenhum app salvo ainda.</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Status</h2>
+        <div class="status-box">
+          <div class="badge">Pronto ✅</div>
+          <div class="hint" id="statusHint">Factory carregada.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- NEW APP -->
+    <section class="view" id="view-newapp">
+      <div class="card">
+        <h2>Novo App</h2>
+        <p class="hint">Crie um app (nome + slug). Depois você vai para o Editor.</p>
+
+        <div class="form">
+          <div class="row">
+            <input id="newAppName" placeholder="Nome (ex: MeuApp)" />
+          </div>
+          <div class="row">
+            <input id="newAppSlug" placeholder="Slug (ex: meuapp)" />
+          </div>
+          <div class="row">
+            <button class="btn primary" id="btnDoCreateApp" type="button">Criar</button>
+            <button class="btn ghost" id="btnAutoSlug" type="button">Gerar slug</button>
+          </div>
+        </div>
+
+        <pre class="mono small" id="newAppOut"></pre>
+      </div>
+    </section>
+
+    <!-- EDITOR -->
+    <section class="view" id="view-editor">
+      <div class="card">
+        <h2>Editor</h2>
+        <p class="hint">Edite arquivos do app ativo e salve.</p>
+
+        <div class="row">
+          <div class="status-pill"><span class="ok" id="activeAppText">Sem app ativo ✅</span></div>
+          <button class="btn ok" id="btnSaveFile" type="button">Salvar arquivo</button>
+          <button class="btn danger" id="btnResetFile" type="button">Reset arquivo</button>
+        </div>
+
+        <div class="files" id="filesList">
+          <div class="hint">Selecione um app para ver arquivos.</div>
+        </div>
+
+        <div class="editor">
+          <div class="editor-head" id="editorHead">Arquivo atual: —</div>
+          <textarea id="fileContent" spellcheck="false" placeholder="Conteúdo do arquivo..."></textarea>
+        </div>
+
+        <pre class="mono small" id="editorOut"></pre>
+      </div>
+    </section>
+
+    <!-- GENERATOR -->
+    <section class="view" id="view-generator">
+      <div class="card">
+        <h2>Generator</h2>
+        <p class="hint">Gera ZIP/Export (stub). Vamos ligar isso depois.</p>
+        <div class="row">
+          <button class="btn primary" id="btnGenZip" type="button">Gerar ZIP</button>
+          <button class="btn ghost" id="btnGenPreview" type="button">Preview</button>
+        </div>
+        <pre class="mono small" id="genOut"></pre>
+      </div>
+    </section>
+
+    <!-- AGENT -->
+    <section class="view" id="view-agent">
+      <div class="card">
+        <h2>AGENT • Criador de Apps</h2>
+        <p class="hint">Você dá comandos. Ele monta uma sugestão (patch) e você aprova.</p>
+
+        <div class="cmd">
+          <input id="agentCmd" placeholder="Digite um comando... (ex: help, list, show)" />
+        </div>
+
+        <div class="row">
+          <button class="btn primary" id="btnAgentRun" type="button">Executar</button>
+          <button class="btn ghost" id="btnAgentClear" type="button">Limpar</button>
+          <button class="btn ok" id="btnAgentApprove" type="button">Aprovar sugestão</button>
+          <button class="btn danger" id="btnAgentDiscard" type="button">Descartar sugestão</button>
+        </div>
+
+        <h2>Resultado</h2>
+        <pre class="mono" id="agentOut">Pronto.</pre>
+      </div>
+    </section>
+
+    <!-- IMPORT (RECEPTOR) -->
+    <section class="view" id="view-import">
+      <div class="card">
+        <h2>IMPORT • Receptor de Código</h2>
+        <p class="hint">
+          Cole aqui pacotes no formato Markdown com blocos do tipo:
+          <br><span class="mono small">```app.js</span> + código + <span class="mono small">```</span>
+          <br>Ele aplica no <b>APP ativo</b> (storage interno da Factory).
+        </p>
+
+        <div class="row">
+          <button class="btn primary" id="btnImportApply" type="button">Aplicar no app ativo</button>
+          <button class="btn ghost" id="btnImportClear" type="button">Limpar</button>
+          <button class="btn" id="btnImportExample" type="button">Exemplo</button>
+        </div>
+
+        <textarea id="importText" spellcheck="false" style="
+          width:100%;
+          min-height:42vh;
+          margin-top:10px;
+          resize: vertical;
+          border:1px solid rgba(255,255,255,.10);
+          background: rgba(0,0,0,.22);
+          color: rgba(255,255,255,.92);
+          border-radius: 12px;
+          padding: 12px;
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+          font-size: 13px;
+          line-height: 1.45;
+          outline: none;
+        " placeholder="Cole seus blocos ```arquivo``` aqui..."></textarea>
+
+        <pre class="mono small" id="importOut">Pronto.</pre>
+      </div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section class="view" id="view-settings">
+      <div class="card">
+        <h2>Settings</h2>
+        <p class="hint">Configurações básicas (stub).</p>
+        <pre class="mono small">Em breve: modo auto/safe, storage, rede.</pre>
+      </div>
+    </section>
+
+    <!-- ADMIN -->
+    <section class="view" id="view-admin">
+      <div class="card">
+        <h2>ADMIN • IA Offline v2 (70%)</h2>
+        <p class="hint">Ajuda a atualizar a Factory (corrigir UI, melhorar ações). Você aprova manualmente.</p>
+
+        <div class="row">
+          <button class="btn primary" id="btnAdminDiag" type="button">Executar</button>
+          <button class="btn ghost" id="btnAdminClear" type="button">Limpar</button>
+          <button class="btn ok" id="btnAdminApply" type="button">Aplicar sugestão</button>
+          <button class="btn danger" id="btnAdminDiscard" type="button">Descartar</button>
+        </div>
+
+        <h2>Plano + Sugestão</h2>
+        <pre class="mono" id="adminOut">Pronto.</pre>
+      </div>
+    </section>
+
+    <!-- DIAGNOSTICS -->
+    <section class="view" id="view-diagnostics">
+      <div class="card">
+        <h2>DIAG • Diagnóstico</h2>
+        <p class="hint">Painel de diagnóstico rápido do Factory (logs, storage, integridade).</p>
+
+        <div class="row">
+          <button class="btn primary" id="btnDiagRun" type="button">Executar diagnóstico</button>
+          <button class="btn ghost" id="btnDiagClear" type="button">Limpar</button>
+        </div>
+
+        <pre class="mono" id="diagOut">Pronto.</pre>
+      </div>
+    </section>
+
+    <!-- LOGS -->
+    <section class="view" id="view-logs">
+      <div class="card">
+        <h2>LOGS • Registro</h2>
+        <p class="hint">Visualização dedicada dos logs do Factory.</p>
+
+        <div class="row">
+          <button class="btn" id="btnLogsRefresh" type="button">Atualizar</button>
+          <button class="btn" id="btnLogsCopy" type="button">Copiar</button>
+          <button class="btn danger" id="btnLogsClear" type="button">Limpar</button>
+        </div>
+
+        <pre class="mono" id="logsOut">Logs...</pre>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- TOOLS DRAWER -->
+  <aside class="tools" id="toolsDrawer" aria-hidden="true">
+    <div class="tools-head">
+      <b>Ferramentas</b>
+      <button class="btn small" id="btnCloseTools" type="button">Fechar</button>
+    </div>
+    <div class="tools-body">
+      <div class="row">
+        <button class="btn" id="btnClearLogs" type="button">Limpar logs</button>
+        <button class="btn" id="btnCopyLogs" type="button">Copiar logs</button>
+      </div>
+      <pre class="mono small" id="logsBox">Logs...</pre>
+    </div>
+  </aside>
+
+  <!-- DOCK -->
+  <div class="dock" id="dock">
+    <button class="dockbtn" data-view="agent" type="button">Agent</button>
+    <button class="dockbtn" data-view="import" type="button">Import</button>
+    <button class="dockbtn" data-view="admin" type="button">Admin</button>
+    <button class="dockbtn" data-view="diagnostics" type="button">Diag</button>
+    <button class="dockbtn" data-view="logs" type="button">Logs</button>
+  </div>
+
+  <!-- CORE (ordem importa) -->
+  <script src="core/logger.js"></script>
+  <script src="core/storage.js"></script>
+  <script src="core/errors.js"></script>
+  <script src="core/policy.js"></script>
+  <script src="core/risk.js"></script>
+
+  <script src="core/snapshot.js"></script>
+  <script src="core/patch.js"></script>
+  <script src="core/patchset.js"></script>
+
+  <script src="core/diagnostics.js"></script>
+  <script src="core/commands.js"></script>
+
+  <script src="core/ui_safety.js"></script>
+  <script src="core/ui_bindings.js"></script>
+
+  <script src="core/selfheal.js"></script>
+  <script src="core/autofix.js"></script>
+
+  <script src="core/admin.js"></script>
+  <script src="core/ai.builder.js"></script>
+
+  <!-- APP (por último) -->
+  <script src="app.js"></script>
+
+  <!-- Importer inline (não depende de pasta nova) -->
+  <script>
+    (function(){
+      "use strict";
+      const $ = (id) => document.getElementById(id);
+
+      function setOut(t){
+        const o = $("importOut");
+        if (o) o.textContent = String(t || "");
+      }
+
+      function getActiveApp(){
+        const R = window.RCF;
+        const st = R && R.state;
+        if (!st || !st.active || !st.apps) return null;
+        if (!st.active.appSlug) return null;
+        return st.apps.find(a => a.slug === st.active.appSlug) || null;
+      }
+
+      function ensureFiles(app){
+        if (!app.files || typeof app.files !== "object") app.files = {};
+      }
+
+      function parseBlocks(text){
+        const s = String(text || "");
+        const blocks = [];
+        const re = /```([a-zA-Z0-9_.\-\/]+)\n([\s\S]*?)```/g;
+        let m;
+        while ((m = re.exec(s))) {
+          blocks.push({ file: m[1].trim(), content: m[2] });
+        }
+        return blocks;
+      }
+
+      function applyImport(){
+        const txt = $("importText");
+        const raw = txt ? txt.value : "";
+        const blocks = parseBlocks(raw);
+
+        if (!blocks.length) {
+          setOut("⚠️ Nenhum bloco encontrado. Use o formato:\n```app.js\\n...\\n```");
+          return;
+        }
+
+        const app = getActiveApp();
+        if (!app) {
+          setOut("❌ Sem app ativo. Vá em New App/Apps salvos e selecione um app antes.");
+          return;
+        }
+
+        ensureFiles(app);
+
+        let changed = 0;
+        const applied = [];
+        blocks.forEach(b => {
+          if (!b.file) return;
+          app.files[b.file] = String(b.content || "");
+          changed++;
+          applied.push(b.file);
+        });
+
+        // salva via Storage do app.js (se existir)
+        try {
+          if (window.RCF && window.RCF.state) {
+            // app.js salva automaticamente em vários pontos, mas aqui forçamos um log e deixamos o usuário salvar no editor se quiser
+            if (typeof window.RCF.log === "function") {
+              window.RCF.log("IMPORT applied:", applied.join(", "));
+            }
+          }
+        } catch {}
+
+        setOut("✅ Import aplicado no app ativo: " + app.slug + "\nArquivos:\n- " + applied.join("\n- ") + "\n\nAgora vá no Editor e confira.");
+      }
+
+      function setExample(){
+        const ex =
+`Cole blocos assim:
+
+\`\`\`index.html
+<!doctype html>
+<html><body><h1>Hello</h1></body></html>
+\`\`\`
+
+\`\`\`app.js
+console.log("ok");
+\`\`\`
+`;
+        const txt = $("importText");
+        if (txt) txt.value = ex;
+        setOut("Exemplo carregado. Agora você pode substituir pelo seu pacote.");
+      }
+
+      function bind(){
+        const a = $("btnImportApply");
+        const c = $("btnImportClear");
+        const e = $("btnImportExample");
+
+        if (a) a.addEventListener("click", applyImport, { passive:false });
+        if (c) c.addEventListener("click", function(){
+          const t = $("importText"); if (t) t.value = "";
+          setOut("Limpo.");
+        }, { passive:false });
+        if (e) e.addEventListener("click", setExample, { passive:false });
+      }
+
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", bind);
+      } else {
+        bind();
+      }
+    })();
+  </script>
+</body>
+</html>
