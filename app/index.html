@@ -2,218 +2,239 @@
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>RControl Factory</title>
   <meta name="theme-color" content="#0b1220" />
   <link rel="manifest" href="manifest.json" />
   <link rel="stylesheet" href="styles.css" />
 </head>
+
 <body>
-  <header class="topbar">
+  <header class="topbar" id="topbar">
     <div class="brand">
       <span class="dot"></span>
-      <div class="brandText">
-        <div class="brandTitle">RControl Factory</div>
-        <div class="brandSub">Factory interna • PWA • Offline-first</div>
+      <div class="brand-text">
+        <div class="title">RControl Factory</div>
+        <div class="subtitle">Factory interna • PWA • Offline-first</div>
       </div>
     </div>
 
-    <nav class="nav">
-      <button class="tabBtn" data-tab="dashboard">Dashboard</button>
-      <button class="tabBtn" data-tab="newapp">New App</button>
-      <button class="tabBtn" data-tab="editor">Editor</button>
-      <button class="tabBtn" data-tab="generator">Generator</button>
-      <button class="tabBtn" data-tab="settings">Settings</button>
-      <button class="tabBtn" data-tab="admin">Admin</button>
+    <nav class="tabs" id="tabs">
+      <button class="tab active" data-view="dashboard">Dashboard</button>
+      <button class="tab" data-view="newapp">New App</button>
+      <button class="tab" data-view="editor">Editor</button>
+      <button class="tab" data-view="generator">Generator</button>
+      <button class="tab" data-view="agente">Agente</button>
+      <button class="tab" data-view="settings">Settings</button>
+      <button class="tab" data-view="admin">Admin</button>
 
-      <div class="navRight">
-        <span id="statusPill" class="pill ok">OK ✅</span>
-        <button id="gearBtn" class="gear" aria-label="Ferramentas">⚙️</button>
+      <div class="spacer"></div>
+
+      <div class="status-pill" id="statusPill">
+        <span id="statusText">OK</span>
+        <span class="ok">✅</span>
       </div>
+
+      <button class="gear" id="btnTools" title="Ferramentas">⚙️</button>
     </nav>
   </header>
 
-  <main class="wrap">
+  <main class="container">
     <!-- DASHBOARD -->
-    <section id="tab-dashboard" class="tab">
-      <div class="card">
+    <section class="view active" id="view-dashboard">
+      <div class="card hero">
         <h1>Bem-vindo 👋</h1>
-        <p class="muted">Crie apps e publique depois (primeiro vamos estabilizar).</p>
+        <p>Crie apps e publique depois (primeiro vamos estabilizar).</p>
 
         <div class="row">
-          <button class="btn primary" id="btnCreateQuick">+ Criar novo app</button>
-          <button class="btn" id="btnGoEditor">Abrir Editor</button>
-          <button class="btn" id="btnExportBackup">Exportar backup</button>
+          <button class="btn primary" id="btnCreate">+ Criar novo app</button>
+          <button class="btn" id="btnOpenEditor">Abrir Editor</button>
+          <button class="btn" id="btnExport">Exportar backup</button>
         </div>
 
-        <h2>Apps salvos</h2>
-        <div id="appsList" class="appsList"></div>
+        <div class="row">
+          <button class="btn ghost" id="btnOpenAgent">Agente</button>
+          <button class="btn ghost" id="btnOpenAdmin">Admin</button>
+          <button class="btn ghost" id="btnOpenTools">Ferramentas</button>
+        </div>
+      </div>
 
+      <div class="card">
+        <h2>Apps salvos</h2>
+        <div id="appsList" class="apps"></div>
+      </div>
+
+      <div class="card">
         <h2>Status</h2>
-        <div class="statusBox">
-          <span>Pronto ✅</span>
+        <div class="status-box">
+          <span>Pronto</span> <span class="ok">✅</span>
         </div>
       </div>
     </section>
 
     <!-- NEW APP -->
-    <section id="tab-newapp" class="tab hidden">
+    <section class="view" id="view-newapp">
       <div class="card">
         <h1>Novo App</h1>
-        <p class="muted">Crie um app (slug sem espaço). Ex: <b>RQuotas</b> / <b>rquotas</b></p>
+        <p>Crie um app base (HTML/CSS/JS + PWA).</p>
 
         <div class="form">
-          <label>Nome</label>
-          <input id="newName" placeholder="RQuotas" />
-          <label>Slug</label>
-          <input id="newSlug" placeholder="rquotas" />
-          <button class="btn primary" id="btnCreate">Criar</button>
+          <label>Nome do app</label>
+          <input id="newName" placeholder="Ex: RQuotas" />
+
+          <label>Slug (sem espaço)</label>
+          <input id="newSlug" placeholder="Ex: rquotas" />
+
+          <div class="row">
+            <button class="btn primary" id="btnDoCreate">Criar</button>
+            <button class="btn" id="btnGoDashboard">Voltar</button>
+          </div>
+
+          <p class="hint">Dica: o slug vira ID interno. Ex: <b>rquotas</b></p>
         </div>
       </div>
     </section>
 
     <!-- EDITOR -->
-    <section id="tab-editor" class="tab hidden">
+    <section class="view" id="view-editor">
       <div class="card">
         <h1>Editor</h1>
-        <p class="muted">Edite arquivos do app ativo e veja o preview.</p>
+        <p>Edite os arquivos do app ativo e salve.</p>
 
-        <div class="row between">
-          <div class="muted">App ativo: <b id="activeAppLabel">—</b></div>
-          <div class="row">
-            <button class="btn" id="btnPreview">👁️ Preview</button>
-            <button class="btn primary" id="btnSaveFile">Salvar arquivo</button>
-            <button class="btn danger" id="btnResetFile">Reset arquivo</button>
-          </div>
+        <div class="pill">
+          App ativo: <b id="activeAppLabel">—</b>
+          <button class="btn small" id="btnPreview">👁️ Preview</button>
         </div>
 
-        <div class="grid">
-          <div class="filesCol">
-            <h2>Arquivos</h2>
-            <div id="filesList" class="filesList"></div>
-            <div class="muted small">Arquivo atual: <b id="currentFileLabel">—</b></div>
-          </div>
-
-          <div class="editorCol">
-            <textarea id="fileEditor" spellcheck="false"></textarea>
-          </div>
+        <div class="row">
+          <button class="btn primary" id="btnSaveFile">Salvar arquivo</button>
+          <button class="btn danger" id="btnResetFile">Reset arquivo</button>
         </div>
 
-        <div id="previewWrap" class="previewWrap hidden">
-          <iframe id="previewFrame" title="Preview"></iframe>
+        <h2>Arquivos</h2>
+        <div id="filesList" class="files"></div>
+
+        <div class="editor">
+          <div class="editor-head">
+            Arquivo atual: <b id="currentFileLabel">—</b>
+          </div>
+          <textarea id="fileContent" spellcheck="false"></textarea>
         </div>
       </div>
     </section>
 
     <!-- GENERATOR -->
-    <section id="tab-generator" class="tab hidden">
+    <section class="view" id="view-generator">
       <div class="card">
         <h1>Generator</h1>
-        <p class="muted">Export do app ativo (JSON). ZIP real dá pra colocar depois.</p>
+        <p>Gere export/backup e “pacotes” do app ativo.</p>
+
         <div class="row">
-          <button class="btn primary" id="btnExportApp">Exportar app (JSON)</button>
-          <button class="btn" id="btnImportBackup">Importar backup</button>
+          <button class="btn primary" id="btnGenBackup">Baixar backup (JSON)</button>
+          <button class="btn" id="btnGenAppJson">Baixar app ativo (JSON)</button>
         </div>
-        <p class="muted small">Obs: “Importar backup” abre seletor de arquivo JSON.</p>
-        <input id="importInput" type="file" accept="application/json" class="hidden"/>
+
+        <p class="hint">
+          ZIP real dá pra colocar depois (com JSZip embutido). Por enquanto, backup JSON é seguro e offline.
+        </p>
+      </div>
+    </section>
+
+    <!-- AGENTE -->
+    <section class="view" id="view-agente">
+      <div class="card">
+        <h1>AGENT • Criador de Apps</h1>
+        <p>Você dá comandos. Ele monta uma sugestão (patch) e você aprova.</p>
+
+        <div class="cmd">
+          <div class="hint">
+            Comandos: <b>help</b> • <b>list</b> • <b>create NOME SLUG</b> • <b>select SLUG</b> • <b>open editor</b> •
+            <b>set file app.js</b> • <b>write</b> (cola texto) • <b>show</b> • <b>apply</b>
+          </div>
+
+          <input id="agentInput" placeholder="Digite um comando... (ex: create RQuotas rquotas)" />
+          <div class="row">
+            <button class="btn primary" id="btnAgentRun">Executar</button>
+            <button class="btn" id="btnAgentClear">Limpar</button>
+            <button class="btn ok" id="btnAgentApprove">Aprovar sugestão</button>
+            <button class="btn danger" id="btnAgentDiscard">Descartar sugestão</button>
+          </div>
+
+          <h2>Resultado</h2>
+          <pre id="agentOut" class="mono">—</pre>
+        </div>
       </div>
     </section>
 
     <!-- SETTINGS -->
-    <section id="tab-settings" class="tab hidden">
+    <section class="view" id="view-settings">
       <div class="card">
         <h1>Settings</h1>
-        <p class="muted">Modo da Factory: <b id="modeLabel">private</b></p>
+
         <div class="row">
-          <button class="btn" id="btnSetPrivate">Private</button>
-          <button class="btn" id="btnSetPublic">Public</button>
+          <label class="switch">
+            <input type="checkbox" id="toggleDock" />
+            <span class="slider"></span>
+          </label>
+          <div>
+            <b>Dock inferior</b>
+            <div class="hint">Se desligar, some os botões flutuantes embaixo.</div>
+          </div>
         </div>
+
+        <div class="row">
+          <button class="btn" id="btnClearCache">Limpar Cache PWA</button>
+          <button class="btn" id="btnCopyDiag">Copiar diagnóstico</button>
+        </div>
+
+        <pre id="diagBox" class="mono">—</pre>
       </div>
     </section>
 
     <!-- ADMIN -->
-    <section id="tab-admin" class="tab hidden">
+    <section class="view" id="view-admin">
       <div class="card">
-        <h1>Admin</h1>
-        <p class="muted">Aqui é o “Admin/IA” pra sugerir correções na Factory (você aprova manual).</p>
+        <h1>ADMIN • IA Offline v2 (70%)</h1>
+        <p>Ajuda a atualizar a Factory (corrigir UI, melhorar ações). Você aprova manualmente.</p>
+
+        <textarea id="adminPrompt" placeholder="Ex: mover botões para topo, remover dock, colocar engrenagem com ferramentas..."></textarea>
+
         <div class="row">
-          <button class="btn primary" id="btnOpenAdmin">Abrir Admin IA</button>
-          <button class="btn" id="btnDiag">Gerar diagnóstico</button>
+          <button class="btn primary" id="btnAdminRun">Executar</button>
+          <button class="btn" id="btnAdminClear">Limpar</button>
+          <button class="btn ok" id="btnAdminApply">Aplicar sugestão</button>
+          <button class="btn danger" id="btnAdminDiscard">Descartar</button>
         </div>
-        <pre id="diagBox" class="codeBox"></pre>
+
+        <h2>Plano + Sugestão</h2>
+        <pre id="adminOut" class="mono">—</pre>
       </div>
     </section>
   </main>
 
-  <!-- TOOLS MENU (engrenagem) -->
-  <div id="toolsMenu" class="toolsMenu hidden">
-    <div class="toolsCard">
-      <div class="row between">
-        <b>Ferramentas</b>
-        <button class="btn small" id="btnCloseTools">Fechar</button>
-      </div>
-      <div class="row wrap">
+  <!-- TOOLS DRAWER -->
+  <aside class="tools" id="toolsDrawer" aria-hidden="true">
+    <div class="tools-head">
+      <b>Ferramentas</b>
+      <button class="btn small" id="btnCloseTools">Fechar</button>
+    </div>
+
+    <div class="tools-body">
+      <div class="row">
         <button class="btn" id="btnClearLogs">Limpar logs</button>
         <button class="btn" id="btnCopyLogs">Copiar logs</button>
-        <button class="btn" id="btnCopyDiag">Copiar diagnóstico</button>
-        <button class="btn danger" id="btnClearCache">Limpar Cache PWA</button>
       </div>
-      <pre id="logsBox" class="codeBox"></pre>
+
+      <pre id="logsBox" class="mono small">—</pre>
     </div>
-  </div>
+  </aside>
 
-  <!-- MODAL: AGENT (Criador de apps) -->
-  <div id="agentModal" class="modal hidden" role="dialog" aria-modal="true">
-    <div class="modalCard">
-      <div class="row between">
-        <div>
-          <div class="modalTitle">AGENT • Criador de Apps</div>
-          <div class="muted small">Você dá comandos. Ele monta uma sugestão (patch) e você aprova.</div>
-        </div>
-        <button class="btn small" data-close="agentModal">Fechar</button>
-      </div>
-
-      <div class="muted small">Comandos: <b>help</b> • <b>list</b> • <b>create NOME slug</b> • <b>select slug</b> • <b>open editor</b> • <b>set file app.js</b> • <b>write ...</b></div>
-
-      <textarea id="agentInput" class="modalInput" placeholder="Digite um comando... (ex: create RQuotas rquotas)"></textarea>
-
-      <div class="row">
-        <button class="btn primary" id="btnAgentRun">Executar</button>
-        <button class="btn" id="btnAgentClear">Limpar</button>
-      </div>
-
-      <h3>Resultado</h3>
-      <pre id="agentOutput" class="codeBox"></pre>
-    </div>
-  </div>
-
-  <!-- MODAL: ADMIN IA -->
-  <div id="adminModal" class="modal hidden" role="dialog" aria-modal="true">
-    <div class="modalCard">
-      <div class="row between">
-        <div>
-          <div class="modalTitle">ADMIN • IA Offline v2 (70%)</div>
-          <div class="muted small">Ajuda a atualizar a Factory (corrigir UI, melhorar ações). Você aprova manualmente.</div>
-        </div>
-        <button class="btn small" data-close="adminModal">Fechar</button>
-      </div>
-
-      <textarea id="adminInput" class="modalInput" placeholder="Ex: mover botões para topo, remover dock, colocar engrenagem com ferramentas..."></textarea>
-
-      <div class="row">
-        <button class="btn primary" id="btnAdminPlan">Gerar plano + sugestão</button>
-        <button class="btn" id="btnAdminClear">Limpar</button>
-      </div>
-
-      <h3>Plano + Sugestão</h3>
-      <pre id="adminOutput" class="codeBox"></pre>
-
-      <div class="row">
-        <button class="btn primary" id="btnApplySuggestion">Aplicar sugestão (gera patch)</button>
-        <button class="btn danger" id="btnDiscardSuggestion">Descartar</button>
-      </div>
-      <pre id="patchBox" class="codeBox"></pre>
-    </div>
+  <!-- DOCK (opcional) -->
+  <div class="dock" id="dock">
+    <button class="dockbtn" data-view="agente">Agent</button>
+    <button class="dockbtn" data-view="admin">Admin</button>
+    <button class="dockbtn" data-view="settings">Diag</button>
+    <button class="dockbtn" data-view="settings">Logs</button>
   </div>
 
   <script src="app.js"></script>
