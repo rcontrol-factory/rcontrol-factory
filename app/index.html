@@ -7,20 +7,6 @@
   <title>RControl Factory</title>
   <link rel="manifest" href="manifest.json">
   <link rel="stylesheet" href="styles.css" />
-
-  <!-- BOOT anti-iOS overlay: garante pointer-events ligados desde o início -->
-  <script>
-    (function(){
-      try{
-        document.documentElement.style.pointerEvents = "auto";
-        document.addEventListener("DOMContentLoaded", function(){
-          try{
-            document.body.style.pointerEvents = "auto";
-          }catch{}
-        });
-      }catch{}
-    })();
-  </script>
 </head>
 
 <body>
@@ -31,9 +17,9 @@
         <div class="title">RControl Factory</div>
         <div class="subtitle">Factory interna • PWA • Offline-first</div>
         <div class="subtitle">
-          <a href="#" style="color:rgba(255,255,255,.65);text-decoration:none;">Privacidade</a>
+          <a href="privacy.html" style="color:rgba(255,255,255,.65);text-decoration:none;">Privacidade</a>
           •
-          <a href="#" style="color:rgba(255,255,255,.65);text-decoration:none;">Termos</a>
+          <a href="terms.html" style="color:rgba(255,255,255,.65);text-decoration:none;">Termos</a>
         </div>
       </div>
     </div>
@@ -203,9 +189,6 @@
         <h2>Plano + Sugestão</h2>
         <pre class="mono" id="adminOut">Pronto.</pre>
       </div>
-
-      <!-- (Opcional) ponto de montagem da Mãe -->
-      <div id="rcfMotherMount" style="pointer-events:auto;"></div>
     </section>
 
     <!-- DIAGNOSTICS -->
@@ -264,40 +247,31 @@
     <button class="dockbtn" data-view="logs" type="button">Logs</button>
   </div>
 
-  <!-- =====================================================
-       SCRIPTS (ORDEM CRÍTICA)
-       Regra: evitar "UI duplicada" brigando por clique.
-       app.js é quem faz os binds principais.
-  ====================================================== -->
+  <!-- CORE (ordem importa) -->
+  <script src="js/core/logger.js"></script>
+  <script src="js/core/storage.js"></script>
+  <script src="js/core/errors.js"></script>
+  <script src="js/core/policy.js"></script>
+  <script src="js/core/risk.js"></script>
 
-  <!-- Core base (pode existir, mas não prende clique) -->
-  <script src="core/logger.js"></script>
-  <script src="core/storage.js"></script>
-  <script src="core/errors.js"></script>
+  <script src="js/core/snapshot.js"></script>
+  <script src="js/core/patch.js"></script>
+  <script src="js/core/patchset.js"></script>
 
-  <!-- APP (faz bind principal de UI) -->
+  <script src="js/core/diagnostics.js"></script>
+  <script src="js/core/commands.js"></script>
+
+  <script src="js/core/ui_safety.js"></script>
+  <script src="js/core/ui_bindings.js"></script>
+
+  <script src="js/core/selfheal.js"></script>
+  <script src="js/core/autofix.js"></script>
+
+  <!-- ADMIN + AI (fora de core) -->
+  <script src="js/admin.js"></script>
+  <script src="js/ai.builder.js"></script>
+
+  <!-- APP (por último) -->
   <script src="app.js"></script>
-
-  <!-- Core extra (pode ficar depois do app.js) -->
-  <script src="core/policy.js"></script>
-  <script src="core/risk.js"></script>
-  <script src="core/snapshot.js"></script>
-  <script src="core/patch.js"></script>
-  <script src="core/patchset.js"></script>
-  <script src="core/diagnostics.js"></script>
-  <script src="core/commands.js"></script>
-
-  <!-- IMPORTANTE:
-       - NÃO carregar core/ui_bindings.js agora (conflita com app.js e mata clique)
-       - admin.js fica por último porque ele injeta a MAE e instala capture delegation
-  -->
- <script src="js/admin.js"></script>
-
-  <!-- (opcionais para depois; se ligar, liga um por vez) -->
-  <!-- <script src="core/ui_safety.js"></script> -->
-  <!-- <script src="core/selfheal.js"></script> -->
-  <!-- <script src="core/autofix.js"></script> -->
-  <!-- <script src="core/ai.builder.js"></script> -->
-
 </body>
 </html>
