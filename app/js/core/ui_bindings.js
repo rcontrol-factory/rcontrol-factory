@@ -1,31 +1,43 @@
 /* =========================================================
-  RControl Factory — core/ui_bindings.js (BASE v1.1)
+  RControl Factory — core/ui_bindings.js (LOGS FIX v1.2)
   - Liga UI (Agent/Admin/Diag/Logs/Tools) ao core
   - iOS-safe: click + touchend (evita double fire)
-  - Logs: funciona com window.RCF_LOGGER OU fallback localStorage (rcf:logs)
-  - Auto refresh ao abrir a view Logs
+  - Logs: lê de múltiplas fontes + múltiplas keys no localStorage
+  - Logs: escreve no elemento certo (pre/textarea) mesmo se ID variar
 ========================================================= */
 
 (function () {
   "use strict";
 
+  // ---------- helpers ----------
   function $(id) { return document.getElementById(id); }
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
-  function safeText(v) { return (v === undefined || v === null) ? "" : String(v); }
+  function safeText(v) {
+    return (v === undefined || v === null) ? "" : String(v);
+  }
 
-  // ---------- status helper ----------
+  function setBoxText(el, text) {
+    if (!el) return;
+    const t = safeText(text);
+    const tag = (el.tagName || "").toUpperCase();
+    if (tag === "TEXTAREA" || tag === "INPUT") el.value = t;
+    else el.textContent = t;
+  }
+
+  // Top status (se existir)
   function setTopStatus(msg) {
     const el = $("statusText");
     if (el) el.textContent = safeText(msg);
   }
 
-  // Evita duplo fire no iOS
+  // Evita "duplo clique" (touch + click) no iOS
   const TAP_GUARD_MS = 450;
   let _lastTapAt = 0;
 
   function bindTap(el, fn) {
     if (!el) return;
+
     const handler = (e) => {
       const now = Date.now();
       if (now - _lastTapAt < TAP_GUARD_MS) {
@@ -33,9 +45,11 @@
         return;
       }
       _lastTapAt = now;
+
       try { e.preventDefault(); e.stopPropagation(); } catch {}
       try { fn(e); } catch {}
     };
+
     el.addEventListener("click", handler, { passive: false });
     el.addEventListener("touchend", handler, { passive: false });
   }
@@ -61,40 +75,77 @@
       try { res = handler(String(cmd || "").trim(), ctx); }
       catch (err) { res = "ERRO ao executar comando: " + (err && err.message ? err.message : String(err)); }
     }
-    if (outEl) outEl.textContent = safeText(res);
+
+    if (outEl) setBoxText(outEl, res);
     return res;
   }
 
-  // ---------- logger ----------
-  function readLogsFromLocalStorageFallback() {
+  // ---------- logger integration ----------
+  function tryReadLS(key) {
     try {
-      const raw = localStorage.getItem("rcf:logs");
+      const raw = localStorage.getItem(key);
       if (!raw) return "";
-      const arr = JSON.parse(raw);
-      if (Array.isArray(arr)) return arr.map(safeText).join("\n");
+      // pode ser string pura ou JSON array
+      if (raw[0] === "[" || raw[0] === "{") {
+        try {
+          const v = JSON.parse(raw);
+          if (Array.isArray(v)) return v.map(safeText).join("\n");
+          if (typeof v === "string") return v;
+          return raw;
+        } catch {
+          return raw;
+        }
+      }
+      return raw;
+    } catch {
       return "";
-    } catch { return ""; }
+    }
+  }
+
+  function readLogsFromLocalStorageFallback() {
+    // tenta várias chaves possíveis (porque teu storage.js NÃO tem prefix)
+    const keys = [
+      "logs",
+      "rcf:logs",
+      "factory:logs",
+      "RCF_LOGS",
+      "rcontrol:logs"
+    ];
+
+    let best = "";
+    for (const k of keys) {
+      const t = tryReadLS(k);
+      if (t && t.length > best.length) best = t;
+    }
+    return best;
   }
 
   function loggerGetText() {
     const L = window.RCF_LOGGER;
+
     if (L) {
       if (typeof L.getText === "function") return safeText(L.getText());
       if (typeof L.dump === "function") return safeText(L.dump());
       if (Array.isArray(L.lines)) return L.lines.map(safeText).join("\n");
       if (Array.isArray(L.buffer)) return L.buffer.map(safeText).join("\n");
     }
+
+    // fallback localStorage
     return readLogsFromLocalStorageFallback();
   }
 
   function loggerClear() {
     const L = window.RCF_LOGGER;
     if (L) {
-      if (typeof L.clear === "function") return L.clear();
+      if (typeof L.clear === "function") { try { return L.clear(); } catch {} }
       if (Array.isArray(L.lines)) L.lines.length = 0;
       if (Array.isArray(L.buffer)) L.buffer.length = 0;
     }
+
+    // limpa as principais chaves
+    try { localStorage.setItem("logs", JSON.stringify([])); } catch {}
     try { localStorage.setItem("rcf:logs", JSON.stringify([])); } catch {}
+    try { localStorage.setItem("factory:logs", JSON.stringify([])); } catch {}
   }
 
   function loggerPush(level, msg) {
@@ -106,15 +157,17 @@
     }
   }
 
-  // ---------- patchset ----------
+  // ---------- Patchset integration ----------
   function patchApplyAll(outEl) {
     const P = window.RCF_PATCHSET;
     let rep = "";
     if (P && typeof P.applyAll === "function") {
       try { rep = P.applyAll(); }
       catch (e) { rep = "ERRO applyAll: " + safeText(e && e.message ? e.message : e); }
-    } else rep = "Patchset não disponível (RCF_PATCHSET.applyAll não existe).";
-    if (outEl) outEl.textContent = safeText(rep || "OK ✅");
+    } else {
+      rep = "Patchset não disponível (RCF_PATCHSET.applyAll não existe).";
+    }
+    if (outEl) setBoxText(outEl, rep || "OK ✅");
     return rep;
   }
 
@@ -124,12 +177,14 @@
     if (P && typeof P.clear === "function") {
       try { P.clear(); rep = "Patches descartados ✅"; }
       catch (e) { rep = "ERRO clear: " + safeText(e && e.message ? e.message : e); }
-    } else rep = "Patchset não disponível (RCF_PATCHSET.clear não existe).";
-    if (outEl) outEl.textContent = safeText(rep);
+    } else {
+      rep = "Patchset não disponível (RCF_PATCHSET.clear não existe).";
+    }
+    if (outEl) setBoxText(outEl, rep);
     return rep;
   }
 
-  // ---------- diag ----------
+  // ---------- DIAG report ----------
   async function buildDiagReport() {
     const D = window.RCF_DIAGNOSTICS;
     if (D && typeof D.buildReport === "function") return await D.buildReport();
@@ -141,7 +196,8 @@
     info.push("RCF_COMMANDS: " + (!!window.RCF_COMMANDS));
     info.push("RCF_PATCHSET: " + (!!window.RCF_PATCHSET));
     info.push("RCF_LOGGER: " + (!!window.RCF_LOGGER));
-    info.push("fallback localStorage logs: " + (loggerGetText().length ? "OK" : "vazio"));
+    const t = loggerGetText();
+    info.push("loggerGetText(): " + (t && t.trim().length ? ("OK (" + t.length + " chars)") : "VAZIO"));
     info.push("navigator.onLine: " + (typeof navigator !== "undefined" ? navigator.onLine : "n/a"));
     info.push("ua: " + (typeof navigator !== "undefined" ? navigator.userAgent : "n/a"));
     return info.join("\n");
@@ -157,7 +213,13 @@
     const btnDiscard = $("btnAgentDiscard");
 
     if (btnRun && input) bindTap(btnRun, () => runCommand(input.value, out));
-    if (btnClear && input) bindTap(btnClear, () => { input.value = ""; if (out) out.textContent = "Limpo."; });
+
+    if (btnClear && input) {
+      bindTap(btnClear, () => {
+        input.value = "";
+        if (out) setBoxText(out, "Limpo.");
+      });
+    }
 
     if (btnApprove) bindTap(btnApprove, () => patchApplyAll(out));
     if (btnDiscard) bindTap(btnDiscard, () => patchClear(out));
@@ -179,8 +241,14 @@
     const btnApply = $("btnAdminApply");
     const btnDiscard = $("btnAdminDiscard");
 
-    if (btnDiag) bindTap(btnDiag, async () => { const rep = await buildDiagReport(); if (out) out.textContent = safeText(rep); });
-    if (btnClear) bindTap(btnClear, () => { if (out) out.textContent = "Limpo."; });
+    if (btnDiag) {
+      bindTap(btnDiag, async () => {
+        const rep = await buildDiagReport();
+        if (out) setBoxText(out, rep);
+      });
+    }
+
+    if (btnClear) bindTap(btnClear, () => { if (out) setBoxText(out, "Limpo."); });
     if (btnApply) bindTap(btnApply, () => patchApplyAll(out));
     if (btnDiscard) bindTap(btnDiscard, () => patchClear(out));
   }
@@ -190,13 +258,29 @@
     const btnRun = $("btnDiagRun");
     const btnClear = $("btnDiagClear");
 
-    if (btnRun) bindTap(btnRun, async () => { const rep = await buildDiagReport(); if (out) out.textContent = safeText(rep); });
-    if (btnClear) bindTap(btnClear, () => { if (out) out.textContent = "Pronto."; });
+    if (btnRun) {
+      bindTap(btnRun, async () => {
+        const rep = await buildDiagReport();
+        if (out) setBoxText(out, rep);
+      });
+    }
+
+    if (btnClear) bindTap(btnClear, () => { if (out) setBoxText(out, "Pronto."); });
   }
 
   function bindLogsViewAndTools() {
-    const logsViewBox = $("logsOut");   // ✅ HTML: <pre id="logsOut">
-    const toolsLogsBox = $("logsBox");  // ✅ HTML: <pre id="logsBox">
+    // ✅ robusto: tenta vários IDs possíveis
+    const logsViewBox =
+      $("logsOut") ||
+      $("logsViewBox") ||
+      $("logsView") ||
+      $("logsPre") ||
+      $("logsArea");
+
+    const toolsLogsBox =
+      $("logsBox") ||
+      $("toolsLogsBox") ||
+      $("drawerLogsBox");
 
     const btnRefresh = $("btnLogsRefresh");
     const btnCopy = $("btnLogsCopy");
@@ -208,8 +292,9 @@
     const refresh = () => {
       const text = loggerGetText();
       const out = text && text.trim().length ? text : "(sem logs ainda)";
-      if (logsViewBox) logsViewBox.textContent = out;
-      if (toolsLogsBox) toolsLogsBox.textContent = out;
+      setBoxText(logsViewBox, out);
+      setBoxText(toolsLogsBox, out);
+
       setTopStatus("Logs atualizados ✅");
       setTimeout(() => setTopStatus("OK ✅"), 900);
     };
@@ -221,12 +306,14 @@
         setTopStatus("Logs copiados ✅");
         setTimeout(() => setTopStatus("OK ✅"), 900);
       } catch {
-        // fallback iOS
         alert("iOS bloqueou copiar. Selecione e copie manual.");
       }
     };
 
-    const clear = () => { loggerClear(); refresh(); };
+    const clear = () => {
+      loggerClear();
+      refresh();
+    };
 
     if (btnRefresh) bindTap(btnRefresh, refresh);
     if (btnCopy) bindTap(btnCopy, copy);
@@ -235,10 +322,11 @@
     if (btnClearLogs) bindTap(btnClearLogs, clear);
     if (btnCopyLogs) bindTap(btnCopyLogs, copy);
 
-    // Auto-refresh quando abrir a view Logs (tabs + dock)
-    $$('[data-view="logs"], .dockbtn[data-view="logs"]').forEach(b => {
-      bindTap(b, () => setTimeout(refresh, 50));
-    });
+    // Auto refresh ao entrar em Logs (se os botões tiverem data-view)
+    $$('[data-view="logs"]').forEach(b => bindTap(b, () => setTimeout(refresh, 50)));
+    // Fallback: se tiver botões com texto "Logs"
+    $$("button").filter(b => (b.textContent || "").trim().toLowerCase() === "logs")
+      .forEach(b => bindTap(b, () => setTimeout(refresh, 50)));
 
     refresh();
   }
@@ -251,9 +339,12 @@
     bindDiagnosticsView();
     bindLogsViewAndTools();
 
-    loggerPush("log", "core/ui_bindings.js carregado ✅ (BASE v1.1)");
+    loggerPush("log", "core/ui_bindings.js carregado ✅ (LOGS FIX v1.2)");
   }
 
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
-  else init();
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
 })();
