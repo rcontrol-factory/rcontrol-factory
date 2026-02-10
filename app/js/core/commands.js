@@ -1,597 +1,490 @@
-/**
- * core/commands.js
- * RControl Factory — Command Engine (Replit-like)
- *
- * Objetivo:
- * - Aceitar comandos formais: help, list, create, select, open editor, set file, write, show, apply
- * - Aceitar texto solto (natural) e transformar em ação útil
- * - Auto-slug e validação amigável
- * - Modo "auto" (executa ações seguras sem ficar travando em aprovação)
- *
- * Integração esperada:
- * Este módulo NÃO mexe no DOM.
- * Ele recebe um "ctx" com adaptadores (storage, fs, ui, logger)
- * e devolve um resultado padronizado.
- */
+/* core/commands.js
+   RControl Factory — Command Router (Replit-like)
+   - NLP simples offline (regex/intenção)
+   - comandos curtos + texto natural
+   - atalhos: digitar só slug -> auto select
+   - auto-slug: create Nome -> slugify
+   - modos: auto (aplica seguros) / safe (gera patch pendente)
+   - logs + snapshot antes de aplicar
+*/
 
-/* ----------------------------- Utilitários ----------------------------- */
+(function () {
+  const W = typeof window !== "undefined" ? window : globalThis;
 
-function nowISO() {
-  return new Date().toISOString();
-}
-
-function clampLen(s, max = 80) {
-  if (!s) return "";
-  s = String(s);
-  return s.length > max ? s.slice(0, max - 1) + "…" : s;
-}
-
-function normalizeSpaces(s) {
-  return String(s || "")
-    .replace(/\r\n/g, "\n")
-    .replace(/[ \t]+/g, " ")
-    .trim();
-}
-
-function toSlug(input) {
-  const s = String(input || "")
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "") // remove acentos
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .replace(/-+/g, "-");
-
-  // slug mínimo decente
-  if (!s) return "";
-  if (s.length < 2) return s.padEnd(2, "0");
-  return s.slice(0, 48);
-}
-
-function isValidSlug(slug) {
-  return /^[a-z0-9]([a-z0-9-]{0,46}[a-z0-9])?$/.test(slug || "");
-}
-
-function safeJsonParse(s, fallback = null) {
-  try {
-    return JSON.parse(s);
-  } catch {
-    return fallback;
+  // =========================
+  // Utils
+  // =========================
+  function nowISO() {
+    try { return new Date().toISOString(); } catch { return "" + Date.now(); }
   }
-}
 
-function isProbablyCommand(text) {
-  const t = normalizeSpaces(text).toLowerCase();
-  const starters = [
-    "help",
-    "list",
-    "create",
-    "select",
-    "open",
-    "set",
-    "write",
-    "show",
-    "apply",
-    "auto",
-    "diag",
-    "diagnostico",
-    "diagnóstico",
-  ];
-  return starters.some((k) => t.startsWith(k + " ") || t === k);
-}
+  function slugify(input) {
+    return String(input || "")
+      .trim()
+      .toLowerCase()
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .replace(/--+/g, "-");
+  }
 
-/* ------------------------- Ajuda (help) ------------------------- */
+  function safeJsonParse(s, fallback) {
+    try { return JSON.parse(s); } catch { return fallback; }
+  }
 
-const HELP_TEXT = `
-Comandos (Replit-like):
-- help
-- list
-- create NOME [SLUG]
-  Ex: create Rquotas rquotas
-  Ex: create "AgroControl" agrocontrol
-- select SLUG
-  Ex: select rquotas
-- open editor
-- set file <caminho>
-  Ex: set file app.js
-  Ex: set file core/commands.js
-- write <texto>
-  (cole o texto inteiro após 'write', ou use 'write' e cole no campo)
-- show
-- apply
+  function isNonEmpty(str) {
+    return typeof str === "string" && str.trim().length > 0;
+  }
 
-Atalhos Replit-like:
-- Digitar só um nome (ex: rquotas) -> tenta selecionar; se não existir, sugere criar.
-- Digitar algo tipo "criar app X" -> vira create automaticamente.
-- Digitar um bloco de código -> vira write automaticamente (no arquivo atual).
+  // =========================
+  // Optional core modules (tolerant)
+  // =========================
+  const Core = W.RCF_CORE || (W.RCF_CORE = {});
 
-Modo auto:
-- auto on  -> tenta aplicar ações seguras automaticamente
-- auto off -> volta ao modo com confirmação/patch
+  const Logger = Core.logger || {
+    info: (...a) => console.log("[RCF]", ...a),
+    warn: (...a) => console.warn("[RCF]", ...a),
+    error: (...a) => console.error("[RCF]", ...a),
+  };
 
-Diagnóstico:
-- diag -> mostra resumo do estado (app ativo, arquivo atual, modo auto, etc)
-`.trim();
+  const Storage = Core.storage || {
+    get(key, fallback) {
+      try {
+        const v = localStorage.getItem(key);
+        return v == null ? fallback : safeJsonParse(v, v);
+      } catch { return fallback; }
+    },
+    set(key, value) {
+      try {
+        localStorage.setItem(key, JSON.stringify(value));
+        return true;
+      } catch { return false; }
+    },
+    del(key) {
+      try { localStorage.removeItem(key); return true; } catch { return false; }
+    }
+  };
 
-/* --------------------------- Engine principal --------------------------- */
+  const Snapshot = Core.snapshot || {
+    take(label, state) {
+      const snaps = Storage.get("rcf.snapshots", []);
+      snaps.push({ at: nowISO(), label: label || "snapshot", state: state || null });
+      Storage.set("rcf.snapshots", snaps.slice(-20));
+      return snaps[snaps.length - 1];
+    }
+  };
 
-/**
- * ctx esperado (adaptadores):
- * ctx.state.get() -> retorna estado atual
- * ctx.state.set(partial) -> salva no estado
- *
- * ctx.apps.list() -> [{ name, slug, updatedAt }]
- * ctx.apps.exists(slug) -> boolean
- * ctx.apps.create({name, slug}) -> cria app
- * ctx.apps.select(slug) -> seleciona app ativo
- * ctx.apps.getActive() -> { name, slug } | null
- *
- * ctx.fs.getCurrentFile() -> string | null
- * ctx.fs.setCurrentFile(path) -> void
- * ctx.fs.read(path) -> string
- * ctx.fs.write(path, content) -> void
- *
- * ctx.patch.set(patchObj) -> salva patch pendente (para UI aprovar)
- * ctx.patch.clear()
- *
- * ctx.log.info(msg, data?)
- * ctx.log.error(msg, data?)
- *
- * Observação: se algum adaptador não existir, a engine continua "de boa",
- * devolvendo mensagens e patches para você aplicar manualmente.
- */
+  // Patchset: estrutura simples (pode ser substituída pelo seu patchset.js real)
+  const Patchset = Core.patchset || {
+    make(ops, meta) {
+      return { meta: meta || {}, ops: Array.isArray(ops) ? ops : [] };
+    }
+  };
 
-function defaultCtxGuards(ctx) {
-  const safe = (obj, path, fallback) => {
+  // =========================
+  // State
+  // =========================
+  const STATE_KEY = "rcf.agent.state";
+  const APPS_KEY = "rcf.apps";
+  const PATCH_PENDING_KEY = "rcf.patch.pending";
+
+  function getState() {
+    const s = Storage.get(STATE_KEY, null);
+    return s && typeof s === "object"
+      ? s
+      : { mode: "safe", active: null };
+  }
+  function setState(next) {
+    Storage.set(STATE_KEY, next);
+    return next;
+  }
+
+  function getApps() {
+    const apps = Storage.get(APPS_KEY, []);
+    return Array.isArray(apps) ? apps : [];
+  }
+  function setApps(apps) {
+    Storage.set(APPS_KEY, apps);
+    return apps;
+  }
+
+  function findAppBySlug(slug) {
+    const apps = getApps();
+    const s = slugify(slug);
+    return apps.find(a => a && a.slug === s) || null;
+  }
+
+  function upsertApp(app) {
+    const apps = getApps();
+    const idx = apps.findIndex(a => a && a.slug === app.slug);
+    if (idx >= 0) apps[idx] = app;
+    else apps.push(app);
+    setApps(apps);
+    return app;
+  }
+
+  // =========================
+  // NLP simples offline
+  // =========================
+  function nlpParse(text) {
+    const raw = String(text || "").trim();
+    const t = raw.toLowerCase();
+
+    // Natural language: "cria um app chamado AgroControl"
+    let m = t.match(/cria(?:r)?\s+(?:um\s+)?app\s+(?:chamado|nomeado)\s+(.+)$/i);
+    if (m && m[1]) return { intent: "create", name: raw.slice(raw.toLowerCase().indexOf(m[1])).trim() };
+
+    // "criar app agrocontrol"
+    m = t.match(/cria(?:r)?\s+app\s+(.+)$/i);
+    if (m && m[1]) return { intent: "create", name: raw.slice(raw.toLowerCase().indexOf(m[1])).trim() };
+
+    // "seleciona r-quotas" / "abrir r-quotas"
+    m = t.match(/(seleciona|selecionar|select|abrir|open)\s+(.+)$/i);
+    if (m && m[2]) return { intent: "select", slug: slugify(m[2]) };
+
+    // "modo auto" / "modo safe"
+    m = t.match(/(modo|mode)\s+(auto|safe)$/i);
+    if (m && m[2]) return { intent: "mode", mode: m[2].toLowerCase() };
+
+    return null;
+  }
+
+  // =========================
+  // Command parsing (curto)
+  // =========================
+  function parseCommand(input) {
+    const raw = String(input || "").trim();
+    if (!raw) return { type: "empty" };
+
+    // 1) comandos curtos
+    const parts = raw.split(/\s+/);
+    const cmd = parts[0].toLowerCase();
+
+    if (cmd === "help") return { type: "help" };
+    if (cmd === "list") return { type: "list" };
+
+    if (cmd === "mode") {
+      const mode = (parts[1] || "").toLowerCase();
+      return { type: "mode", mode };
+    }
+
+    if (cmd === "create") {
+      // create NOME SLUG  | create NOME
+      const rest = raw.slice(raw.indexOf(" ") + 1).trim();
+      if (!rest || rest === "create") return { type: "error", message: "Use: create NOME [SLUG]" };
+
+      // Tenta separar: se tiver 2+ tokens, último pode ser slug se tiver "-" ou já for slug-like
+      const p2 = rest.split(/\s+/);
+      if (p2.length >= 2) {
+        const maybeSlug = slugify(p2[p2.length - 1]);
+        const name = p2.slice(0, -1).join(" ").trim();
+        // Se o último token era realmente um slug "bom"
+        if (maybeSlug && (p2[p2.length - 1].includes("-") || maybeSlug === p2[p2.length - 1].toLowerCase())) {
+          return { type: "create", name, slug: maybeSlug };
+        }
+      }
+      return { type: "create", name: rest.trim(), slug: slugify(rest) };
+    }
+
+    if (cmd === "select") {
+      const slug = slugify(parts.slice(1).join(" "));
+      return { type: "select", slug };
+    }
+
+    if (cmd === "open" && parts[1] && parts[1].toLowerCase() === "editor") {
+      return { type: "open_editor" };
+    }
+
+    // set file X
+    if (cmd === "set" && parts[1] && parts[1].toLowerCase() === "file") {
+      const file = parts.slice(2).join(" ").trim();
+      return { type: "set_file", file };
+    }
+
+    // write (cola texto...)
+    if (cmd === "write") {
+      const text = raw.slice(raw.toLowerCase().indexOf("write") + 5).trim();
+      return { type: "write", text };
+    }
+
+    if (cmd === "show") return { type: "show" };
+    if (cmd === "apply") return { type: "apply" };
+
+    // 2) NLP natural
+    const nlp = nlpParse(raw);
+    if (nlp) {
+      if (nlp.intent === "create") return { type: "create", name: nlp.name, slug: slugify(nlp.name) };
+      if (nlp.intent === "select") return { type: "select", slug: nlp.slug };
+      if (nlp.intent === "mode") return { type: "mode", mode: nlp.mode };
+    }
+
+    // 3) atalho: se digitou só um slug existente -> auto select
+    const asSlug = slugify(raw);
+    if (asSlug && findAppBySlug(asSlug)) {
+      return { type: "select", slug: asSlug, shortcut: true };
+    }
+
+    // 4) fallback
+    return { type: "unknown", raw };
+  }
+
+  // =========================
+  // Safety / auto apply rules
+  // =========================
+  function isAutoSafe(opType) {
+    // Lista de operações que podem rodar em auto sem pedir apply
+    return ["select", "list", "help", "mode"].includes(opType);
+  }
+
+  function buildPatchForCreate(app) {
+    // patch mínimo: criar app no storage
+    return Patchset.make(
+      [{ op: "APP_UPSERT", app }],
+      { kind: "create", createdAt: nowISO(), risk: "low" }
+    );
+  }
+
+  function savePendingPatch(patch) {
+    Storage.set(PATCH_PENDING_KEY, patch);
+    return patch;
+  }
+
+  function getPendingPatch() {
+    return Storage.get(PATCH_PENDING_KEY, null);
+  }
+
+  function clearPendingPatch() {
+    Storage.del(PATCH_PENDING_KEY);
+  }
+
+  function applyPatch(patch) {
+    if (!patch || !Array.isArray(patch.ops)) return { ok: false, message: "Sem patch pendente." };
+
+    // snapshot antes de aplicar
+    Snapshot.take("before_apply", {
+      state: getState(),
+      apps: getApps(),
+      pending: patch
+    });
+
+    for (const op of patch.ops) {
+      if (!op || !op.op) continue;
+      if (op.op === "APP_UPSERT" && op.app) {
+        upsertApp(op.app);
+      }
+    }
+
+    clearPendingPatch();
+    return { ok: true, message: "Patch aplicado com sucesso." };
+  }
+
+  // =========================
+  // Public API
+  // =========================
+  function helpText() {
+    const s = getState();
+    return [
+      "Comandos (Replit-like):",
+      "help",
+      "list",
+      "create NOME [SLUG]     (auto-slug se não passar SLUG)",
+      "select SLUG            (ou digite só o SLUG para auto-select)",
+      "mode auto | safe       (auto aplica comandos seguros; safe pede apply)",
+      "open editor",
+      "set file ARQUIVO",
+      "write (cola texto)",
+      "show",
+      "apply                  (aplica patch pendente do modo safe)",
+      "",
+      `Modo atual: ${s.mode}`,
+      `App ativo: ${s.active || "-"}`,
+    ].join("\n");
+  }
+
+  function run(input) {
+    const state = getState();
+    const cmd = parseCommand(input);
+
+    // Resposta padrão
+    const out = {
+      ok: true,
+      type: cmd.type,
+      message: "",
+      state,
+      pendingPatch: getPendingPatch() || null
+    };
+
     try {
-      return path.split(".").reduce((a, k) => (a ? a[k] : undefined), obj) ?? fallback;
-    } catch {
-      return fallback;
-    }
-  };
-
-  return {
-    stateGet: () => safe(ctx, "state.get", () => ({}))(),
-    stateSet: (p) => safe(ctx, "state.set", () => {}) (p),
-
-    appsList: () => safe(ctx, "apps.list", () => [])(),
-    appsExists: (slug) => safe(ctx, "apps.exists", () => false)(slug),
-    appsCreate: (o) => safe(ctx, "apps.create", () => { throw new Error("apps.create não disponível"); })(o),
-    appsSelect: (slug) => safe(ctx, "apps.select", () => { throw new Error("apps.select não disponível"); })(slug),
-    appsGetActive: () => safe(ctx, "apps.getActive", () => null)(),
-
-    fsGetCurrentFile: () => safe(ctx, "fs.getCurrentFile", () => null)(),
-    fsSetCurrentFile: (p) => safe(ctx, "fs.setCurrentFile", () => {}) (p),
-    fsRead: (p) => safe(ctx, "fs.read", () => "")(p),
-    fsWrite: (p, c) => safe(ctx, "fs.write", () => { throw new Error("fs.write não disponível"); })(p, c),
-
-    patchSet: (patch) => safe(ctx, "patch.set", () => {}) (patch),
-    patchClear: () => safe(ctx, "patch.clear", () => {}) (),
-
-    logInfo: (m, d) => safe(ctx, "log.info", () => {}) (m, d),
-    logError: (m, d) => safe(ctx, "log.error", () => {}) (m, d),
-  };
-}
-
-function makeResult({ ok = true, message = "", data = null, patch = null, needsApproval = false } = {}) {
-  return { ok, message, data, patch, needsApproval, ts: nowISO() };
-}
-
-/**
- * Decide se uma alteração é "segura" pra auto aplicar.
- * (você pode endurecer isso depois)
- */
-function isSafeAutoAction(action) {
-  const safeActions = new Set([
-    "HELP",
-    "LIST",
-    "DIAG",
-    "SELECT",
-    "OPEN_EDITOR",
-    "SET_FILE",
-    "SHOW",
-  ]);
-  return safeActions.has(action);
-}
-
-/* ----------------------- Parser (formal + natural) ---------------------- */
-
-function parseInput(rawInput) {
-  const input = String(rawInput ?? "");
-  const trimmed = input.trim();
-
-  // vazio
-  if (!trimmed) return { action: "EMPTY" };
-
-  // Se parece um bloco de código (muitas linhas / contém { } ; / function / import)
-  const lines = trimmed.split("\n");
-  const looksLikeCode =
-    lines.length >= 3 ||
-    /(^|\s)(function|const|let|var|import|export|class)\s/.test(trimmed) ||
-    /[{};]{2,}/.test(trimmed) ||
-    trimmed.includes("=>") ||
-    trimmed.includes("</") ||
-    trimmed.includes("/*");
-
-  // Se não é comando e parece código -> vira WRITE automático
-  if (!isProbablyCommand(trimmed) && looksLikeCode) {
-    return { action: "WRITE", content: trimmed, implicit: true };
-  }
-
-  const t = normalizeSpaces(trimmed);
-  const lower = t.toLowerCase();
-
-  // help
-  if (lower === "help") return { action: "HELP" };
-
-  // list
-  if (lower === "list") return { action: "LIST" };
-
-  // diag
-  if (lower === "diag" || lower === "diagnostico" || lower === "diagnóstico") return { action: "DIAG" };
-
-  // auto on/off
-  if (lower === "auto on") return { action: "AUTO", value: true };
-  if (lower === "auto off") return { action: "AUTO", value: false };
-
-  // open editor
-  if (lower === "open editor") return { action: "OPEN_EDITOR" };
-
-  // show
-  if (lower === "show") return { action: "SHOW" };
-
-  // apply
-  if (lower === "apply") return { action: "APPLY" };
-
-  // set file ...
-  if (lower.startsWith("set file ")) {
-    const path = t.slice("set file ".length).trim();
-    return { action: "SET_FILE", path };
-  }
-
-  // write ...
-  if (lower === "write") {
-    // UI pode colar em seguida
-    return { action: "WRITE", content: "", waitingPaste: true };
-  }
-  if (lower.startsWith("write ")) {
-    const content = trimmed.slice(trimmed.toLowerCase().indexOf("write") + 5).trimStart();
-    return { action: "WRITE", content, implicit: false };
-  }
-
-  // create ...
-  // Permite: create Nome slug
-  // Permite: create "Nome com espaço" slug
-  if (lower.startsWith("create ")) {
-    const rest = trimmed.slice(7).trim();
-
-    // tenta parse com aspas
-    let name = "";
-    let slug = "";
-
-    if (rest.startsWith('"')) {
-      const end = rest.indexOf('"', 1);
-      if (end > 1) {
-        name = rest.slice(1, end);
-        slug = rest.slice(end + 1).trim();
-      } else {
-        name = rest.replace(/"/g, "");
-      }
-    } else {
-      const parts = rest.split(" ");
-      name = parts.shift() || "";
-      slug = parts.join(" ").trim();
-    }
-
-    name = normalizeSpaces(name);
-    slug = normalizeSpaces(slug);
-
-    return { action: "CREATE", name, slug };
-  }
-
-  // select ...
-  if (lower.startsWith("select ")) {
-    const slug = t.slice(7).trim();
-    return { action: "SELECT", slug };
-  }
-
-  // Natural language: "criar app X"
-  if (lower.startsWith("criar app ")) {
-    const name = t.slice(9).trim();
-    return { action: "CREATE", name, slug: "" , implicit: true};
-  }
-  if (lower.startsWith("criar ")) {
-    const name = t.slice(6).trim();
-    return { action: "CREATE", name, slug: "" , implicit: true};
-  }
-
-  // Texto solto: tenta select; se não existir, sugere create
-  return { action: "SOFT", text: trimmed };
-}
-
-/* ------------------------- Execução das ações -------------------------- */
-
-function buildDiag(guards) {
-  const st = guards.stateGet() || {};
-  const active = guards.appsGetActive();
-  const currentFile = guards.fsGetCurrentFile();
-  return {
-    mode: st.mode || "private",
-    auto: !!st.auto,
-    activeApp: active ? active.slug : null,
-    currentFile: currentFile || null,
-    appsCount: (guards.appsList() || []).length,
-    ua: st.ua || null,
-    dock: st.dock ?? null,
-  };
-}
-
-function formatAppsList(apps) {
-  if (!apps || !apps.length) return "Nenhum app encontrado.";
-  return apps
-    .slice(0, 30)
-    .map((a, i) => `${i + 1}) ${a.name || a.slug} (${a.slug})`)
-    .join("\n");
-}
-
-function ensureSlug(name, slugInput) {
-  const slug = slugInput ? toSlug(slugInput) : toSlug(name);
-  return slug;
-}
-
-function normalizeName(name) {
-  return clampLen(normalizeSpaces(name), 80);
-}
-
-function makePatch({ title, description, changes }) {
-  return {
-    title: title || "Patch",
-    description: description || "",
-    changes: Array.isArray(changes) ? changes : [],
-    createdAt: nowISO(),
-  };
-}
-
-/**
- * Execute comando e devolve:
- * - message: texto pra UI
- * - patch: se precisa aplicar (aprovação)
- * - needsApproval: se a UI deve pedir confirmação
- */
-export async function runCommand(rawInput, ctx = {}) {
-  const g = defaultCtxGuards(ctx);
-  const st = g.stateGet() || {};
-  const auto = !!st.auto;
-
-  const parsed = parseInput(rawInput);
-
-  try {
-    switch (parsed.action) {
-      case "EMPTY":
-        return makeResult({ ok: true, message: "Digite um comando. Use: help" });
-
-      case "HELP":
-        return makeResult({ ok: true, message: HELP_TEXT });
-
-      case "LIST": {
-        const apps = g.appsList();
-        return makeResult({ ok: true, message: formatAppsList(apps), data: { apps } });
+      if (cmd.type === "empty") {
+        out.ok = false;
+        out.message = "Digite um comando. Use: help";
+        return out;
       }
 
-      case "DIAG": {
-        const d = buildDiag(g);
-        const msg =
-          `RCF DIAGNÓSTICO\n` +
-          `mode: ${d.mode}\n` +
-          `auto: ${d.auto ? "on" : "off"}\n` +
-          `apps: ${d.appsCount}\n` +
-          `active: ${d.activeApp ?? "-"}\n` +
-          `file: ${d.currentFile ?? "-"}\n` +
-          (d.ua ? `ua: ${d.ua}\n` : "") +
-          (d.dock !== null ? `dock: ${d.dock}\n` : "");
-        return makeResult({ ok: true, message: msg.trim(), data: d });
+      if (cmd.type === "unknown") {
+        out.ok = false;
+        out.message = "Comando não reconhecido. Use: help";
+        return out;
       }
 
-      case "AUTO": {
-        g.stateSet({ auto: !!parsed.value });
-        return makeResult({ ok: true, message: `Modo auto: ${parsed.value ? "ON" : "OFF"}` });
+      if (cmd.type === "help") {
+        out.message = helpText();
+        return out;
       }
 
-      case "OPEN_EDITOR": {
-        // Aqui a UI pode apenas mudar de aba; engine só confirma
-        return makeResult({ ok: true, message: "Abrindo Editor…" });
+      if (cmd.type === "list") {
+        const apps = getApps();
+        out.message = apps.length
+          ? apps.map(a => `- ${a.name} (${a.slug})`).join("\n")
+          : "Nenhum app ainda. Use: create NOME [SLUG]";
+        return out;
       }
 
-      case "SET_FILE": {
-        const path = normalizeSpaces(parsed.path || "");
-        if (!path) return makeResult({ ok: false, message: "Informe o caminho do arquivo. Ex: set file app.js" });
-        g.fsSetCurrentFile(path);
-        g.stateSet({ currentFile: path });
-        return makeResult({ ok: true, message: `Arquivo atual: ${path}`, data: { currentFile: path } });
+      if (cmd.type === "mode") {
+        const m = (cmd.mode || "").toLowerCase();
+        if (m !== "auto" && m !== "safe") {
+          out.ok = false;
+          out.message = "Use: mode auto | mode safe";
+          return out;
+        }
+        const next = setState({ ...state, mode: m });
+        out.state = next;
+        out.message = `Modo definido: ${m}`;
+        return out;
       }
 
-      case "SHOW": {
-        const file = g.fsGetCurrentFile() || st.currentFile;
-        if (!file) return makeResult({ ok: false, message: "Nenhum arquivo selecionado. Use: set file app.js" });
-
-        const content = g.fsRead(file);
-        const preview = content ? content.slice(0, 2000) : "";
-        return makeResult({
-          ok: true,
-          message: preview ? preview : "(arquivo vazio)",
-          data: { file, length: (content || "").length },
-        });
+      if (cmd.type === "select") {
+        if (!cmd.slug) {
+          out.ok = false;
+          out.message = "Use: select SLUG";
+          return out;
+        }
+        const app = findAppBySlug(cmd.slug);
+        if (!app) {
+          out.ok = false;
+          out.message = `Slug não encontrado: ${cmd.slug}`;
+          return out;
+        }
+        const next = setState({ ...state, active: app.slug });
+        out.state = next;
+        out.message = cmd.shortcut
+          ? `Auto-select: ${app.slug} ✅`
+          : `Selecionado: ${app.slug} ✅`;
+        return out;
       }
 
-      case "APPLY": {
-        // A UI normalmente aplica o patch pendente.
-        // Aqui apenas confirmamos.
-        return makeResult({ ok: true, message: "Aplicar: confirme na UI (Aprovar sugestão) se houver patch pendente." });
-      }
+      if (cmd.type === "create") {
+        const name = (cmd.name || "").trim();
+        const slug = slugify(cmd.slug || cmd.name);
 
-      case "SELECT": {
-        const slug = toSlug(parsed.slug);
-        if (!isValidSlug(slug)) return makeResult({ ok: false, message: "Slug inválido. Ex: select rquotas" });
-
-        if (!g.appsExists(slug)) {
-          return makeResult({
-            ok: false,
-            message: `App "${slug}" não existe. Quer criar? Use: create Nome ${slug}`,
-            data: { slug },
-          });
+        if (!isNonEmpty(name) || !isNonEmpty(slug)) {
+          out.ok = false;
+          out.message = "Nome/slug inválidos. Use: create NOME [SLUG]";
+          return out;
         }
 
-        // Seleciona
-        await g.appsSelect(slug);
-        g.stateSet({ activeApp: slug });
-        return makeResult({ ok: true, message: `App ativo: ${slug}`, data: { slug } });
-      }
-
-      case "CREATE": {
-        const name = normalizeName(parsed.name || "");
-        if (!name) return makeResult({ ok: false, message: "Nome inválido. Ex: create Rquotas rquotas" });
-
-        const slug = ensureSlug(name, parsed.slug);
-        if (!isValidSlug(slug)) {
-          return makeResult({
-            ok: false,
-            message: `Nome/slug inválidos. Tente: create "${name}" ${toSlug(name)}`,
-            data: { name, slugSuggested: toSlug(name) },
-          });
-        }
-
-        if (g.appsExists(slug)) {
-          // Se já existe, só seleciona automaticamente
-          await g.appsSelect(slug);
-          g.stateSet({ activeApp: slug });
-          return makeResult({ ok: true, message: `Já existe. App ativo: ${slug}`, data: { slug, existed: true } });
-        }
-
-        // CREATE é ação que mexe em estrutura, mas geralmente é segura.
-        // Se auto ON, cria direto.
-        // Se auto OFF, gera patch p/ aprovação.
-        const doCreate = async () => {
-          await g.appsCreate({ name, slug });
-          await g.appsSelect(slug);
-          g.stateSet({ activeApp: slug });
+        const app = {
+          name,
+          slug,
+          createdAt: nowISO(),
+          updatedAt: nowISO(),
+          files: {} // pode crescer depois
         };
 
-        if (auto) {
-          await doCreate();
-          return makeResult({ ok: true, message: `Criado e selecionado: ${name} (${slug})`, data: { name, slug } });
+        // Se já existe, só atualiza
+        const existing = findAppBySlug(slug);
+        if (existing) {
+          app.createdAt = existing.createdAt || app.createdAt;
         }
 
-        const patch = makePatch({
-          title: "Criar app",
-          description: `Criar app "${name}" com slug "${slug}" e selecionar como ativo.`,
-          changes: [{ type: "APP_CREATE", name, slug }],
-        });
+        if (state.mode === "auto") {
+          // auto: cria direto (pouco risco), log + snapshot
+          Snapshot.take("before_create_auto", { state, apps: getApps(), newApp: app });
+          upsertApp(app);
+          const next = setState({ ...state, active: slug });
+          out.state = next;
+          out.message = `App criado (AUTO): ${name} (${slug}) ✅`;
+          return out;
+        }
 
-        g.patchSet(patch);
-        return makeResult({
-          ok: true,
-          message: `Sugestão pronta: criar "${name}" (${slug}). Clique "Aprovar sugestão".`,
-          patch,
-          needsApproval: true,
-        });
+        // safe: vira patch pendente
+        const patch = buildPatchForCreate(app);
+        savePendingPatch(patch);
+        out.pendingPatch = patch;
+        out.message =
+          `Patch pendente (SAFE): criar app "${name}" (${slug}).\n` +
+          `Clique "apply" para aplicar.`;
+        return out;
       }
 
-      case "WRITE": {
-        const file = g.fsGetCurrentFile() || st.currentFile || "app.js";
-        const content = parsed.content || "";
-
-        // Se não tem conteúdo e waitingPaste, a UI vai colar depois
-        if (parsed.waitingPaste) {
-          // apenas orienta
-          return makeResult({
-            ok: true,
-            message: `Cole o texto do código após 'write' (ou use: write <cole aqui>). Arquivo atual: ${file}`,
-            data: { file, waitingPaste: true },
-          });
+      if (cmd.type === "apply") {
+        const patch = getPendingPatch();
+        if (!patch) {
+          out.ok = false;
+          out.message = "Sem patch pendente.";
+          return out;
         }
-
-        if (!content) {
-          return makeResult({ ok: false, message: "Nada para escrever. Use: write <código>" });
+        const res = applyPatch(patch);
+        out.ok = !!res.ok;
+        out.message = res.message || (res.ok ? "Aplicado." : "Falhou.");
+        // após aplicar, se patch era create, seta active se tiver só 1 op APP_UPSERT
+        const op = patch.ops && patch.ops[0];
+        if (op && op.op === "APP_UPSERT" && op.app && op.app.slug) {
+          out.state = setState({ ...getState(), active: op.app.slug });
+        } else {
+          out.state = getState();
         }
-
-        // WRITE é potencialmente perigoso (substitui arquivo).
-        // Se auto ON: aplica direto
-        // Se auto OFF: gera patch
-        const doWrite = async () => {
-          g.fsWrite(file, content);
-          g.stateSet({ currentFile: file });
-        };
-
-        if (auto) {
-          await doWrite();
-          return makeResult({
-            ok: true,
-            message: `Escrito em ${file} (${content.length} chars).`,
-            data: { file, length: content.length, autoApplied: true },
-          });
-        }
-
-        const patch = makePatch({
-          title: "Escrever arquivo",
-          description: `Substituir conteúdo de ${file} por novo texto (${content.length} chars).`,
-          changes: [{ type: "FILE_WRITE", path: file, content }],
-        });
-
-        g.patchSet(patch);
-
-        return makeResult({
-          ok: true,
-          message: `Sugestão pronta para escrever em ${file}. Clique "Aprovar sugestão".`,
-          patch,
-          needsApproval: true,
-        });
+        out.pendingPatch = getPendingPatch() || null;
+        return out;
       }
 
-      case "SOFT": {
-        // Texto solto (estilo Replit)
-        const text = normalizeSpaces(parsed.text);
-
-        // 1) Se for um slug/word só: tenta select automático, ou sugere create
-        const single = text.split(" ").length === 1;
-        if (single) {
-          const candidate = toSlug(text);
-          if (isValidSlug(candidate)) {
-            if (g.appsExists(candidate)) {
-              await g.appsSelect(candidate);
-              g.stateSet({ activeApp: candidate });
-              return makeResult({ ok: true, message: `App ativo: ${candidate}`, data: { slug: candidate } });
-            } else {
-              const suggestedName = text;
-              const msg = `Não existe app "${candidate}". Sugestão: create "${suggestedName}" ${candidate}`;
-              return makeResult({ ok: true, message: msg, data: { suggestedCreate: { name: suggestedName, slug: candidate } } });
-            }
-          }
-        }
-
-        // 2) Se o texto contém "create" implícito
-        if (/^(app|projeto|projeto:)\s+/i.test(text)) {
-          const name = text.replace(/^(app|projeto|projeto:)\s+/i, "").trim();
-          return await runCommand(`create "${name}"`, ctx);
-        }
-
-        // 3) Caso geral: responde orientando e oferecendo help
-        return makeResult({
-          ok: false,
-          message: `Comando não reconhecido. Use: help\n\nVocê digitou: "${clampLen(text, 120)}"`,
-        });
+      // Comandos avançados ainda “placeholder” (não quebram)
+      if (cmd.type === "open_editor") {
+        out.message = "OK: open editor (UI deve navegar/abrir o Editor).";
+        return out;
+      }
+      if (cmd.type === "set_file") {
+        out.message = `OK: set file "${cmd.file}" (a UI deve selecionar arquivo).`;
+        return out;
+      }
+      if (cmd.type === "write") {
+        out.message = `OK: write (${(cmd.text || "").length} chars) (a UI deve colar no editor).`;
+        return out;
+      }
+      if (cmd.type === "show") {
+        out.message = "OK: show (a UI deve mostrar preview/estado).";
+        return out;
       }
 
-      default:
-        return makeResult({ ok: false, message: "Comando não reconhecido. Use: help" });
+      // fallback
+      out.ok = false;
+      out.message = "Comando não reconhecido. Use: help";
+      return out;
+
+    } catch (e) {
+      Logger.error("run() failed", e);
+      out.ok = false;
+      out.message = `Erro interno: ${e && e.message ? e.message : String(e)}`;
+      return out;
     }
-  } catch (err) {
-    g.logError("runCommand error", { err: String(err?.message || err) });
-    return makeResult({ ok: false, message: `Erro: ${String(err?.message || err)}` });
   }
-}
 
-/* --------------------------- Compat (opcional) ---------------------------
- * Se sua base antiga esperava outro nome, exporta alias.
- */
-export const CoreCommands = { runCommand };
-export default { runCommand };
+  // Expor
+  Core.commands = {
+    run,
+    parseCommand,
+    slugify,
+    helpText,
+    getState,
+    setState,
+    getApps,
+    setApps,
+    getPendingPatch,
+    applyPatch
+  };
+
+  // Conveniência global
+  W.RCF = W.RCF || {};
+  W.RCF.commands = Core.commands;
+
+})();
