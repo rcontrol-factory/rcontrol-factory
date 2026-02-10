@@ -162,3 +162,25 @@ body{
   padding:8px 10px;
   border-radius:999px;
 }
+/* ===== FIX: topbar sempre clicável ===== */
+.header, header, .topbar, #topbar, .nav-top {
+  position: sticky;
+  top: 0;
+  z-index: 9999;
+  pointer-events: auto;
+}
+
+.header * , header * , .topbar * , #topbar * , .nav-top * {
+  pointer-events: auto;
+}
+
+/* Qualquer overlay invisível não pode bloquear clique */
+.overlay, .modal-backdrop, .glass, .sheet, .floating-layer {
+  pointer-events: none;
+}
+
+/* Quando um modal estiver realmente aberto, ele volta a aceitar clique */
+.overlay.is-open, .modal-backdrop.is-open, .sheet.is-open {
+  pointer-events: auto;
+  z-index: 10000;
+}
