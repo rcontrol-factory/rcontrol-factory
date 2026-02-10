@@ -7,6 +7,20 @@
   <title>RControl Factory</title>
   <link rel="manifest" href="manifest.json">
   <link rel="stylesheet" href="styles.css" />
+
+  <!-- BOOT anti-iOS overlay: garante pointer-events ligados desde o início -->
+  <script>
+    (function(){
+      try{
+        document.documentElement.style.pointerEvents = "auto";
+        document.addEventListener("DOMContentLoaded", function(){
+          try{
+            document.body.style.pointerEvents = "auto";
+          }catch{}
+        });
+      }catch{}
+    })();
+  </script>
 </head>
 
 <body>
@@ -186,43 +200,12 @@
           <button class="btn danger" id="btnAdminDiscard" type="button">Descartar</button>
         </div>
 
-        <hr style="border:0;border-top:1px solid rgba(255,255,255,.10);margin:14px 0">
-
-        <h2>MAINTENANCE • Self-Update (Mãe)</h2>
-        <p class="hint">
-          Aplica overrides por cima do site (no iPhone) via Service Worker.
-          Se quebrar, use Rollback.
-        </p>
-
-        <div class="row">
-          <button class="btn ok" id="btnMotherApplyImport" type="button">Aplicar /import/mother_bundle.json</button>
-          <button class="btn danger" id="btnMotherRollback" type="button">Rollback overrides</button>
-        </div>
-
-        <div class="hint" style="margin-top:10px">Ou cole um bundle JSON aqui:</div>
-        <textarea id="motherBundleText" spellcheck="false" style="
-          width:100%;
-          min-height:140px;
-          resize: vertical;
-          border:1px solid rgba(255,255,255,.10);
-          background: rgba(0,0,0,.22);
-          color: rgba(255,255,255,.92);
-          border-radius: 12px;
-          padding: 12px;
-          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
-          font-size: 12px;
-          line-height: 1.4;
-          outline: none;
-          margin-top:8px;
-        " placeholder='{"files":{"/app.js":"...","/core/ui_bindings.js":"..."}}'></textarea>
-
-        <div class="row" style="margin-top:10px">
-          <button class="btn ok" id="btnMotherApplyPaste" type="button">Aplicar bundle colado</button>
-        </div>
-
-        <h2 style="margin-top:14px">Plano + Sugestão</h2>
+        <h2>Plano + Sugestão</h2>
         <pre class="mono" id="adminOut">Pronto.</pre>
       </div>
+
+      <!-- (Opcional) ponto de montagem da Mãe -->
+      <div id="rcfMotherMount" style="pointer-events:auto;"></div>
     </section>
 
     <!-- DIAGNOSTICS -->
@@ -281,48 +264,40 @@
     <button class="dockbtn" data-view="logs" type="button">Logs</button>
   </div>
 
-  <!-- ✅ REGISTRO DO SERVICE WORKER (SELF-UPDATE) -->
-  <script>
-    (function () {
-      if (!("serviceWorker" in navigator)) return;
-      navigator.serviceWorker.register("/sw.js").then(() => {
-        console.log("[RCF] SW registered");
-      }).catch((e) => {
-        console.warn("[RCF] SW register fail:", e);
-      });
-    })();
-  </script>
+  <!-- =====================================================
+       SCRIPTS (ORDEM CRÍTICA)
+       Regra: evitar "UI duplicada" brigando por clique.
+       app.js é quem faz os binds principais.
+  ====================================================== -->
 
-  <!-- CORE (ordem importa) -->
+  <!-- Core base (pode existir, mas não prende clique) -->
   <script src="core/logger.js"></script>
   <script src="core/storage.js"></script>
   <script src="core/errors.js"></script>
+
+  <!-- APP (faz bind principal de UI) -->
+  <script src="app.js"></script>
+
+  <!-- Core extra (pode ficar depois do app.js) -->
   <script src="core/policy.js"></script>
   <script src="core/risk.js"></script>
-
   <script src="core/snapshot.js"></script>
   <script src="core/patch.js"></script>
   <script src="core/patchset.js"></script>
-
   <script src="core/diagnostics.js"></script>
   <script src="core/commands.js"></script>
 
-  <script src="core/ui_safety.js"></script>
-  <script src="core/ui_bindings.js"></script>
-
-  <script src="core/selfheal.js"></script>
-  <script src="core/autofix.js"></script>
-
+  <!-- IMPORTANTE:
+       - NÃO carregar core/ui_bindings.js agora (conflita com app.js e mata clique)
+       - admin.js fica por último porque ele injeta a MAE e instala capture delegation
+  -->
   <script src="core/admin.js"></script>
-  <script src="core/ai.builder.js"></script>
 
-  <!-- ✅ VFS overrides (mãe autoaplica nela mesma) -->
-  <script src="core/vfs_overrides.js"></script>
+  <!-- (opcionais para depois; se ligar, liga um por vez) -->
+  <!-- <script src="core/ui_safety.js"></script> -->
+  <!-- <script src="core/selfheal.js"></script> -->
+  <!-- <script src="core/autofix.js"></script> -->
+  <!-- <script src="core/ai.builder.js"></script> -->
 
-  <!-- ✅ Maintenance / Self-update UI (Admin) -->
-  <script src="core/mother_selfupdate.js"></script>
-
-  <!-- APP (por último) -->
-  <script src="app.js"></script>
 </body>
 </html>
