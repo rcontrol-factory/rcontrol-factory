@@ -1,21 +1,22 @@
 /* =========================================================
-  RControl Factory — core/admin.js (FULL) — MAE v1.1
-  Fix iOS: botões MAINTENANCE não clicavam (viravam seleção de texto)
-  - Renderiza MAINTENANCE com IDs fixos
-  - bindTap agressivo: pointerup + touchend + click
-  - user-select none via CSS (ver patch no styles.css)
-  - Mostra "MAE v1.1" na tela pra confirmar que carregou (cache/SW)
+  RControl Factory — core/admin.js (FULL) — FIX BOTÕES MAE
+  - Renderiza seção "MAINTENANCE • Self-Update (Mãe)"
+  - iOS-safe bind: touchend + click (com preventDefault)
+  - Força pointer-events na área (mata overlay travando clique)
+  - Ações (MVP):
+      • Aplicar /import/mother_bundle.json  -> carrega e salva em localStorage
+      • Aplicar bundle colado              -> salva em localStorage
+      • Rollback overrides                 -> limpa localStorage
+  OBS: aqui o objetivo é GARANTIR CLIQUE e fluxo; depois ligamos o patch real.
 ========================================================= */
 
-(() => {
+(function () {
   "use strict";
 
-  const VERSION = "MAE v1.1 ✅ carregado";
+  const $ = (id) => document.getElementById(id);
 
-  const $ = (sel, root = document) => root.querySelector(sel);
-
-  // iOS: evita duplo-fire + melhora clique
-  const TAP_GUARD_MS = 420;
+  // ---------- iOS safe tap ----------
+  const TAP_GUARD_MS = 450;
   let _lastTapAt = 0;
 
   function bindTap(el, fn) {
@@ -29,246 +30,234 @@
       }
       _lastTapAt = now;
 
-      // iOS: impede seleção / menu de copiar interferir
-      try { e.preventDefault(); } catch {}
-      try { e.stopPropagation(); } catch {}
-
-      try { fn(e); } catch (err) { log("admin tap err:", err?.message || String(err)); }
+      try { e.preventDefault(); e.stopPropagation(); } catch {}
+      try { fn(e); } catch (err) {
+        writeOut("adminOut", "ERRO no clique: " + (err?.message || String(err)));
+      }
     };
 
-    // mais agressivo (iOS às vezes ignora click)
-    el.addEventListener("pointerup", handler, { passive: false });
-    el.addEventListener("touchend", handler, { passive: false });
-    el.addEventListener("click", handler, { passive: false });
+    el.style.pointerEvents = "auto";
+    el.style.touchAction = "manipulation";
+    el.style.webkitTapHighlightColor = "transparent";
 
-    // garante toque
-    try {
-      el.style.pointerEvents = "auto";
-      el.style.touchAction = "manipulation";
-      el.style.webkitTapHighlightColor = "transparent";
-      el.style.webkitUserSelect = "none";
-      el.style.userSelect = "none";
-    } catch {}
-  }
-
-  function log(...args) {
-    // usa logger do app.js se existir
-    try {
-      if (window.RCF && typeof window.RCF.log === "function") {
-        window.RCF.log(...args);
-        return;
-      }
-    } catch {}
-    try { console.log("[RCF][ADMIN]", ...args); } catch {}
+    // capture ajuda quando existe overlay/parent estranho
+    el.addEventListener("touchend", handler, { passive: false, capture: true });
+    el.addEventListener("click", handler, { passive: false, capture: true });
   }
 
   function setStatus(text) {
-    const el = $("#statusText");
-    if (el) el.textContent = text;
+    const el = $("statusText");
+    if (el) el.textContent = String(text || "");
   }
 
-  function out(text) {
-    const el = $("#motherOut");
-    if (el) el.textContent = String(text ?? "");
+  function writeOut(id, text) {
+    const el = $(id);
+    if (el) el.textContent = String(text || "");
   }
 
-  function getOverrides() {
-    try { return JSON.parse(localStorage.getItem("rcf:mother_overrides") || "null"); }
-    catch { return null; }
+  function log(msg) {
+    try {
+      if (window.RCF_LOGGER && typeof window.RCF_LOGGER.push === "function") {
+        window.RCF_LOGGER.push("log", msg);
+      } else if (window.RCF && typeof window.RCF.log === "function") {
+        window.RCF.log(msg);
+      } else {
+        console.log("[RCF ADMIN]", msg);
+      }
+    } catch {}
   }
 
-  function setOverrides(obj) {
-    try { localStorage.setItem("rcf:mother_overrides", JSON.stringify(obj)); } catch {}
+  // ---------- storage keys ----------
+  const KEY_BUNDLE = "rcf:mother_bundle";
+  const KEY_BUNDLE_AT = "rcf:mother_bundle_at";
+
+  function saveBundle(obj) {
+    localStorage.setItem(KEY_BUNDLE, JSON.stringify(obj));
+    localStorage.setItem(KEY_BUNDLE_AT, new Date().toISOString());
   }
 
-  function clearOverrides() {
-    try { localStorage.removeItem("rcf:mother_overrides"); } catch {}
+  function loadBundle() {
+    try {
+      const raw = localStorage.getItem(KEY_BUNDLE);
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
   }
 
-  function templateDate(str) {
-    return String(str || "").replace(/\{\{DATE\}\}/g, new Date().toLocaleString());
+  function clearBundle() {
+    try { localStorage.removeItem(KEY_BUNDLE); } catch {}
+    try { localStorage.removeItem(KEY_BUNDLE_AT); } catch {}
   }
 
-  function ensureMaintenanceUI() {
-    const view = $("#view-admin");
-    if (!view) return null;
+  // ---------- render ----------
+  function renderMaintenance() {
+    const adminView = $("view-admin");
+    if (!adminView) return;
 
-    // se já existe, só retorna
-    const existing = $("#rcfMotherBox", view);
-    if (existing) return existing;
+    // evita duplicar
+    if ($("motherMaintCard")) return;
 
-    // injeta logo depois do primeiro card do admin
-    const firstCard = $(".card", view);
-    if (!firstCard) return null;
+    // força pointer-events na view inteira
+    adminView.style.pointerEvents = "auto";
+    adminView.style.position = "relative";
+    adminView.style.zIndex = "1";
 
-    const box = document.createElement("div");
-    box.id = "rcfMotherBox";
-    box.className = "card";
-    box.innerHTML = `
-      <h2>MAINTENANCE • Self-Update (Mãe)</h2>
-      <div class="hint" style="margin-top:-6px;margin-bottom:10px">${VERSION}</div>
+    const card = document.createElement("div");
+    card.className = "card";
+    card.id = "motherMaintCard";
+    card.style.pointerEvents = "auto";
 
-      <p class="hint">
-        Aplica overrides por cima do site (no iPhone) via Service Worker.
-        Se quebrar, use Rollback.
-      </p>
+    card.innerHTML = `
+      <h2 style="margin-top:4px">MAINTENANCE • Self-Update (Mãe)</h2>
+      <p class="hint">Aplicar overrides por cima do site (MVP). Se quebrar, use Rollback.</p>
 
-      <div class="row" style="flex-wrap:wrap">
-        <button class="btn primary" id="btnMotherApplyFile" type="button">Aplicar /import/mother_bundle.json</button>
-        <button class="btn danger" id="btnMotherRollback" type="button">Rollback overrides</button>
+      <div class="row" style="flex-wrap:wrap; gap:10px; pointer-events:auto">
+        <button class="btn primary" id="btnMotherApplyFile" type="button" style="pointer-events:auto">
+          Aplicar /import/mother_bundle.json
+        </button>
+        <button class="btn danger" id="btnMotherRollback" type="button" style="pointer-events:auto">
+          Rollback overrides
+        </button>
       </div>
 
-      <div style="margin-top:10px" class="hint">Ou cole um bundle JSON aqui:</div>
-
-      <textarea id="motherBundleText" spellcheck="false" class="mono" style="
-        width:100%;
-        min-height:140px;
-        margin-top:8px;
-        border:1px solid rgba(255,255,255,.10);
-        background: rgba(0,0,0,.22);
-        color: rgba(255,255,255,.92);
-        border-radius: 12px;
-        padding: 12px;
-        font-size: 13px;
-        line-height: 1.45;
-        outline: none;
-      " placeholder='{
+      <div class="hint" style="margin:10px 0 6px 0">Ou cole um bundle JSON aqui:</div>
+      <textarea id="motherBundleTextarea" spellcheck="false"
+        style="
+          width:100%;
+          min-height:160px;
+          border:1px solid rgba(255,255,255,.10);
+          background: rgba(0,0,0,.22);
+          color: rgba(255,255,255,.92);
+          border-radius: 12px;
+          padding: 12px;
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+          font-size: 13px;
+          line-height: 1.45;
+          outline: none;
+          pointer-events:auto;
+        "
+      >{
   "files": {
     "/core/TESTE.txt": "OK — bundle aplicado em {{DATE}}"
   }
-}'></textarea>
+}</textarea>
 
-      <div class="row" style="margin-top:10px">
-        <button class="btn ok" id="btnMotherApplyPaste" type="button">Aplicar bundle colado</button>
+      <div class="row" style="margin-top:10px; pointer-events:auto">
+        <button class="btn ok" id="btnMotherApplyPasted" type="button" style="pointer-events:auto">
+          Aplicar bundle colado
+        </button>
       </div>
 
-      <pre class="mono" id="motherOut">Pronto.</pre>
+      <pre class="mono small" id="motherMaintOut" style="margin-top:10px; pointer-events:auto">Pronto.</pre>
     `;
 
-    firstCard.insertAdjacentElement("afterend", box);
-    return box;
-  }
-
-  async function fetchBundleJSON(url) {
-    const res = await fetch(url, { cache: "no-store" });
-    if (!res.ok) throw new Error(`fetch falhou: ${res.status}`);
-    const txt = await res.text();
-    return JSON.parse(txt);
-  }
-
-  function validateBundle(b) {
-    if (!b || typeof b !== "object") return "Bundle inválido (não é objeto)";
-    if (!b.files || typeof b.files !== "object") return "Bundle inválido: precisa de { files: {...} }";
-    return "";
-  }
-
-  function normalizeBundle(b) {
-    const out = { files: {} };
-    for (const k of Object.keys(b.files || {})) {
-      const v = b.files[k];
-      out.files[String(k)] = templateDate(typeof v === "string" ? v : JSON.stringify(v));
+    // insere DEPOIS do primeiro card do admin (ou no fim)
+    const firstCard = adminView.querySelector(".card");
+    if (firstCard && firstCard.parentNode) {
+      firstCard.parentNode.insertBefore(card, firstCard.nextSibling);
+    } else {
+      adminView.appendChild(card);
     }
-    return out;
   }
 
-  async function notifySW(bundle) {
+  // ---------- actions ----------
+  async function applyFromFile() {
+    setStatus("Aplicando bundle…");
+    writeOut("motherMaintOut", "Carregando /import/mother_bundle.json …");
+
+    // cache-bust
+    const url = "/import/mother_bundle.json?ts=" + Date.now();
+
+    let json;
     try {
-      if (navigator.serviceWorker && navigator.serviceWorker.controller) {
-        navigator.serviceWorker.controller.postMessage({
-          type: "RCF_MOTHER_APPLY",
-          payload: bundle
-        });
-        return true;
-      }
-    } catch {}
-    return false;
-  }
-
-  async function applyBundle(bundle, sourceLabel) {
-    const err = validateBundle(bundle);
-    if (err) {
-      out("❌ " + err);
-      setStatus("Erro ❌");
-      log("MAE invalid bundle:", err);
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      json = await res.json();
+    } catch (e) {
+      writeOut("motherMaintOut", "❌ Falha ao carregar " + url + "\n" + (e?.message || String(e)));
+      setStatus("Falha ❌");
       return;
     }
 
-    const norm = normalizeBundle(bundle);
-    setOverrides(norm);
+    try {
+      saveBundle(json);
+      writeOut("motherMaintOut", "✅ Bundle carregado e salvo.\nAgora o clique está OK.\n\n(Próximo passo: ligar aplicação real em runtime.)");
+      setStatus("Bundle salvo ✅");
+      log("MAE: bundle salvo via arquivo");
+    } catch (e) {
+      writeOut("motherMaintOut", "❌ Erro ao salvar bundle: " + (e?.message || String(e)));
+      setStatus("Falha ❌");
+    }
+  }
 
-    const swOk = await notifySW(norm);
+  function applyFromPaste() {
+    setStatus("Aplicando colado…");
+    const ta = $("motherBundleTextarea");
+    const raw = ta ? String(ta.value || "") : "";
 
-    out(
-      `✅ Bundle aplicado (${sourceLabel})\n` +
-      `files: ${Object.keys(norm.files).length}\n` +
-      `sw: ${swOk ? "OK" : "NOK (sem controller ainda)"}\n\n` +
-      `Se não aplicar na hora: feche o PWA e abra de novo.`
-    );
+    let json;
+    try {
+      json = JSON.parse(raw);
+    } catch (e) {
+      writeOut("motherMaintOut", "❌ JSON inválido.\n" + (e?.message || String(e)));
+      setStatus("JSON inválido ❌");
+      return;
+    }
 
-    setStatus("Override aplicado ✅");
-    log("MAE apply:", { files: Object.keys(norm.files).length, sw: swOk ? "OK" : "NOK" });
+    try {
+      saveBundle(json);
+      writeOut("motherMaintOut", "✅ Bundle colado salvo em localStorage.\nAgora o clique está OK.\n\n(Próximo passo: ligar aplicação real em runtime.)");
+      setStatus("Bundle salvo ✅");
+      log("MAE: bundle salvo via colado");
+    } catch (e) {
+      writeOut("motherMaintOut", "❌ Erro ao salvar: " + (e?.message || String(e)));
+      setStatus("Falha ❌");
+    }
   }
 
   function rollback() {
-    clearOverrides();
-    out("✅ Rollback feito. Overrides removidos.");
+    clearBundle();
+    writeOut("motherMaintOut", "✅ Rollback feito (bundle apagado do localStorage).");
     setStatus("Rollback ✅");
-    log("MAE rollback");
-
-    try { location.reload(); } catch {}
+    log("MAE: rollback");
   }
 
+  // ---------- bind ----------
   function bindMaintenanceButtons() {
-    const btnFile = $("#btnMotherApplyFile");
-    const btnRollback = $("#btnMotherRollback");
-    const btnPaste = $("#btnMotherApplyPaste");
-    const ta = $("#motherBundleText");
+    // garante que render exista
+    renderMaintenance();
 
-    bindTap(btnFile, async () => {
-      setStatus("Aplicando…");
-      out("Aplicando /import/mother_bundle.json …");
-      try {
-        const b = await fetchBundleJSON("/import/mother_bundle.json");
-        await applyBundle(b, "/import/mother_bundle.json");
-      } catch (e) {
-        out("❌ Falhou: " + (e?.message || String(e)));
-        setStatus("Erro ❌");
-        log("MAE apply file error:", e?.message || String(e));
-      }
-    });
+    // força pointer-events em tudo do card (mata overlay)
+    const card = $("motherMaintCard");
+    if (card) {
+      card.style.pointerEvents = "auto";
+      card.querySelectorAll("*").forEach((el) => {
+        if (el && el.style) el.style.pointerEvents = "auto";
+      });
+    }
 
-    bindTap(btnRollback, () => rollback());
-
-    bindTap(btnPaste, async () => {
-      setStatus("Aplicando…");
-      const raw = (ta && ta.value) ? ta.value : "";
-      if (!raw.trim()) {
-        out("⚠️ Cole um JSON no textarea primeiro.");
-        setStatus("OK ✅");
-        return;
-      }
-      try {
-        const b = JSON.parse(raw);
-        await applyBundle(b, "bundle colado");
-      } catch (e) {
-        out("❌ JSON inválido: " + (e?.message || String(e)));
-        setStatus("Erro ❌");
-      }
-    });
+    bindTap($("btnMotherApplyFile"), applyFromFile);
+    bindTap($("btnMotherApplyPasted"), applyFromPaste);
+    bindTap($("btnMotherRollback"), rollback);
   }
 
   function init() {
-    const box = ensureMaintenanceUI();
-    if (!box) return;
-
+    // render + bind
     bindMaintenanceButtons();
 
-    const existing = getOverrides();
-    if (existing && existing.files) {
-      out(`ℹ️ Existe override salvo.\nfiles: ${Object.keys(existing.files).length}\nUse Rollback se quiser remover.`);
+    // feedback visível
+    const saved = loadBundle();
+    if (saved) {
+      const at = localStorage.getItem(KEY_BUNDLE_AT) || "";
+      writeOut("motherMaintOut", "Bundle já existe no localStorage ✅\n" + (at ? ("Salvo em: " + at) : ""));
     }
 
-    log("core/admin.js loaded ✅", VERSION);
+    // marca que carregou (pra você ver na hora)
+    writeOut("adminOut", ( $("adminOut")?.textContent || "Pronto." ) + "\n\nMAE v1.1 ✅ carregado (admin.js)");
+    setStatus("OK ✅");
+    log("MAE v1.1 carregado");
   }
 
   if (document.readyState === "loading") {
