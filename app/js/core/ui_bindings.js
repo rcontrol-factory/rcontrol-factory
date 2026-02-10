@@ -25,6 +25,7 @@
     const handler = (e) => {
       const now = Date.now();
       if (now - _lastTapAt < TAP_GUARD_MS) {
+        // ignora o segundo evento (double fire)
         try { e.preventDefault(); e.stopPropagation(); } catch {}
         return;
       }
@@ -70,6 +71,7 @@
 
   // ---------- logger integration ----------
   function loggerGetText() {
+    // tenta vários formatos possíveis
     const L = window.RCF_LOGGER;
 
     if (!L) return "";
@@ -93,6 +95,7 @@
     if (L && typeof L.push === "function") {
       try { L.push(level || "log", msg); } catch {}
     } else {
+      // fallback silencioso
       try { console.log("[RCF]", msg); } catch {}
     }
   }
@@ -126,6 +129,7 @@
 
   // ---------- DIAG report ----------
   async function buildDiagReport() {
+    // tenta o core/diagnostics.js primeiro
     const D = window.RCF_DIAGNOSTICS;
     if (D && typeof D.buildReport === "function") {
       return await D.buildReport();
@@ -134,11 +138,13 @@
       return await D.run();
     }
 
+    // fallback: factory diagnosis (se existir)
     const F = window.RCF && window.RCF.factory;
     if (F && typeof F.buildDiagnosisReport === "function") {
       return await F.buildDiagnosisReport();
     }
 
+    // fallback simples
     const info = [];
     info.push("DIAG (fallback) ✅");
     info.push("—");
@@ -152,7 +158,7 @@
 
   // ---------- bindings ----------
   function bindAgent() {
-    const input = $("agentCmd"); // ID real
+    const input = $("agentCmd");      // ✅ ID real do seu HTML
     const out = $("agentOut");
 
     const btnRun = $("btnAgentRun");
@@ -160,7 +166,9 @@
     const btnApprove = $("btnAgentApprove");
     const btnDiscard = $("btnAgentDiscard");
 
-    if (btnRun && input) bindTap(btnRun, () => runCommand(input.value, out));
+    if (btnRun && input) {
+      bindTap(btnRun, () => runCommand(input.value, out));
+    }
 
     if (btnClear && input) {
       bindTap(btnClear, () => {
@@ -169,9 +177,15 @@
       });
     }
 
-    if (btnApprove) bindTap(btnApprove, () => patchApplyAll(out));
-    if (btnDiscard) bindTap(btnDiscard, () => patchClear(out));
+    // Aprovar/Descartar (patchset)
+    if (btnApprove) {
+      bindTap(btnApprove, () => patchApplyAll(out));
+    }
+    if (btnDiscard) {
+      bindTap(btnDiscard, () => patchClear(out));
+    }
 
+    // Enter executa (sem shift) — e não quebra colagem grande
     if (input) {
       input.addEventListener("keydown", (e) => {
         if (e.key === "Enter" && !e.shiftKey) {
@@ -185,10 +199,10 @@
   function bindAdmin() {
     const out = $("adminOut");
 
-    const btnDiag = $("btnAdminDiag");
-    const btnClear = $("btnAdminClear");
-    const btnApply = $("btnAdminApply");
-    const btnDiscard = $("btnAdminDiscard");
+    const btnDiag = $("btnAdminDiag");       // ✅ ID real
+    const btnClear = $("btnAdminClear");     // ✅ ID real
+    const btnApply = $("btnAdminApply");     // ✅ ID real
+    const btnDiscard = $("btnAdminDiscard"); // ✅ ID real (ANTES estava errado)
 
     if (btnDiag) {
       bindTap(btnDiag, async () => {
@@ -197,9 +211,19 @@
       });
     }
 
-    if (btnClear) bindTap(btnClear, () => { if (out) out.textContent = "Limpo."; });
-    if (btnApply) bindTap(btnApply, () => patchApplyAll(out));
-    if (btnDiscard) bindTap(btnDiscard, () => patchClear(out));
+    if (btnClear) {
+      bindTap(btnClear, () => {
+        if (out) out.textContent = "Limpo.";
+      });
+    }
+
+    if (btnApply) {
+      bindTap(btnApply, () => patchApplyAll(out));
+    }
+
+    if (btnDiscard) {
+      bindTap(btnDiscard, () => patchClear(out));
+    }
   }
 
   function bindDiagnosticsView() {
@@ -214,19 +238,22 @@
       });
     }
 
-    if (btnClear) bindTap(btnClear, () => { if (out) out.textContent = "Pronto."; });
+    if (btnClear) {
+      bindTap(btnClear, () => {
+        if (out) out.textContent = "Pronto.";
+      });
+    }
   }
 
   function bindLogsViewAndTools() {
-    // ✅ ID real do seu HTML (view logs)
-    const logsViewBox = $("logsOut");
-    // ✅ drawer ferramentas
-    const toolsLogsBox = $("logsBox");
+    const logsViewBox = $("logsViewBox"); // view logs
+    const toolsLogsBox = $("logsBox");    // drawer ferramentas
 
     const btnRefresh = $("btnLogsRefresh");
     const btnCopy = $("btnLogsCopy");
     const btnClear = $("btnLogsClear");
 
+    // tools drawer
     const btnClearLogs = $("btnClearLogs");
     const btnCopyLogs = $("btnCopyLogs");
 
@@ -258,10 +285,12 @@
     if (btnClearLogs) bindTap(btnClearLogs, clear);
     if (btnCopyLogs) bindTap(btnCopyLogs, copy);
 
+    // Atualiza uma vez ao iniciar (pra não ficar “Logs...”)
     refresh();
   }
 
   function init() {
+    // iOS: garante que a página registra toque (sem travar scroll)
     document.body.addEventListener("touchstart", () => {}, { passive: true });
 
     bindAgent();
