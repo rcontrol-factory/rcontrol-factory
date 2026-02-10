@@ -1,77 +1,67 @@
 /* =========================================================
-  RControl Factory — core/logger.js (BASE v1.0)
-  - Logger único do Core (window.RCF_LOGGER)
-  - Usa localStorage chave: "rcf:logs"
-  - Compatível com app.js (que já grava em rcf:logs)
+  RControl Factory — app/js/core/logger.js (FULL)
+  - Logger global (RCF_LOGGER)
+  - Persiste em localStorage (rcf:logs)
+  - Compatível com <script> normal
 ========================================================= */
 (function () {
   "use strict";
 
-  const KEY = "rcf:logs";
-  const MAX = 600;
-
-  function safeText(v) {
-    return (v === undefined || v === null) ? "" : String(v);
+  function safeStr(v) {
+    if (v === undefined || v === null) return "";
+    if (typeof v === "string") return v;
+    try { return JSON.stringify(v); } catch { return String(v); }
   }
 
-  function readArr() {
-    try {
-      const raw = localStorage.getItem(KEY);
-      if (!raw) return [];
-      const arr = JSON.parse(raw);
-      return Array.isArray(arr) ? arr.map(safeText) : [];
-    } catch {
-      return [];
-    }
-  }
+  const prefix = "rcf:";
+  const key = prefix + "logs";
 
-  function writeArr(arr) {
-    try { localStorage.setItem(KEY, JSON.stringify(arr)); } catch {}
-  }
+  const Logger = {
+    max: 500,
+    lines: [],
 
-  function timeStamp() {
-    try { return new Date().toLocaleString(); } catch { return new Date().toISOString(); }
-  }
+    _load() {
+      try {
+        const raw = localStorage.getItem(key);
+        const arr = raw ? JSON.parse(raw) : [];
+        this.lines = Array.isArray(arr) ? arr : [];
+      } catch {
+        this.lines = [];
+      }
+    },
 
-  const LOGGER = {
-    key: KEY,
-    max: MAX,
+    _save() {
+      try { localStorage.setItem(key, JSON.stringify(this.lines)); } catch {}
+    },
+
+    _format(level, msg) {
+      const stamp = new Date().toLocaleString();
+      return `[${stamp}] ${String(level || "log").toUpperCase()}: ${msg}`;
+    },
 
     push(level, msg) {
-      const line = `[${timeStamp()}] ${safeText(msg)}`;
-      const arr = readArr();
-      arr.push(line);
-      while (arr.length > LOGGER.max) arr.shift();
-      writeArr(arr);
-      try { console.log("[RCF]", level || "log", msg); } catch {}
+      const line = this._format(level, safeStr(msg));
+      this.lines.push(line);
+      while (this.lines.length > this.max) this.lines.shift();
+      this._save();
+      try { console.log("[RCF]", line); } catch {}
       return line;
     },
 
-    log(msg) { return LOGGER.push("log", msg); },
-    warn(msg) { return LOGGER.push("warn", msg); },
-    error(msg) { return LOGGER.push("error", msg); },
-
     clear() {
-      writeArr([]);
-      try { console.log("[RCF] logs cleared"); } catch {}
-    },
-
-    getLines() {
-      return readArr();
+      this.lines.length = 0;
+      this._save();
     },
 
     getText() {
-      return readArr().join("\n");
+      return this.lines.join("\n");
     },
 
-    dump() {
-      return LOGGER.getText();
+    getAll() {
+      return this.lines.slice();
     }
   };
 
-  // Expose
-  window.RCF_LOGGER = LOGGER;
-
-  // marca que carregou
-  LOGGER.log("core/logger.js carregado ✅ (BASE v1.0)");
+  Logger._load();
+  window.RCF_LOGGER = Logger;
 })();
