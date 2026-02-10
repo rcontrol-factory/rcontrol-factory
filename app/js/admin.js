@@ -1,12 +1,7 @@
 /* =========================================================
-  RControl Factory — core/admin.js (FULL) — MÃE BUTTONS FIX (CAPTURE)
-  - Renderiza seção "MAINTENANCE • Self-Update (Mãe)" dentro do Admin
-  - iOS/Chrome-safe: delegação global com CAPTURE (pega clique antes de overlays/stopPropagation)
-  - Força pointer-events e z-index no card da Mãe
-  - Ações (MVP):
-      • Aplicar /import/mother_bundle.json  -> salva bundle em localStorage
-      • Aplicar bundle colado              -> salva bundle em localStorage
-      • Rollback overrides                 -> limpa bundle do localStorage
+  RControl Factory — core/admin.js (FULL) — MÃE ALWAYS RENDER
+  - A Mãe nunca some: renderiza no mount (#rcfMotherMount) e re-tenta via MutationObserver
+  - Botões clicáveis: CAPTURE delegation (touchend/click/pointerup)
 ========================================================= */
 
 (function () {
@@ -14,10 +9,7 @@
 
   const $ = (id) => document.getElementById(id);
 
-  // -------- utils ----------
-  function safeText(v) {
-    return (v === undefined || v === null) ? "" : String(v);
-  }
+  function safeText(v) { return (v === undefined || v === null) ? "" : String(v); }
 
   function setStatus(text) {
     const el = $("statusText");
@@ -31,15 +23,12 @@
 
   function log(msg) {
     try {
-      if (window.RCF && typeof window.RCF.log === "function") {
-        window.RCF.log(msg);
-      } else {
-        console.log("[RCF ADMIN]", msg);
-      }
+      if (window.RCF && typeof window.RCF.log === "function") window.RCF.log(msg);
+      else console.log("[RCF ADMIN]", msg);
     } catch {}
   }
 
-  // -------- storage keys ----------
+  // storage
   const KEY_BUNDLE = "rcf:mother_bundle";
   const KEY_BUNDLE_AT = "rcf:mother_bundle_at";
 
@@ -51,11 +40,8 @@
   function loadBundle() {
     try {
       const raw = localStorage.getItem(KEY_BUNDLE);
-      if (!raw) return null;
-      return JSON.parse(raw);
-    } catch {
-      return null;
-    }
+      return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
   }
 
   function clearBundle() {
@@ -63,27 +49,28 @@
     try { localStorage.removeItem(KEY_BUNDLE_AT); } catch {}
   }
 
-  // -------- render Mãe ----------
+  // render
   function renderMotherCard() {
-    const adminView = $("view-admin");
-    if (!adminView) return false;
-
-    // evita duplicar
+    // se já existe, ok
     if ($("motherMaintCard")) return true;
 
-    // mount "limpo" (se existir no index)
+    const adminView = $("view-admin");
     const mount = $("rcfMotherMount");
 
-    // força clique na view
-    adminView.style.pointerEvents = "auto";
-    adminView.style.position = "relative";
-    adminView.style.zIndex = "2";
+    // se não existe Admin ainda, não dá pra render agora
+    if (!adminView && !mount) return false;
+
+    const host = mount || adminView;
+    if (!host) return false;
+
+    // força clique
+    host.style.pointerEvents = "auto";
+    host.style.position = "relative";
+    host.style.zIndex = "999";
 
     const card = document.createElement("div");
     card.className = "card";
     card.id = "motherMaintCard";
-
-    // MUITO importante: garante que nada cubra
     card.style.position = "relative";
     card.style.zIndex = "999";
     card.style.pointerEvents = "auto";
@@ -130,17 +117,9 @@
       <pre class="mono small" id="motherMaintOut" style="margin-top:10px; pointer-events:auto">Pronto.</pre>
     `;
 
-    // insere no mount se existir, senão no fim do adminView
-    if (mount) {
-      mount.style.pointerEvents = "auto";
-      mount.style.position = "relative";
-      mount.style.zIndex = "999";
-      mount.appendChild(card);
-    } else {
-      adminView.appendChild(card);
-    }
+    host.appendChild(card);
 
-    // força pointer-events em TUDO dentro do card
+    // força pointer-events em tudo
     try {
       card.querySelectorAll("*").forEach((el) => {
         if (el && el.style) {
@@ -151,10 +130,23 @@
       });
     } catch {}
 
+    // marca carregamento
+    const adminOut = $("adminOut");
+    if (adminOut) {
+      adminOut.textContent = (adminOut.textContent || "Pronto.") + "\n\nMAE v1.3 ✅ render OK";
+    }
+
+    // se já existe bundle, mostra status
+    const saved = loadBundle();
+    if (saved) {
+      const at = localStorage.getItem(KEY_BUNDLE_AT) || "";
+      writeOut("motherMaintOut", "Bundle já existe no localStorage ✅\n" + (at ? ("Salvo em: " + at) : ""));
+    }
+
     return true;
   }
 
-  // -------- actions ----------
+  // actions
   async function applyFromFile() {
     setStatus("Aplicando bundle…");
     writeOut("motherMaintOut", "Carregando /import/mother_bundle.json …");
@@ -174,7 +166,7 @@
 
     try {
       saveBundle(json);
-      writeOut("motherMaintOut", "✅ Bundle carregado e salvo em localStorage.\nPróximo: aplicar runtime (já já).");
+      writeOut("motherMaintOut", "✅ Bundle carregado e salvo em localStorage.");
       setStatus("Bundle salvo ✅");
       log("MAE: bundle salvo via arquivo");
     } catch (e) {
@@ -190,9 +182,8 @@
     const raw = ta ? String(ta.value || "") : "";
 
     let json;
-    try {
-      json = JSON.parse(raw);
-    } catch (e) {
+    try { json = JSON.parse(raw); }
+    catch (e) {
       writeOut("motherMaintOut", "❌ JSON inválido.\n" + (e?.message || String(e)));
       setStatus("JSON inválido ❌");
       return;
@@ -200,7 +191,7 @@
 
     try {
       saveBundle(json);
-      writeOut("motherMaintOut", "✅ Bundle colado salvo em localStorage.\nPróximo: aplicar runtime (já já).");
+      writeOut("motherMaintOut", "✅ Bundle colado salvo em localStorage.");
       setStatus("Bundle salvo ✅");
       log("MAE: bundle salvo via colado");
     } catch (e) {
@@ -216,64 +207,54 @@
     log("MAE: rollback");
   }
 
-  // -------- CAPTURE delegation (mata overlay/stopPropagation) ----------
-  function findBtnIdFromEvent(ev) {
+  // CAPTURE delegation
+  function getBtnId(ev) {
     try {
       const t = ev.target;
-      if (!t) return "";
-      const btn = t.closest ? t.closest("#btnMotherApplyFile,#btnMotherApplyPasted,#btnMotherRollback") : null;
+      const btn = t && t.closest ? t.closest("#btnMotherApplyFile,#btnMotherApplyPasted,#btnMotherRollback") : null;
       return btn ? btn.id : "";
-    } catch {
-      return "";
-    }
+    } catch { return ""; }
   }
 
-  function installGlobalCapture() {
+  function installCapture() {
     const handler = (ev) => {
-      const id = findBtnIdFromEvent(ev);
+      const id = getBtnId(ev);
       if (!id) return;
 
-      // IMPORTANTÍSSIMO: para tudo antes de outros scripts
       try { ev.preventDefault(); ev.stopPropagation(); } catch {}
 
-      // garante render antes de agir
+      // garante render (caso sumiu)
       renderMotherCard();
-
-      // debug visível
-      try { log("MAE click captured: " + id + " (" + ev.type + ")"); } catch {}
 
       if (id === "btnMotherApplyFile") return applyFromFile();
       if (id === "btnMotherApplyPasted") return applyFromPaste();
       if (id === "btnMotherRollback") return rollback();
     };
 
-    // CAPTURE = true
     document.addEventListener("touchend", handler, { passive: false, capture: true });
     document.addEventListener("click", handler, { passive: false, capture: true });
     document.addEventListener("pointerup", handler, { passive: false, capture: true });
   }
 
+  function installObserver() {
+    // se o adminView/mount aparecer depois (ou for recriado), re-renderiza
+    const obs = new MutationObserver(() => {
+      if ($("motherMaintCard")) return;
+      renderMotherCard();
+    });
+
+    obs.observe(document.documentElement, { childList: true, subtree: true });
+  }
+
   function init() {
-    // Render + instala capture (mesmo se overlay existir)
+    installCapture();
+    installObserver();
+
+    // tenta render agora, se não der, o observer resolve depois
     renderMotherCard();
-    installGlobalCapture();
-
-    const saved = loadBundle();
-    if (saved) {
-      const at = localStorage.getItem(KEY_BUNDLE_AT) || "";
-      writeOut("motherMaintOut", "Bundle já existe no localStorage ✅\n" + (at ? ("Salvo em: " + at) : ""));
-    }
-
-    // marca carregamento (você vê no adminOut)
-    const adminOut = $("adminOut");
-    if (adminOut) {
-      adminOut.textContent =
-        (adminOut.textContent || "Pronto.") +
-        "\n\nMAE v1.2 ✅ carregado (admin.js capture delegation)";
-    }
 
     setStatus("OK ✅");
-    log("MAE v1.2 carregado");
+    log("MAE v1.3 carregado (admin.js)");
   }
 
   if (document.readyState === "loading") {
