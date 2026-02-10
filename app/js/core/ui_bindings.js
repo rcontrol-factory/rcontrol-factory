@@ -1,9 +1,10 @@
 /* =========================================================
-  RControl Factory — core/ui_bindings.js (BASE / FIX LOGS)
+  RControl Factory — core/ui_bindings.js (FULL / BASE FIX)
   - Liga UI (Agent/Admin/Diag/Logs/Tools) ao core
-  - iOS-safe: click + touchend (evita double fire)
-  - Logs: usa #logsOut (view) + #logsBox (drawer)
-  - Fallback: lê localStorage "rcf:logs" (app.js atual)
+  - iOS-safe tap guard (touchend + click)
+  - LOGS FIX:
+      -> escreve em #logsOut (tela Logs) e #logsBox (drawer)
+      -> se RCF_LOGGER não existir, lê direto localStorage rcf:logs
 ========================================================= */
 
 (function () {
@@ -11,7 +12,14 @@
 
   // ---------- helpers ----------
   function $(id) { return document.getElementById(id); }
-  function safeText(v) { return (v === undefined || v === null) ? "" : String(v); }
+
+  function safeText(v) {
+    return (v === undefined || v === null) ? "" : String(v);
+  }
+
+  function safeJsonParse(s, fallback) {
+    try { return JSON.parse(s); } catch { return fallback; }
+  }
 
   // Evita "duplo clique" (touch + click) no iOS
   const TAP_GUARD_MS = 450;
@@ -29,13 +37,14 @@
       _lastTapAt = now;
 
       try { e.preventDefault(); e.stopPropagation(); } catch {}
-      try { fn(e); } catch {}
+      try { fn(e); } catch (err) { try { console.log("[RCF] tap err", err); } catch {} }
     };
 
     el.addEventListener("click", handler, { passive: false });
     el.addEventListener("touchend", handler, { passive: false });
   }
 
+  // ---------- context / commands ----------
   function getCtx() {
     return window.RCF_STATE || (window.RCF_STATE = {
       autoMode: false,
@@ -54,29 +63,20 @@
     if (!handler) {
       res = "ERRO: core/commands.js não carregou (RCF_COMMANDS.handle não existe).";
     } else {
-      try { res = handler(String(cmd || "").trim(), ctx); }
-      catch (err) { res = "ERRO ao executar comando: " + (err?.message || String(err)); }
+      try {
+        res = handler(String(cmd || "").trim(), ctx);
+      } catch (err) {
+        res = "ERRO ao executar comando: " + (err && err.message ? err.message : String(err));
+      }
     }
 
     if (outEl) outEl.textContent = safeText(res);
     return res;
   }
 
-  // ---------- logger integration ----------
-  function readLocalLogsFallback() {
-    // app.js atual: Storage prefix "rcf:" e bufKey "logs"
-    try {
-      const raw = localStorage.getItem("rcf:logs");
-      if (!raw) return "";
-      const arr = JSON.parse(raw);
-      if (Array.isArray(arr)) return arr.map(safeText).join("\n");
-      return safeText(arr);
-    } catch {
-      return "";
-    }
-  }
-
-  function loggerGetText() {
+  // ---------- Logger (pega de onde tiver) ----------
+  function getLogsText() {
+    // 1) Preferir logger oficial
     const L = window.RCF_LOGGER;
     if (L) {
       if (typeof L.getText === "function") return safeText(L.getText());
@@ -84,19 +84,26 @@
       if (Array.isArray(L.lines)) return L.lines.map(safeText).join("\n");
       if (Array.isArray(L.buffer)) return L.buffer.map(safeText).join("\n");
     }
-    // fallback pro Logger do app.js (localStorage)
-    return readLocalLogsFallback();
+
+    // 2) Fallback: o app.js grava em localStorage "rcf:logs" como JSON array
+    try {
+      const raw = localStorage.getItem("rcf:logs");
+      const arr = safeJsonParse(raw, []);
+      if (Array.isArray(arr)) return arr.map(safeText).join("\n");
+      if (typeof raw === "string") return raw;
+    } catch {}
+
+    return "";
   }
 
-  function loggerClear() {
+  function clearLogsEverywhere() {
+    // limpa logger se existir
     const L = window.RCF_LOGGER;
-    if (L) {
-      if (typeof L.clear === "function") { L.clear(); return; }
-      if (Array.isArray(L.lines)) L.lines.length = 0;
-      if (Array.isArray(L.buffer)) L.buffer.length = 0;
-      return;
+    if (L && typeof L.clear === "function") {
+      try { L.clear(); } catch {}
     }
-    // fallback pro app.js
+
+    // limpa fallback do app.js
     try { localStorage.setItem("rcf:logs", JSON.stringify([])); } catch {}
   }
 
@@ -115,7 +122,7 @@
     let rep = "";
     if (P && typeof P.applyAll === "function") {
       try { rep = P.applyAll(); }
-      catch (e) { rep = "ERRO applyAll: " + safeText(e?.message || e); }
+      catch (e) { rep = "ERRO applyAll: " + safeText(e && e.message ? e.message : e); }
     } else {
       rep = "Patchset não disponível (RCF_PATCHSET.applyAll não existe).";
     }
@@ -128,7 +135,7 @@
     let rep = "";
     if (P && typeof P.clear === "function") {
       try { P.clear(); rep = "Patches descartados ✅"; }
-      catch (e) { rep = "ERRO clear: " + safeText(e?.message || e); }
+      catch (e) { rep = "ERRO clear: " + safeText(e && e.message ? e.message : e); }
     } else {
       rep = "Patchset não disponível (RCF_PATCHSET.clear não existe).";
     }
@@ -151,6 +158,7 @@
     info.push("RCF_COMMANDS: " + (!!window.RCF_COMMANDS));
     info.push("RCF_PATCHSET: " + (!!window.RCF_PATCHSET));
     info.push("RCF_LOGGER: " + (!!window.RCF_LOGGER));
+    info.push("localStorage rcf:logs: " + (localStorage.getItem("rcf:logs") ? "OK" : "vazio"));
     info.push("navigator.onLine: " + (typeof navigator !== "undefined" ? navigator.onLine : "n/a"));
     info.push("ua: " + (typeof navigator !== "undefined" ? navigator.userAgent : "n/a"));
     return info.join("\n");
@@ -167,12 +175,7 @@
     const btnDiscard = $("btnAgentDiscard");
 
     if (btnRun && input) bindTap(btnRun, () => runCommand(input.value, out));
-    if (btnClear && input) {
-      bindTap(btnClear, () => {
-        input.value = "";
-        if (out) out.textContent = "Limpo.";
-      });
-    }
+    if (btnClear && input) bindTap(btnClear, () => { input.value = ""; if (out) out.textContent = "Limpo."; });
 
     if (btnApprove) bindTap(btnApprove, () => patchApplyAll(out));
     if (btnDiscard) bindTap(btnDiscard, () => patchClear(out));
@@ -201,7 +204,6 @@
         if (out) out.textContent = safeText(rep);
       });
     }
-
     if (btnClear) bindTap(btnClear, () => { if (out) out.textContent = "Limpo."; });
     if (btnApply) bindTap(btnApply, () => patchApplyAll(out));
     if (btnDiscard) bindTap(btnDiscard, () => patchClear(out));
@@ -218,34 +220,50 @@
         if (out) out.textContent = safeText(rep);
       });
     }
-
     if (btnClear) bindTap(btnClear, () => { if (out) out.textContent = "Pronto."; });
   }
 
   function bindLogsViewAndTools() {
-    const logsViewBox = $("logsOut"); // ✅ ID real do HTML
-    const toolsLogsBox = $("logsBox"); // ✅ drawer
+    // ✅ IDs reais do seu HTML:
+    const logsViewBox = $("logsOut"); // tela Logs
+    const toolsLogsBox = $("logsBox"); // drawer Ferramentas
 
     const btnRefresh = $("btnLogsRefresh");
     const btnCopy = $("btnLogsCopy");
     const btnClear = $("btnLogsClear");
 
-    const btnClearLogs = $("btnClearLogs");
-    const btnCopyLogs = $("btnCopyLogs");
+    const btnClearLogs = $("btnClearLogs"); // drawer
+    const btnCopyLogs = $("btnCopyLogs");   // drawer
 
     const refresh = () => {
-      const text = loggerGetText() || "Logs...";
-      if (logsViewBox) logsViewBox.textContent = text;
-      if (toolsLogsBox) toolsLogsBox.textContent = text;
+      const text = getLogsText();
+      const show = text ? text : "Logs...";
+      if (logsViewBox) logsViewBox.textContent = show;
+      if (toolsLogsBox) toolsLogsBox.textContent = show;
+
+      // opcional: mostrar feedback no pill do topo se existir
+      const pill = $("statusText");
+      if (pill) pill.textContent = "Logs atualizados ✅";
+      setTimeout(() => {
+        const p = $("statusText");
+        if (p) p.textContent = "OK ✅";
+      }, 900);
     };
 
     const copy = async () => {
-      const text = loggerGetText() || "";
-      try { await navigator.clipboard.writeText(text); alert("Logs copiados ✅"); }
-      catch { alert("iOS bloqueou copiar. Copie manual pelo drawer (⚙️)."); }
+      const text = getLogsText() || "";
+      try {
+        await navigator.clipboard.writeText(text);
+        alert("Logs copiados ✅");
+      } catch {
+        alert("iOS bloqueou copiar. Selecione o texto e copie manual.");
+      }
     };
 
-    const clear = () => { loggerClear(); refresh(); };
+    const clear = () => {
+      clearLogsEverywhere();
+      refresh();
+    };
 
     if (btnRefresh) bindTap(btnRefresh, refresh);
     if (btnCopy) bindTap(btnCopy, copy);
@@ -254,7 +272,8 @@
     if (btnClearLogs) bindTap(btnClearLogs, clear);
     if (btnCopyLogs) bindTap(btnCopyLogs, copy);
 
-    refresh(); // já inicia preenchido
+    // Atualiza uma vez ao iniciar
+    refresh();
   }
 
   function init() {
@@ -268,7 +287,9 @@
     loggerPush("log", "core/ui_bindings.js carregado ✅ (logs fix)");
   }
 
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
-  else init();
-
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
 })();
