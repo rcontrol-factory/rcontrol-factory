@@ -1,3 +1,7 @@
+/* ===== FIX: esconder dock inferior (Agent/Admin/Diag/Logs) ===== */
+.bottom-dock, #bottomDock, .dock, .nav-bottom, .fabbar {
+  display: none !important;
+}
 :root{
   --bg:#0b1220;
   --card:#0f1a2e;
