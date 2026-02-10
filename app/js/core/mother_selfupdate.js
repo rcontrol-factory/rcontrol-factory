@@ -1,8 +1,8 @@
 /* =========================================================
-  RControl Factory — core/mother_selfupdate.js (FULL / iOS TAP FIX)
+  RControl Factory — core/mother_selfupdate.js (FULL)
   - Self-update da Mãe via Service Worker overrides (RCF_VFS)
-  - Lê /import/mother_bundle.json (ou bundle colado)
-  - iOS-safe tap: click + touchend (passive:false) + stopPropagation
+  - iOS: click + touchend (passive:false)
+  - FIX: auto-unblock overlays que ficam em cima dos 3 botões
 ========================================================= */
 (() => {
   "use strict";
@@ -44,6 +44,8 @@
       el.style.touchAction = "manipulation";
       el.style.webkitTapHighlightColor = "transparent";
       el.style.userSelect = "none";
+      el.style.position = el.style.position || "relative";
+      el.style.zIndex = el.style.zIndex || "5";
     } catch {}
   }
 
@@ -66,19 +68,111 @@
       }
     };
 
-    // remove possíveis binds antigos
-    try {
-      el.onclick = null;
-      el.ontouchend = null;
-    } catch {}
+    // limpa binds antigos
+    try { el.onclick = null; el.ontouchend = null; } catch {}
 
     el.addEventListener("click", handler, { passive: false });
     el.addEventListener("touchend", handler, { passive: false });
 
-    // fallback (quando safari ignora listener por algum motivo)
+    // fallback
     try { el.onclick = (e) => handler(e || window.event); } catch {}
   }
 
+  // -------- AUTO-UNBLOCK (overlay em cima dos botões) --------
+  function isRoot(el) {
+    return el === document.documentElement || el === document.body;
+  }
+
+  function sameOrInside(a, b) {
+    if (!a || !b) return false;
+    return a === b || a.contains(b);
+  }
+
+  function centerPoint(el) {
+    const r = el.getBoundingClientRect();
+    const x = Math.round(r.left + r.width / 2);
+    const y = Math.round(r.top + r.height / 2);
+    return { x, y, r };
+  }
+
+  function tagInfo(el) {
+    if (!el) return "(null)";
+    const id = el.id ? `#${el.id}` : "";
+    const cls = (el.className && typeof el.className === "string") ? "." + el.className.split(/\s+/).filter(Boolean).slice(0,3).join(".") : "";
+    return `${el.tagName}${id}${cls}`;
+  }
+
+  function unblockButton(btn, maxSteps = 8) {
+    if (!btn) return { ok: false, msg: "btn null" };
+
+    forceClickable(btn);
+
+    const { x, y } = centerPoint(btn);
+
+    const changed = [];
+    for (let i = 0; i < maxSteps; i++) {
+      const top = document.elementFromPoint(x, y);
+      if (!top) return { ok: false, msg: "elementFromPoint vazio" };
+
+      // se já chegou no botão (ou algo dentro dele), acabou
+      if (sameOrInside(btn, top)) {
+        return { ok: true, msg: `OK: alcançável. steps=${i}`, changed };
+      }
+
+      // se o topo for root, não dá pra matar
+      if (isRoot(top)) {
+        return { ok: false, msg: `Topo é root (${tagInfo(top)}).`, changed };
+      }
+
+      // tenta “furar” o overlay: pointer-events none
+      try {
+        const prev = top.style.pointerEvents;
+        top.style.pointerEvents = "none";
+        changed.push({ el: top, prev, now: "none", who: tagInfo(top) });
+      } catch {}
+
+      // continua loop para ver se liberou
+    }
+
+    const finalTop = document.elementFromPoint(x, y);
+    const ok = !!finalTop && sameOrInside(btn, finalTop);
+    return { ok, msg: ok ? "OK após loop" : `Ainda bloqueado por: ${tagInfo(finalTop)}`, changed };
+  }
+
+  function autoUnblockMaintenanceButtons() {
+    const out = $id("adminOut");
+
+    const ids = ["btnMotherApplyImport", "btnMotherApplyPaste", "btnMotherRollback"];
+    const rep = [];
+    rep.push("MAINTENANCE TAP FIX (auto-unblock) ✅");
+    rep.push("—");
+
+    ids.forEach((id) => {
+      const btn = $id(id);
+      if (!btn) {
+        rep.push(`⚠️ ${id}: não encontrado`);
+        return;
+      }
+
+      const r = unblockButton(btn, 10);
+      rep.push(`${r.ok ? "✅" : "❌"} ${id}: ${r.msg}`);
+
+      // loga quem foi “desativado”
+      if (r.changed && r.changed.length) {
+        rep.push("  overlays desativados:");
+        r.changed.slice(0, 6).forEach(c => rep.push("  - " + c.who));
+        if (r.changed.length > 6) rep.push(`  - ... +${r.changed.length - 6}`);
+      }
+    });
+
+    rep.push("");
+    rep.push("Se os botões ainda não clicarem: tire print do topo do adminOut após esse texto.");
+    if (out) out.textContent = rep.join("\n");
+
+    try { console.log("[RCF]", rep.join("\n")); } catch {}
+  }
+
+  // -------- bundle ops --------
   async function applyBundle(bundle, opts = {}) {
     const out = $id("adminOut");
     const statusText = $id("statusText");
@@ -216,7 +310,7 @@
   }
 
   function init() {
-    // garante que nada "cancela" os taps no body
+    // garante “vida” no touch
     try { document.body.addEventListener("touchstart", () => {}, { passive: true }); } catch {}
 
     const b1 = $id("btnMotherApplyImport");
@@ -226,11 +320,14 @@
     // força clique sempre
     forceClickable(b1); forceClickable(b2); forceClickable(b3);
 
+    // 🔥 auto-desbloqueia overlays em cima deles
+    autoUnblockMaintenanceButtons();
+
+    // bindings (mesmo se overlay existia antes, agora deve estar furado)
     bindTap(b1, onApplyFromImport);
     bindTap(b2, onApplyFromPaste);
     bindTap(b3, onRollback);
 
-    // logzinho pra saber que carregou
     try { console.log("[RCF] mother_selfupdate.js loaded ✅"); } catch {}
   }
 
