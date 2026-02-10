@@ -1,121 +1,150 @@
-/* RControl Factory — sw.js (FULL) — v2026.02.10-3
-   Fix: iPhone preso em HTML antigo + scripts antigos (Admin não atualiza)
-   - Cache versionado (força limpar)
-   - skipWaiting + clientsClaim
-   - Network-first para navegação (HTML)
-   - Cache-first para assets
+/* RControl Factory — sw.js (FULL) — Mother Overrides
+   - Cache básico offline-first
+   - Override via localStorage (bundle salvo pela Mãe)
+   - Quando existir override para uma URL, SW responde por cima
 */
 
-const SW_VERSION = "v2026.02.10-3";
-const CACHE_NAME = `rcf-cache-${SW_VERSION}`;
+const CACHE_NAME = "rcf-cache-v1.3"; // se mudar algo, incremente aqui
 
-// Ajuste se seu app NÃO estiver na raiz:
-const APP_SCOPE = self.registration.scope; // auto
+// arquivos básicos do app (ajuste se quiser adicionar mais)
+const APP_SHELL = [
+  "/",
+  "/index.html",
+  "/styles.css",
+  "/app.js",
+  "/manifest.json",
 
-// Lista mínima de arquivos essenciais
-const CORE_ASSETS = [
-  "./",
-  "./index.html",
-  "./styles.css",
-  "./app.js",
-  "./manifest.json",
+  // js (seu layout atual)
+  "/js/core/logger.js",
+  "/js/core/storage.js",
+  "/js/core/errors.js",
+  "/js/core/policy.js",
+  "/js/core/risk.js",
+  "/js/core/snapshot.js",
+  "/js/core/patch.js",
+  "/js/core/patchset.js",
+  "/js/core/diagnostics.js",
+  "/js/core/commands.js",
+  "/js/core/ui_safety.js",
+  "/js/core/ui_bindings.js",
+  "/js/core/selfheal.js",
+  "/js/core/autofix.js",
+
+  "/js/admin.js",
+  "/js/ai.builder.js"
 ];
 
-// Se seus scripts ficam em /core/... (como no seu index.html), adiciona também:
-const CORE_SCRIPTS = [
-  "./core/logger.js",
-  "./core/storage.js",
-  "./core/errors.js",
-  "./core/policy.js",
-  "./core/risk.js",
-  "./core/snapshot.js",
-  "./core/patch.js",
-  "./core/patchset.js",
-  "./core/diagnostics.js",
-  "./core/commands.js",
-  "./core/ui_safety.js",
-  "./core/ui_bindings.js",
-  "./core/selfheal.js",
-  "./core/autofix.js",
-  "./core/admin.js",
-  "./core/ai.builder.js",
-];
+// ===== Helpers =====
+function normalizePath(url) {
+  // transforma https://site/app/js/x.js -> /js/x.js
+  try {
+    const u = new URL(url);
+    return u.pathname || "/";
+  } catch {
+    return "/";
+  }
+}
 
-self.addEventListener("install", (event) => {
-  event.waitUntil((async () => {
-    try {
-      const cache = await caches.open(CACHE_NAME);
-      await cache.addAll([...CORE_ASSETS, ...CORE_SCRIPTS]);
-    } catch (e) {
-      // se algum asset falhar, não impede instalação
+// Lê overrides do bundle via localStorage **usando clients** (SW não acessa localStorage direto)
+// Então a gente pede pra página responder com o bundle.
+async function getBundleFromClient() {
+  const allClients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+  if (!allClients || !allClients.length) return null;
+
+  // pergunta para o primeiro client
+  const client = allClients[0];
+  const channel = new MessageChannel();
+
+  const p = new Promise((resolve) => {
+    const t = setTimeout(() => resolve(null), 650);
+    channel.port1.onmessage = (ev) => {
+      clearTimeout(t);
+      resolve(ev.data || null);
+    };
+  });
+
+  client.postMessage({ type: "RCF_GET_MOTHER_BUNDLE" }, [channel.port2]);
+  return await p;
+}
+
+async function tryOverrideResponse(req) {
+  // Só aplica override em GET
+  if (req.method !== "GET") return null;
+
+  const path = normalizePath(req.url);
+
+  // Não sobrescrever sw.js por segurança
+  if (path === "/sw.js") return null;
+
+  const bundle = await getBundleFromClient();
+  if (!bundle || !bundle.files || typeof bundle.files !== "object") return null;
+
+  const text = bundle.files[path];
+  if (typeof text !== "string") return null;
+
+  // content-type simples
+  let contentType = "text/plain; charset=utf-8";
+  if (path.endsWith(".js")) contentType = "application/javascript; charset=utf-8";
+  if (path.endsWith(".css")) contentType = "text/css; charset=utf-8";
+  if (path.endsWith(".html")) contentType = "text/html; charset=utf-8";
+  if (path.endsWith(".json")) contentType = "application/json; charset=utf-8";
+
+  return new Response(text, {
+    status: 200,
+    headers: {
+      "Content-Type": contentType,
+      "X-RCF-Override": "1"
     }
-    self.skipWaiting(); // ✅ ativa rápido
-  })());
+  });
+}
+
+// ===== SW lifecycle =====
+self.addEventListener("install", (event) => {
+  event.waitUntil(
+    (async () => {
+      const cache = await caches.open(CACHE_NAME);
+      await cache.addAll(APP_SHELL);
+      self.skipWaiting();
+    })()
+  );
 });
 
 self.addEventListener("activate", (event) => {
-  event.waitUntil((async () => {
-    // ✅ remove caches antigos
-    const keys = await caches.keys();
-    await Promise.all(keys.map((k) => (k !== CACHE_NAME ? caches.delete(k) : Promise.resolve())));
-    await self.clients.claim(); // ✅ assume as abas já abertas
-  })());
+  event.waitUntil(
+    (async () => {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k) => (k === CACHE_NAME ? null : caches.delete(k))));
+      self.clients.claim();
+    })()
+  );
 });
 
-// helpers
-function isNavigationRequest(req) {
-  return req.mode === "navigate" || (req.destination === "document");
-}
-
-function isAssetRequest(req) {
-  return ["script", "style", "image", "font"].includes(req.destination);
-}
-
+// ===== Fetch: override > cache > network =====
 self.addEventListener("fetch", (event) => {
   const req = event.request;
-  const url = new URL(req.url);
 
-  // só cuida do mesmo origin
-  if (url.origin !== self.location.origin) return;
+  event.respondWith(
+    (async () => {
+      // 1) Override primeiro (Mãe manda)
+      const overridden = await tryOverrideResponse(req);
+      if (overridden) return overridden;
 
-  // ✅ NAVIGATION (HTML): network-first
-  if (isNavigationRequest(req)) {
-    event.respondWith((async () => {
-      try {
-        const fresh = await fetch(req, { cache: "no-store" });
-        const cache = await caches.open(CACHE_NAME);
-        cache.put(req, fresh.clone());
-        return fresh;
-      } catch {
-        const cached = await caches.match(req);
-        return cached || caches.match("./index.html") || new Response("Offline", { status: 200 });
-      }
-    })());
-    return;
-  }
-
-  // ✅ ASSETS: cache-first (offline-first)
-  if (isAssetRequest(req) || req.method === "GET") {
-    event.respondWith((async () => {
-      const cached = await caches.match(req);
+      // 2) Cache
+      const cache = await caches.open(CACHE_NAME);
+      const cached = await cache.match(req);
       if (cached) return cached;
 
+      // 3) Network (e guarda no cache se for GET)
       try {
-        const fresh = await fetch(req);
-        const cache = await caches.open(CACHE_NAME);
-        cache.put(req, fresh.clone());
-        return fresh;
-      } catch {
-        return cached || new Response("", { status: 504 });
+        const res = await fetch(req);
+        if (req.method === "GET" && res && res.status === 200) {
+          cache.put(req, res.clone());
+        }
+        return res;
+      } catch (e) {
+        // fallback simples
+        return cached || new Response("Offline", { status: 503 });
       }
-    })());
-  }
-});
-
-// (opcional) receber mensagens (se você usar)
-self.addEventListener("message", (event) => {
-  const data = event.data || {};
-  if (data.type === "SW_PING") {
-    event.source?.postMessage({ type: "SW_PONG", version: SW_VERSION, cache: CACHE_NAME });
-  }
+    })()
+  );
 });
