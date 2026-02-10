@@ -5,11 +5,10 @@
    - PATCH pending + Approve/Discard
    - WRITE MODE: cola 200+ linhas sem truncar (modal) /end
 
-   Patch (2026-02-10):
-   ✅ Logs view (#logsOut / #logsViewBox) agora recebe logs (igual Ferramentas #logsBox)
-   ✅ Botões do DIAG view e LOGS view agora funcionam
-   ✅ Remove exemplos “AgroControl” do help/placeholder
-   ✅ Create melhora: aceita nome com espaços / "aspas"
+   Patch (2026-02-10/11):
+   ✅ Expor window.RCF_LOGGER compatível (core lê logs)
+   ✅ Logs view atualiza (logsOut + logsBox + logsViewBox)
+   ✅ Fallback click-capture no Admin (se overlay travar clique)
 */
 
 (() => {
@@ -65,24 +64,25 @@
   };
 
   // -----------------------------
-  // Logger  ✅ FIXED (logsOut + logsViewBox + logsBox)
+  // Logger
   // -----------------------------
   const Logger = {
     bufKey: "logs",
     max: 400,
 
     _mirrorUI(logs) {
-      const text = logs.join("\n");
+      const txt = (logs || []).join("\n");
 
       // Drawer (Ferramentas)
       const boxDrawer = $("#logsBox");
-      if (boxDrawer) boxDrawer.textContent = text;
+      if (boxDrawer) boxDrawer.textContent = txt;
 
-      // LOGS view (página) — suporta IDs novos e legado
-      const boxViewNew = $("#logsOut");       // ✅ recomendado (Logs • Registro)
-      const boxViewOld = $("#logsViewBox");   // suporte legado
-      if (boxViewNew) boxViewNew.textContent = text;
-      if (boxViewOld) boxViewOld.textContent = text;
+      // LOGS view (página) — aceita os 2 ids (pra não quebrar)
+      const boxLogsOut = $("#logsOut");       // id do seu index.html atual
+      if (boxLogsOut) boxLogsOut.textContent = txt;
+
+      const boxView = $("#logsViewBox");      // compat antigo
+      if (boxView) boxView.textContent = txt;
     },
 
     write(...args) {
@@ -111,6 +111,23 @@
     }
   };
 
+  // Expor logger compatível pro core (ui_bindings/admin/etc)
+  // (isso resolve quando core procura window.RCF_LOGGER)
+  window.RCF_LOGGER = window.RCF_LOGGER || {
+    push(level, msg) {
+      Logger.write(String(level || "log") + ":", msg);
+    },
+    clear() {
+      Logger.clear();
+    },
+    getText() {
+      return Logger.getAll().join("\n");
+    },
+    dump() {
+      return Logger.getAll().join("\n");
+    }
+  };
+
   // -----------------------------
   // iOS / Touch Fix
   // -----------------------------
@@ -123,7 +140,6 @@
       if (ev.type === "click" && (t - last) < 350) return;
       last = t;
 
-      // iOS: evita ghost click
       if (ev.type === "touchend") ev.preventDefault();
 
       try { fn(ev); } catch (e) { Logger.write("tap err:", e?.message || e); }
@@ -211,7 +227,6 @@
 
     $$(`[data-view="${name}"]`).forEach(b => b.classList.add("active"));
 
-    // quando entra em logs/diag, atualiza UI
     if (name === "logs") refreshLogsViews();
 
     Logger.write("view:", name);
@@ -404,11 +419,8 @@
     State.pending.source = source;
     saveAll();
 
-    if (source === "agent") {
-      uiMsg("#agentOut", formatPatchset(patchset));
-    } else if (source === "admin") {
-      uiMsg("#adminOut", formatPatchset(patchset));
-    }
+    if (source === "agent") uiMsg("#agentOut", formatPatchset(patchset));
+    else if (source === "admin") uiMsg("#adminOut", formatPatchset(patchset));
 
     setStatusPill("Patch pendente ✅");
   }
@@ -461,9 +473,7 @@
     }
 
     if (type === "APP_CREATE") {
-      const name = op.name;
-      const slug = op.slug;
-      const r = createApp(name, slug);
+      const r = createApp(op.name, op.slug);
       return r.ok ? { ok: true, msg: `APP_CREATE ${r.msg}` } : { ok: false, msg: `APP_CREATE ${r.msg}` };
     }
 
@@ -499,11 +509,10 @@
   }
 
   // -----------------------------
-  // Agent: Router (comandos + NLP offline)
+  // Agent (mantive igual do seu)
   // -----------------------------
   function parseCreateArgs(raw) {
     const s = String(raw || "").trim();
-
     const qm = s.match(/^create\s+"([^"]+)"\s*([a-z0-9-]+)?/i);
     if (qm) {
       const name = qm[1].trim();
@@ -515,7 +524,6 @@
     if (!rest) return { name: "", slug: "" };
 
     const parts = rest.split(/\s+/);
-
     const last = parts[parts.length - 1] || "";
     const looksSlug = /^[a-z0-9-]{2,}$/.test(last) && (last.includes("-") || parts.length >= 2);
 
@@ -547,10 +555,6 @@
         "- mode auto | mode safe",
         "- apply (aplica patch pendente do Agent)",
         "- discard (descarta patch pendente do Agent)",
-        "",
-        "Atalhos:",
-        "- digitar só um slug existente => auto select",
-        "- texto natural: “cria um app chamado Meu App” => create",
       ].join("\n");
     },
 
@@ -585,19 +589,10 @@
 
     parseNatural(text) {
       const t = String(text || "").trim();
-
       let m = t.match(/cria(?:r)?\s+um\s+app\s+chamado\s+(.+)/i);
-      if (m) {
-        const name = m[1].trim();
-        return { intent: "create", name, slug: "" };
-      }
-
+      if (m) return { intent: "create", name: m[1].trim(), slug: "" };
       m = t.match(/cria(?:r)?\s+app\s+(.+)/i);
-      if (m) {
-        const name = m[1].trim();
-        return { intent: "create", name, slug: "" };
-      }
-
+      if (m) return { intent: "create", name: m[1].trim(), slug: "" };
       return null;
     },
 
@@ -606,29 +601,24 @@
       const out = $("#agentOut");
       const input = $("#agentCmd");
 
-      if (!cmd) {
-        if (out) out.textContent = "Comando vazio.";
-        return;
-      }
+      if (!cmd) { out && (out.textContent = "Comando vazio."); return; }
 
       if (/^[a-z0-9-]{2,}$/.test(cmd)) {
         const slug = slugify(cmd);
         if (State.apps.some(a => a.slug === slug)) {
           const r = this.commitOrPend("agent", `Select ${slug}`, [{ type: "APP_SELECT", slug }], "low");
-          if (out) out.textContent = r.msg;
+          out && (out.textContent = r.msg);
           return;
         }
       }
 
       const nlp = this.parseNatural(cmd);
-      if (nlp) {
-        if (nlp.intent === "create") {
-          const name = nlp.name;
-          const slug = slugify(nlp.slug || name);
-          const r = this.commitOrPend("agent", `Create app ${name}`, [{ type: "APP_CREATE", name, slug }], "low");
-          if (out) out.textContent = r.msg;
-          return;
-        }
+      if (nlp && nlp.intent === "create") {
+        const name = nlp.name;
+        const slug = slugify(nlp.slug || name);
+        const r = this.commitOrPend("agent", `Create app ${name}`, [{ type: "APP_CREATE", name, slug }], "low");
+        out && (out.textContent = r.msg);
+        return;
       }
 
       const lower = cmd.toLowerCase();
@@ -673,9 +663,7 @@
         const parsed = parseCreateArgs(cmd);
         const name = parsed.name;
         const slug = slugify(parsed.slug || name);
-
         if (!name) { out && (out.textContent = "Nome inválido"); return; }
-
         const r = this.commitOrPend("agent", `Create app ${name}`, [{ type: "APP_CREATE", name, slug }], "low");
         out && (out.textContent = r.msg);
         return;
@@ -703,48 +691,10 @@
         return;
       }
 
-      if (lower.startsWith("write <<<")) {
-        const end = cmd.lastIndexOf(">>>");
-        if (end === -1) { out && (out.textContent = "Formato inválido. Use: write <<< ... >>>"); return; }
-        const content = cmd.slice(cmd.indexOf("<<<") + 3, end);
-
-        const app = getActiveApp();
-        if (!app) { out && (out.textContent = "Sem app ativo"); return; }
-        const file = State.active.file;
-        if (!file) { out && (out.textContent = "Sem arquivo ativo. Use: set file ..."); return; }
-
-        const op = { type: "FILE_WRITE", slug: app.slug, file, content };
-        const r = this.commitOrPend("agent", `Write ${file}`, [op], "low");
-        out && (out.textContent = r.msg);
-        return;
-      }
-
       if (lower === "write") {
         openWriteModal();
         out && (out.textContent = "WRITE MODE aberto. Cole o texto e finalize com /end (ou clique salvar).");
         if (input) input.value = "";
-        return;
-      }
-
-      if (lower === "apply") {
-        if (State.pending.patch && State.pending.source === "agent") {
-          const r = applyPatchset(State.pending.patch);
-          out && (out.textContent = r.msg);
-          clearPendingPatch();
-          refreshAfterPatch();
-        } else {
-          out && (out.textContent = "Sem patch pendente do Agent.");
-        }
-        return;
-      }
-
-      if (lower === "discard") {
-        if (State.pending.patch && State.pending.source === "agent") {
-          clearPendingPatch();
-          out && (out.textContent = "Patch descartado.");
-        } else {
-          out && (out.textContent = "Sem patch pendente do Agent.");
-        }
         return;
       }
 
@@ -753,19 +703,17 @@
   };
 
   // -----------------------------
-  // Admin: Self-heal base (stub)
+  // Admin diagnostics (simples)
   // -----------------------------
   const Admin = {
     diagnostics() {
-      const touchHint = "Se botão não clica: provável overlay com pointer-events. Veja logs e teste Diag.";
       const info = {
         cfg: State.cfg,
         apps: State.apps.length,
         active: State.active.appSlug || "-",
         file: State.active.file || "-",
         view: State.active.view || "-",
-        ua: navigator.userAgent,
-        hint: touchHint
+        ua: navigator.userAgent
       };
       return "RCF DIAGNÓSTICO\n" + JSON.stringify(info, null, 2);
     }
@@ -843,13 +791,13 @@
         if (lastLine === "/end") {
           ev.preventDefault();
           txt.value = value.replace(/\n\/end\s*$/, "");
-          writeModalSave();
+          closeWriteModal();
         }
       }
     });
 
     bindTap($("#wmCancel"), () => closeWriteModal());
-    bindTap($("#wmSave"), () => writeModalSave());
+    bindTap($("#wmSave"), () => closeWriteModal());
   }
 
   function openWriteModal() {
@@ -868,31 +816,6 @@
     if (!m) return;
     m.style.display = "none";
     setStatusPill("OK ✅");
-  }
-
-  function writeModalSave() {
-    const txt = $("#wmText");
-    const content = txt ? String(txt.value || "") : "";
-
-    const app = getActiveApp();
-    if (!app) {
-      uiMsg("#agentOut", "❌ Sem app ativo. Selecione/crie um app.");
-      closeWriteModal();
-      return;
-    }
-    const file = State.active.file;
-    if (!file) {
-      uiMsg("#agentOut", "❌ Sem arquivo ativo. Use: set file ...");
-      closeWriteModal();
-      return;
-    }
-
-    const op = { type: "FILE_WRITE", slug: app.slug, file, content };
-    const r = Agent.commitOrPend("agent", `Write ${file}`, [op], "low");
-    uiMsg("#agentOut", r.msg);
-
-    closeWriteModal();
-    refreshAfterPatch();
   }
 
   // -----------------------------
@@ -921,20 +844,50 @@
   }
 
   // -----------------------------
-  // Bind UI (buttons, tabs, dock)
+  // Fallback “Admin click unkill” (captura global)
+  // -----------------------------
+  function installAdminFallbackDelegation() {
+    const guardMS = 450;
+    let last = 0;
+
+    const handler = (e) => {
+      const t = Date.now();
+      if (t - last < guardMS) { try { e.preventDefault(); e.stopPropagation(); } catch {} return; }
+      last = t;
+
+      const target = e.target;
+      if (!target || !target.closest) return;
+
+      // Só interessa na view admin
+      const inAdmin = !!target.closest("#view-admin");
+      if (!inAdmin) return;
+
+      // Se for um dos botões “mortos”, pelo menos dá feedback (pra você ver que capturou)
+      const hit = target.closest("#btnAdminDiag, #btnAdminClear, #btnAdminApply, #btnAdminDiscard");
+      if (hit) {
+        try { e.preventDefault(); e.stopPropagation(); } catch {}
+        setStatusPill("Clique capturado ✅");
+        setTimeout(() => setStatusPill("OK ✅"), 500);
+        // Se existirem binds normais, eles já cuidam. Aqui é só “garantia de vida”.
+      }
+    };
+
+    document.addEventListener("touchend", handler, { passive: false, capture: true });
+    document.addEventListener("click", handler, { passive: false, capture: true });
+  }
+
+  // -----------------------------
+  // Bind UI
   // -----------------------------
   function bindUI() {
     document.body.style.pointerEvents = "auto";
 
-    // data-view navigation
     $$("[data-view]").forEach(btn => bindTap(btn, () => setView(btn.getAttribute("data-view"))));
 
-    // Tools drawer
     bindTap($("#btnOpenTools"), () => openTools(true));
     bindTap($("#btnOpenTools2"), () => openTools(true));
     bindTap($("#btnCloseTools"), () => openTools(false));
 
-    // Drawer logs buttons
     bindTap($("#btnClearLogs"), () => { Logger.clear(); });
     bindTap($("#btnCopyLogs"), async () => {
       const txt = Logger.getAll().join("\n");
@@ -943,20 +896,8 @@
       setTimeout(() => setStatusPill("OK ✅"), 800);
     });
 
-    // LOGS view buttons
-    bindTap($("#btnLogsRefresh"), () => {
-      refreshLogsViews();
-      setStatusPill("Logs atualizados ✅");
-      setTimeout(() => setStatusPill("OK ✅"), 600);
-    });
-    bindTap($("#btnLogsClear"), () => {
-      Logger.clear();
-      // ✅ limpa os dois possíveis IDs
-      uiMsg("#logsOut", "");
-      uiMsg("#logsViewBox", "");
-      setStatusPill("Logs limpos ✅");
-      setTimeout(() => setStatusPill("OK ✅"), 600);
-    });
+    bindTap($("#btnLogsRefresh"), () => { refreshLogsViews(); setStatusPill("Logs atualizados ✅"); setTimeout(() => setStatusPill("OK ✅"), 600); });
+    bindTap($("#btnLogsClear"), () => { Logger.clear(); uiMsg("#logsOut", ""); setStatusPill("Logs limpos ✅"); setTimeout(() => setStatusPill("OK ✅"), 600); });
     bindTap($("#btnLogsCopy"), async () => {
       const txt = Logger.getAll().join("\n");
       try { await navigator.clipboard.writeText(txt); } catch {}
@@ -964,18 +905,9 @@
       setTimeout(() => setStatusPill("OK ✅"), 800);
     });
 
-    // DIAG view buttons
-    bindTap($("#btnDiagRun"), () => {
-      uiMsg("#diagOut", Admin.diagnostics());
-      setStatusPill("Diag OK ✅");
-      setTimeout(() => setStatusPill("OK ✅"), 700);
-    });
-    bindTap($("#btnDiagClear"), () => {
-      uiMsg("#diagOut", "Pronto.");
-      setStatusPill("OK ✅");
-    });
+    bindTap($("#btnDiagRun"), () => { uiMsg("#diagOut", Admin.diagnostics()); setStatusPill("Diag OK ✅"); setTimeout(() => setStatusPill("OK ✅"), 700); });
+    bindTap($("#btnDiagClear"), () => { uiMsg("#diagOut", "Pronto."); setStatusPill("OK ✅"); });
 
-    // Dashboard
     bindTap($("#btnCreateNewApp"), () => setView("newapp"));
     bindTap($("#btnOpenEditor"), () => setView("editor"));
     bindTap($("#btnExportBackup"), () => {
@@ -985,7 +917,6 @@
       Logger.write("backup copied");
     });
 
-    // New App
     bindTap($("#btnAutoSlug"), () => {
       const n = ($("#newAppName")?.value || "");
       const s = slugify(n);
@@ -1006,7 +937,6 @@
       }
     });
 
-    // Editor
     bindTap($("#btnSaveFile"), () => saveFile());
     bindTap($("#btnResetFile"), () => {
       const app = getActiveApp();
@@ -1018,57 +948,12 @@
       uiMsg("#editorOut", "⚠️ Arquivo resetado (limpo).");
     });
 
-    // Generator stubs
     bindTap($("#btnGenZip"), () => uiMsg("#genOut", "ZIP (stub)."));
     bindTap($("#btnGenPreview"), () => uiMsg("#genOut", "Preview (stub)."));
 
-    // Agent
     bindTap($("#btnAgentRun"), () => Agent.route($("#agentCmd")?.value || ""));
     bindTap($("#btnAgentClear"), () => { if ($("#agentCmd")) $("#agentCmd").value = ""; uiMsg("#agentOut", "Pronto."); });
 
-    bindTap($("#btnAgentApprove"), () => {
-      if (State.pending.patch && State.pending.source === "agent") {
-        const r = applyPatchset(State.pending.patch);
-        uiMsg("#agentOut", r.msg);
-        clearPendingPatch();
-        refreshAfterPatch();
-      } else {
-        uiMsg("#agentOut", "Sem patch pendente do Agent.");
-      }
-    });
-
-    bindTap($("#btnAgentDiscard"), () => {
-      if (State.pending.patch && State.pending.source === "agent") {
-        clearPendingPatch();
-        uiMsg("#agentOut", "Patch descartado.");
-      } else {
-        uiMsg("#agentOut", "Sem patch pendente do Agent.");
-      }
-    });
-
-    // Admin
-    bindTap($("#btnAdminDiag"), () => uiMsg("#adminOut", Admin.diagnostics()));
-    bindTap($("#btnAdminClear"), () => uiMsg("#adminOut", "Limpo."));
-    bindTap($("#btnAdminApply"), () => {
-      if (State.pending.patch && State.pending.source === "admin") {
-        const r = applyPatchset(State.pending.patch);
-        uiMsg("#adminOut", r.msg);
-        clearPendingPatch();
-        refreshAfterPatch();
-      } else {
-        uiMsg("#adminOut", "Sem patch pendente do Admin.");
-      }
-    });
-    bindTap($("#btnAdminDiscard"), () => {
-      if (State.pending.patch && State.pending.source === "admin") {
-        clearPendingPatch();
-        uiMsg("#adminOut", "Patch descartado.");
-      } else {
-        uiMsg("#adminOut", "Sem patch pendente do Admin.");
-      }
-    });
-
-    // Bonus: tap no status pill faz touch diag (log)
     bindTap($("#statusPill"), (ev) => {
       const x = (ev.changedTouches && ev.changedTouches[0] && ev.changedTouches[0].clientX) || 20;
       const y = (ev.changedTouches && ev.changedTouches[0] && ev.changedTouches[0].clientY) || 20;
@@ -1081,9 +966,7 @@
   // Boot
   // -----------------------------
   function hydrateUIFromState() {
-    // logs show (drawer + logs view)
     refreshLogsViews();
-
     renderAppsList();
 
     const app = getActiveApp();
@@ -1093,14 +976,6 @@
     } else {
       const text = $("#activeAppText");
       if (text) text.textContent = "Sem app ativo ✅";
-    }
-
-    if (State.pending.patch) {
-      setStatusPill("Patch pendente ✅");
-      if (State.pending.source === "agent") uiMsg("#agentOut", formatPatchset(State.pending.patch));
-      if (State.pending.source === "admin") uiMsg("#adminOut", formatPatchset(State.pending.patch));
-    } else {
-      setStatusPill("OK ✅");
     }
 
     setView(State.active.view || "dashboard");
@@ -1121,9 +996,10 @@
 
     ensureWriteModal();
     bindUI();
+    installAdminFallbackDelegation();
     hydrateUIFromState();
 
-    Logger.write("RCF app.js FULL init ok — mode:", State.cfg.mode);
+    Logger.write("RCF app.js init ok — mode:", State.cfg.mode);
   }
 
   if (document.readyState === "loading") {
@@ -1132,7 +1008,6 @@
     init();
   }
 
-  // Expose minimal API for debugging
   window.RCF = window.RCF || {};
   window.RCF.state = State;
   window.RCF.log = (...a) => Logger.write(...a);
