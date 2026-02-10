@@ -1,208 +1,161 @@
-/* core/ui_bindings.js
-   - iOS Safari touch/click reliability
-   - binds buttons even if IDs differ (by label fallback)
-*/
+/* =========================================================
+  RControl Factory — core/ui_bindings.js (FULL)
+  Liga Agent/Admin UI a core/commands.js
+  iOS-safe: click + touchstart
+========================================================= */
 
 (function () {
   "use strict";
 
-  function $(sel) { return document.querySelector(sel); }
-  function $all(sel) { return Array.from(document.querySelectorAll(sel)); }
-  function txt(el) { return (el?.textContent || "").trim().toLowerCase(); }
+  function $(id) { return document.getElementById(id); }
+  function on(el, ev, fn) { if (el) el.addEventListener(ev, fn, { passive: false }); }
 
-  function findButtonByText(wanted) {
-    wanted = wanted.toLowerCase();
-    const btns = $all("button, a[role='button']");
-    return btns.find(b => txt(b) === wanted) || null;
+  function runWith(inputEl, outEl) {
+    const cmd = String(inputEl?.value || "").trim();
+    if (!cmd) return;
+
+    const ctx = window.RCF_STATE || (window.RCF_STATE = { autoMode:false, safeMode:true, currentFile:"index.html" });
+
+    const res = window.RCF_COMMANDS?.handle(cmd, ctx);
+    if (outEl && typeof res === "string") outEl.textContent = res;
   }
 
-  function bindTap(el, fn) {
-    if (!el) return;
-    // iOS: use pointer + click fallback
-    el.addEventListener("pointerup", (e) => { e.preventDefault(); fn(e); }, { passive: false });
-    el.addEventListener("click", (e) => { e.preventDefault(); fn(e); }, { passive: false });
-  }
+  function bindAgentPanels() {
+    // --- Painel Agent (se existir)
+    const agentInput =
+      $("agentInput") || $("aiInput") || $("rcf-admin-cmd");
+    const agentOut =
+      $("agentOut") || $("aiOut") || $("rcf-admin-chat-out");
 
-  function safeGetAgentInput() {
-    return (
-      $("#agentInput") ||
-      $("#agentIn") ||
-      $("input[name='agent']") ||
-      $("textarea[name='agent']") ||
-      $("input[type='text']") // fallback
-    );
-  }
-
-  function safeGetAgentOut() {
-    return $("#agentOut") || $("#resultOut") || $("#result") || $("pre");
-  }
-
-  function setOut(pre, text) {
-    if (!pre) return;
-    pre.textContent = text;
-  }
-
-  function buildResultText(res) {
-    const head = res.title ? (res.title + "\n") : "";
-    const body = (res.lines || []).join("\n");
-    const footer = "\n\n" +
-      `active: ${res.active?.slug || "-"} | file: ${res.active?.file || "-"}` +
-      `\nauto=${res.modes?.auto ? "ON" : "OFF"} | safe=${res.modes?.safe ? "ON" : "OFF"}` +
-      `\nwriteMode=${res.writeMode?.on ? "ON" : "OFF"}` +
-      `\npending=${res.pending ? (res.pending.type + " → " + (res.pending.file || "")) : "none"}`;
-    return head + body + footer;
-  }
-
-  function updateBadges() {
-    // tries to update "Sem app ativo" / OK chips if present
-    try {
-      const core = window.RCF?.core;
-      if (!core) return;
-
-      const active = core.getActiveSlug();
-      const pending = core.getPending();
-
-      // find badge container by common texts
-      const chips = $all("div,span").filter(el => {
-        const t = txt(el);
-        return t.includes("sem app ativo") || t.includes("ok") || t.includes("nome/slug");
-      });
-
-      // update "Sem app ativo" chip if exists
-      const sem = chips.find(el => txt(el).includes("sem app ativo"));
-      if (sem) sem.textContent = active ? ("Ativo: " + active) : "Sem app ativo";
-
-      // show a tiny pending mark if we can find approve button
-      const approve = findButtonByText("aprovar sugestão");
-      if (approve) {
-        approve.disabled = !pending;
-        approve.style.opacity = pending ? "1" : "0.45";
-      }
-
-    } catch {}
-  }
-
-  function openView(viewName) {
-    // If your app uses data-view switching, we trigger it here
-    const btn = $all("[data-view]").find(b => (b.getAttribute("data-view") || "") === viewName);
-    if (btn) btn.click();
-  }
-
-  function initDock() {
-    // bottom dock buttons: data-view="agente/admin/settings..."
-    $all(".dockbtn,[data-view]").forEach(btn => {
-      bindTap(btn, () => {
-        // if your app already handles it, this won't break; it's a tap fix
-      });
-    });
-  }
-
-  function initTools() {
-    const core = window.RCF?.core;
-    if (!core) return;
-
-    const logsBox = $("#logsBox");
-    const btnCopyLogs = $("#btnCopyLogs") || findButtonByText("copiar logs");
-    const btnClearLogs = $("#btnClearLogs") || findButtonByText("limpar logs");
-
-    bindTap(btnClearLogs, () => {
-      core.clearLogs();
-      if (logsBox) logsBox.textContent = "";
-      updateBadges();
-    });
-
-    bindTap(btnCopyLogs, async () => {
-      const logs = core.getLogs();
-      const text = logs.map(l => `${l.ts} [${l.level}] ${l.msg} ${l.data ? JSON.stringify(l.data) : ""}`).join("\n");
-      try {
-        await navigator.clipboard.writeText(text);
-      } catch {
-        // fallback
-        const ta = document.createElement("textarea");
-        ta.value = text;
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand("copy");
-        ta.remove();
-      }
-    });
-
-    // If logsBox exists, show logs on load
-    if (logsBox) {
-      const logs = core.getLogs();
-      logsBox.textContent = logs.map(l => `${l.ts} [${l.level}] ${l.msg}`).join("\n");
-    }
-  }
-
-  function initAgent() {
-    const core = window.RCF?.core;
-    if (!core) return;
-
-    const input = safeGetAgentInput();
-    const out = safeGetAgentOut();
-
+    // Botões possíveis (vários layouts)
     const btnRun =
-      $("#btnAgentRun") || $("#btnRun") || findButtonByText("executar");
-
+      $("btnAgentRun") || $("aiRunBtn") || $("runBtn") || $("adminRunBtn");
     const btnClear =
-      $("#btnAgentClear") || $("#btnClear") || findButtonByText("limpar");
+      $("btnAgentClear") || $("aiClearBtn") || $("clearBtn");
 
-    const btnApprove =
-      $("#btnAgentApprove") || $("#btnApprove") || findButtonByText("aprovar sugestão");
-
-    const btnDiscard =
-      $("#btnAgentDiscard") || $("#btnDiscard") || findButtonByText("descartar sugestão");
-
-    function doRun(text) {
-      const res = core.run(text);
-      setOut(out, buildResultText(res));
-      updateBadges();
-      return res;
+    if (btnRun && agentInput) {
+      on(btnRun, "click", (e) => { e.preventDefault(); runWith(agentInput, agentOut); });
+      on(btnRun, "touchstart", (e) => { e.preventDefault(); runWith(agentInput, agentOut); });
     }
 
-    bindTap(btnRun, () => {
-      const v = (input?.value || "").trim();
-      if (!v) return;
-      doRun(v);
-    });
+    if (btnClear && agentInput) {
+      on(btnClear, "click", (e) => { e.preventDefault(); agentInput.value = ""; });
+      on(btnClear, "touchstart", (e) => { e.preventDefault(); agentInput.value = ""; });
+    }
 
-    bindTap(btnClear, () => {
-      if (input) input.value = "";
-      setOut(out, "");
-      updateBadges();
-    });
-
-    bindTap(btnApprove, () => {
-      doRun("apply");
-    });
-
-    bindTap(btnDiscard, () => {
-      doRun("discard");
-    });
-
-    // Allow Enter to execute (but keep paste-friendly)
-    if (input && input.tagName.toLowerCase() !== "textarea") {
-      input.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") {
+    // Enter pra executar (sem quebrar colagem grande)
+    if (agentInput) {
+      agentInput.addEventListener("keydown", (e) => {
+        // Enter sem shift executa, com shift quebra linha
+        if (e.key === "Enter" && !e.shiftKey) {
           e.preventDefault();
-          const v = (input.value || "").trim();
-          if (v) doRun(v);
+          runWith(agentInput, agentOut);
         }
       });
     }
+  }
 
-    // First paint
-    updateBadges();
+  function bindAdminDiagButtons() {
+    // “diagnóstico / copiar / limpar cache” (se existirem)
+    const diagBtn = $("diagBtn");
+    const copyDiagBtn = $("copyDiagBtn");
+    const clearPwaBtn = $("clearPwaBtn");
+    const adminOut = $("adminOut");
+
+    if (diagBtn && adminOut) {
+      on(diagBtn, "click", async (e) => {
+        e.preventDefault();
+        const rep = window.RCF?.factory?.buildDiagnosisReport
+          ? await window.RCF.factory.buildDiagnosisReport()
+          : "Diagnóstico não disponível (buildDiagnosisReport não encontrado).";
+        adminOut.textContent = rep;
+      });
+      on(diagBtn, "touchstart", async (e) => {
+        e.preventDefault();
+        const rep = window.RCF?.factory?.buildDiagnosisReport
+          ? await window.RCF.factory.buildDiagnosisReport()
+          : "Diagnóstico não disponível (buildDiagnosisReport não encontrado).";
+        adminOut.textContent = rep;
+      });
+    }
+
+    if (copyDiagBtn && adminOut) {
+      const fn = async (e) => {
+        e.preventDefault();
+        try { await navigator.clipboard.writeText(String(adminOut.textContent || "")); alert("Diagnóstico copiado ✅"); }
+        catch { alert("iOS bloqueou copiar. Selecione o texto e copie manual."); }
+      };
+      on(copyDiagBtn, "click", fn);
+      on(copyDiagBtn, "touchstart", fn);
+    }
+
+    if (clearPwaBtn) {
+      const fn = async (e) => {
+        e.preventDefault();
+        if (!confirm("Limpar Cache PWA + desregistrar SW e recarregar?")) return;
+        if (window.RCF?.factory?.nukePwaCache) {
+          await window.RCF.factory.nukePwaCache();
+        } else {
+          // fallback
+          try {
+            if ("caches" in window) {
+              const keys = await caches.keys();
+              await Promise.all(keys.map(k => caches.delete(k)));
+            }
+          } catch {}
+          try {
+            if ("serviceWorker" in navigator) {
+              const regs = await navigator.serviceWorker.getRegistrations();
+              await Promise.all(regs.map(r => r.unregister()));
+            }
+          } catch {}
+        }
+        alert("Cache limpo ✅");
+        location.reload();
+      };
+      on(clearPwaBtn, "click", fn);
+      on(clearPwaBtn, "touchstart", fn);
+    }
+  }
+
+  function bindApplyPatchIfExists() {
+    // Botão apply de patch (se existir em algum layout)
+    const applyBtn = $("aiApplyBtn") || $("btnAdminApply") || $("applyBtn");
+    const discardBtn = $("aiDiscardBtn") || $("btnAdminClear") || $("discardBtn");
+    const out = $("aiOut") || $("adminOut") || $("agentOut");
+
+    if (applyBtn) {
+      const fn = (e) => {
+        e.preventDefault();
+        const rep = window.RCF_PATCHSET?.applyAll ? window.RCF_PATCHSET.applyAll() : "(patchset não existe)";
+        if (out) out.textContent = String(rep || "OK");
+      };
+      on(applyBtn, "click", fn);
+      on(applyBtn, "touchstart", fn);
+    }
+
+    if (discardBtn) {
+      const fn = (e) => {
+        e.preventDefault();
+        if (window.RCF_PATCHSET?.clear) window.RCF_PATCHSET.clear();
+        if (out) out.textContent = "(patches descartados)";
+      };
+      on(discardBtn, "click", fn);
+      on(discardBtn, "touchstart", fn);
+    }
   }
 
   function init() {
-    initDock();
-    initAgent();
-    initTools();
-    updateBadges();
+    // garante que click funciona no iOS mesmo quando tem scroll
+    document.body.addEventListener("touchstart", () => {}, { passive: true });
+
+    bindAgentPanels();
+    bindAdminDiagButtons();
+    bindApplyPatchIfExists();
+
+    if (window.RCF_LOGGER?.push) window.RCF_LOGGER.push("log", "core/ui_bindings.js carregado ✅");
   }
 
-  // wait DOM
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", init);
   } else {
