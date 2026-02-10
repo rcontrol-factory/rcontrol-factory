@@ -1,120 +1,268 @@
 /* =========================================================
-  RControl Factory — core/thompson.js (FULL) v1.0
-  "THOMPSON" = Validador + Diff + Dedupe para Mother Bundles
-  - Valida formato { meta, files }
-  - Normaliza paths (usa RCF_POLICY.normPath se existir)
-  - Filtra inválidos/bloqueados
-  - Diff: compara com overrides atuais e ignora "sem mudança"
+  RControl Factory — js/core/thompson.js (FULL)
+  THOMPSON = motor OFFLINE de validação e “negociação” do bundle.
+
+  Funções:
+  - parseBundle(raw) -> {ok, bundle, error}
+  - normalizeBundle(bundle) -> bundle normalizado + meta preenchida
+  - dryRun(bundle, currentOverrides) -> relatório do que vai mudar
+  - isCriticalPath(path) -> true/false
+  - guardApply(bundle, mode) -> {ok, needsConfirm, criticalFiles[]}
 ========================================================= */
 
 (function () {
   "use strict";
 
-  const KEY_OVERRIDES = "rcf:mother_overrides_v2";
+  const KEY_OVERRIDES = "rcf:vfs_overrides";     // mapa path->content
+  const KEY_HISTORY   = "rcf:mother_history";    // array de snapshots
 
-  function safeParseJSON(s, fallback) { try { return JSON.parse(s); } catch { return fallback; } }
-  function safeString(v) { return (v === undefined || v === null) ? "" : String(v); }
+  function safeText(v){ return (v===undefined||v===null) ? "" : String(v); }
 
-  function getPolicy() {
-    const P = window.RCF_POLICY;
-    return (P && typeof P.classify === "function" && typeof P.normPath === "function") ? P : null;
+  function nowISO(){ return new Date().toISOString(); }
+
+  function deepClone(obj){
+    try { return JSON.parse(JSON.stringify(obj)); } catch { return obj; }
   }
 
-  function normPath(path) {
-    const P = getPolicy();
-    if (P) return P.normPath(path);
-    // fallback simples
-    let s = String(path || "").trim();
-    if (/^https?:\/\//i.test(s)) return null;
-    if (!s.startsWith("/")) s = "/" + s;
-    s = s.split("?")[0].split("#")[0].replace(/\/{2,}/g, "/");
-    if (s.includes("..")) return null;
-    return s;
+  function parseJSON(raw){
+    try { return { ok:true, value: JSON.parse(String(raw||"")) }; }
+    catch(e){ return { ok:false, error: e?.message || String(e) }; }
   }
 
-  function classify(path) {
-    const P = getPolicy();
-    if (P) return P.classify(path);
-    // sem policy => condicional (mais seguro)
-    const n = normPath(path);
-    if (!n) return { ok:false, path:null, mode:"BLOCKED", reason:"Path inválido" };
-    return { ok:true, path:n, mode:"CONDITIONAL" };
+  function ensureLeadingSlash(p){
+    p = safeText(p).trim();
+    if (!p) return "";
+    if (!p.startsWith("/")) p = "/" + p;
+    return p;
   }
 
-  function normalizeBundle(obj) {
-    const b = obj && typeof obj === "object" ? obj : {};
-    const out = {
-      meta: (b.meta && typeof b.meta === "object") ? b.meta : {},
-      files: (b.files && typeof b.files === "object") ? b.files : {}
-    };
-    out.meta.name = safeString(out.meta.name || "mother-bundle");
-    out.meta.version = safeString(out.meta.version || "1.0");
-    out.meta.createdAt = safeString(out.meta.createdAt || "{{DATE}}");
-    return out;
+  function normalizePath(p){
+    p = ensureLeadingSlash(p);
+    // remove duplo // e resolve .. simples (sem ficar complexo)
+    p = p.replace(/\/{2,}/g, "/");
+    while (p.includes("/./")) p = p.replace("/./", "/");
+    // bloqueia caminhos vazios ou raiz
+    if (p === "/") return "";
+    return p;
   }
 
-  function loadCurrentOverrides() {
-    const cur = safeParseJSON(localStorage.getItem(KEY_OVERRIDES) || "null", null);
-    if (!cur || typeof cur !== "object") return { meta:{}, files:{} };
-    if (!cur.files || typeof cur.files !== "object") cur.files = {};
-    return cur;
+  function interpolateDate(str){
+    return safeText(str).replace(/\{\{DATE\}\}/g, nowISO());
   }
 
-  function validateAndPlan(bundleObj) {
-    const b = normalizeBundle(bundleObj);
-    const keys = Object.keys(b.files || {});
+  function isCriticalPath(path){
+    const p = normalizePath(path);
+    if (!p) return true;
 
-    const plan = {
-      ok: true,
-      meta: b.meta,
-      total: keys.length,
-      free: [],
-      conditional: [],
-      blocked: [],
-      invalid: [],
-      normalizedFiles: {} // path normalizado -> content string
-    };
+    // CRÍTICOS absolutos
+    if (p === "/index.html") return true;
+    if (p === "/app.js") return true;
+    if (p === "/sw.js") return true;
+    if (p === "/manifest.json") return true;
 
-    for (const k of keys) {
-      const c = classify(k);
-      if (!c.ok || !c.path) {
-        plan.invalid.push({ path: k, reason: c.reason || "inválido" });
-        continue;
-      }
+    // Qualquer core
+    if (p.startsWith("/js/core/")) return true;
 
-      const content = safeString(b.files[k]);
-      plan.normalizedFiles[c.path] = content;
+    // (opcional) estilos também são sensíveis, mas não travam app normalmente:
+    // if (p === "/styles.css") return true;
 
-      if (c.mode === "FREE") plan.free.push(c.path);
-      else if (c.mode === "CONDITIONAL") plan.conditional.push(c.path);
-      else plan.blocked.push(c.path);
+    return false;
+  }
+
+  function parseBundle(raw){
+    const j = parseJSON(raw);
+    if (!j.ok) return { ok:false, error: "JSON inválido: " + j.error };
+
+    const b = j.value;
+    if (!b || typeof b !== "object") return { ok:false, error:"Bundle precisa ser objeto." };
+
+    if (!b.files || typeof b.files !== "object") {
+      return { ok:false, error:"Bundle precisa ter 'files' (objeto)." };
     }
 
-    return plan;
+    return { ok:true, bundle: b };
   }
 
-  function diffAgainstCurrent(plan) {
-    const cur = loadCurrentOverrides();
-    const curFiles = cur.files || {};
-    const incoming = plan.normalizedFiles || {};
+  function normalizeBundle(bundle){
+    const b = deepClone(bundle || {});
+    b.meta = b.meta && typeof b.meta === "object" ? b.meta : {};
+    b.meta.name = safeText(b.meta.name || "mother-bundle");
+    b.meta.version = safeText(b.meta.version || "1.0");
+    b.meta.createdAt = safeText(b.meta.createdAt || "{{DATE}}");
+    b.meta.createdAt = interpolateDate(b.meta.createdAt);
 
+    const files = b.files || {};
+    const out = {};
+    Object.keys(files).forEach((k)=>{
+      const nk = normalizePath(k);
+      if (!nk) return;
+      out[nk] = interpolateDate(files[k]);
+    });
+    b.files = out;
+    return b;
+  }
+
+  function loadOverrides(){
+    try {
+      const raw = localStorage.getItem(KEY_OVERRIDES);
+      if (!raw) return {};
+      const obj = JSON.parse(raw);
+      return (obj && typeof obj === "object") ? obj : {};
+    } catch {
+      return {};
+    }
+  }
+
+  function saveOverrides(map){
+    localStorage.setItem(KEY_OVERRIDES, JSON.stringify(map || {}));
+  }
+
+  function pushHistory(entry){
+    try {
+      const raw = localStorage.getItem(KEY_HISTORY);
+      const arr = raw ? JSON.parse(raw) : [];
+      const hist = Array.isArray(arr) ? arr : [];
+      hist.unshift(entry);
+      while (hist.length > 10) hist.pop();
+      localStorage.setItem(KEY_HISTORY, JSON.stringify(hist));
+    } catch {}
+  }
+
+  function getHistory(){
+    try {
+      const raw = localStorage.getItem(KEY_HISTORY);
+      const arr = raw ? JSON.parse(raw) : [];
+      return Array.isArray(arr) ? arr : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function diffKeys(newFiles, current){
     const changed = [];
+    const added = [];
     const same = [];
 
-    for (const [path, content] of Object.entries(incoming)) {
-      const prev = safeString(curFiles[path]);
-      if (prev === safeString(content)) same.push(path);
-      else changed.push(path);
-    }
+    Object.keys(newFiles).forEach((k)=>{
+      const nv = safeText(newFiles[k]);
+      const cv = safeText(current[k]);
+      if (current.hasOwnProperty(k)) {
+        if (nv === cv) same.push(k);
+        else changed.push(k);
+      } else {
+        added.push(k);
+      }
+    });
 
-    return { changed, same, currentCount: Object.keys(curFiles).length };
+    return { added, changed, same };
   }
 
-  // API
+  function dryRun(bundle, currentOverrides){
+    const b = normalizeBundle(bundle);
+    const current = currentOverrides || {};
+    const files = b.files || {};
+    const keys = Object.keys(files);
+
+    const d = diffKeys(files, current);
+
+    const critical = keys.filter(isCriticalPath);
+    const nonCritical = keys.filter(k => !isCriticalPath(k));
+
+    return {
+      meta: b.meta,
+      totalFiles: keys.length,
+      added: d.added,
+      changed: d.changed,
+      same: d.same,
+      critical,
+      nonCritical
+    };
+  }
+
+  function guardApply(bundle, mode){
+    const b = normalizeBundle(bundle);
+    const keys = Object.keys(b.files || {});
+    const critical = keys.filter(isCriticalPath);
+
+    // mode: "safe" = condicional
+    if ((mode || "safe") === "safe" && critical.length) {
+      return { ok:true, needsConfirm:true, criticalFiles: critical };
+    }
+    return { ok:true, needsConfirm:false, criticalFiles: critical };
+  }
+
+  function apply(bundle){
+    const b = normalizeBundle(bundle);
+    const overrides = loadOverrides();
+
+    // snapshot p/ rollback (guarda o mapa inteiro)
+    pushHistory({
+      at: nowISO(),
+      meta: b.meta,
+      overridesBefore: overrides
+    });
+
+    const next = { ...overrides };
+    Object.keys(b.files || {}).forEach((k)=>{
+      next[k] = safeText(b.files[k]);
+    });
+
+    saveOverrides(next);
+
+    return {
+      ok:true,
+      meta: b.meta,
+      files: Object.keys(b.files || {}).length
+    };
+  }
+
+  function rollback(steps = 1){
+    const hist = getHistory();
+    if (!hist.length) return { ok:false, msg:"Sem histórico." };
+
+    const idx = Math.max(0, Math.min(hist.length - 1, (steps|0) - 1));
+    const snap = hist[idx];
+    if (!snap || !snap.overridesBefore) return { ok:false, msg:"Snapshot inválido." };
+
+    saveOverrides(snap.overridesBefore);
+
+    // remove snapshots usados (até idx)
+    try {
+      const remain = hist.slice(idx + 1);
+      localStorage.setItem(KEY_HISTORY, JSON.stringify(remain));
+    } catch {}
+
+    return { ok:true, msg:`Rollback OK (voltou ${idx+1})` };
+  }
+
+  function resetAll(){
+    saveOverrides({});
+    localStorage.removeItem(KEY_HISTORY);
+    return { ok:true };
+  }
+
+  function exportCurrent(){
+    const overrides = loadOverrides();
+    const files = overrides || {};
+    const bundle = normalizeBundle({
+      meta: { name:"mother-export", version:"1.0", createdAt: "{{DATE}}" },
+      files
+    });
+    return bundle;
+  }
+
+  // Expose
   window.RCF_THOMPSON = {
+    parseBundle,
     normalizeBundle,
-    validateAndPlan,
-    diffAgainstCurrent,
-    loadCurrentOverrides
+    dryRun,
+    guardApply,
+    isCriticalPath,
+    apply,
+    rollback,
+    resetAll,
+    exportCurrent,
+    loadOverrides,
+    getHistory
   };
 })();
