@@ -894,7 +894,27 @@ ${html}
     document.addEventListener("DOMContentLoaded", init);
   } else {
     init();
-  }
+       // ===================== iOS click fallback =====================
+  (function enableIOSClickFallback(){
+    // Se o clique não disparar por algum bug do iOS, tenta converter touch em click
+    let moved = false;
+
+    window.addEventListener("touchmove", () => { moved = true; }, { passive: true });
+
+    window.addEventListener("touchend", (e) => {
+      try {
+        if (moved) { moved = false; return; }
+
+        const t = e.changedTouches && e.changedTouches[0];
+        if (!t) return;
+
+        const el = document.elementFromPoint(t.clientX, t.clientY);
+        if (!el) return;
+
+        const clickable = el.closest("button, a, .tab, .btn, .dockbtn, .fileBtn");
+        if (clickable) clickable.click();
+      } catch {}
+    }, { passive: true });
 
 })();
 // (fim do arquivo) — Parte 2 vazia de propósito.
