@@ -213,6 +213,21 @@
       meta: b.meta || {},
       files: {}
     };
+    const T = window.RCF_THOMPSON;
+if (T) {
+  const plan0 = T.validateAndPlan(bundleObj);
+  return {
+    ok: plan0.ok,
+    name: plan0.meta?.name || "bundle",
+    version: plan0.meta?.version || "?",
+    createdAt: plan0.meta?.createdAt || "?",
+    total: plan0.total,
+    free: plan0.free,
+    conditional: plan0.conditional,
+    blocked: plan0.blocked,
+    invalid: plan0.invalid
+  };
+}
 
     // re-mapeia mantendo só os permitidos
     for (const [k, v] of Object.entries(b.files || {})) {
