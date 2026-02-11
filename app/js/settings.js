@@ -1,148 +1,188 @@
-/* =========================================================
-  RControl Factory — /app/js/settings.js (FULL)
-  Centraliza configurações no tab Settings (sem engrenagem)
-========================================================= */
 (() => {
   "use strict";
 
-  const $ = (id) => document.getElementById(id);
-  const LS_GH = "RCF_GH_CFG";
-  const LS_PIN = "RCF_ADMIN_PIN";
+  const $ = (sel, root = document) => root.querySelector(sel);
 
-  const safeJSON = (s, fb) => { try { return JSON.parse(s); } catch { return fb; } };
-
-  function setOut(id, msg) {
-    const el = $(id);
-    if (el) el.textContent = msg;
+  function nowISO(){
+    try { return new Date().toISOString(); } catch(e){ return ""; }
   }
 
-  // -------- GitHub config (localStorage) --------
-  function loadGh() {
-    const cfg = safeJSON(localStorage.getItem(LS_GH) || "null", null) || {};
-    if ($("ghOwner")) $("ghOwner").value = cfg.owner || "";
-    if ($("ghRepo")) $("ghRepo").value = cfg.repo || "";
-    if ($("ghBranch")) $("ghBranch").value = cfg.branch || "main";
-    if ($("ghPath")) $("ghPath").value = cfg.path || "app/import/mother_bundle.json";
-    if ($("ghToken")) $("ghToken").value = cfg.token ? "********" : "";
+  // --- LOGS helpers (compatível com o que já existe e com fallback) ---
+  const LOG_KEY_PRIMARY = "rcf:logs";
+  const LOG_KEY_ALT_1 = "RCF_LOGS";
+  const LOG_KEY_ALT_2 = "logs";
+
+  function getLogsRaw(){
+    return (
+      localStorage.getItem(LOG_KEY_PRIMARY) ||
+      localStorage.getItem(LOG_KEY_ALT_1) ||
+      localStorage.getItem(LOG_KEY_ALT_2) ||
+      ""
+    );
   }
 
-  function saveGh() {
-    const old = safeJSON(localStorage.getItem(LS_GH) || "null", null) || {};
-    const tokenRaw = ($("ghToken")?.value || "").trim();
+  function setLogsRaw(s){
+    localStorage.setItem(LOG_KEY_PRIMARY, String(s ?? ""));
+  }
 
-    const cfg = {
-      owner: ($("ghOwner")?.value || "").trim(),
-      repo: ($("ghRepo")?.value || "").trim(),
-      branch: ($("ghBranch")?.value || "main").trim(),
-      path: ($("ghPath")?.value || "app/import/mother_bundle.json").trim(),
-      token: (tokenRaw && tokenRaw !== "********") ? tokenRaw : (old.token || "")
+  function clearLogs(){
+    localStorage.removeItem(LOG_KEY_PRIMARY);
+    localStorage.removeItem(LOG_KEY_ALT_1);
+    localStorage.removeItem(LOG_KEY_ALT_2);
+  }
+
+  function asText(raw){
+    // aceita json array de strings/objetos OU texto puro
+    const t = String(raw || "").trim();
+    if (!t) return "";
+    try{
+      const v = JSON.parse(t);
+      if (Array.isArray(v)) {
+        return v.map(x => (typeof x === "string" ? x : JSON.stringify(x))).join("\n");
+      }
+      if (typeof v === "object") return JSON.stringify(v, null, 2);
+      return String(v);
+    } catch(e){
+      return t;
+    }
+  }
+
+  function downloadText(filename, text){
+    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      URL.revokeObjectURL(a.href);
+      a.remove();
+    }, 300);
+  }
+
+  // --- PIN (segurança) ---
+  const PIN_KEY = "rcf:admin_pin";
+
+  function renderSettings(){
+    const mount = $("#settingsMount");
+    if (!mount) return;
+
+    mount.innerHTML = `
+      <div class="card" style="margin-top:12px">
+        <h3 style="margin:0 0 6px 0">✅ Settings carregado.</h3>
+        <p class="hint">Central de configurações (sem GitHub aqui). GitHub fica no Admin.</p>
+      </div>
+
+      <div class="card" style="margin-top:12px" id="settings-security"></div>
+      <div class="card" style="margin-top:12px" id="settings-logs"></div>
+      <div class="card" style="margin-top:12px" id="settings-diag"></div>
+    `;
+
+    // 1) Segurança
+    const secBox = $("#settings-security");
+    secBox.innerHTML = `
+      <h3>Segurança</h3>
+      <p class="hint">Define um PIN para liberar ações críticas no Admin (recomendado).</p>
+      <div class="row">
+        <input id="pinInput" class="input" inputmode="numeric" placeholder="Definir PIN (4–8 dígitos)" />
+        <button id="btnPinSave" class="btn primary" type="button">Salvar PIN</button>
+        <button id="btnPinRemove" class="btn danger" type="button">Remover PIN</button>
+      </div>
+      <pre id="pinOut" class="mono small">Pronto.</pre>
+    `;
+
+    $("#btnPinSave")?.addEventListener("click", () => {
+      const v = ($("#pinInput")?.value || "").trim();
+      const ok = /^\d{4,8}$/.test(v);
+      $("#pinOut").textContent = ok ? "PIN salvo." : "PIN inválido (use 4–8 dígitos).";
+      if (ok) localStorage.setItem(PIN_KEY, v);
+    });
+
+    $("#btnPinRemove")?.addEventListener("click", () => {
+      localStorage.removeItem(PIN_KEY);
+      $("#pinOut").textContent = "PIN removido.";
+    });
+
+    // 2) Logs (no lugar do GitHub)
+    const logsBox = $("#settings-logs");
+    logsBox.innerHTML = `
+      <h3>Logs</h3>
+      <p class="hint">Ver, exportar e limpar logs locais (para diagnóstico rápido).</p>
+
+      <div class="row">
+        <button id="btnLogsRefresh" class="btn" type="button">Atualizar</button>
+        <button id="btnLogsExport" class="btn primary" type="button">Exportar .txt</button>
+        <button id="btnLogsClear" class="btn danger" type="button">Limpar logs</button>
+      </div>
+
+      <textarea id="logsView" class="textarea mono" spellcheck="false"
+        placeholder="Sem logs ainda."></textarea>
+
+      <pre id="logsOut" class="mono small">Pronto.</pre>
+    `;
+
+    const refreshLogs = () => {
+      const raw = getLogsRaw();
+      const txt = asText(raw);
+      const el = $("#logsView");
+      if (el) el.value = txt || "";
+      $("#logsOut").textContent = txt ? `Logs carregados (${txt.split("\n").length} linhas).` : "Sem logs.";
     };
 
-    localStorage.setItem(LS_GH, JSON.stringify(cfg));
-    setOut("ghOut", "✅ Config salva.");
+    $("#btnLogsRefresh")?.addEventListener("click", refreshLogs);
+
+    $("#btnLogsExport")?.addEventListener("click", () => {
+      const raw = getLogsRaw();
+      const txt = asText(raw);
+      if (!txt) {
+        $("#logsOut").textContent = "Nada para exportar.";
+        return;
+      }
+      downloadText(`rcf-logs-${nowISO().replaceAll(":","-")}.txt`, txt);
+      $("#logsOut").textContent = "Exportado.";
+    });
+
+    $("#btnLogsClear")?.addEventListener("click", () => {
+      clearLogs();
+      setLogsRaw(""); // garante key principal zerada
+      refreshLogs();
+      $("#logsOut").textContent = "Logs limpos.";
+    });
+
+    // carrega na hora
+    refreshLogs();
+
+    // 3) Diag / Atalhos
+    const diagBox = $("#settings-diag");
+    diagBox.innerHTML = `
+      <h3>Diag / Atalhos</h3>
+      <p class="hint">Atalhos rápidos (o Admin continua com ações críticas).</p>
+      <div class="row">
+        <button id="btnGoDiagnose" class="btn" type="button">Diagnosticar</button>
+        <button id="btnGoAdmin" class="btn" type="button">Abrir Admin</button>
+      </div>
+      <pre id="diagOut" class="mono small">Pronto.</pre>
+    `;
+
+    $("#btnGoDiagnose")?.addEventListener("click", () => {
+      $("#diagOut").textContent = "Rodando diagnóstico…";
+      try {
+        document.getElementById("btnDiagnose")?.click?.();
+        $("#diagOut").textContent = "Diagnóstico acionado.";
+      } catch (e) {
+        $("#diagOut").textContent = "Falhou ao acionar diagnóstico.";
+      }
+    });
+
+    $("#btnGoAdmin")?.addEventListener("click", () => {
+      try {
+        document.querySelector('.tab[data-view="admin"]')?.click?.();
+        $("#diagOut").textContent = "Abrindo Admin…";
+      } catch (e) {
+        $("#diagOut").textContent = "Falhou ao abrir Admin.";
+      }
+    });
   }
 
-  // -------- PIN (simples) --------
-  function setPin() {
-    const pin = ($("adminPin")?.value || "").trim();
-    if (!/^\d{4,8}$/.test(pin)) {
-      setOut("secOut", "❌ PIN inválido. Use 4 a 8 dígitos.");
-      return;
-    }
-    localStorage.setItem(LS_PIN, pin);
-    $("adminPin").value = "";
-    setOut("secOut", "✅ PIN salvo. (Ações críticas no Admin podem exigir esse PIN.)");
-  }
-
-  function clearPin() {
-    localStorage.removeItem(LS_PIN);
-    setOut("secOut", "✅ PIN removido.");
-  }
-
-  // -------- Integração com módulos existentes --------
-  async function ghPull() {
-    // se você já tem window.RCF_GH_SYNC, usa. Senão, só orienta.
-    if (window.RCF_GH_SYNC?.pull) {
-      setOut("ghOut", "⏳ Pull...");
-      const r = await window.RCF_GH_SYNC.pull();
-      setOut("ghOut", "✅ Pull OK.\n" + (r ? JSON.stringify(r, null, 2) : ""));
-      return;
-    }
-    setOut("ghOut", "⚠️ Módulo GitHub Sync não encontrado (window.RCF_GH_SYNC ausente).");
-  }
-
-  async function ghPush() {
-    if (window.RCF_GH_SYNC?.push) {
-      setOut("ghOut", "⏳ Push...");
-      const r = await window.RCF_GH_SYNC.push();
-      setOut("ghOut", "✅ Push OK.\n" + (r ? JSON.stringify(r, null, 2) : ""));
-      return;
-    }
-    setOut("ghOut", "⚠️ Módulo GitHub Sync não encontrado (window.RCF_GH_SYNC ausente).");
-  }
-
-  async function ghUpdateNow() {
-    // tenta usar self-update, se existir
-    if (window.RCF_MOTHER?.applyFromImport) {
-      setOut("ghOut", "⏳ Atualizando agora...");
-      await window.RCF_MOTHER.applyFromImport();
-      setOut("ghOut", "✅ Atualização aplicada.");
-      return;
-    }
-    setOut("ghOut", "⚠️ Self-update (Mãe) não encontrado (window.RCF_MOTHER ausente).");
-  }
-
-  function runDiag() {
-    if (window.RCF_DIAG?.run) {
-      const r = window.RCF_DIAG.run();
-      setOut("diagOut", "✅ Diagnóstico:\n" + JSON.stringify(r, null, 2));
-      return;
-    }
-    setOut("diagOut", "⚠️ Diagnóstico não disponível (window.RCF_DIAG ausente).");
-  }
-
-  function openAdmin() {
-    // se seu router tem método, chama; se não, só clica no tab
-    const tab = document.querySelector('.tab[data-view="admin"]');
-    tab?.click?.();
-  }
-
-  function clearLogs() {
-    if (window.RCF_LOGGER?.clear) window.RCF_LOGGER.clear();
-    setOut("diagOut", "✅ Logs limpos.");
-  }
-
-  // -------- Bind seguro (touch/click) --------
-  function bindTap(id, fn) {
-    const el = $(id);
-    if (!el) return;
-    const handler = (e) => { try { e.preventDefault(); e.stopPropagation(); } catch {} fn(); };
-    el.style.touchAction = "manipulation";
-    el.addEventListener("touchend", handler, { passive: false });
-    el.addEventListener("click", handler, { passive: false });
-  }
-
-  function init() {
-    loadGh();
-
-    bindTap("btnGhSave", saveGh);
-    bindTap("btnGhPull", ghPull);
-    bindTap("btnGhPush", ghPush);
-    bindTap("btnGhUpdateNow", ghUpdateNow);
-
-    bindTap("btnSetPin", setPin);
-    bindTap("btnClearPin", clearPin);
-
-    bindTap("btnRunDiag", runDiag);
-    bindTap("btnOpenAdmin", openAdmin);
-    bindTap("btnClearLogs2", clearLogs);
-
-    setOut("settingsOut", "✅ Settings carregado.");
-  }
-
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", init);
-  } else {
-    init();
-  }
+  window.addEventListener("DOMContentLoaded", renderSettings);
 })();
