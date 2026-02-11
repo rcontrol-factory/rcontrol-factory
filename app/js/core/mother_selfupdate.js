@@ -1,5 +1,5 @@
 /* =========================================================
-  RControl Factory — js/core/mother_selfupdate.js (FULL)
+  RControl Factory — js/core/mother_selfupdate.js (FULL) v2.2
   UI da Mãe (Admin) + integra Thompson:
   - Apply /import/mother_bundle.json
   - Dry-run (prévia)
@@ -7,6 +7,10 @@
   - Rollback (voltar 1)
   - Exportar bundle atual
   - Zerar tudo
+
+  + NOVO (v2.2):
+  - Publish Queue (OFFLINE): enfileirar bundles aplicados
+  - Ver fila / Exportar fila / Limpar fila
 
   MODO SAFE (condicional):
   - Se bundle mexe em arquivo crítico -> pede confirmação no UI
@@ -17,6 +21,10 @@
 
   const $ = (id) => document.getElementById(id);
   const T = () => window.RCF_THOMPSON;
+  const Q = () => window.RCF_PUBLISH_QUEUE;
+
+  // sinal pra outros scripts não duplicarem a UI da Mãe
+  window.RCF_MOTHER_UI = true;
 
   const TAP_GUARD_MS = 450;
   let _lastTapAt = 0;
@@ -56,7 +64,6 @@
   }
 
   function getModeSafe(){
-    // Preferência: se app.js expõe cfg.mode, usa. Senão assume safe.
     try {
       const mode = window.RCF?.state?.cfg?.mode;
       return (mode === "auto") ? "auto" : "safe";
@@ -94,6 +101,17 @@
         <button class="btn danger" id="btnMotherResetAll" type="button">Zerar tudo</button>
       </div>
 
+      <hr style="border:0;border-top:1px solid rgba(255,255,255,.08);margin:12px 0">
+
+      <div class="hint" style="margin:0 0 8px 0">Publish Queue (OFFLINE) — (publicação real via API fica para depois)</div>
+
+      <div class="row" style="flex-wrap:wrap; gap:10px">
+        <button class="btn" id="btnQueueEnqueueFromPaste" type="button">Enfileirar bundle colado</button>
+        <button class="btn" id="btnQueueView" type="button">Ver fila</button>
+        <button class="btn" id="btnQueueExport" type="button">Exportar fila</button>
+        <button class="btn danger" id="btnQueueClear" type="button">Limpar fila</button>
+      </div>
+
       <div class="hint" style="margin:10px 0 6px 0">Cole um bundle JSON aqui:</div>
       <textarea id="motherBundleTextarea" spellcheck="false"
         style="
@@ -125,14 +143,13 @@
 
       <pre class="mono small" id="motherMaintOut" style="margin-top:10px">Pronto.</pre>
       <div class="hint" id="motherHistHint" style="margin-top:8px"></div>
+      <div class="hint" id="queueHint" style="margin-top:6px"></div>
     `;
 
-    // insere logo depois do primeiro card do admin (fica bonitinho)
     const firstCard = adminView.querySelector(".card");
     if (firstCard && firstCard.parentNode) firstCard.parentNode.insertBefore(card, firstCard.nextSibling);
     else adminView.appendChild(card);
 
-    // força pointer-events dentro do card
     card.querySelectorAll("*").forEach(el => { if (el && el.style) el.style.pointerEvents = "auto"; });
   }
 
@@ -182,11 +199,19 @@
     el.textContent = `Histórico: ${h.length} snapshot(s). Último: ${top?.at || "-"}`;
   }
 
+  function refreshQueueHint(){
+    const el = $("queueHint");
+    if (!el) return;
+    const qq = Q()?.list?.() || [];
+    el.textContent = `Fila: ${qq.length} item(s). (OFFLINE)`;
+  }
+
   function doDryRun(bundle){
     const current = T().loadOverrides();
     const rep = T().dryRun(bundle, current);
     out("motherMaintOut", renderReport(rep));
     refreshHistoryHint();
+    refreshQueueHint();
     return rep;
   }
 
@@ -206,6 +231,18 @@
     }
   }
 
+  function enqueueApplied(bundle, source){
+    try {
+      if (!Q() || typeof Q().enqueue !== "function") return;
+      Q().enqueue(bundle, {
+        source: source || "unknown",
+        mode: getModeSafe(),
+        note: "Applied locally (overrides) — ready to publish later"
+      });
+      refreshQueueHint();
+    } catch {}
+  }
+
   async function actionApplyFile(){
     status("Aplicando…");
     out("motherMaintOut", "Carregando /import/mother_bundle.json …");
@@ -213,11 +250,16 @@
     const rep = doDryRun(bundle);
     checkGuard(bundle);
 
-    const r = T().apply(bundle);
+    T().apply(bundle);
+
+    // ✅ Novo: enfileira automaticamente
+    enqueueApplied(bundle, "import_file");
+
     status("Bundle salvo ✅");
-    log("MAE apply file ok: " + (r.meta?.name || ""));
+    log("MAE apply file ok: " + (bundle?.meta?.name || ""));
     out("motherMaintOut", renderReport(rep));
     refreshHistoryHint();
+    refreshQueueHint();
   }
 
   function actionDryRun(){
@@ -233,11 +275,16 @@
     const rep = doDryRun(bundle);
     checkGuard(bundle);
 
-    const r = T().apply(bundle);
+    T().apply(bundle);
+
+    // ✅ Novo: enfileira automaticamente
+    enqueueApplied(bundle, "pasted");
+
     status("Bundle salvo ✅");
-    log("MAE apply pasted ok: " + (r.meta?.name || ""));
+    log("MAE apply pasted ok: " + (bundle?.meta?.name || ""));
     out("motherMaintOut", renderReport(rep));
     refreshHistoryHint();
+    refreshQueueHint();
   }
 
   function actionRollback(){
@@ -247,6 +294,7 @@
     status("Rollback ✅");
     out("motherMaintOut", "✅ " + r.msg + "\n\nRecarregue a página se necessário.");
     refreshHistoryHint();
+    refreshQueueHint();
     log("MAE rollback ok");
   }
 
@@ -258,6 +306,7 @@
     out("motherMaintOut", "✅ Bundle atual exportado (copiado no clipboard).\nfiles: " + Object.keys(bundle.files||{}).length);
     status("Export ok ✅");
     refreshHistoryHint();
+    refreshQueueHint();
   }
 
   function actionResetAll(){
@@ -266,7 +315,61 @@
     out("motherMaintOut", "✅ ZERADO.\nOverrides e histórico removidos.");
     status("Zerado ✅");
     refreshHistoryHint();
+    refreshQueueHint();
     log("MAE reset all");
+  }
+
+  // ------- Queue actions -------
+  function actionQueueEnqueueFromPaste(){
+    status("Enfileirando…");
+    if (!Q()) throw new Error("Publish Queue não carregou (RCF_PUBLISH_QUEUE).");
+    const bundle = parsePasted();
+    Q().enqueue(bundle, { source:"manual_enqueue", mode:getModeSafe() });
+    out("motherMaintOut", "✅ Enfileirado na fila OFFLINE.\n(Quando ligar API, a gente publica.)");
+    status("Fila ✅");
+    refreshQueueHint();
+  }
+
+  function actionQueueView(){
+    if (!Q()) throw new Error("Publish Queue não carregou (RCF_PUBLISH_QUEUE).");
+    const q = Q().list();
+    if (!q.length) {
+      out("motherMaintOut", "Fila vazia.");
+      refreshQueueHint();
+      return;
+    }
+    const top = q[0];
+    const name = top?.bundle?.meta?.name || "-";
+    const ver  = top?.bundle?.meta?.version || "-";
+    out("motherMaintOut",
+      `Fila: ${q.length} item(s)\n` +
+      `Topo: ${name} v${ver}\n` +
+      `at: ${top.at}\n` +
+      `status: ${top.status}\n` +
+      `files: ${Object.keys(top.bundle?.files||{}).length}\n\n` +
+      `Dica: "Exportar fila" copia tudo (json).`
+    );
+    refreshQueueHint();
+  }
+
+  function actionQueueExport(){
+    status("Exportando fila…");
+    if (!Q()) throw new Error("Publish Queue não carregou (RCF_PUBLISH_QUEUE).");
+    const dump = Q().exportAll();
+    const txt = JSON.stringify(dump, null, 2);
+    try { navigator.clipboard.writeText(txt); } catch {}
+    out("motherMaintOut", "✅ Fila exportada (tentei copiar no clipboard).\nitems: " + (dump.items?.length || 0));
+    status("Export fila ✅");
+    refreshQueueHint();
+  }
+
+  function actionQueueClear(){
+    status("Limpando fila…");
+    if (!Q()) throw new Error("Publish Queue não carregou (RCF_PUBLISH_QUEUE).");
+    Q().clear();
+    out("motherMaintOut", "✅ Fila limpa.");
+    status("Fila limpa ✅");
+    refreshQueueHint();
   }
 
   function bind(){
@@ -279,11 +382,16 @@
     bindTap($("btnMotherExport"), () => actionExport());
     bindTap($("btnMotherResetAll"), () => actionResetAll());
 
-    // sinal no adminOut (pra você ver que carregou)
+    bindTap($("btnQueueEnqueueFromPaste"), () => actionQueueEnqueueFromPaste());
+    bindTap($("btnQueueView"), () => actionQueueView());
+    bindTap($("btnQueueExport"), () => actionQueueExport());
+    bindTap($("btnQueueClear"), () => actionQueueClear());
+
     const aout = $("adminOut");
-    if (aout) aout.textContent = (aout.textContent || "Pronto.") + "\n\nMAE+THOMPSON ✅ carregado (mother_selfupdate.js)";
+    if (aout) aout.textContent = (aout.textContent || "Pronto.") + "\n\nMAE v2.2 ✅ (queue OFFLINE)";
 
     refreshHistoryHint();
+    refreshQueueHint();
     status("OK ✅");
   }
 
