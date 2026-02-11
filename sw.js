@@ -1,32 +1,36 @@
 /* RControl Factory — Service Worker (ROOT)
    Scope: "/"
-   - Offline cache básico
-   - Overrides via postMessage:
-       RCF_OVERRIDE_PUT  { path, content, contentType }
-       RCF_OVERRIDE_CLEAR
+   Cache v3 (quebra cache velho)
+   Estratégia:
+   - HTML (navigate): network-first com fallback /app/index.html
+   - Assets: cache-first + atualiza em background
+   - Overrides (opcional): postMessage PUT/CLEAR
 */
 
 "use strict";
 
-const CORE_CACHE = "rcf-core-v3";        // <- bump
+const CORE_CACHE = "rcf-core-v3";
 const OVERRIDE_CACHE = "rcf-overrides-v3";
 
 const CORE_ASSETS = [
+  "/",
   "/index.html",
+  "/app/",
   "/app/index.html",
   "/app/styles.css",
   "/app/app.js",
+  "/app/manifest.json",
 
+  // scripts (se existirem)
   "/app/js/ui.touchfix.js",
   "/app/js/router.js",
   "/app/js/admin.js",
 
+  // core (se existirem)
   "/app/js/core/vfs_overrides.js",
   "/app/js/core/thompson.js",
   "/app/js/core/github_sync.js",
-  "/app/js/core/mother_selfupdate.js",
-
-  "/app/manifest.json"
+  "/app/js/core/mother_selfupdate.js"
 ];
 
 self.addEventListener("install", (event) => {
@@ -41,11 +45,9 @@ self.addEventListener("activate", (event) => {
   event.waitUntil((async () => {
     self.clients.claim();
     const keys = await caches.keys();
-    await Promise.all(
-      keys.map((k) => {
-        if (k !== CORE_CACHE && k !== OVERRIDE_CACHE) return caches.delete(k);
-      })
-    );
+    await Promise.all(keys.map((k) => {
+      if (k !== CORE_CACHE && k !== OVERRIDE_CACHE) return caches.delete(k);
+    }));
   })());
 });
 
@@ -95,76 +97,54 @@ self.addEventListener("message", (event) => {
   })());
 });
 
-/* Fetch:
-   - Navegação (HTML): sempre usa /app/index.html como shell (offline fallback)
-   - Override > cache core > rede
-*/
+/* Fetch */
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.method !== "GET") return;
 
   const url = new URL(req.url);
-  const sameOrigin = (url.origin === self.location.origin);
+  const sameOrigin = url.origin === self.location.origin;
 
-  // Navegação/HTML: network-first, fallback pro shell
-  if (req.mode === "navigate" && sameOrigin) {
-    event.respondWith((async () => {
-      try {
-        const net = await fetch(req);
-        // Atualiza cache do index raiz e do /app/index.html quando vier HTML
-        if (net && net.ok) {
-          const cache = await caches.open(CORE_CACHE);
-          cache.put(req, net.clone()).catch(() => {});
-        }
-        return net;
-      } catch {
-        const cache = await caches.open(CORE_CACHE);
-
-        // Se estiver offline, sempre devolve o shell do app
-        const shell = await cache.match("/app/index.html");
-        if (shell) return shell;
-
-        // última tentativa
-        const root = await cache.match("/index.html");
-        if (root) return root;
-
-        return new Response("Offline", { status: 503, headers: { "Content-Type": "text/plain; charset=utf-8" } });
-      }
-    })());
-    return;
-  }
-
-  // Demais requests: override > cache > rede
   event.respondWith((async () => {
     // 1) Overrides
     const oCache = await caches.open(OVERRIDE_CACHE);
     const oHit = await oCache.match(req.url);
     if (oHit) return oHit;
 
-    // 2) Core cache
+    // 2) Navegação (HTML): network-first (evita “HTML velho”)
+    if (req.mode === "navigate") {
+      try {
+        const net = await fetch(req);
+        const cCache = await caches.open(CORE_CACHE);
+        cCache.put(req, net.clone()).catch(() => {});
+        return net;
+      } catch (e) {
+        const cCache = await caches.open(CORE_CACHE);
+        const fallback = await cCache.match("/app/index.html");
+        if (fallback) return fallback;
+        return new Response("Offline", { status: 503, headers: { "Content-Type": "text/plain; charset=utf-8" } });
+      }
+    }
+
+    // 3) Assets: cache-first
     const cCache = await caches.open(CORE_CACHE);
     const cHit = await cCache.match(req);
-    if (cHit) return cHit;
+    if (cHit) {
+      // atualiza em background
+      if (sameOrigin) {
+        fetch(req).then((net) => {
+          if (net && net.ok) cCache.put(req, net.clone()).catch(() => {});
+        }).catch(() => {});
+      }
+      return cHit;
+    }
 
-    // 3) Rede (+ runtime cache leve)
+    // 4) Network fallback + guarda
     try {
       const net = await fetch(req);
-
-      if (sameOrigin) {
-        const isStatic =
-          url.pathname.startsWith("/app/") ||
-          url.pathname.endsWith(".js") ||
-          url.pathname.endsWith(".css") ||
-          url.pathname.endsWith(".html") ||
-          url.pathname.endsWith(".json");
-
-        if (isStatic && net && net.ok) {
-          cCache.put(req, net.clone()).catch(() => {});
-        }
-      }
-
+      if (sameOrigin && net && net.ok) cCache.put(req, net.clone()).catch(() => {});
       return net;
-    } catch {
+    } catch (e) {
       return new Response("Offline", { status: 503, headers: { "Content-Type": "text/plain; charset=utf-8" } });
     }
   })());
