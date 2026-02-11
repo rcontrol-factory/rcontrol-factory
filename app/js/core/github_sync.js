@@ -1,142 +1,133 @@
 /* =========================================================
-  RControl Factory — app/js/github_sync.js (FULL) — GitHub Sync v1
-  - Salva config (owner/repo/branch/token) no localStorage
-  - Push arquivos via GitHub REST: Contents API (PUT /contents/{path})
-  - Usado pelo Thompson: pushFilesFromOverrides(paths, overrides, meta)
+  RControl Factory — /app/js/core/github_sync.js (v1)
+  GitHub Sync PRIVADO (SAFE)
+  - GET/PUT via GitHub Contents API
+  - Usado pela Mãe para Pull/Push do mother_bundle.json
+  - Não loga token
 ========================================================= */
-(() => {
+
+(function () {
   "use strict";
 
-  const KEY = "rcf:github:cfg";
+  const LS_KEY = "RCF_GH_SYNC_CFG_v1";
 
-  function safeJsonParse(raw, fallback) {
-    try { return JSON.parse(raw); } catch { return fallback; }
+  function safeJsonParse(s) {
+    try { return JSON.parse(String(s || "")); } catch { return null; }
   }
 
-  function cfgGet() {
-    const raw = localStorage.getItem(KEY);
-    const cfg = safeJsonParse(raw || "{}", {});
-    return cfg && typeof cfg === "object" ? cfg : {};
-  }
-
-  function cfgSet(cfg) {
-    localStorage.setItem(KEY, JSON.stringify(cfg || {}));
-  }
-
-  function isConfigured() {
-    const c = cfgGet();
-    return !!(c.token && c.owner && c.repo);
-  }
-
-  function apiBase() {
-    return "https://api.github.com";
-  }
-
-  function authHeaders() {
-    const c = cfgGet();
-    if (!c.token) return {};
+  function getCfg() {
+    const raw = localStorage.getItem(LS_KEY);
+    const cfg = safeJsonParse(raw) || {};
     return {
-      "Authorization": "Bearer " + c.token,
+      owner: cfg.owner || "",
+      repo: cfg.repo || "",
+      branch: cfg.branch || "main",
+      path: cfg.path || "app/import/mother_bundle.json",
+      token: cfg.token || "" // PAT fine-grained (contents: read/write)
+    };
+  }
+
+  function setCfg(patch) {
+    const cur = getCfg();
+    const next = { ...cur, ...(patch || {}) };
+    localStorage.setItem(LS_KEY, JSON.stringify(next));
+    return next;
+  }
+
+  function assertCfg(cfg) {
+    if (!cfg.owner || !cfg.repo) throw new Error("Config inválida: owner/repo.");
+    if (!cfg.branch) throw new Error("Config inválida: branch.");
+    if (!cfg.path) throw new Error("Config inválida: path.");
+    if (!cfg.token) throw new Error("Token ausente. Cole seu PAT no campo Token.");
+  }
+
+  function apiBase(cfg) {
+    return `https://api.github.com/repos/${encodeURIComponent(cfg.owner)}/${encodeURIComponent(cfg.repo)}/contents/${cfg.path}`;
+  }
+
+  function headers(cfg) {
+    return {
+      "Accept": "application/vnd.github+json",
+      "Authorization": "Bearer " + cfg.token,
       "X-GitHub-Api-Version": "2022-11-28"
     };
   }
 
-  function normPathForRepo(p) {
-    // Overrides usam "/core/x.js" etc. No repo, vamos salvar sem a "/" inicial
-    const s = String(p || "").trim();
-    return s.startsWith("/") ? s.slice(1) : s;
-  }
-
   function b64EncodeUnicode(str) {
-    // btoa não curte unicode; aqui vai safe
-    return btoa(unescape(encodeURIComponent(String(str || ""))));
+    // suporta acentos
+    const utf8 = new TextEncoder().encode(String(str ?? ""));
+    let bin = "";
+    utf8.forEach(b => bin += String.fromCharCode(b));
+    return btoa(bin);
   }
 
-  async function ghFetch(url, opt = {}) {
-    const headers = {
-      "Accept": "application/vnd.github+json",
-      ...authHeaders(),
-      ...(opt.headers || {})
-    };
-    const res = await fetch(url, { ...opt, headers });
-    const txt = await res.text();
-    let data = null;
-    try { data = JSON.parse(txt); } catch { data = txt; }
+  function b64DecodeUnicode(b64) {
+    const bin = atob(String(b64 || ""));
+    const bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
+  }
+
+  async function getFile(cfgIn) {
+    const cfg = cfgIn || getCfg();
+    assertCfg(cfg);
+
+    const url = apiBase(cfg) + `?ref=${encodeURIComponent(cfg.branch)}&_=${Date.now()}`;
+    const res = await fetch(url, { headers: headers(cfg), cache: "no-store" });
+
+    if (res.status === 404) {
+      return { ok: false, status: 404, msg: "Arquivo não existe no repo ainda.", data: null };
+    }
     if (!res.ok) {
-      const msg = (data && data.message) ? data.message : ("HTTP " + res.status);
-      throw new Error(msg);
+      const t = await res.text().catch(() => "");
+      return { ok: false, status: res.status, msg: "GET falhou: HTTP " + res.status, detail: t };
     }
-    return data;
+
+    const data = await res.json();
+    const content = data && data.content ? b64DecodeUnicode(data.content.replace(/\n/g, "")) : "";
+    return {
+      ok: true,
+      status: res.status,
+      sha: data.sha,
+      content,
+      data
+    };
   }
 
-  async function getFileSha(owner, repo, path, branch) {
-    const q = branch ? ("?ref=" + encodeURIComponent(branch)) : "";
-    const url = `${apiBase()}/repos/${owner}/${repo}/contents/${encodeURIComponent(path)}${q}`;
-    try {
-      const data = await ghFetch(url, { method: "GET" });
-      // quando é file, vem { sha, content, ... }
-      if (data && typeof data === "object" && data.sha) return data.sha;
-      return null;
-    } catch (e) {
-      // se não existe, GitHub retorna 404 -> aqui vira erro; vamos tratar como sha null
-      const m = String(e?.message || "");
-      if (m.toLowerCase().includes("not found")) return null;
-      return null;
-    }
-  }
+  async function putFile(cfgIn, content, message) {
+    const cfg = cfgIn || getCfg();
+    assertCfg(cfg);
 
-  async function putFile(path, content, message) {
-    const c = cfgGet();
-    if (!c.owner || !c.repo || !c.token) throw new Error("GitHub não configurado.");
+    // pega SHA atual (se existir)
+    const current = await getFile(cfg);
+    const sha = current.ok ? current.sha : undefined;
 
-    const owner = c.owner;
-    const repo = c.repo;
-    const branch = c.branch || "main";
-
-    const repoPath = normPathForRepo(path);
-    const sha = await getFileSha(owner, repo, repoPath, branch);
-
-    const url = `${apiBase()}/repos/${owner}/${repo}/contents/${encodeURIComponent(repoPath)}`;
+    const url = apiBase(cfg);
     const body = {
-      message: message || ("RCF update: " + repoPath),
+      message: message || `RCF update: ${cfg.path}`,
       content: b64EncodeUnicode(String(content ?? "")),
-      branch
+      branch: cfg.branch
     };
     if (sha) body.sha = sha;
 
-    return ghFetch(url, { method: "PUT", body: JSON.stringify(body) });
-  }
+    const res = await fetch(url, {
+      method: "PUT",
+      headers: { ...headers(cfg), "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
 
-  async function pushFilesFromOverrides(paths, overrides, meta) {
-    const c = cfgGet();
-    const branch = c.branch || "main";
-    const stamp = new Date().toISOString();
-    const name = meta?.name || "mother-bundle";
-    const ver = meta?.version || "1.0";
-
-    const list = Array.isArray(paths) ? paths : [];
-    for (const p of list) {
-      const entry = overrides && overrides[p];
-      if (!entry) continue;
-      const msg = `RCF(${name}@${ver}) ${p} — ${stamp}`;
-      await putFile(p, String(entry.content ?? ""), msg);
+    if (!res.ok) {
+      const t = await res.text().catch(() => "");
+      return { ok: false, status: res.status, msg: "PUT falhou: HTTP " + res.status, detail: t };
     }
 
-    return { ok: true, pushed: list.length, branch };
+    const data = await res.json();
+    return { ok: true, status: res.status, data };
   }
 
-  function clearConfig() {
-    localStorage.removeItem(KEY);
-  }
-
-  window.RCF_GITHUB_SYNC = {
-    cfgGet,
-    cfgSet,
-    clearConfig,
-    isConfigured,
-    putFile,
-    pushFilesFromOverrides
+  window.RCF_GITHUB = {
+    getCfg,
+    setCfg,
+    getFile,
+    putFile
   };
-
-  try { console.log("[RCF] GitHub Sync v1 carregado ✅"); } catch {}
 })();
