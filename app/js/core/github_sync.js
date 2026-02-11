@@ -1,189 +1,142 @@
 /* =========================================================
-  core/github_sync.js (FULL)
-  - Cliente de Sync (PWA -> Worker -> GitHub)
-  - Treino offline: fila (queue) em localStorage
-  - Auto-sync no Save (somente low-risk)
-  - SAFE: crítico exige confirmação manual
+  RControl Factory — app/js/github_sync.js (FULL) — GitHub Sync v1
+  - Salva config (owner/repo/branch/token) no localStorage
+  - Push arquivos via GitHub REST: Contents API (PUT /contents/{path})
+  - Usado pelo Thompson: pushFilesFromOverrides(paths, overrides, meta)
 ========================================================= */
-
 (() => {
   "use strict";
 
-  const LS = {
-    get(k, fb) {
-      try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : fb; }
-      catch { return fb; }
-    },
-    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
-  };
+  const KEY = "rcf:github:cfg";
 
-  const KEY_CFG = "rcf:gh:cfg";
-  const KEY_Q = "rcf:gh:queue";
-
-  const DEFAULT_CFG = {
-    enabled: false,          // auto-sync on save
-    endpoint: "/api/push",   // Worker route
-    basePath: "factory/app", // onde gravar no repo (ajusta depois)
-    allowCritical: false     // só com confirmação
-  };
-
-  const CRITICAL = [
-    "index.html",
-    "app.js",
-    "sw.js",
-    "service-worker.js",
-    "core/",    // qualquer core/*
-  ];
-
-  function isCriticalFile(path) {
-    const p = String(path || "");
-    if (!p) return false;
-    if (p === "index.html") return true;
-    if (p === "app.js") return true;
-    if (p.endsWith("/sw.js") || p.endsWith("service-worker.js")) return true;
-    if (p.includes("/core/") || p.startsWith("core/")) return true;
-    return CRITICAL.some(x => p === x);
+  function safeJsonParse(raw, fallback) {
+    try { return JSON.parse(raw); } catch { return fallback; }
   }
 
-  function cfgGet() { return Object.assign({}, DEFAULT_CFG, LS.get(KEY_CFG, {})); }
-  function cfgSet(patch) {
+  function cfgGet() {
+    const raw = localStorage.getItem(KEY);
+    const cfg = safeJsonParse(raw || "{}", {});
+    return cfg && typeof cfg === "object" ? cfg : {};
+  }
+
+  function cfgSet(cfg) {
+    localStorage.setItem(KEY, JSON.stringify(cfg || {}));
+  }
+
+  function isConfigured() {
     const c = cfgGet();
-    const next = Object.assign({}, c, patch || {});
-    LS.set(KEY_CFG, next);
-    return next;
+    return !!(c.token && c.owner && c.repo);
   }
 
-  function qGet() { return LS.get(KEY_Q, []); }
-  function qSet(list) { LS.set(KEY_Q, Array.isArray(list) ? list : []); }
-
-  function qPush(job) {
-    const q = qGet();
-    q.unshift(job);
-    while (q.length > 50) q.pop();
-    qSet(q);
-    return q;
+  function apiBase() {
+    return "https://api.github.com";
   }
 
-  function qRemove(id) {
-    const q = qGet().filter(x => x.id !== id);
-    qSet(q);
-    return q;
-  }
-
-  function nowISO() { return new Date().toISOString(); }
-
-  function makeId() {
-    return "gh_" + Math.random().toString(16).slice(2) + "_" + Date.now();
-  }
-
-  function getActiveEditorState() {
-    // tenta ler do core (app.js) que você já tem
-    const s = window.RCF?.state || null;
-    const appSlug = s?.active?.appSlug || null;
-    const file = s?.active?.file || null;
-
-    // conteúdo do editor (textarea principal)
-    const ta = document.getElementById("fileContent");
-    const content = ta ? String(ta.value || "") : "";
-
-    return { appSlug, file, content };
-  }
-
-  function buildRepoPath(basePath, appSlug, file) {
-    // Se appSlug existir, grava dentro de /apps/<slug>/<file>
-    // Se não existir (sem app ativo), grava em /factory/<file> (para “mãe”)
-    const bp = String(basePath || "").replace(/^\/+|\/+$/g, "");
-    if (appSlug && file) return `${bp}/apps/${appSlug}/${file}`;
-    if (file) return `${bp}/factory/${file}`;
-    return `${bp}/factory/unknown.txt`;
-  }
-
-  async function apiPush({ path, content, message }) {
+  function authHeaders() {
     const c = cfgGet();
-    const url = c.endpoint || "/api/push";
+    if (!c.token) return {};
+    return {
+      "Authorization": "Bearer " + c.token,
+      "X-GitHub-Api-Version": "2022-11-28"
+    };
+  }
 
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ path, content, message })
-    });
+  function normPathForRepo(p) {
+    // Overrides usam "/core/x.js" etc. No repo, vamos salvar sem a "/" inicial
+    const s = String(p || "").trim();
+    return s.startsWith("/") ? s.slice(1) : s;
+  }
 
+  function b64EncodeUnicode(str) {
+    // btoa não curte unicode; aqui vai safe
+    return btoa(unescape(encodeURIComponent(String(str || ""))));
+  }
+
+  async function ghFetch(url, opt = {}) {
+    const headers = {
+      "Accept": "application/vnd.github+json",
+      ...authHeaders(),
+      ...(opt.headers || {})
+    };
+    const res = await fetch(url, { ...opt, headers });
     const txt = await res.text();
     let data = null;
-    try { data = JSON.parse(txt); } catch { data = { raw: txt }; }
-
+    try { data = JSON.parse(txt); } catch { data = txt; }
     if (!res.ok) {
-      const msg = data?.error || data?.message || ("HTTP " + res.status);
+      const msg = (data && data.message) ? data.message : ("HTTP " + res.status);
       throw new Error(msg);
     }
     return data;
   }
 
-  async function pushCurrentFile(opts = {}) {
-    const c = cfgGet();
-    const { appSlug, file, content } = getActiveEditorState();
-    if (!file) throw new Error("Sem arquivo ativo no editor.");
-
-    const repoPath = buildRepoPath(c.basePath, appSlug, file);
-
-    // SAFE: crítico só se allowCritical true (ou confirmação externa no UI)
-    const critical = isCriticalFile(repoPath) || isCriticalFile(file);
-    if (critical && !c.allowCritical && !opts.forceCritical) {
-      throw new Error("SAFE: arquivo crítico. Marque confirmação no Admin para permitir.");
-    }
-
-    const message = opts.message || `RCF sync: ${appSlug || "factory"} / ${file} @ ${nowISO()}`;
-
-    const job = {
-      id: makeId(),
-      at: nowISO(),
-      appSlug: appSlug || null,
-      file,
-      repoPath,
-      message,
-      bytes: content.length,
-      critical
-    };
-
-    // tenta push
+  async function getFileSha(owner, repo, path, branch) {
+    const q = branch ? ("?ref=" + encodeURIComponent(branch)) : "";
+    const url = `${apiBase()}/repos/${owner}/${repo}/contents/${encodeURIComponent(path)}${q}`;
     try {
-      const r = await apiPush({ path: repoPath, content, message });
-      return { ok: true, job, result: r };
+      const data = await ghFetch(url, { method: "GET" });
+      // quando é file, vem { sha, content, ... }
+      if (data && typeof data === "object" && data.sha) return data.sha;
+      return null;
     } catch (e) {
-      // ainda não existe Worker? ok: treina fila
-      qPush(Object.assign({ status: "queued", error: (e?.message || String(e)) }, job));
-      return { ok: false, job, error: (e?.message || String(e)), queued: true };
+      // se não existe, GitHub retorna 404 -> aqui vira erro; vamos tratar como sha null
+      const m = String(e?.message || "");
+      if (m.toLowerCase().includes("not found")) return null;
+      return null;
     }
   }
 
-  async function flushQueue(limit = 5) {
-    const q = qGet();
-    if (!q.length) return { ok: true, msg: "Queue vazia." };
+  async function putFile(path, content, message) {
+    const c = cfgGet();
+    if (!c.owner || !c.repo || !c.token) throw new Error("GitHub não configurado.");
 
-    let done = 0;
-    let fail = 0;
+    const owner = c.owner;
+    const repo = c.repo;
+    const branch = c.branch || "main";
 
-    for (const item of [...q].slice(0, limit)) {
-      try {
-        await apiPush({ path: item.repoPath, content: item._content || "", message: item.message });
-        qRemove(item.id);
-        done++;
-      } catch (e) {
-        fail++;
-      }
-    }
+    const repoPath = normPathForRepo(path);
+    const sha = await getFileSha(owner, repo, repoPath, branch);
 
-    return { ok: true, msg: `Flush: ok=${done} fail=${fail} (limit=${limit})` };
+    const url = `${apiBase()}/repos/${owner}/${repo}/contents/${encodeURIComponent(repoPath)}`;
+    const body = {
+      message: message || ("RCF update: " + repoPath),
+      content: b64EncodeUnicode(String(content ?? "")),
+      branch
+    };
+    if (sha) body.sha = sha;
+
+    return ghFetch(url, { method: "PUT", body: JSON.stringify(body) });
   }
 
-  // Observação: pra fila funcionar “de verdade”, precisamos guardar content também.
-  // Mas como isso pode ficar grande, a versão 1 usa fila como “treino do fluxo”.
-  // Próximo upgrade: guardar content compactado por hash.
+  async function pushFilesFromOverrides(paths, overrides, meta) {
+    const c = cfgGet();
+    const branch = c.branch || "main";
+    const stamp = new Date().toISOString();
+    const name = meta?.name || "mother-bundle";
+    const ver = meta?.version || "1.0";
 
-  window.RCF_GH = {
-    cfgGet, cfgSet,
-    qGet, qSet,
-    pushCurrentFile,
-    flushQueue
+    const list = Array.isArray(paths) ? paths : [];
+    for (const p of list) {
+      const entry = overrides && overrides[p];
+      if (!entry) continue;
+      const msg = `RCF(${name}@${ver}) ${p} — ${stamp}`;
+      await putFile(p, String(entry.content ?? ""), msg);
+    }
+
+    return { ok: true, pushed: list.length, branch };
+  }
+
+  function clearConfig() {
+    localStorage.removeItem(KEY);
+  }
+
+  window.RCF_GITHUB_SYNC = {
+    cfgGet,
+    cfgSet,
+    clearConfig,
+    isConfigured,
+    putFile,
+    pushFilesFromOverrides
   };
+
+  try { console.log("[RCF] GitHub Sync v1 carregado ✅"); } catch {}
 })();
