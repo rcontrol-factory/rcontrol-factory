@@ -19,6 +19,15 @@
   <div id="app"></div>
 
   <!-- CORE -->
+  <div id="bootErr" style="white-space:pre-wrap;font-family:monospace;color:#fff;background:#b00020;padding:12px;border-radius:12px;margin:12px;display:none;"></div>
+<script>
+  window.addEventListener("error", (e) => {
+    const box = document.getElementById("bootErr");
+    if (!box) return;
+    box.style.display = "block";
+    box.textContent = "JS ERROR:\n" + (e.message || e.error || e) + "\n" + (e.filename || "") + ":" + (e.lineno || "") ;
+  });
+</script>
   <script defer src="/app/app.js"></script>
 
   <!-- TOUCH FIX (anti botão travado) -->
