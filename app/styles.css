@@ -446,3 +446,32 @@ nav,
   position: relative !important;
   z-index: 5 !important;
 }
+/* ===== iOS click fixes ===== */
+.topbar { pointer-events: auto; z-index: 1000; position: sticky; top: 0; }
+#btnGear { pointer-events: auto !important; position: relative; z-index: 1200; }
+
+/* checkbox sempre clicável */
+input[type="checkbox"]{ pointer-events:auto !important; }
+label{ pointer-events:auto !important; cursor:pointer; }
+
+/* modal da engrenagem */
+.rcf-gear-backdrop{
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.45);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  z-index: 9999;
+  display:flex; align-items:flex-end; justify-content:center;
+  padding: 16px;
+}
+.rcf-gear-sheet{
+  width: min(560px, 100%);
+  background: rgba(11,18,32,.92);
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 16px;
+  box-shadow: 0 20px 60px rgba(0,0,0,.45);
+  padding: 14px;
+}
+.rcf-gear-sheet h3{ margin: 0 0 10px 0; font-size: 16px; }
+.rcf-gear-grid{ display:flex; gap:10px; flex-wrap:wrap; }
+.rcf-gear-grid .btn{ flex: 1 1 160px; }
