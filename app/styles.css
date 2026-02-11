@@ -536,3 +536,28 @@ input[type="checkbox"]{
 .blur,  .blur  * {
   pointer-events: auto !important;
 }
+/* === RCF HOTFIX: overlay invisível bloqueando o miolo === */
+#rcfWriteModal,
+.rcf-gear-backdrop,
+.tools,
+#toolsDrawer {
+  pointer-events: none;
+}
+#rcfWriteModal[style*="display: flex"],
+#rcfWriteModal.open,
+.rcf-gear-backdrop.open,
+.tools.open,
+#toolsDrawer.open {
+  pointer-events: auto !important;
+}
+
+/* se por acaso algum overlay genérico ficar por cima */
+.overlay,
+.backdrop,
+.modal,
+.sheet,
+.scrim,
+#overlay,
+#backdrop {
+  pointer-events: none !important;
+}
