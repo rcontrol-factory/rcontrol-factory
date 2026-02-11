@@ -1,161 +1,124 @@
-/* /app/sw.js — RControl Factory Service Worker (FULL)
-   - Controla o site inteiro (scope "/")
-   - Suporta overrides via postMessage (RCF_OVERRIDE_PUT / CLEAR)
-   - Serve overrides primeiro, depois rede, depois cache básico
+/* RControl Factory — sw.js (FULL)
+   - Cache básico de assets do Factory
+   - Override VFS: RCF_OVERRIDE_PUT / RCF_OVERRIDE_CLEAR
+   - Scope recomendado: "/" (registrado pelo /index.html)
 */
 
-(() => {
-  "use strict";
+"use strict";
 
-  const SW_VERSION = "rcf-sw-v1.0.0";
-  const OVERRIDE_CACHE = "rcf-overrides-v1";
-  const CORE_CACHE = "rcf-core-v1";
+const CORE_CACHE = "rcf-core-v1";
+const OVERRIDE_CACHE = "rcf-overrides-v1";
 
-  // Cache mínimo (não inventa muita coisa pra não dar tela branca)
-  const CORE_ASSETS = [
-    "/",                 // raiz
-    "/index.html",
-    "/app/styles.css",
-    "/app/app.js",
-    "/app/js/router.js",
-    "/app/js/admin.js",
-    "/app/js/ui.touchfix.js",
-    "/app/js/core/vfs_overrides.js",
-    "/app/js/core/thompson.js",
-    "/app/js/core/github_sync.js",
-    "/app/js/core/mother_selfupdate.js",
-  ];
+// Lista mínima (adicione mais se quiser, mas não é obrigatório)
+const CORE_ASSETS = [
+  "/",
+  "/index.html",
+  "/app/styles.css",
+  "/app/app.js",
 
-  self.addEventListener("install", (event) => {
-    event.waitUntil((async () => {
-      try {
-        const cache = await caches.open(CORE_CACHE);
-        // addAll pode falhar se algum caminho não existir.
-        // então fazemos “best effort”:
-        for (const url of CORE_ASSETS) {
-          try { await cache.add(url); } catch (e) {}
-        }
-      } finally {
-        await self.skipWaiting();
+  "/app/js/router.js",
+  "/app/js/admin.js",
+
+  "/app/js/core/vfs_overrides.js",
+  "/app/js/core/thompson.js",
+  "/app/js/core/github_sync.js",
+  "/app/js/core/mother_selfupdate.js",
+
+  "/app/index.html",
+  "/app/sw.js",
+];
+
+self.addEventListener("install", (event) => {
+  event.waitUntil((async () => {
+    const cache = await caches.open(CORE_CACHE);
+    try {
+      await cache.addAll(CORE_ASSETS);
+    } catch (e) {
+      // Se algum asset não existir, não mata o install.
+      // Isso evita “tela branca” por erro bobo de 404 em arquivo opcional.
+      console.warn("SW install cache warning:", e);
+    }
+    self.skipWaiting();
+  })());
+});
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil((async () => {
+    // limpa caches antigos
+    const keys = await caches.keys();
+    await Promise.all(keys.map((k) => {
+      if (k !== CORE_CACHE && k !== OVERRIDE_CACHE) return caches.delete(k);
+    }));
+    await self.clients.claim();
+  })());
+});
+
+// Recebe overrides do window.RCF_VFS.put / clearAll()
+self.addEventListener("message", (event) => {
+  const d = event.data || {};
+  event.waitUntil((async () => {
+    try {
+      if (d.type === "RCF_OVERRIDE_PUT") {
+        const path = String(d.path || "").trim();
+        const content = String(d.content ?? "");
+        const contentType = String(d.contentType || "text/plain; charset=utf-8");
+
+        if (!path.startsWith("/")) throw new Error("override path deve começar com /");
+
+        const cache = await caches.open(OVERRIDE_CACHE);
+        await cache.put(path, new Response(content, {
+          status: 200,
+          headers: { "Content-Type": contentType }
+        }));
+
+        event.source?.postMessage({ type: "RCF_OVERRIDE_PUT_OK", path });
+        return;
       }
-    })());
-  });
 
-  self.addEventListener("activate", (event) => {
-    event.waitUntil((async () => {
-      // limpa caches antigos (se futuramente mudar versão)
-      const keys = await caches.keys();
-      for (const k of keys) {
-        if (k !== CORE_CACHE && k !== OVERRIDE_CACHE) {
-          try { await caches.delete(k); } catch (e) {}
-        }
+      if (d.type === "RCF_OVERRIDE_CLEAR") {
+        await caches.delete(OVERRIDE_CACHE);
+        event.source?.postMessage({ type: "RCF_OVERRIDE_CLEAR_OK" });
+        return;
       }
-      await self.clients.claim();
-    })());
-  });
+    } catch (e) {
+      console.warn("SW msg error:", e);
+      // não trava
+    }
+  })());
+});
 
-  function isGET(req) { return (req && req.method === "GET"); }
+self.addEventListener("fetch", (event) => {
+  const req = event.request;
+  if (req.method !== "GET") return;
 
-  // ---------------------------
-  // Overrides API via postMessage
-  // ---------------------------
-  self.addEventListener("message", (event) => {
-    const msg = event.data || {};
-    const src = event.source;
+  const url = new URL(req.url);
 
-    const reply = (data) => {
-      try { src && src.postMessage(data); } catch (e) {}
-    };
+  // Só controla mesmo domínio
+  if (url.origin !== self.location.origin) return;
 
-    event.waitUntil((async () => {
-      try {
-        if (msg.type === "RCF_OVERRIDE_PUT") {
-          const path = String(msg.path || "").trim();
-          const content = String(msg.content ?? "");
-          const contentType = String(msg.contentType || "text/plain; charset=utf-8");
+  event.respondWith((async () => {
+    // 1) Overrides têm prioridade
+    const ovCache = await caches.open(OVERRIDE_CACHE);
+    const ovHit = await ovCache.match(url.pathname);
+    if (ovHit) return ovHit;
 
-          if (!path.startsWith("/")) throw new Error("path deve começar com '/'");
+    // 2) Cache core
+    const core = await caches.open(CORE_CACHE);
+    const coreHit = await core.match(req);
+    if (coreHit) return coreHit;
 
-          const cache = await caches.open(OVERRIDE_CACHE);
-          const res = new Response(content, {
-            status: 200,
-            headers: { "Content-Type": contentType, "X-RCF-Override": "1" }
-          });
-
-          // chave do cache = URL absoluta do site (SW entende melhor assim)
-          const url = new URL(path, self.location.origin).toString();
-          await cache.put(url, res);
-
-          reply({ type: "RCF_OVERRIDE_PUT_OK", path, ok: true });
-          return;
-        }
-
-        if (msg.type === "RCF_OVERRIDE_CLEAR") {
-          await caches.delete(OVERRIDE_CACHE);
-          reply({ type: "RCF_OVERRIDE_CLEAR_OK", ok: true });
-          return;
-        }
-      } catch (e) {
-        reply({ type: "RCF_OVERRIDE_ERR", ok: false, error: String(e?.message || e) });
+    // 3) Network + cache (best effort)
+    try {
+      const fresh = await fetch(req);
+      // cacheia só se for ok
+      if (fresh && fresh.ok) {
+        try { core.put(req, fresh.clone()); } catch {}
       }
-    })());
-  });
-
-  // ---------------------------
-  // Fetch: override > cache core > network
-  // ---------------------------
-  self.addEventListener("fetch", (event) => {
-    const req = event.request;
-    if (!isGET(req)) return;
-
-    const url = new URL(req.url);
-
-    // só controla o mesmo origin
-    if (url.origin !== self.location.origin) return;
-
-    event.respondWith((async () => {
-      // 1) overrides primeiro
-      try {
-        const oCache = await caches.open(OVERRIDE_CACHE);
-        const over = await oCache.match(req.url);
-        if (over) return over;
-      } catch (e) {}
-
-      // 2) cache core (rápido)
-      try {
-        const cCache = await caches.open(CORE_CACHE);
-        const cached = await cCache.match(req);
-        if (cached) {
-          // atualiza em background (stale-while-revalidate)
-          event.waitUntil((async () => {
-            try {
-              const fresh = await fetch(req);
-              if (fresh && fresh.ok) await cCache.put(req, fresh.clone());
-            } catch (e) {}
-          })());
-          return cached;
-        }
-      } catch (e) {}
-
-      // 3) rede
-      try {
-        const fresh = await fetch(req);
-        // guarda alguns GET no core cache (sem exagero)
-        try {
-          const cCache = await caches.open(CORE_CACHE);
-          if (fresh && fresh.ok) await cCache.put(req, fresh.clone());
-        } catch (e) {}
-        return fresh;
-      } catch (e) {
-        // 4) fallback básico
-        if (url.pathname === "/" || url.pathname === "/index.html") {
-          const cCache = await caches.open(CORE_CACHE);
-          const fallback = await cCache.match("/index.html");
-          if (fallback) return fallback;
-        }
-        return new Response("Offline / erro de rede.", { status: 503, headers: { "Content-Type": "text/plain; charset=utf-8" } });
-      }
-    })());
-  });
-
-})();
+      return fresh;
+    } catch (e) {
+      // fallback final
+      const fallback = await core.match("/index.html");
+      return fallback || new Response("Offline", { status: 503 });
+    }
+  })());
+});
