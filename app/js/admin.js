@@ -356,3 +356,28 @@
     boot();
   }
 })();
+// iOS fallback: se overlay travar clique, forçamos toggle do checkbox do safe-mode
+(function(){
+  function bindSafeCheckboxFix(){
+    const cb = document.querySelector("#motherConfirmCritical, #mother_confirm_critical, input[type=checkbox][data-role='mother-confirm']");
+    if (!cb) return;
+
+    // garante que clique no label funciona
+    const lbl = document.querySelector(`label[for="${cb.id}"]`);
+    if (lbl) lbl.style.pointerEvents = "auto";
+
+    // fallback: clique no bloco tracejado alterna
+    const box = cb.closest(".rcf-checkline, .checkline, .dashed, .card, .row") || cb.parentElement;
+    if (!box) return;
+
+    box.addEventListener("click", (e) => {
+      const t = e.target;
+      // se clicou em botão/input/textarea, não mexe
+      if (t?.closest?.("button, input, textarea, select, a")) return;
+      cb.checked = !cb.checked;
+      cb.dispatchEvent(new Event("change", { bubbles:true }));
+    }, { passive:true });
+  }
+
+  window.addEventListener("load", () => setTimeout(bindSafeCheckboxFix, 500));
+})();
