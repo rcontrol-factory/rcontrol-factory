@@ -475,3 +475,39 @@ label{ pointer-events:auto !important; cursor:pointer; }
 .rcf-gear-sheet h3{ margin: 0 0 10px 0; font-size: 16px; }
 .rcf-gear-grid{ display:flex; gap:10px; flex-wrap:wrap; }
 .rcf-gear-grid .btn{ flex: 1 1 160px; }
+/* ===========================
+   RCF FIX: Drawer/Engrenagem - botões não clicam (iOS/Android)
+   Cole NO FINAL do styles.css
+   =========================== */
+
+.tools,
+#toolsDrawer {
+  position: fixed;
+  z-index: 99999 !important;
+}
+
+/* FECHADO: não captura toque */
+.tools { pointer-events: none; }
+.tools.open { pointer-events: auto !important; }
+
+/* garante que tudo dentro aceita toque */
+.tools.open,
+.tools.open * {
+  pointer-events: auto !important;
+  touch-action: manipulation;
+}
+
+/* às vezes o iOS "mata" checkbox visualmente sem label clicável */
+.tools.open input[type="checkbox"],
+.tools.open label {
+  pointer-events: auto !important;
+  cursor: pointer;
+}
+
+/* Se existir backdrop/overlay invisível, não pode capturar toque */
+.overlay,
+.backdrop,
+#overlay,
+#backdrop {
+  pointer-events: none !important;
+}
