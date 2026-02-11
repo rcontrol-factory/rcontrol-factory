@@ -1,10 +1,8 @@
 {
-  "meta": {
-    "name": "mother-test",
-    "version": "1.0",
-    "createdAt": "2026-02-11T05:50:00Z"
-  },
+  "meta": { "name": "rcf-release", "version": "1.0", "createdAt": "..." },
   "files": {
-    "/core/TESTE.txt": "OK — override ativo"
+    "/app/index.html": "<!doctype html>....",
+    "/app/js/admin.js": "(function(){ ... })();",
+    "/app/sw.js": "/* service worker */"
   }
 }
