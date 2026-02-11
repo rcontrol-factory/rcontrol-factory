@@ -1,208 +1,360 @@
 /* =========================================================
-  RControl Factory — app/js/admin.js (FULL) — MÃE UI (SAFE) + iOS TAP FIX
-  - Injeta "MAINTENANCE • Self-Update (Mãe)" dentro do Admin
-  - Botões clicáveis no iPhone (touchend + click, capture, preventDefault)
-  - Detecta Thompson (window.RCF_THOMPSON) e mostra status no Admin
-  - MVP: ainda NÃO publica nada em GitHub (isso é próximo passo)
+  RControl Factory — app/js/admin.js (FULL)
+  - Recria UI do Admin (cards extras)
+  - Mantém ações de diagnóstico/reset (se existirem no core)
+  - Recoloca:
+    A) GitHub Sync (Privado) — SAFE (Pull/Push/Atualizar agora)
+    B) Publish Queue (OFFLINE)
+  - iOS: bind touchend + click
 ========================================================= */
 
 (function () {
   "use strict";
 
   const $ = (id) => document.getElementById(id);
+  const qs = (sel, root = document) => root.querySelector(sel);
 
-  // ---------- iOS safe tap ----------
   const TAP_GUARD_MS = 450;
   let _lastTapAt = 0;
 
   function bindTap(el, fn) {
     if (!el) return;
-
-    const handler = async (e) => {
+    const handler = (e) => {
       const now = Date.now();
       if (now - _lastTapAt < TAP_GUARD_MS) {
         try { e.preventDefault(); e.stopPropagation(); } catch {}
         return;
       }
       _lastTapAt = now;
-
       try { e.preventDefault(); e.stopPropagation(); } catch {}
-      try { await fn(e); } catch (err) {
-        out("motherMaintOut", "❌ ERRO: " + (err?.message || String(err)));
-        status("Falha ❌");
-        log("ADMIN error: " + (err?.message || String(err)));
-      }
+      try { fn(e); } catch (err) { console.error(err); }
     };
-
-    try {
-      el.style.pointerEvents = "auto";
-      el.style.touchAction = "manipulation";
-      el.style.webkitTapHighlightColor = "transparent";
-    } catch {}
-
+    el.style.pointerEvents = "auto";
+    el.style.touchAction = "manipulation";
+    el.style.webkitTapHighlightColor = "transparent";
     el.addEventListener("touchend", handler, { passive: false, capture: true });
     el.addEventListener("click", handler, { passive: false, capture: true });
   }
 
-  function status(text) {
-    const el = $("statusText");
+  function setAdminOut(text) {
+    const el = $("adminOut");
     if (el) el.textContent = String(text || "");
   }
 
-  function out(id, text) {
-    const el = $(id);
-    if (el) el.textContent = String(text || "");
-  }
-
-  function appendOut(id, text) {
-    const el = $(id);
+  function appendAdminOut(text) {
+    const el = $("adminOut");
     if (!el) return;
-    const prev = (el.textContent || "").trim();
-    el.textContent = prev ? (prev + "\n" + text) : text;
+    el.textContent = (el.textContent ? el.textContent + "\n" : "") + String(text || "");
   }
 
-  function log(msg) {
+  function ensureAdminView() {
+    const v = $("view-admin");
+    if (!v) throw new Error("view-admin não existe (index.html).");
+    return v;
+  }
+
+  // -------------------------
+  // Publish Queue (offline)
+  // -------------------------
+  const QKEY = "RCF_PUBLISH_QUEUE_V1";
+
+  function qLoad() {
     try {
-      if (window.RCF && typeof window.RCF.log === "function") window.RCF.log(msg);
-      else console.log("[RCF ADMIN]", msg);
-    } catch {}
+      const raw = localStorage.getItem(QKEY);
+      const arr = raw ? JSON.parse(raw) : [];
+      return Array.isArray(arr) ? arr : [];
+    } catch {
+      return [];
+    }
   }
 
-  // ---------- Thompson adapter ----------
-  function getThompson() {
-    return window.RCF_THOMPSON || window.THOMPSON || null;
+  function qSave(arr) {
+    localStorage.setItem(QKEY, JSON.stringify(arr || []));
   }
 
-  // ---------- Render Mother card ----------
-  function ensureMotherCard() {
-    const adminView = $("view-admin");
-    if (!adminView) return null;
+  function qEnqueue(bundle) {
+    const q = qLoad();
+    q.unshift({
+      at: new Date().toISOString(),
+      meta: bundle?.meta || {},
+      bundle
+    });
+    qSave(q);
+    return q;
+  }
 
-    // evita duplicar
-    if ($("motherMaintCard")) return $("motherMaintCard");
+  function qClear() {
+    qSave([]);
+  }
 
-    adminView.style.pointerEvents = "auto";
-    adminView.style.position = "relative";
-    adminView.style.zIndex = "1";
+  function qExport() {
+    const q = qLoad();
+    return JSON.stringify(q, null, 2);
+  }
 
-    const card = document.createElement("div");
-    card.className = "card";
-    card.id = "motherMaintCard";
-    card.style.pointerEvents = "auto";
+  function qSummary() {
+    const q = qLoad();
+    if (!q.length) return "Fila: 0 item.";
+    const top = q[0];
+    const name = top?.meta?.name || "-";
+    const ver = top?.meta?.version || "-";
+    return `Fila: ${q.length} item(s). Último: ${name} v${ver} (${top.at})`;
+  }
 
-    card.innerHTML = `
-      <h2 style="margin-top:4px">MAINTENANCE • Self-Update (Mãe)</h2>
-      <p class="hint">SAFE por padrão. (Próximo passo: ligar Thompson + overrides + rollback real.)</p>
+  // -------------------------
+  // GitHub Sync UI
+  // -------------------------
+  function ghAvailable() {
+    return !!(window.RCF_GH_SYNC && typeof window.RCF_GH_SYNC.loadCfg === "function");
+  }
 
-      <div class="row" style="flex-wrap:wrap; gap:10px; pointer-events:auto">
-        <button class="btn primary" id="btnMotherPing" type="button">Testar clique (PING)</button>
-        <button class="btn" id="btnMotherCheckTh" type="button">Checar Thompson</button>
-        <button class="btn danger" id="btnMotherHide" type="button">Ocultar card</button>
+  function thAvailable() {
+    return !!(window.RCF_THOMPSON && typeof window.RCF_THOMPSON.apply === "function");
+  }
+
+  function parseBundleFromTextarea(textareaId) {
+    if (!thAvailable()) throw new Error("Thompson não carregou (RCF_THOMPSON ausente).");
+    const raw = $(textareaId)?.value || "";
+    const r = window.RCF_THOMPSON.parseBundle(raw);
+    if (!r.ok) throw new Error(r.error || "Bundle inválido.");
+    return r.bundle;
+  }
+
+  // -------------------------
+  // Render Cards
+  // -------------------------
+  function cardHTML(title, subtitle) {
+    return `
+      <div class="card" style="pointer-events:auto">
+        <h2>${title}</h2>
+        <p class="hint">${subtitle || ""}</p>
+      </div>
+    `;
+  }
+
+  function ensureGitHubCard(adminView) {
+    if ($("rcfGitHubCard")) return;
+
+    const wrap = document.createElement("div");
+    wrap.id = "rcfGitHubCard";
+    wrap.className = "card";
+    wrap.style.pointerEvents = "auto";
+
+    wrap.innerHTML = `
+      <h2>GitHub Sync (Privado) — SAFE</h2>
+      <p class="hint">Puxa/Empurra o bundle no seu repo. Assim você atualiza em um aparelho e puxa no outro.</p>
+
+      <div class="row" style="gap:10px; flex-wrap:wrap">
+        <input id="ghOwner" class="input" placeholder="owner (ex: rcontrol-factory)" />
+        <input id="ghRepo" class="input" placeholder="repo (ex: rcontrol-factory)" />
+      </div>
+      <div class="row" style="gap:10px; flex-wrap:wrap">
+        <input id="ghBranch" class="input" placeholder="branch (ex: main)" />
+        <input id="ghPath" class="input" placeholder="path (ex: app/import/mother_bundle.json)" />
+      </div>
+      <div class="row" style="gap:10px; flex-wrap:wrap">
+        <input id="ghToken" class="input" placeholder="TOKEN (PAT) — contents:read/write" />
+        <button id="ghSave" class="btn" type="button">Salvar config</button>
       </div>
 
-      <div class="hint" style="margin:10px 0 6px 0">Bundle de teste (não aplica nada ainda):</div>
-      <textarea id="motherBundleTextarea" spellcheck="false"
-        style="
-          width:100%;
-          min-height:130px;
-          border:1px solid rgba(255,255,255,.10);
-          background: rgba(0,0,0,.22);
-          color: rgba(255,255,255,.92);
-          border-radius: 12px;
-          padding: 12px;
-          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
-          font-size: 13px;
-          line-height: 1.45;
-          outline: none;
-          pointer-events:auto;
-        "
-      >{
-  "meta": { "name":"mother-test", "version":"1.0", "createdAt":"{{DATE}}" },
-  "files": { "/core/TESTE.txt": "OK — teste em {{DATE}}" }
-}</textarea>
+      <div class="row" style="gap:10px; flex-wrap:wrap">
+        <button id="ghPull" class="btn" type="button">⬇ Pull (baixar do GitHub)</button>
+        <button id="ghPush" class="btn ok" type="button">⬆ Push (enviar p/ GitHub)</button>
+        <button id="ghUpdateNow" class="btn primary" type="button">⚡ Atualizar agora</button>
+      </div>
 
-      <pre class="mono small" id="motherMaintOut" style="margin-top:10px; pointer-events:auto">Pronto.</pre>
+      <pre id="ghOut" class="mono small">GitHub: pronto. (Sync v1)</pre>
     `;
 
-    // insere depois do primeiro card do admin (fica bonitinho)
+    // inserir depois do primeiro card do Admin (pra ficar perto da Mãe)
     const firstCard = adminView.querySelector(".card");
-    if (firstCard && firstCard.parentNode) firstCard.parentNode.insertBefore(card, firstCard.nextSibling);
-    else adminView.appendChild(card);
+    if (firstCard && firstCard.parentNode) firstCard.parentNode.insertBefore(wrap, firstCard.nextSibling);
+    else adminView.appendChild(wrap);
 
-    // força pointer-events em tudo no card
-    card.querySelectorAll("*").forEach((el) => {
-      try {
-        el.style.pointerEvents = "auto";
-        el.style.touchAction = "manipulation";
-      } catch {}
-    });
-
-    return card;
-  }
-
-  // ---------- Actions ----------
-  function replaceDateTokens(raw) {
-    const iso = new Date().toISOString();
-    return String(raw || "").replaceAll("{{DATE}}", iso);
-  }
-
-  async function actionPing() {
-    status("PING ✅");
-    out("motherMaintOut", "✅ Clique OK (PING)\n" + new Date().toLocaleString());
-    appendOut("adminOut", "MAE: PING OK ✅");
-    setTimeout(() => status("OK ✅"), 700);
-  }
-
-  async function actionCheckThompson() {
-    const T = getThompson();
-    const ok = !!T;
-
-    const line = ok
-      ? "✅ Thompson OK (window.RCF_THOMPSON encontrado)"
-      : "❌ Thompson NÃO encontrado (verifique app/js/core/thompson.js e ordem no index.html)";
-
-    // mostra detalhes se existir
-    let extra = "";
-    if (ok) {
-      const methods = Object.keys(T).filter(k => typeof T[k] === "function").slice(0, 30);
-      extra = "\nmethods: " + (methods.length ? methods.join(", ") : "(nenhum detectado)");
+    // preencher inputs com cfg
+    if (ghAvailable()) {
+      const cfg = window.RCF_GH_SYNC.loadCfg();
+      if ($("ghOwner")) $("ghOwner").value = cfg.owner || "";
+      if ($("ghRepo")) $("ghRepo").value = cfg.repo || "";
+      if ($("ghBranch")) $("ghBranch").value = cfg.branch || "main";
+      if ($("ghPath")) $("ghPath").value = cfg.path || "app/import/mother_bundle.json";
+      if ($("ghToken")) $("ghToken").value = cfg.token || "";
+    } else {
+      $("ghOut").textContent = "❌ GitHub Sync: módulo não carregou (RCF_GH_SYNC ausente). Verifique index.html: js/core/github_sync.js";
     }
 
-    out("motherMaintOut", line + extra);
-    appendOut("adminOut", "MAE: check Thompson -> " + (ok ? "OK ✅" : "FAIL ❌"));
-    status(ok ? "Thompson OK ✅" : "Thompson FAIL ❌");
-    setTimeout(() => status("OK ✅"), 900);
+    // binds
+    bindTap($("ghSave"), () => {
+      if (!ghAvailable()) throw new Error("RCF_GH_SYNC ausente.");
+      const cfg = {
+        owner: $("ghOwner")?.value?.trim() || "",
+        repo: $("ghRepo")?.value?.trim() || "",
+        branch: $("ghBranch")?.value?.trim() || "main",
+        path: $("ghPath")?.value?.trim() || "app/import/mother_bundle.json",
+        token: $("ghToken")?.value?.trim() || "",
+      };
+      window.RCF_GH_SYNC.saveCfg(cfg);
+      $("ghOut").textContent = "✅ Config salva em localStorage (RCF_GH_CFG).";
+    });
+
+    bindTap($("ghPull"), async () => {
+      if (!ghAvailable()) throw new Error("RCF_GH_SYNC ausente.");
+      $("ghOut").textContent = "Pull…";
+      const r = await window.RCF_GH_SYNC.pullText();
+      const txt = r.text || "";
+      // joga dentro do textarea da Mãe se existir
+      const ta = $("motherBundleTextarea");
+      if (ta) ta.value = txt;
+      $("ghOut").textContent = "✅ Pull OK. Bundle baixado do GitHub.";
+    });
+
+    bindTap($("ghPush"), async () => {
+      if (!ghAvailable()) throw new Error("RCF_GH_SYNC ausente.");
+      const ta = $("motherBundleTextarea");
+      const txt = ta ? (ta.value || "") : "";
+      // valida JSON antes de mandar
+      try { JSON.parse(txt); } catch { throw new Error("Bundle inválido: JSON inválido ou vazio."); }
+
+      $("ghOut").textContent = "Push…";
+      await window.RCF_GH_SYNC.pushText(txt, "RCF: update mother_bundle.json");
+      $("ghOut").textContent = "✅ Push OK. Atualizado no GitHub. (commit via contents API)";
+    });
+
+    // Atualizar agora: Pull e já aplica como bundle colado (se Thompson + Mãe existirem)
+    bindTap($("ghUpdateNow"), async () => {
+      if (!ghAvailable()) throw new Error("RCF_GH_SYNC ausente.");
+      if (!thAvailable()) throw new Error("Thompson não carregou (RCF_THOMPSON ausente).");
+
+      $("ghOut").textContent = "Atualizar agora… (pull + apply)";
+      const r = await window.RCF_GH_SYNC.pullText();
+      const txt = r.text || "";
+
+      // valida + aplica
+      const ta = $("motherBundleTextarea");
+      if (ta) ta.value = txt;
+
+      // parse bundle
+      const bundle = parseBundleFromTextarea("motherBundleTextarea");
+
+      // SAFE: se tiver confirmação crítica, respeita checkbox da Mãe
+      const mode = (window.RCF?.state?.cfg?.mode === "auto") ? "auto" : "safe";
+      const guard = window.RCF_THOMPSON.guardApply(bundle, mode);
+      if (guard.needsConfirm) {
+        const chk = $("motherConfirmCritical");
+        if (!chk || !chk.checked) {
+          $("ghOut").textContent =
+            "⚠️ SAFE MODE: tem arquivo crítico. Marque 'Confirmo aplicar...' e clique de novo.";
+          return;
+        }
+      }
+
+      window.RCF_THOMPSON.apply(bundle);
+      $("ghOut").textContent = "✅ Atualizado agora: pull + apply OK. Recarregue a página se necessário.";
+    });
   }
 
-  async function actionHide() {
-    const card = $("motherMaintCard");
-    if (card) card.style.display = "none";
-    appendOut("adminOut", "MAE: card ocultado");
-    status("OK ✅");
+  function ensurePublishQueueCard(adminView) {
+    if ($("rcfQueueCard")) return;
+
+    const wrap = document.createElement("div");
+    wrap.id = "rcfQueueCard";
+    wrap.className = "card";
+    wrap.style.pointerEvents = "auto";
+
+    wrap.innerHTML = `
+      <h2>Publish Queue (OFFLINE)</h2>
+      <p class="hint">Fila local para bundles (publicação real via API fica pra depois).</p>
+
+      <div class="row" style="gap:10px; flex-wrap:wrap">
+        <button id="qEnqueue" class="btn" type="button">Enfileirar bundle colado</button>
+        <button id="qView" class="btn" type="button">Ver fila</button>
+        <button id="qExport" class="btn" type="button">Exportar fila</button>
+        <button id="qClear" class="btn danger" type="button">Limpar fila</button>
+      </div>
+
+      <pre id="qOut" class="mono small">${qSummary()}</pre>
+    `;
+
+    adminView.appendChild(wrap);
+
+    bindTap($("qEnqueue"), () => {
+      const bundle = parseBundleFromTextarea("motherBundleTextarea"); // usa textarea da Mãe
+      qEnqueue(bundle);
+      $("qOut").textContent = "✅ Enfileirado.\n" + qSummary();
+    });
+
+    bindTap($("qView"), () => {
+      const q = qLoad();
+      if (!q.length) { $("qOut").textContent = "Fila: 0 item."; return; }
+      const lines = [];
+      lines.push(qSummary());
+      lines.push("");
+      q.slice(0, 10).forEach((it, i) => {
+        lines.push(`${i+1}) ${it.meta?.name || "-"} v${it.meta?.version || "-"} — ${it.at}`);
+      });
+      if (q.length > 10) lines.push(`… +${q.length - 10}`);
+      $("qOut").textContent = lines.join("\n");
+    });
+
+    bindTap($("qExport"), () => {
+      const txt = qExport();
+      try { navigator.clipboard.writeText(txt); } catch {}
+      $("qOut").textContent = "✅ Fila exportada (copiada no clipboard).\n" + qSummary();
+    });
+
+    bindTap($("qClear"), () => {
+      qClear();
+      $("qOut").textContent = "✅ Fila limpa.\nFila: 0 item.";
+    });
   }
 
-  // ---------- Bind + Boot ----------
-  function bindMother() {
-    ensureMotherCard();
+  // -------------------------
+  // Admin base actions
+  // -------------------------
+  function bindBaseButtons() {
+    // Se existirem handlers no core, tenta chamar. Se não, só mostra msg.
+    bindTap($("btnDiagnose"), () => {
+      try {
+        if (window.RCF && typeof window.RCF.collectDiagnostics === "function") {
+          const d = window.RCF.collectDiagnostics();
+          setAdminOut("✅ Diagnóstico coletado.\n" + JSON.stringify(d, null, 2));
+        } else {
+          appendAdminOut("✅ Diagnosticar: (modo simples) — core não expôs collectDiagnostics().");
+        }
+      } catch (e) {
+        appendAdminOut("❌ Diagnóstico erro: " + (e?.message || e));
+      }
+    });
 
-    bindTap($("btnMotherPing"), actionPing);
-    bindTap($("btnMotherCheckTh"), actionCheckThompson);
-    bindTap($("btnMotherHide"), actionHide);
-
-    // marca carregamento visível
-    appendOut("adminOut", "MAE UI carregada ✅ (app/js/admin.js)");
-    out("motherMaintOut", "✅ MAE UI carregada.\nSe aparecer aqui, então o script está rodando.");
+    bindTap($("btnResetSafe"), () => {
+      try {
+        if (window.RCF_THOMPSON && typeof window.RCF_THOMPSON.resetAll === "function") {
+          window.RCF_THOMPSON.resetAll();
+          appendAdminOut("✅ Zerar (safe): overrides/histórico removidos.");
+        } else {
+          appendAdminOut("✅ Zerar (safe): (modo simples) — Thompson não expôs resetAll().");
+        }
+      } catch (e) {
+        appendAdminOut("❌ Reset erro: " + (e?.message || e));
+      }
+    });
   }
 
   function init() {
-    bindMother();
+    const adminView = ensureAdminView();
 
-    // status Thompson logo no boot
-    const T = getThompson();
-    appendOut("adminOut", "Thompson: " + (T ? "OK ✅" : "não encontrado ❌"));
+    // marca que admin.js carregou
+    appendAdminOut("MAE UI carregada ✅ (app/js/admin.js)");
 
-    status("OK ✅");
-    log("admin.js init ok");
+    bindBaseButtons();
+
+    // recria os blocos que você falou que sumiram
+    ensureGitHubCard(adminView);
+    ensurePublishQueueCard(adminView);
+
+    // status no topo (se existir)
+    const st = $("statusText");
+    if (st) st.textContent = "OK ✅";
   }
 
   if (document.readyState === "loading") {
