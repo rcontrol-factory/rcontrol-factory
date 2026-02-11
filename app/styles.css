@@ -531,3 +531,8 @@ input[type="checkbox"]{
 /* overlays comuns: nunca podem bloquear toque quando não estão abertos */
 .tools { pointer-events: none !important; }
 .tools.open { pointer-events: auto !important; }
+/* HARD FIX: se algum container tiver classe de estilo tipo glass, nunca pode matar clique */
+.glass, .glass * ,
+.blur,  .blur  * {
+  pointer-events: auto !important;
+}
