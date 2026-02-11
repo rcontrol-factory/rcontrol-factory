@@ -6,19 +6,47 @@
   <meta name="theme-color" content="#0b1220" />
   <title>RControl Factory</title>
 
-  <!-- Evita cache te enganando -->
-  <meta http-equiv="cache-control" content="no-cache, no-store, must-revalidate" />
-  <meta http-equiv="pragma" content="no-cache" />
-  <meta http-equiv="expires" content="0" />
-</head>
-<body style="margin:0;font-family:system-ui;background:#fff;color:#111">
-  <pre id="boot" style="padding:16px;white-space:pre-wrap">Boot: redirect → /app/ ...</pre>
+  <!-- CSS vem da pasta /app -->
+  <link rel="stylesheet" href="/app/styles.css" />
 
+  <!-- iOS PWA -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+</head>
+
+<body>
+  <div id="app"></div>
+
+  <!-- CORE -->
+  <script defer src="/app/app.js"></script>
+
+  <!-- TOUCH FIX -->
+  <script defer src="/app/js/ui.touchfix.js"></script>
+
+  <!-- ROUTER -->
+  <script defer src="/app/js/router.js"></script>
+
+  <!-- ADMIN -->
+  <script defer src="/app/js/admin.js"></script>
+
+  <!-- CORE MODULES -->
+  <script defer src="/app/js/core/vfs_overrides.js"></script>
+  <script defer src="/app/js/core/thompson.js"></script>
+  <script defer src="/app/js/core/github_sync.js"></script>
+  <script defer src="/app/js/core/mother_selfupdate.js"></script>
+
+  <!-- SW REGISTER -->
   <script>
-    (function () {
-      // Força abrir /app/ (com cache-bust)
-      var v = Date.now();
-      location.replace("/app/?v=" + v);
+    (function(){
+      if (!("serviceWorker" in navigator)) return;
+      window.addEventListener("load", async () => {
+        try {
+          // SW FICA EM /app/sw.js mas controla o site todo
+          await navigator.serviceWorker.register("/app/sw.js", { scope: "/" });
+        } catch(e){
+          console.warn("SW erro:", e);
+        }
+      });
     })();
   </script>
 </body>
