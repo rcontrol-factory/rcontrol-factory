@@ -1,1 +1,8 @@
-
+{
+  "latest": {
+    "version": "1",
+    "bundlePath": "app/import/mother_bundle.json",
+    "notes": "base",
+    "createdAt": "2026-02-11"
+  }
+}
