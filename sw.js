@@ -1,7 +1,9 @@
-/* RControl Factory — sw.js (FULL)
-   - Cache básico de assets do Factory
-   - Override VFS: RCF_OVERRIDE_PUT / RCF_OVERRIDE_CLEAR
-   - Scope recomendado: "/" (registrado pelo /index.html)
+/* RControl Factory — Service Worker (ROOT)
+   - Scope: "/"
+   - Offline cache básico
+   - Overrides via postMessage:
+       RCF_OVERRIDE_PUT  { path, content, contentType }
+       RCF_OVERRIDE_CLEAR
 */
 
 "use strict";
@@ -9,116 +11,143 @@
 const CORE_CACHE = "rcf-core-v1";
 const OVERRIDE_CACHE = "rcf-overrides-v1";
 
-// Lista mínima (adicione mais se quiser, mas não é obrigatório)
 const CORE_ASSETS = [
   "/",
   "/index.html",
+  "/app/",
+  "/app/index.html",
   "/app/styles.css",
   "/app/app.js",
 
+  // Se existirem no seu repo, ótimo. Se não existirem, não quebra: fetch vai cair no runtime.
+  "/app/js/ui.touchfix.js",
   "/app/js/router.js",
   "/app/js/admin.js",
-
   "/app/js/core/vfs_overrides.js",
   "/app/js/core/thompson.js",
   "/app/js/core/github_sync.js",
   "/app/js/core/mother_selfupdate.js",
-
-  "/app/index.html",
-  "/app/sw.js",
+  "/app/manifest.json"
 ];
 
 self.addEventListener("install", (event) => {
   event.waitUntil((async () => {
-    const cache = await caches.open(CORE_CACHE);
-    try {
-      await cache.addAll(CORE_ASSETS);
-    } catch (e) {
-      // Se algum asset não existir, não mata o install.
-      // Isso evita “tela branca” por erro bobo de 404 em arquivo opcional.
-      console.warn("SW install cache warning:", e);
-    }
     self.skipWaiting();
+    const cache = await caches.open(CORE_CACHE);
+    // Tenta cachear o máximo possível sem travar instalação
+    await Promise.allSettled(CORE_ASSETS.map((url) => cache.add(url)));
   })());
 });
 
 self.addEventListener("activate", (event) => {
   event.waitUntil((async () => {
-    // limpa caches antigos
+    self.clients.claim();
+
     const keys = await caches.keys();
-    await Promise.all(keys.map((k) => {
-      if (k !== CORE_CACHE && k !== OVERRIDE_CACHE) return caches.delete(k);
-    }));
-    await self.clients.claim();
+    await Promise.all(
+      keys.map((k) => {
+        if (k !== CORE_CACHE && k !== OVERRIDE_CACHE) return caches.delete(k);
+      })
+    );
   })());
 });
 
-// Recebe overrides do window.RCF_VFS.put / clearAll()
+/* Helpers */
+function normalizePath(p) {
+  let path = String(p || "").trim();
+  if (!path.startsWith("/")) path = "/" + path;
+  return path;
+}
+
+function urlFromPath(path) {
+  // Gera URL absoluta dentro do escopo do SW
+  return new URL(normalizePath(path), self.registration.scope).toString();
+}
+
+/* Overrides: PUT/CLEAR */
 self.addEventListener("message", (event) => {
-  const d = event.data || {};
+  const data = event.data || {};
+  const src = event.source;
+
   event.waitUntil((async () => {
     try {
-      if (d.type === "RCF_OVERRIDE_PUT") {
-        const path = String(d.path || "").trim();
-        const content = String(d.content ?? "");
-        const contentType = String(d.contentType || "text/plain; charset=utf-8");
-
-        if (!path.startsWith("/")) throw new Error("override path deve começar com /");
+      if (data.type === "RCF_OVERRIDE_PUT") {
+        const path = normalizePath(data.path);
+        const content = String(data.content ?? "");
+        const contentType = String(data.contentType || "text/plain; charset=utf-8");
 
         const cache = await caches.open(OVERRIDE_CACHE);
-        await cache.put(path, new Response(content, {
-          status: 200,
-          headers: { "Content-Type": contentType }
-        }));
+        const headers = new Headers({
+          "Content-Type": contentType,
+          "Cache-Control": "no-store"
+        });
 
-        event.source?.postMessage({ type: "RCF_OVERRIDE_PUT_OK", path });
+        const resp = new Response(content, { status: 200, headers });
+        await cache.put(urlFromPath(path), resp);
+
+        if (src) src.postMessage({ type: "RCF_OVERRIDE_PUT_OK", path });
         return;
       }
 
-      if (d.type === "RCF_OVERRIDE_CLEAR") {
+      if (data.type === "RCF_OVERRIDE_CLEAR") {
         await caches.delete(OVERRIDE_CACHE);
-        event.source?.postMessage({ type: "RCF_OVERRIDE_CLEAR_OK" });
+        if (src) src.postMessage({ type: "RCF_OVERRIDE_CLEAR_OK" });
         return;
       }
     } catch (e) {
-      console.warn("SW msg error:", e);
-      // não trava
+      // (se quiser, dá pra responder erro também)
+      if (src) src.postMessage({ type: "RCF_OVERRIDE_ERR", error: String(e?.message || e) });
     }
   })());
 });
 
+/* Fetch: prioridade = override > cache core > network (+runtime cache leve) */
 self.addEventListener("fetch", (event) => {
   const req = event.request;
+
+  // Só GET
   if (req.method !== "GET") return;
 
   const url = new URL(req.url);
 
-  // Só controla mesmo domínio
-  if (url.origin !== self.location.origin) return;
-
   event.respondWith((async () => {
-    // 1) Overrides têm prioridade
-    const ovCache = await caches.open(OVERRIDE_CACHE);
-    const ovHit = await ovCache.match(url.pathname);
-    if (ovHit) return ovHit;
+    // 1) Overrides (se existir para esse path)
+    const oCache = await caches.open(OVERRIDE_CACHE);
+    const oHit = await oCache.match(req.url);
+    if (oHit) return oHit;
 
-    // 2) Cache core
-    const core = await caches.open(CORE_CACHE);
-    const coreHit = await core.match(req);
-    if (coreHit) return coreHit;
+    // 2) Core cache
+    const cCache = await caches.open(CORE_CACHE);
+    const cHit = await cCache.match(req);
+    if (cHit) return cHit;
 
-    // 3) Network + cache (best effort)
+    // 3) Network + runtime cache (somente same-origin)
     try {
-      const fresh = await fetch(req);
-      // cacheia só se for ok
-      if (fresh && fresh.ok) {
-        try { core.put(req, fresh.clone()); } catch {}
+      const net = await fetch(req);
+
+      if (url.origin === self.location.origin) {
+        // cacheia só arquivos estáticos comuns
+        const isStatic =
+          url.pathname.startsWith("/app/") ||
+          url.pathname.endsWith(".js") ||
+          url.pathname.endsWith(".css") ||
+          url.pathname.endsWith(".html") ||
+          url.pathname.endsWith(".json");
+
+        if (isStatic && net && net.ok) {
+          cCache.put(req, net.clone()).catch(() => {});
+        }
       }
-      return fresh;
+
+      return net;
     } catch (e) {
-      // fallback final
-      const fallback = await core.match("/index.html");
-      return fallback || new Response("Offline", { status: 503 });
+      // Offline fallback
+      // Se for navegação, devolve o app
+      if (req.mode === "navigate") {
+        const fallback = await cCache.match("/app/index.html");
+        if (fallback) return fallback;
+      }
+      return new Response("Offline", { status: 503, headers: { "Content-Type": "text/plain; charset=utf-8" } });
     }
   })());
 });
