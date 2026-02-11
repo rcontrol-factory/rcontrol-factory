@@ -1,47 +1,86 @@
-/* RControl Factory - SW (SAFE) */
-const CACHE = "rcf-cache-v1";
-const CORE = [
+/* RControl Factory SW (único) — /app/sw.js */
+const VERSION = "rcf-sw-2026-02-11-v3";
+const STATIC_CACHE = `rcf-static-${VERSION}`;
+const HTML_CACHE   = `rcf-html-${VERSION}`;
+
+const CORE_ASSETS = [
   "./",
   "./index.html",
   "./styles.css",
   "./app.js",
+  "./manifest.json",
+  "./icon-192.png",
 ];
 
-self.addEventListener("install", (e) => {
-  self.skipWaiting();
-  e.waitUntil(
-    caches.open(CACHE).then((c) => c.addAll(CORE)).catch(() => {})
-  );
+self.addEventListener("install", (event) => {
+  event.waitUntil((async () => {
+    const c = await caches.open(STATIC_CACHE);
+    await c.addAll(CORE_ASSETS);
+    self.skipWaiting();
+  })());
 });
 
-self.addEventListener("activate", (e) => {
-  e.waitUntil((async () => {
+self.addEventListener("activate", (event) => {
+  event.waitUntil((async () => {
     const keys = await caches.keys();
-    await Promise.all(keys.map(k => (k === CACHE ? null : caches.delete(k))));
+    await Promise.all(keys.map((k) => {
+      if (k.startsWith("rcf-") && k !== STATIC_CACHE && k !== HTML_CACHE) return caches.delete(k);
+    }));
     await self.clients.claim();
   })());
 });
 
-self.addEventListener("fetch", (e) => {
-  const req = e.request;
-  if (req.method !== "GET") return;
+function isHTML(req) {
+  const accept = req.headers.get("accept") || "";
+  return accept.includes("text/html");
+}
 
-  e.respondWith((async () => {
-    const cached = await caches.match(req);
-    if (cached) return cached;
+self.addEventListener("fetch", (event) => {
+  const req = event.request;
+  const url = new URL(req.url);
 
-    try {
-      const net = await fetch(req);
-      const url = new URL(req.url);
+  // só controla /app/
+  if (!url.pathname.startsWith("/app/")) return;
 
-      // só cacheia coisas do mesmo domínio
-      if (url.origin === location.origin) {
-        const c = await caches.open(CACHE);
-        c.put(req, net.clone()).catch(() => {});
+  // HTML: network-first (pra evitar “tela velha”)
+  if (req.method === "GET" && isHTML(req)) {
+    event.respondWith((async () => {
+      try {
+        const fresh = await fetch(req);
+        const c = await caches.open(HTML_CACHE);
+        c.put(req, fresh.clone());
+        return fresh;
+      } catch (e) {
+        const cached = await caches.match(req);
+        return cached || caches.match("./index.html");
       }
-      return net;
-    } catch (err) {
-      return cached || new Response("Offline", { status: 200 });
-    }
-  })());
+    })());
+    return;
+  }
+
+  // Assets: cache-first + revalida
+  if (req.method === "GET") {
+    event.respondWith((async () => {
+      const cached = await caches.match(req);
+      if (cached) {
+        event.waitUntil((async () => {
+          try {
+            const fresh = await fetch(req);
+            const c = await caches.open(STATIC_CACHE);
+            c.put(req, fresh.clone());
+          } catch (_) {}
+        })());
+        return cached;
+      }
+
+      try {
+        const fresh = await fetch(req);
+        const c = await caches.open(STATIC_CACHE);
+        c.put(req, fresh.clone());
+        return fresh;
+      } catch (e) {
+        return cached || Response.error();
+      }
+    })());
+  }
 });
