@@ -1,6 +1,10 @@
 {
-  "meta": { "name":"mother-test", "version":"1.0", "createdAt":"{{DATE}}" },
+  "meta": {
+    "name": "mother-test",
+    "version": "1.0",
+    "createdAt": "2026-02-11T05:50:00Z"
+  },
   "files": {
-    "/core/TESTE.txt": "OK — override ativo em {{DATE}}"
+    "/core/TESTE.txt": "OK — override ativo"
   }
 }
