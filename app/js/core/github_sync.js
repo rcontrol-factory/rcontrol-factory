@@ -1,133 +1,167 @@
 /* =========================================================
-  RControl Factory — /app/js/core/github_sync.js (v1)
-  GitHub Sync PRIVADO (SAFE)
-  - GET/PUT via GitHub Contents API
-  - Usado pela Mãe para Pull/Push do mother_bundle.json
-  - Não loga token
+  RCF — app/js/core/github_sync.js
+  GitHub Contents API (SAFE helper)
+  - cfg via localStorage: "RCF_GH_CFG"
+    { owner, repo, branch, path, token }
+
+  API:
+    window.RCF_GH_SYNC.saveCfg(cfg)
+    window.RCF_GH_SYNC.loadCfg()
+    window.RCF_GH_SYNC.peekRemote() -> {ok, sha, url}
+    window.RCF_GH_SYNC.pullJson() -> {ok, sha, json}
+    window.RCF_GH_SYNC.pushJson(json, message) -> {ok, sha}
 ========================================================= */
 
 (function () {
   "use strict";
 
-  const LS_KEY = "RCF_GH_SYNC_CFG_v1";
+  const LS_KEY = "RCF_GH_CFG";
 
-  function safeJsonParse(s) {
-    try { return JSON.parse(String(s || "")); } catch { return null; }
+  function b64ToUtf8(b64) {
+    // base64 -> utf8 (iOS safe)
+    const bin = atob(String(b64 || "").replace(/\s/g, ""));
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    try { return new TextDecoder("utf-8").decode(bytes); }
+    catch { // fallback
+      let s = "";
+      for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+      return decodeURIComponent(escape(s));
+    }
   }
 
-  function getCfg() {
-    const raw = localStorage.getItem(LS_KEY);
-    const cfg = safeJsonParse(raw) || {};
+  function utf8ToB64(str) {
+    // utf8 -> base64 (iOS safe)
+    const s = String(str ?? "");
+    try {
+      const bytes = new TextEncoder().encode(s);
+      let bin = "";
+      for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+      return btoa(bin);
+    } catch {
+      return btoa(unescape(encodeURIComponent(s)));
+    }
+  }
+
+  function cleanCfg(cfg) {
+    const c = cfg && typeof cfg === "object" ? cfg : {};
     return {
-      owner: cfg.owner || "",
-      repo: cfg.repo || "",
-      branch: cfg.branch || "main",
-      path: cfg.path || "app/import/mother_bundle.json",
-      token: cfg.token || "" // PAT fine-grained (contents: read/write)
+      owner: String(c.owner || "").trim(),
+      repo: String(c.repo || "").trim(),
+      branch: String(c.branch || "main").trim(),
+      path: String(c.path || "app/import/mother_bundle.json").trim(),
+      token: String(c.token || "").trim()
     };
   }
 
-  function setCfg(patch) {
-    const cur = getCfg();
-    const next = { ...cur, ...(patch || {}) };
-    localStorage.setItem(LS_KEY, JSON.stringify(next));
-    return next;
+  function saveCfg(cfg) {
+    const c = cleanCfg(cfg);
+    localStorage.setItem(LS_KEY, JSON.stringify(c));
+    return c;
   }
 
-  function assertCfg(cfg) {
-    if (!cfg.owner || !cfg.repo) throw new Error("Config inválida: owner/repo.");
-    if (!cfg.branch) throw new Error("Config inválida: branch.");
-    if (!cfg.path) throw new Error("Config inválida: path.");
-    if (!cfg.token) throw new Error("Token ausente. Cole seu PAT no campo Token.");
+  function loadCfg() {
+    try {
+      const raw = localStorage.getItem(LS_KEY);
+      if (!raw) return cleanCfg({});
+      return cleanCfg(JSON.parse(raw));
+    } catch {
+      return cleanCfg({});
+    }
   }
 
-  function apiBase(cfg) {
-    return `https://api.github.com/repos/${encodeURIComponent(cfg.owner)}/${encodeURIComponent(cfg.repo)}/contents/${cfg.path}`;
+  function hasCfg(cfg) {
+    const c = cleanCfg(cfg);
+    return !!(c.owner && c.repo && c.branch && c.path && c.token);
   }
 
-  function headers(cfg) {
-    return {
+  function apiUrl(cfg) {
+    const c = cleanCfg(cfg);
+    // NOTE: path precisa estar URL-encoded corretamente
+    const p = encodeURIComponent(c.path).replace(/%2F/g, "/");
+    return `https://api.github.com/repos/${encodeURIComponent(c.owner)}/${encodeURIComponent(c.repo)}/contents/${p}?ref=${encodeURIComponent(c.branch)}`;
+  }
+
+  async function ghFetch(cfg, url, opts) {
+    const c = cleanCfg(cfg);
+    const headers = {
       "Accept": "application/vnd.github+json",
-      "Authorization": "Bearer " + cfg.token,
-      "X-GitHub-Api-Version": "2022-11-28"
+      "Authorization": "Bearer " + c.token
     };
-  }
-
-  function b64EncodeUnicode(str) {
-    // suporta acentos
-    const utf8 = new TextEncoder().encode(String(str ?? ""));
-    let bin = "";
-    utf8.forEach(b => bin += String.fromCharCode(b));
-    return btoa(bin);
-  }
-
-  function b64DecodeUnicode(b64) {
-    const bin = atob(String(b64 || ""));
-    const bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
-    return new TextDecoder().decode(bytes);
-  }
-
-  async function getFile(cfgIn) {
-    const cfg = cfgIn || getCfg();
-    assertCfg(cfg);
-
-    const url = apiBase(cfg) + `?ref=${encodeURIComponent(cfg.branch)}&_=${Date.now()}`;
-    const res = await fetch(url, { headers: headers(cfg), cache: "no-store" });
-
-    if (res.status === 404) {
-      return { ok: false, status: 404, msg: "Arquivo não existe no repo ainda.", data: null };
-    }
-    if (!res.ok) {
-      const t = await res.text().catch(() => "");
-      return { ok: false, status: res.status, msg: "GET falhou: HTTP " + res.status, detail: t };
-    }
-
-    const data = await res.json();
-    const content = data && data.content ? b64DecodeUnicode(data.content.replace(/\n/g, "")) : "";
-    return {
-      ok: true,
-      status: res.status,
-      sha: data.sha,
-      content,
-      data
-    };
-  }
-
-  async function putFile(cfgIn, content, message) {
-    const cfg = cfgIn || getCfg();
-    assertCfg(cfg);
-
-    // pega SHA atual (se existir)
-    const current = await getFile(cfg);
-    const sha = current.ok ? current.sha : undefined;
-
-    const url = apiBase(cfg);
-    const body = {
-      message: message || `RCF update: ${cfg.path}`,
-      content: b64EncodeUnicode(String(content ?? "")),
-      branch: cfg.branch
-    };
-    if (sha) body.sha = sha;
-
     const res = await fetch(url, {
-      method: "PUT",
-      headers: { ...headers(cfg), "Content-Type": "application/json" },
-      body: JSON.stringify(body)
+      method: opts?.method || "GET",
+      headers: { ...headers, ...(opts?.headers || {}) },
+      body: opts?.body ? JSON.stringify(opts.body) : undefined
     });
-
+    const text = await res.text();
+    let json = null;
+    try { json = JSON.parse(text); } catch {}
     if (!res.ok) {
-      const t = await res.text().catch(() => "");
-      return { ok: false, status: res.status, msg: "PUT falhou: HTTP " + res.status, detail: t };
+      const msg = (json && (json.message || json.error)) ? (json.message || json.error) : ("HTTP " + res.status);
+      return { ok: false, status: res.status, msg, raw: text };
     }
-
-    const data = await res.json();
-    return { ok: true, status: res.status, data };
+    return { ok: true, status: res.status, json: json || {} };
   }
 
-  window.RCF_GITHUB = {
-    getCfg,
-    setCfg,
-    getFile,
-    putFile
+  async function peekRemote(cfg) {
+    const c = cleanCfg(cfg);
+    if (!hasCfg(c)) return { ok: false, msg: "Config GitHub incompleta." };
+    const url = apiUrl(c);
+    const r = await ghFetch(c, url);
+    if (!r.ok) return r;
+    const sha = r.json?.sha || "";
+    return { ok: true, sha, url };
+  }
+
+  async function pullJson(cfg) {
+    const c = cleanCfg(cfg);
+    if (!hasCfg(c)) return { ok: false, msg: "Config GitHub incompleta." };
+
+    const url = apiUrl(c);
+    const r = await ghFetch(c, url);
+    if (!r.ok) return r;
+
+    const sha = r.json?.sha || "";
+    const content = r.json?.content || "";
+    if (!content) return { ok: false, msg: "Arquivo vazio/sem content no GitHub." };
+
+    const txt = b64ToUtf8(content);
+    let parsed = null;
+    try { parsed = JSON.parse(txt); } catch (e) {
+      return { ok: false, msg: "JSON inválido no GitHub: " + (e?.message || String(e)) };
+    }
+    return { ok: true, sha, json: parsed };
+  }
+
+  async function pushJson(cfg, jsonObj, message) {
+    const c = cleanCfg(cfg);
+    if (!hasCfg(c)) return { ok: false, msg: "Config GitHub incompleta." };
+
+    // pega sha atual (se existir)
+    const peek = await peekRemote(c);
+    const currentSha = peek.ok ? (peek.sha || null) : null;
+
+    const url = apiUrl(c);
+    const txt = JSON.stringify(jsonObj, null, 2);
+    const body = {
+      message: String(message || "RCF: update mother_bundle.json"),
+      content: utf8ToB64(txt),
+      branch: c.branch
+    };
+    if (currentSha) body.sha = currentSha;
+
+    const r = await ghFetch(c, url, { method: "PUT", body });
+    if (!r.ok) return r;
+
+    const newSha = r.json?.content?.sha || r.json?.sha || "";
+    return { ok: true, sha: newSha, json: r.json };
+  }
+
+  window.RCF_GH_SYNC = {
+    saveCfg,
+    loadCfg,
+    peekRemote: () => peekRemote(loadCfg()),
+    pullJson: () => pullJson(loadCfg()),
+    pushJson: (jsonObj, message) => pushJson(loadCfg(), jsonObj, message)
   };
 })();
