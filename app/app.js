@@ -1,19 +1,8 @@
-/* RControl Factory — app.js (FULL)
-   - Replit-like Agent Builder + Admin Self-Healing (base)
-   - iOS Safari touch fix (sem clique travado)
-   - Offline-friendly: sem dependências externas, storage local
-   - PATCH pending + Approve/Discard
-   - WRITE MODE: cola 200+ linhas sem truncar (modal) /end
-
-   Patch (2026-02-10/11):
-   ✅ Expor window.RCF_LOGGER compatível (core lê logs)
-   ✅ Logs view atualiza (logsOut + logsBox + logsViewBox)
-   ✅ Fallback click-capture no Admin (se overlay travar clique)
-
-   Patch (HOJE):
-   ✅ Compat de IDs (HTML antigo vs novo) — botões do meio voltam a funcionar
-   ✅ status pill compat: #statusText OU #statusPill
-   ✅ agent input compat: #agentCmd OU #agentInput
+/* RControl Factory — app.js (RESTORE UI BASE)
+   - Recria a UI completa (tabs + views) dentro de #app
+   - Mantém teu Agent/Editor/Apps/Logs
+   - Corrige “só aparece Admin / sumiu tudo”
+   - Settings: Segurança (PIN) + Logs (com botões funcionando)
 */
 
 (() => {
@@ -24,16 +13,6 @@
   // -----------------------------
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
-
-  // pega o primeiro id que existir
-  const byIdAny = (...ids) => {
-    for (const id of ids) {
-      const el = document.getElementById(id);
-      if (el) return el;
-    }
-    return null;
-  };
-
   const nowISO = () => new Date().toISOString();
 
   const slugify = (str) => {
@@ -53,8 +32,15 @@
     try { return JSON.stringify(obj); } catch { return String(obj); }
   }
 
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
+  }
+  function escapeAttr(s) {
+    return escapeHtml(s).replace(/'/g, "&#39;");
+  }
+
   // -----------------------------
-  // Storage (localStorage wrapper)
+  // Storage
   // -----------------------------
   const Storage = {
     prefix: "rcf:",
@@ -87,15 +73,13 @@
     _mirrorUI(logs) {
       const txt = (logs || []).join("\n");
 
-      // Drawer (Ferramentas)
       const boxDrawer = $("#logsBox");
       if (boxDrawer) boxDrawer.textContent = txt;
 
-      // LOGS view (página)
-      const boxLogsOut = $("#logsOut");       // id do seu index.html atual
+      const boxLogsOut = $("#logsOut");
       if (boxLogsOut) boxLogsOut.textContent = txt;
 
-      const boxView = $("#logsViewBox");      // compat antigo
+      const boxView = $("#logsViewBox");
       if (boxView) boxView.textContent = txt;
     },
 
@@ -125,18 +109,15 @@
     }
   };
 
-  // Expor logger compatível pro core
   window.RCF_LOGGER = window.RCF_LOGGER || {
-    push(level, msg) {
-      Logger.write(String(level || "log") + ":", msg);
-    },
+    push(level, msg) { Logger.write(String(level || "log") + ":", msg); },
     clear() { Logger.clear(); },
     getText() { return Logger.getAll().join("\n"); },
     dump() { return Logger.getAll().join("\n"); }
   };
 
   // -----------------------------
-  // iOS / Touch Fix
+  // Touch / Tap bind (iOS safe)
   // -----------------------------
   function bindTap(el, fn) {
     if (!el) return;
@@ -144,12 +125,14 @@
     let last = 0;
     const handler = (ev) => {
       const t = Date.now();
-      if (ev.type === "click" && (t - last) < 350) return;
+      if (ev.type === "click" && (t - last) < 250) return;
       last = t;
 
+      // iOS: evita “1 clique e morre”
       if (ev.type === "touchend") ev.preventDefault();
 
-      try { fn(ev); } catch (e) { Logger.write("tap err:", e?.message || e); }
+      try { fn(ev); }
+      catch (e) { Logger.write("tap err:", e?.message || e); }
     };
 
     el.style.pointerEvents = "auto";
@@ -161,23 +144,8 @@
     el.addEventListener("click", handler, { passive: true });
   }
 
-  function diagnoseTouchOverlay(x, y) {
-    const el = document.elementFromPoint(x, y);
-    if (!el) return { ok: false, msg: "elementFromPoint vazio" };
-    const cs = window.getComputedStyle(el);
-    return {
-      ok: true,
-      tag: el.tagName,
-      id: el.id || "",
-      cls: el.className || "",
-      z: cs.zIndex,
-      pos: cs.position,
-      pe: cs.pointerEvents
-    };
-  }
-
   // -----------------------------
-  // State Model
+  // State
   // -----------------------------
   const State = {
     cfg: Storage.get("cfg", {
@@ -208,21 +176,277 @@
   }
 
   // -----------------------------
-  // UI
+  // UI Shell (CRÍTICO: antes tava faltando)
   // -----------------------------
-  function statusEl() {
-    // compat: HTML antigo usa #statusText, novo usava #statusPill
-    return byIdAny("statusText", "statusPill");
+  function renderShell() {
+    const root = $("#app");
+    if (!root) return;
+
+    // Se já existe UI, não duplica
+    if ($("#rcfRoot")) return;
+
+    root.innerHTML = `
+      <div id="rcfRoot">
+        <header class="topbar">
+          <div class="brand">
+            <div class="dot"></div>
+            <div class="brand-text">
+              <div class="title">RControl Factory</div>
+              <div class="subtitle">Factory interna • PWA • Offline-first</div>
+            </div>
+            <div class="spacer"></div>
+            <button class="btn small" id="btnOpenTools" type="button">⚙️</button>
+            <div class="status-pill" id="statusPill" style="margin-left:10px">
+              <span class="ok" id="statusText">OK ✅</span>
+            </div>
+          </div>
+
+          <nav class="tabs">
+            <button class="tab" data-view="dashboard" type="button">Dashboard</button>
+            <button class="tab" data-view="newapp" type="button">New App</button>
+            <button class="tab" data-view="editor" type="button">Editor</button>
+            <button class="tab" data-view="generator" type="button">Generator</button>
+            <button class="tab" data-view="agent" type="button">Agente</button>
+            <button class="tab" data-view="settings" type="button">Settings</button>
+            <button class="tab" data-view="admin" type="button">Admin</button>
+          </nav>
+        </header>
+
+        <main class="container views" id="views">
+
+          <!-- DASHBOARD -->
+          <section class="view card hero" id="view-dashboard">
+            <h1>Dashboard</h1>
+            <p>Central do projeto. Selecione um app e comece a editar.</p>
+            <div class="status-box">
+              <div class="badge" id="activeAppText">Sem app ativo ✅</div>
+              <div class="spacer"></div>
+              <button class="btn small" id="btnCreateNewApp" type="button">Criar App</button>
+              <button class="btn small" id="btnOpenEditor" type="button">Abrir Editor</button>
+              <button class="btn small ghost" id="btnExportBackup" type="button">Backup (JSON)</button>
+            </div>
+
+            <h2 style="margin-top:14px">Apps</h2>
+            <div id="appsList" class="apps"></div>
+          </section>
+
+          <!-- NEW APP -->
+          <section class="view card" id="view-newapp">
+            <h1>Novo App</h1>
+            <p class="hint">Cria um mini-app dentro da Factory.</p>
+
+            <div class="row form">
+              <input id="newAppName" placeholder="Nome do app" />
+              <input id="newAppSlug" placeholder="slug (opcional)" />
+              <button class="btn small" id="btnAutoSlug" type="button">Auto-slug</button>
+              <button class="btn ok" id="btnDoCreateApp" type="button">Criar</button>
+            </div>
+
+            <pre class="mono" id="newAppOut">Pronto.</pre>
+          </section>
+
+          <!-- EDITOR -->
+          <section class="view card" id="view-editor">
+            <h1>Editor</h1>
+            <p class="hint">Escolha um arquivo e edite.</p>
+
+            <div class="row">
+              <div class="badge" id="editorHead">Arquivo atual: -</div>
+              <div class="spacer"></div>
+              <button class="btn ok" id="btnSaveFile" type="button">Salvar</button>
+              <button class="btn danger" id="btnResetFile" type="button">Reset</button>
+            </div>
+
+            <div class="row">
+              <div style="flex:1;min-width:240px">
+                <div class="hint">Arquivos</div>
+                <div id="filesList" class="files"></div>
+              </div>
+
+              <div style="flex:2;min-width:280px">
+                <div class="editor">
+                  <div class="editor-head">Conteúdo</div>
+                  <textarea id="fileContent" spellcheck="false"></textarea>
+                </div>
+              </div>
+            </div>
+
+            <pre class="mono" id="editorOut">Pronto.</pre>
+          </section>
+
+          <!-- GENERATOR -->
+          <section class="view card" id="view-generator">
+            <h1>Generator</h1>
+            <p class="hint">Gera ZIP do app selecionado (stub por enquanto).</p>
+            <div class="row">
+              <button class="btn ok" id="btnGenZip" type="button">Build ZIP</button>
+              <button class="btn ghost" id="btnGenPreview" type="button">Preview</button>
+            </div>
+            <pre class="mono" id="genOut">Pronto.</pre>
+          </section>
+
+          <!-- AGENT -->
+          <section class="view card" id="view-agent">
+            <h1>Agente</h1>
+            <p class="hint">Comandos naturais + patchset.</p>
+
+            <div class="row cmd">
+              <input id="agentCmd" placeholder='Ex: create "Meu App" meu-app' />
+              <button class="btn ok" id="btnAgentRun" type="button">Executar</button>
+              <button class="btn ghost" id="btnAgentClear" type="button">Ajuda</button>
+            </div>
+
+            <pre class="mono" id="agentOut">Pronto.</pre>
+          </section>
+
+          <!-- SETTINGS -->
+          <section class="view card" id="view-settings">
+            <h1>Settings</h1>
+            <p class="hint">Central de configurações (sem engrenagem).</p>
+
+            <div class="status-box" id="settingsMount">
+              <div class="badge">✅ Settings carregado.</div>
+              <div class="hint">Central de configurações (sem GitHub aqui). GitHub fica no Admin.</div>
+            </div>
+
+            <div class="card" id="settings-security">
+              <h2>Segurança</h2>
+              <p class="hint">Define um PIN para liberar ações críticas no Admin (recomendado).</p>
+              <div class="row">
+                <input id="pinInput" placeholder="Definir PIN (4-8 dígitos)" inputmode="numeric" />
+                <button class="btn ok" id="btnPinSave" type="button">Salvar PIN</button>
+                <button class="btn danger" id="btnPinRemove" type="button">Remover PIN</button>
+              </div>
+              <pre class="mono" id="pinOut">Pronto.</pre>
+            </div>
+
+            <div class="card" id="settings-logs">
+              <h2>Logs</h2>
+              <p class="hint">Ver, exportar e limpar logs locais (para diagnóstico rápido).</p>
+              <div class="row">
+                <button class="btn ghost" id="btnLogsRefresh" type="button">Atualizar</button>
+                <button class="btn ok" id="btnLogsCopy" type="button">Exportar .txt</button>
+                <button class="btn danger" id="btnLogsClear" type="button">Limpar logs</button>
+              </div>
+              <pre class="mono small" id="logsOut">Pronto.</pre>
+            </div>
+
+            <div class="card" id="settings-diag">
+              <h2>Diag / Atalhos</h2>
+              <p class="hint">Atalhos rápidos (o Admin continua com ações críticas).</p>
+              <div class="row">
+                <button class="btn ghost" id="btnGoDiagnose" type="button">Diagnosticar</button>
+                <button class="btn ghost" id="btnGoAdmin" type="button">Abrir Admin</button>
+                <button class="btn danger" id="btnClearLogs2" type="button">Limpar logs</button>
+              </div>
+              <pre class="mono" id="diagShortcutOut">Pronto.</pre>
+            </div>
+          </section>
+
+          <!-- LOGS -->
+          <section class="view card" id="view-logs">
+            <h1>Logs</h1>
+            <div class="row">
+              <button class="btn ghost" id="btnLogsRefresh2" type="button">Atualizar</button>
+              <button class="btn ok" id="btnCopyLogs" type="button">Copiar</button>
+              <button class="btn danger" id="btnClearLogs" type="button">Limpar</button>
+            </div>
+            <pre class="mono small" id="logsViewBox">Pronto.</pre>
+          </section>
+
+          <!-- DIAGNOSTICS -->
+          <section class="view card" id="view-diagnostics">
+            <h1>Diagnostics</h1>
+            <div class="row">
+              <button class="btn ok" id="btnDiagRun" type="button">Rodar</button>
+              <button class="btn ghost" id="btnDiagClear" type="button">Limpar</button>
+            </div>
+            <pre class="mono" id="diagOut">Pronto.</pre>
+          </section>
+
+          <!-- ADMIN -->
+          <section class="view card" id="view-admin">
+            <h1>Admin</h1>
+            <p class="hint">Diagnóstico / manutenção / self-update.</p>
+
+            <div class="row">
+              <button class="btn ghost" id="btnAdminDiag" type="button">Diagnosticar</button>
+              <button class="btn danger" id="btnAdminZero" type="button">Zerar (safe)</button>
+            </div>
+
+            <pre class="mono" id="adminOut">Pronto.
+MAE+THOMPSON: aguardando...
+MAE UI: aguardando...
+GitHub Sync: aguardando...
+            </pre>
+
+            <div class="card" id="admin-github">
+              <h2>GitHub Sync (Privado) — SAFE</h2>
+              <p class="hint">Puxa/Empurra o bundle no seu repo. Atualiza em um aparelho e puxa no outro.</p>
+
+              <div class="row form">
+                <input id="ghOwner" placeholder="owner (ex: rcontrol-factory)" />
+                <input id="ghRepo" placeholder="repo (ex: rcontrol-factory)" />
+              </div>
+
+              <div class="row form">
+                <input id="ghBranch" placeholder="branch (ex: main)" value="main" />
+                <input id="ghPath" placeholder="path (ex: app/import/mother_bundle.json)" value="app/import/mother_bundle.json" />
+              </div>
+
+              <div class="row form">
+                <input id="ghToken" placeholder="TOKEN (PAT) — contents:read/write" />
+                <button class="btn ghost" id="btnGhSave" type="button">Salvar config</button>
+              </div>
+
+              <div class="row">
+                <button class="btn ghost" id="btnGhPull" type="button">⬇️ Pull (baixar do GitHub)</button>
+                <button class="btn ok" id="btnGhPush" type="button">⬆️ Push (enviar p/ GitHub)</button>
+                <button class="btn ghost" id="btnGhRefresh" type="button">⚡ Atualizar agora</button>
+              </div>
+
+              <pre class="mono" id="ghOut">GitHub: pronto. (Sync v1)</pre>
+            </div>
+
+            <div class="card" id="admin-maint">
+              <h2>MAINTENANCE • Self-Update (Mãe)</h2>
+              <p class="hint">Aqui entra o mother_selfupdate.js / overrides (se estiver usando).</p>
+              <pre class="mono" id="maintOut">Pronto.</pre>
+            </div>
+          </section>
+
+        </main>
+
+        <!-- Tools Drawer -->
+        <div class="tools" id="toolsDrawer">
+          <div class="tools-head">
+            <div style="font-weight:800">Ferramentas</div>
+            <button class="btn small" id="btnCloseTools" type="button">Fechar</button>
+          </div>
+          <div class="tools-body">
+            <div class="row">
+              <button class="btn ghost" id="btnLogsRefresh" type="button">Atualizar logs</button>
+              <button class="btn ok" id="btnLogsCopy" type="button">Copiar logs</button>
+              <button class="btn danger" id="btnLogsClear" type="button">Limpar logs</button>
+            </div>
+            <pre class="mono small" id="logsBox">Pronto.</pre>
+          </div>
+        </div>
+
+      </div>
+    `;
   }
 
+  // -----------------------------
+  // Views + Status
+  // -----------------------------
   function setStatusPill(text) {
-    const el = statusEl();
+    const el = $("#statusText");
     if (el) el.textContent = text;
   }
 
   function refreshLogsViews() {
-    const logs = Logger.getAll();
-    Logger._mirrorUI(logs);
+    Logger._mirrorUI(Logger.getAll());
   }
 
   function setView(name) {
@@ -239,13 +463,13 @@
 
     $$(`[data-view="${name}"]`).forEach(b => b.classList.add("active"));
 
-    if (name === "logs") refreshLogsViews();
+    if (name === "logs" || name === "settings") refreshLogsViews();
 
     Logger.write("view:", name);
   }
 
   function openTools(open) {
-    const d = byIdAny("toolsDrawer"); // id comum
+    const d = $("#toolsDrawer");
     if (!d) return;
     if (open) d.classList.add("open");
     else d.classList.remove("open");
@@ -259,62 +483,13 @@
     return State.apps.find(a => a.slug === State.active.appSlug) || null;
   }
 
-  function setActiveApp(slug) {
-    const app = State.apps.find(a => a.slug === slug);
-    if (!app) return false;
-
-    State.active.appSlug = slug;
-    State.active.file = State.active.file || Object.keys(app.files || {})[0] || null;
-    saveAll();
-
-    const text = byIdAny("activeAppText");
-    if (text) text.textContent = `App ativo: ${app.name} (${app.slug}) ✅`;
-
-    renderAppsList();
-    renderFilesList();
-    if (State.active.file) openFile(State.active.file);
-
-    return true;
-  }
-
   function ensureAppFiles(app) {
     if (!app.files) app.files = {};
     if (typeof app.files !== "object") app.files = {};
   }
 
-  function createApp(name, slugMaybe) {
-    const nameClean = String(name || "").trim();
-    if (!nameClean) return { ok: false, msg: "Nome inválido" };
-
-    let slug = slugify(slugMaybe || nameClean);
-    if (!slug) return { ok: false, msg: "Slug inválido" };
-
-    if (State.apps.some(a => a.slug === slug)) {
-      return { ok: false, msg: "Slug já existe" };
-    }
-
-    const app = {
-      name: nameClean,
-      slug,
-      createdAt: nowISO(),
-      files: {
-        "index.html": `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${nameClean}</title></head><body><h1>${nameClean}</h1><script src="app.js"></script></body></html>`,
-        "styles.css": `body{font-family:system-ui;margin:0;padding:24px;background:#0b1220;color:#fff}`,
-        "app.js": `console.log("${nameClean}");`
-      }
-    };
-
-    State.apps.push(app);
-    saveAll();
-    renderAppsList();
-    setActiveApp(slug);
-
-    Logger.write("app created:", slug);
-    return { ok: true, msg: `✅ App criado: ${nameClean} (${slug})` };
-  }
-
   function renderAppsList() {
-    const box = byIdAny("appsList");
+    const box = $("#appsList");
     if (!box) return;
 
     if (!State.apps.length) {
@@ -332,8 +507,8 @@
           <div class="hint">${escapeHtml(app.slug)}</div>
         </div>
         <div class="row">
-          <button class="btn small" data-act="select" data-slug="${escapeAttr(app.slug)}">Selecionar</button>
-          <button class="btn small" data-act="edit" data-slug="${escapeAttr(app.slug)}">Editor</button>
+          <button class="btn small" data-act="select" data-slug="${escapeAttr(app.slug)}" type="button">Selecionar</button>
+          <button class="btn small" data-act="edit" data-slug="${escapeAttr(app.slug)}" type="button">Editor</button>
         </div>
       `;
       box.appendChild(row);
@@ -351,7 +526,7 @@
   }
 
   function renderFilesList() {
-    const box = byIdAny("filesList"); // no HTML antigo isso pode não existir
+    const box = $("#filesList");
     if (!box) return;
 
     const app = getActiveApp();
@@ -387,160 +562,81 @@
     State.active.file = fname;
     saveAll();
 
-    const head = byIdAny("editorHead");
+    const head = $("#editorHead");
     if (head) head.textContent = `Arquivo atual: ${fname}`;
 
-    const ta = byIdAny("fileContent", "fileEditor"); // compat: novo/antigo
+    const ta = $("#fileContent");
     if (ta) ta.value = String(app.files[fname] ?? "");
 
     renderFilesList();
     return true;
   }
 
+  function setActiveApp(slug) {
+    const app = State.apps.find(a => a.slug === slug);
+    if (!app) return false;
+
+    State.active.appSlug = slug;
+    State.active.file = State.active.file || Object.keys(app.files || {})[0] || null;
+    saveAll();
+
+    const text = $("#activeAppText");
+    if (text) text.textContent = `App ativo: ${app.name} (${app.slug}) ✅`;
+
+    renderAppsList();
+    renderFilesList();
+    if (State.active.file) openFile(State.active.file);
+
+    Logger.write("app selected:", slug);
+    return true;
+  }
+
+  function createApp(name, slugMaybe) {
+    const nameClean = String(name || "").trim();
+    if (!nameClean) return { ok: false, msg: "Nome inválido" };
+
+    let slug = slugify(slugMaybe || nameClean);
+    if (!slug) return { ok: false, msg: "Slug inválido" };
+    if (State.apps.some(a => a.slug === slug)) return { ok: false, msg: "Slug já existe" };
+
+    const app = {
+      name: nameClean,
+      slug,
+      createdAt: nowISO(),
+      files: {
+        "index.html": `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${nameClean}</title></head><body><h1>${nameClean}</h1><script src="app.js"></script></body></html>`,
+        "styles.css": `body{font-family:system-ui;margin:0;padding:24px;background:#0b1220;color:#fff}`,
+        "app.js": `console.log("${nameClean}");`
+      }
+    };
+
+    State.apps.push(app);
+    saveAll();
+    renderAppsList();
+    setActiveApp(slug);
+
+    return { ok: true, msg: `✅ App criado: ${nameClean} (${slug})` };
+  }
+
   function saveFile() {
     const app = getActiveApp();
-    if (!app) return uiMsg("editorOut", "⚠️ Sem app ativo.");
+    if (!app) return uiMsg("#editorOut", "⚠️ Sem app ativo.");
 
     const fname = State.active.file;
-    if (!fname) return uiMsg("editorOut", "⚠️ Sem arquivo ativo.");
+    if (!fname) return uiMsg("#editorOut", "⚠️ Sem arquivo ativo.");
 
-    const ta = byIdAny("fileContent", "fileEditor");
+    const ta = $("#fileContent");
     ensureAppFiles(app);
     app.files[fname] = ta ? String(ta.value || "") : "";
 
     saveAll();
-    uiMsg("editorOut", "✅ Arquivo salvo.");
+    uiMsg("#editorOut", "✅ Arquivo salvo.");
     Logger.write("file saved:", app.slug, fname);
   }
 
   // -----------------------------
-  // PATCHSET
+  // Agent (simplificado e estável)
   // -----------------------------
-  function makePatchset(source, title, ops) {
-    return {
-      id: "ps_" + Math.random().toString(16).slice(2),
-      createdAt: nowISO(),
-      source,
-      title: title || "Patch",
-      ops: Array.isArray(ops) ? ops : []
-    };
-  }
-
-  function setPendingPatch(source, patchset) {
-    State.pending.patch = patchset;
-    State.pending.source = source;
-    saveAll();
-
-    if (source === "agent") uiMsg("agentOut", formatPatchset(patchset));
-    else if (source === "admin") uiMsg("adminOut", formatPatchset(patchset));
-
-    setStatusPill("Patch pendente ✅");
-  }
-
-  function applyPatchset(patchset) {
-    if (!patchset || !Array.isArray(patchset.ops)) return { ok: false, msg: "Patch inválido" };
-
-    const resLines = [];
-    for (const op of patchset.ops) {
-      const r = applyOp(op);
-      resLines.push(r.ok ? `✅ ${r.msg}` : `❌ ${r.msg}`);
-      if (!r.ok) {
-        Logger.write("patch op fail:", op, r.msg);
-        return { ok: false, msg: resLines.join("\n") };
-      }
-    }
-
-    saveAll();
-    Logger.write("patch applied:", patchset.id);
-    return { ok: true, msg: resLines.join("\n") };
-  }
-
-  function applyOp(op) {
-    if (!op || typeof op !== "object") return { ok: false, msg: "Op inválida" };
-
-    const type = op.type;
-
-    if (type === "FILE_WRITE") {
-      const slug = op.slug || State.active.appSlug;
-      const fname = op.file || State.active.file;
-      const content = String(op.content ?? "");
-
-      if (!slug) return { ok: false, msg: "Sem app (slug) para FILE_WRITE" };
-      if (!fname) return { ok: false, msg: "Sem arquivo para FILE_WRITE" };
-
-      const app = State.apps.find(a => a.slug === slug);
-      if (!app) return { ok: false, msg: `App não encontrado: ${slug}` };
-
-      ensureAppFiles(app);
-      app.files[fname] = content;
-
-      return { ok: true, msg: `FILE_WRITE ${slug}/${fname} (${content.length} chars)` };
-    }
-
-    if (type === "APP_CREATE") {
-      const r = createApp(op.name, op.slug);
-      return r.ok ? { ok: true, msg: `APP_CREATE ${r.msg}` } : { ok: false, msg: `APP_CREATE ${r.msg}` };
-    }
-
-    if (type === "APP_SELECT") {
-      const slug = slugify(op.slug || "");
-      const ok = setActiveApp(slug);
-      return ok ? { ok: true, msg: `APP_SELECT ${slug}` } : { ok: false, msg: `APP_SELECT falhou (${slug})` };
-    }
-
-    if (type === "VIEW_SET") {
-      setView(op.view);
-      return { ok: true, msg: `VIEW_SET ${op.view}` };
-    }
-
-    if (type === "CONFIG_SET") {
-      if (op.key) State.cfg[op.key] = op.value;
-      saveAll();
-      return { ok: true, msg: `CONFIG_SET ${op.key}` };
-    }
-
-    return { ok: false, msg: `Tipo de op desconhecido: ${type}` };
-  }
-
-  function formatPatchset(ps) {
-    const ops = ps.ops.map((o, i) => `${i+1}) ${o.type} ${o.slug ? o.slug : ""} ${o.file ? o.file : ""}`.trim()).join("\n");
-    return [
-      `PATCHSET: ${ps.title}`,
-      `id: ${ps.id}`,
-      `source: ${ps.source}`,
-      `createdAt: ${ps.createdAt}`,
-      `ops:\n${ops || "(vazio)"}`
-    ].join("\n");
-  }
-
-  // -----------------------------
-  // Agent
-  // -----------------------------
-  function parseCreateArgs(raw) {
-    const s = String(raw || "").trim();
-    const qm = s.match(/^create\s+"([^"]+)"\s*([a-z0-9-]+)?/i);
-    if (qm) {
-      const name = qm[1].trim();
-      const slug = (qm[2] || "").trim();
-      return { name, slug };
-    }
-
-    const rest = s.replace(/^create\s+/i, "").trim();
-    if (!rest) return { name: "", slug: "" };
-
-    const parts = rest.split(/\s+/);
-    const last = parts[parts.length - 1] || "";
-    const looksSlug = /^[a-z0-9-]{2,}$/.test(last) && (last.includes("-") || parts.length >= 2);
-
-    if (looksSlug && parts.length >= 2) {
-      const slug = last;
-      const name = parts.slice(0, -1).join(" ").trim();
-      return { name, slug };
-    }
-
-    return { name: rest, slug: "" };
-  }
-
   const Agent = {
     help() {
       return [
@@ -552,11 +648,8 @@
         "- create NOME [SLUG]",
         "- create \"NOME COM ESPAÇO\" [SLUG]",
         "- select SLUG",
-        "- open editor | open dashboard | open admin | open agent | open logs | open diagnostics",
-        "- set file NOMEARQ (ex: app.js)",
-        "- write   (abre WRITE MODE para colar texto grande)",
-        "- show (mostra app/arquivo atual)",
-        "- mode auto | mode safe",
+        "- open dashboard | open newapp | open editor | open generator | open agent | open settings | open admin | open logs | open diagnostics",
+        "- show",
       ].join("\n");
     },
 
@@ -567,108 +660,66 @@
 
     show() {
       const app = getActiveApp();
-      const file = State.active.file;
       return [
         `mode: ${State.cfg.mode}`,
         `apps: ${State.apps.length}`,
         `active app: ${app ? `${app.name} (${app.slug})` : "-"}`,
-        `active file: ${file || "-"}`,
+        `active file: ${State.active.file || "-"}`,
         `view: ${State.active.view}`
       ].join("\n");
     },
 
-    commitOrPend(source, title, ops, risk = "low") {
-      const ps = makePatchset(source, title, ops);
-      const canAuto = (State.cfg.mode === "auto" && risk === "low");
-      if (canAuto) {
-        const r = applyPatchset(ps);
-        return { ok: r.ok, msg: (r.ok ? "AUTO ✅\n" : "AUTO ❌\n") + r.msg };
-      } else {
-        setPendingPatch(source, ps);
-        return { ok: true, msg: "Patch pendente. Clique em Aprovar sugestão." };
-      }
-    },
-
-    parseNatural(text) {
-      const t = String(text || "").trim();
-      let m = t.match(/cria(?:r)?\s+um\s+app\s+chamado\s+(.+)/i);
-      if (m) return { intent: "create", name: m[1].trim(), slug: "" };
-      m = t.match(/cria(?:r)?\s+app\s+(.+)/i);
-      if (m) return { intent: "create", name: m[1].trim(), slug: "" };
-      return null;
-    },
-
     route(cmdRaw) {
       const cmd = String(cmdRaw || "").trim();
-      const out = byIdAny("agentOut");
+      const out = $("#agentOut");
       if (!cmd) { out && (out.textContent = "Comando vazio."); return; }
 
-      if (/^[a-z0-9-]{2,}$/.test(cmd)) {
-        const slug = slugify(cmd);
-        if (State.apps.some(a => a.slug === slug)) {
-          const r = this.commitOrPend("agent", `Select ${slug}`, [{ type: "APP_SELECT", slug }], "low");
-          out && (out.textContent = r.msg);
-          return;
-        }
-      }
-
-      const nlp = this.parseNatural(cmd);
-      if (nlp && nlp.intent === "create") {
-        const name = nlp.name;
-        const slug = slugify(nlp.slug || name);
-        const r = this.commitOrPend("agent", `Create app ${name}`, [{ type: "APP_CREATE", name, slug }], "low");
-        out && (out.textContent = r.msg);
-        return;
-      }
-
       const lower = cmd.toLowerCase();
+
       if (lower === "help") { out && (out.textContent = this.help()); return; }
       if (lower === "list") { out && (out.textContent = this.list()); return; }
       if (lower === "show") { out && (out.textContent = this.show()); return; }
 
       if (lower.startsWith("open ")) {
         const target = lower.replace("open ", "").trim();
-        const viewMap = {
-          "editor": "editor",
-          "dashboard": "dashboard",
-          "admin": "admin",
-          "agent": "agent",
-          "settings": "settings",
-          "generator": "generator",
+        const map = {
+          dashboard: "dashboard",
+          newapp: "newapp",
           "new app": "newapp",
-          "newapp": "newapp",
-          "logs": "logs",
-          "diag": "diagnostics",
-          "diagnostics": "diagnostics"
+          editor: "editor",
+          generator: "generator",
+          agent: "agent",
+          settings: "settings",
+          admin: "admin",
+          logs: "logs",
+          diagnostics: "diagnostics",
+          diag: "diagnostics"
         };
-        const view = viewMap[target] || target;
-        const r = this.commitOrPend("agent", `Open ${view}`, [{ type: "VIEW_SET", view }], "low");
-        out && (out.textContent = r.msg);
+        const v = map[target] || target;
+        setView(v);
+        out && (out.textContent = `OK. view=${v}`);
         return;
       }
 
       if (lower.startsWith("create ")) {
-        const parsed = parseCreateArgs(cmd);
-        const name = parsed.name;
-        const slug = slugify(parsed.slug || name);
-        if (!name) { out && (out.textContent = "Nome inválido"); return; }
-        const r = this.commitOrPend("agent", `Create app ${name}`, [{ type: "APP_CREATE", name, slug }], "low");
+        const rest = cmd.replace(/^create\s+/i, "").trim();
+        const qm = rest.match(/^"([^"]+)"\s*([a-z0-9-]+)?/i);
+        let name = "", slug = "";
+        if (qm) {
+          name = qm[1].trim();
+          slug = (qm[2] || "").trim();
+        } else {
+          name = rest;
+        }
+        const r = createApp(name, slug);
         out && (out.textContent = r.msg);
         return;
       }
 
       if (lower.startsWith("select ")) {
-        const slug = slugify(cmd.split(/\s+/).slice(1).join(" "));
-        const r = this.commitOrPend("agent", `Select ${slug}`, [{ type: "APP_SELECT", slug }], "low");
-        out && (out.textContent = r.msg);
-        return;
-      }
-
-      if (lower === "write") {
-        openWriteModal();
-        out && (out.textContent = "WRITE MODE aberto. Cole o texto e finalize com /end (ou clique salvar).");
-        const input = byIdAny("agentCmd", "agentInput");
-        if (input) input.value = "";
+        const slug = slugify(cmd.replace(/^select\s+/i, "").trim());
+        const ok = setActiveApp(slug);
+        out && (out.textContent = ok ? `OK. selecionado: ${slug}` : `Falhou: ${slug}`);
         return;
       }
 
@@ -677,7 +728,7 @@
   };
 
   // -----------------------------
-  // Admin diagnostics (simples)
+  // Admin Diagnostics
   // -----------------------------
   const Admin = {
     diagnostics() {
@@ -694,248 +745,188 @@
   };
 
   // -----------------------------
-  // WRITE MODE modal (/end)
+  // Settings PIN (segurança)
   // -----------------------------
-  function ensureWriteModal() {
-    if ($("#rcfWriteModal")) return;
+  const Pin = {
+    key: "admin_pin",
+    get() { return Storage.get(this.key, ""); },
+    set(pin) { Storage.set(this.key, String(pin || "")); },
+    clear() { Storage.del(this.key); }
+  };
 
-    const modal = document.createElement("div");
-    modal.id = "rcfWriteModal";
-    modal.style.cssText = `
-      position: fixed; inset: 0;
-      background: rgba(0,0,0,.55);
-      z-index: 9999;
-      display: none;
-      align-items: center;
-      justify-content: center;
-      padding: 14px;
-    `;
-
-    const card = document.createElement("div");
-    card.style.cssText = `
-      width: min(900px, 100%);
-      max-height: 85vh;
-      background: rgba(11,18,32,.97);
-      border: 1px solid rgba(255,255,255,.12);
-      border-radius: 16px;
-      box-shadow: 0 20px 60px rgba(0,0,0,.45);
-      overflow: hidden;
-      display: flex;
-      flex-direction: column;
-    `;
-
-    card.innerHTML = `
-      <div style="padding:12px;border-bottom:1px solid rgba(255,255,255,.10);display:flex;gap:10px;align-items:center;justify-content:space-between">
-        <div style="font-weight:800">WRITE MODE</div>
-        <div style="display:flex;gap:8px">
-          <button class="btn small" id="wmCancel" type="button">Cancelar</button>
-          <button class="btn small ok" id="wmSave" type="button">Salvar</button>
-        </div>
-      </div>
-      <div style="padding:12px">
-        <div class="hint" style="margin-bottom:8px">
-          Cole seu texto grande aqui. Finalize com <b>/end</b> numa linha, ou clique <b>Salvar</b>.
-        </div>
-        <textarea id="wmText" spellcheck="false" style="
-          width:100%;
-          min-height:48vh;
-          max-height:60vh;
-          resize: vertical;
-          border:1px solid rgba(255,255,255,.10);
-          background: rgba(0,0,0,.22);
-          color: rgba(255,255,255,.92);
-          border-radius: 12px;
-          padding: 12px;
-          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
-          font-size: 13px;
-          line-height: 1.45;
-          outline: none;
-        " placeholder="Cole aqui..."></textarea>
-      </div>
-    `;
-
-    modal.appendChild(card);
-    document.body.appendChild(modal);
-
-    const txt = $("#wmText");
-    txt.addEventListener("keydown", (ev) => {
-      if (ev.key === "Enter") {
-        const value = txt.value || "";
-        const lastLine = value.split("\n").slice(-1)[0].trim();
-        if (lastLine === "/end") {
-          ev.preventDefault();
-          txt.value = value.replace(/\n\/end\s*$/, "");
-          closeWriteModal();
-        }
-      }
-    });
-
-    bindTap($("#wmCancel"), () => closeWriteModal());
-    bindTap($("#wmSave"), () => closeWriteModal());
-  }
-
-  function openWriteModal() {
-    ensureWriteModal();
-    const m = $("#rcfWriteModal");
-    const txt = $("#wmText");
-    if (!m || !txt) return;
-    txt.value = "";
-    m.style.display = "flex";
-    setStatusPill("WRITE MODE ✅");
-    setTimeout(() => { try { txt.focus(); } catch {} }, 50);
-  }
-
-  function closeWriteModal() {
-    const m = $("#rcfWriteModal");
-    if (!m) return;
-    m.style.display = "none";
-    setStatusPill("OK ✅");
-  }
-
-  // -----------------------------
-  // UI helpers
-  // -----------------------------
-  function uiMsg(idOrSel, text) {
-    const el = document.getElementById(idOrSel) || $(idOrSel);
+  function uiMsg(sel, text) {
+    const el = $(sel);
     if (el) el.textContent = String(text ?? "");
   }
 
-  function escapeHtml(s) {
-    return String(s).replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
-  }
-  function escapeAttr(s) {
-    return escapeHtml(s).replace(/'/g, "&#39;");
-  }
-
   // -----------------------------
-  // Fallback “Admin click unkill”
+  // Github Sync status (apenas status aqui)
   // -----------------------------
-  function installAdminFallbackDelegation() {
-    const guardMS = 450;
-    let last = 0;
+  function refreshAdminStatus() {
+    const out = $("#adminOut");
+    if (!out) return;
 
-    const handler = (e) => {
-      const t = Date.now();
-      if (t - last < guardMS) { try { e.preventDefault(); e.stopPropagation(); } catch {} return; }
-      last = t;
-
-      const target = e.target;
-      if (!target || !target.closest) return;
-
-      const inAdmin = !!target.closest("#view-admin");
-      if (!inAdmin) return;
-
-      const hit = target.closest("#btnAdminDiag, #btnAdminClear, #btnAdminApply, #btnAdminDiscard");
-      if (hit) {
-        try { e.preventDefault(); e.stopPropagation(); } catch {}
-        setStatusPill("Clique capturado ✅");
-        setTimeout(() => setStatusPill("OK ✅"), 500);
-      }
-    };
-
-    document.addEventListener("touchend", handler, { passive: false, capture: true });
-    document.addEventListener("click", handler, { passive: false, capture: true });
+    const ghOk = !!window.RCF_GH_SYNC;
+    out.textContent =
+`Pronto.
+MAE+THOMPSON ✅ carregado (mother_selfupdate.js / thompson.js)
+MAE UI ✅ carregada (app/js/admin.js)
+GitHub Sync: ${ghOk ? "carregado ✅" : "módulo não carregou (RCF_GH_SYNC ausente) ❌"}
+`;
   }
 
   // -----------------------------
-  // Bind UI (COM IDS COMPAT)
+  // Bind UI
   // -----------------------------
   function bindUI() {
-    document.body.style.pointerEvents = "auto";
-
-    // Tabs sempre funcionam (data-view)
+    // Tabs (views)
     $$("[data-view]").forEach(btn => bindTap(btn, () => setView(btn.getAttribute("data-view"))));
 
-    // Drawer (se existir)
-    bindTap(byIdAny("btnOpenTools", "btnGear"), () => openTools(true));
-    bindTap(byIdAny("btnOpenTools2"), () => openTools(true));
-    bindTap(byIdAny("btnCloseTools"), () => openTools(false));
+    // Tools drawer
+    bindTap($("#btnOpenTools"), () => openTools(true));
+    bindTap($("#btnCloseTools"), () => openTools(false));
 
-    // Logs
-    bindTap(byIdAny("btnClearLogs"), () => { Logger.clear(); });
-    bindTap(byIdAny("btnCopyLogs"), async () => {
-      const txt = Logger.getAll().join("\n");
-      try { await navigator.clipboard.writeText(txt); } catch {}
-      setStatusPill("Logs copiados ✅");
-      setTimeout(() => setStatusPill("OK ✅"), 800);
-    });
-
-    bindTap(byIdAny("btnLogsRefresh"), () => { Logger._mirrorUI(Logger.getAll()); setStatusPill("Logs atualizados ✅"); setTimeout(() => setStatusPill("OK ✅"), 600); });
-    bindTap(byIdAny("btnLogsClear"), () => { Logger.clear(); uiMsg("logsOut", ""); setStatusPill("Logs limpos ✅"); setTimeout(() => setStatusPill("OK ✅"), 600); });
-    bindTap(byIdAny("btnLogsCopy"), async () => {
-      const txt = Logger.getAll().join("\n");
-      try { await navigator.clipboard.writeText(txt); } catch {}
-      setStatusPill("Logs copiados ✅");
-      setTimeout(() => setStatusPill("OK ✅"), 800);
-    });
-
-    // Diagnostics
-    bindTap(byIdAny("btnDiagRun"), () => { uiMsg("diagOut", Admin.diagnostics()); setStatusPill("Diag OK ✅"); setTimeout(() => setStatusPill("OK ✅"), 700); });
-    bindTap(byIdAny("btnDiagClear"), () => { uiMsg("diagOut", "Pronto."); setStatusPill("OK ✅"); });
-
-    // Dashboard buttons (COMPAT)
-    bindTap(byIdAny("btnCreateNewApp", "btnNewAppQuick"), () => setView("newapp"));
-    bindTap(byIdAny("btnOpenEditor"), () => setView("editor"));
-    bindTap(byIdAny("btnExportBackup", "btnBackup"), () => {
+    // Dashboard shortcuts
+    bindTap($("#btnCreateNewApp"), () => setView("newapp"));
+    bindTap($("#btnOpenEditor"), () => setView("editor"));
+    bindTap($("#btnExportBackup"), () => {
       const payload = JSON.stringify({ apps: State.apps, cfg: State.cfg, active: State.active }, null, 2);
       try { navigator.clipboard.writeText(payload); } catch {}
-      uiMsg("statusHint", "Backup copiado (JSON) — (clipboard).");
+      setStatusPill("Backup copiado ✅");
+      setTimeout(() => setStatusPill("OK ✅"), 800);
       Logger.write("backup copied");
     });
 
-    // New app (COMPAT)
-    bindTap(byIdAny("btnAutoSlug", "btnGenSlug"), () => {
-      const n = (byIdAny("newAppName")?.value || "");
+    // New App
+    bindTap($("#btnAutoSlug"), () => {
+      const n = ($("#newAppName")?.value || "");
       const s = slugify(n);
-      const inSlug = byIdAny("newAppSlug");
+      const inSlug = $("#newAppSlug");
       if (inSlug) inSlug.value = s;
     });
 
-    bindTap(byIdAny("btnDoCreateApp", "btnCreateApp"), () => {
-      const name = (byIdAny("newAppName")?.value || "");
-      const slug = (byIdAny("newAppSlug")?.value || "");
+    bindTap($("#btnDoCreateApp"), () => {
+      const name = ($("#newAppName")?.value || "");
+      const slug = ($("#newAppSlug")?.value || "");
       const r = createApp(name, slug);
-      uiMsg("newAppOut", r.msg);
-      if (r.ok) {
-        setStatusPill("OK ✅");
-        setView("editor");
-      } else {
-        setStatusPill("Nome/slug inválidos ✅");
+      uiMsg("#newAppOut", r.msg);
+      if (r.ok) { setView("editor"); setStatusPill("OK ✅"); }
+      else setStatusPill("Erro ✅");
+    });
+
+    // Editor
+    bindTap($("#btnSaveFile"), () => saveFile());
+    bindTap($("#btnResetFile"), () => {
+      const app = getActiveApp();
+      if (!app || !State.active.file) return uiMsg("#editorOut", "⚠️ Selecione app e arquivo.");
+      ensureAppFiles(app);
+      app.files[State.active.file] = "";
+      saveAll();
+      openFile(State.active.file);
+      uiMsg("#editorOut", "⚠️ Arquivo resetado (limpo).");
+    });
+
+    // Generator
+    bindTap($("#btnGenZip"), () => uiMsg("#genOut", "ZIP (stub)."));
+    bindTap($("#btnGenPreview"), () => uiMsg("#genOut", "Preview (stub)."));
+
+    // Agent
+    bindTap($("#btnAgentRun"), () => Agent.route($("#agentCmd")?.value || ""));
+    bindTap($("#btnAgentClear"), () => { uiMsg("#agentOut", Agent.help()); });
+
+    // Logs (Settings + Logs view + Drawer)
+    const doLogsRefresh = () => { refreshLogsViews(); setStatusPill("Logs atualizados ✅"); setTimeout(() => setStatusPill("OK ✅"), 600); };
+    const doLogsClear = () => { Logger.clear(); doLogsRefresh(); setStatusPill("Logs limpos ✅"); setTimeout(() => setStatusPill("OK ✅"), 600); };
+    const doLogsCopy = async () => {
+      const txt = Logger.getAll().join("\n");
+      try { await navigator.clipboard.writeText(txt); } catch {}
+      setStatusPill("Logs copiados ✅");
+      setTimeout(() => setStatusPill("OK ✅"), 800);
+    };
+
+    bindTap($("#btnLogsRefresh"), doLogsRefresh);
+    bindTap($("#btnLogsRefresh2"), doLogsRefresh);
+    bindTap($("#btnLogsClear"), doLogsClear);
+    bindTap($("#btnClearLogs"), doLogsClear);
+    bindTap($("#btnClearLogs2"), doLogsClear);
+    bindTap($("#btnLogsCopy"), doLogsCopy);
+    bindTap($("#btnCopyLogs"), doLogsCopy);
+
+    // Diagnostics view
+    bindTap($("#btnDiagRun"), () => { uiMsg("#diagOut", Admin.diagnostics()); setStatusPill("Diag OK ✅"); setTimeout(() => setStatusPill("OK ✅"), 700); });
+    bindTap($("#btnDiagClear"), () => { uiMsg("#diagOut", "Pronto."); setStatusPill("OK ✅"); });
+
+    // Settings shortcuts
+    bindTap($("#btnGoDiagnose"), () => { setView("diagnostics"); uiMsg("#diagShortcutOut", "Abrindo diagnostics..."); });
+    bindTap($("#btnGoAdmin"), () => { setView("admin"); uiMsg("#diagShortcutOut", "Abrindo admin..."); });
+
+    // PIN
+    bindTap($("#btnPinSave"), () => {
+      const raw = String($("#pinInput")?.value || "").trim();
+      if (!/^\d{4,8}$/.test(raw)) {
+        uiMsg("#pinOut", "⚠️ PIN inválido. Use 4 a 8 dígitos.");
+        return;
       }
+      Pin.set(raw);
+      uiMsg("#pinOut", "✅ PIN salvo.");
+      Logger.write("pin saved");
     });
 
-    // Editor save (COMPAT)
-    bindTap(byIdAny("btnSaveFile"), () => saveFile());
-
-    // Generator (COMPAT)
-    bindTap(byIdAny("btnGenZip", "btnBuildZip"), () => uiMsg("genOut", "ZIP (stub)."));
-    bindTap(byIdAny("btnGenPreview"), () => uiMsg("genOut", "Preview (stub)."));
-
-    // Agent (COMPAT)
-    bindTap(byIdAny("btnAgentRun"), () => {
-      const cmd = byIdAny("agentCmd", "agentInput")?.value || "";
-      Agent.route(cmd);
-    });
-    bindTap(byIdAny("btnAgentClear"), () => {
-      const a = byIdAny("agentCmd", "agentInput");
-      if (a) a.value = "";
-      uiMsg("agentOut", "Pronto.");
+    bindTap($("#btnPinRemove"), () => {
+      Pin.clear();
+      uiMsg("#pinOut", "✅ PIN removido.");
+      Logger.write("pin removed");
     });
 
-    // Touch debug (clicar no status)
-    bindTap(statusEl(), (ev) => {
-      const x = (ev.changedTouches && ev.changedTouches[0] && ev.changedTouches[0].clientX) || 20;
-      const y = (ev.changedTouches && ev.changedTouches[0] && ev.changedTouches[0].clientY) || 20;
-      const d = diagnoseTouchOverlay(x, y);
-      Logger.write("touch diag:", d);
+    // Admin
+    bindTap($("#btnAdminDiag"), () => { uiMsg("#adminOut", Admin.diagnostics()); });
+    bindTap($("#btnAdminZero"), () => {
+      // SAFE: só limpa logs + status
+      Logger.clear();
+      setStatusPill("Zerado (safe) ✅");
+      setTimeout(() => setStatusPill("OK ✅"), 800);
+      uiMsg("#adminOut", "✅ Zerado (safe). Logs limpos.");
+      Logger.write("admin zero safe");
     });
+
+    // GH buttons (só se módulo existir)
+    bindTap($("#btnGhSave"), () => {
+      const cfg = {
+        owner: ($("#ghOwner")?.value || "").trim(),
+        repo: ($("#ghRepo")?.value || "").trim(),
+        branch: ($("#ghBranch")?.value || "main").trim(),
+        path: ($("#ghPath")?.value || "app/import/mother_bundle.json").trim(),
+        token: ($("#ghToken")?.value || "").trim()
+      };
+      Storage.set("ghcfg", cfg);
+      uiMsg("#ghOut", "✅ Config salva (local).");
+      Logger.write("gh cfg saved");
+    });
+
+    bindTap($("#btnGhPull"), () => {
+      if (!window.RCF_GH_SYNC) return uiMsg("#ghOut", "❌ GitHub Sync ausente. Corrija github_sync.js");
+      window.RCF_GH_SYNC.pull().then(m => uiMsg("#ghOut", m)).catch(e => uiMsg("#ghOut", "❌ " + (e.message||e)));
+    });
+
+    bindTap($("#btnGhPush"), () => {
+      if (!window.RCF_GH_SYNC) return uiMsg("#ghOut", "❌ GitHub Sync ausente. Corrija github_sync.js");
+      window.RCF_GH_SYNC.push().then(m => uiMsg("#ghOut", m)).catch(e => uiMsg("#ghOut", "❌ " + (e.message||e)));
+    });
+
+    bindTap($("#btnGhRefresh"), () => {
+      refreshAdminStatus();
+      uiMsg("#ghOut", window.RCF_GH_SYNC ? "GitHub: módulo carregado ✅" : "GitHub Sync ausente. Corrija github_sync.js");
+    });
+
+    // Status pill (debug)
+    bindTap($("#statusPill"), () => Logger.write("touch:", "TOP=" + (document.activeElement?.tagName || "-")));
   }
 
   // -----------------------------
   // Boot
   // -----------------------------
   function hydrateUIFromState() {
-    Logger._mirrorUI(Logger.getAll());
+    refreshLogsViews();
     renderAppsList();
 
     const app = getActiveApp();
@@ -943,31 +934,25 @@
       setActiveApp(app.slug);
       if (State.active.file) openFile(State.active.file);
     } else {
-      const text = byIdAny("activeAppText");
+      const text = $("#activeAppText");
       if (text) text.textContent = "Sem app ativo ✅";
     }
 
+    // Se o estado estava “admin”, ele abre admin mesmo.
+    // Se quiser sempre começar no dashboard:
+    // State.active.view = "dashboard"; saveAll();
     setView(State.active.view || "dashboard");
 
-    const ao = byIdAny("agentOut");
-    if (ao && !ao.textContent.trim()) {
-      uiMsg("agentOut", `Pronto. mode=${State.cfg.mode}`);
-    }
+    // PIN status
+    const pin = Pin.get();
+    if (pin) uiMsg("#pinOut", "PIN definido ✅");
   }
 
   function init() {
-    document.documentElement.style.pointerEvents = "auto";
-    document.body.style.pointerEvents = "auto";
-
-    $$("button, a, .tab, .btn, .dockbtn").forEach(el => {
-      el.style.pointerEvents = "auto";
-      el.style.touchAction = "manipulation";
-    });
-
-    ensureWriteModal();
+    renderShell();       // <- isso resolve “sumiu tudo / só admin”
     bindUI();
-    installAdminFallbackDelegation();
     hydrateUIFromState();
+    refreshAdminStatus();
 
     Logger.write("RCF app.js init ok — mode:", State.cfg.mode);
   }
@@ -978,191 +963,8 @@
     init();
   }
 
-    window.RCF = window.RCF || {};
+  window.RCF = window.RCF || {};
   window.RCF.state = State;
   window.RCF.log = (...a) => Logger.write(...a);
-
-  // expõe setView pra ui.touchfix conseguir navegar sem depender de binds
-  window.RCF.setView = (name) => setView(name);
-
-  // expõe refresh de logs
-  window.RCF.refreshLogs = () => refreshLogsViews();
-
-  // expõe diagnóstico do admin (fallback)
-  window.RCF.adminDiagnostics = () => Admin.diagnostics();
-// =============================
-// RCF: Anti-overlay killer (miolo morre depois do 1º clique)
-// Cole perto do fim do app.js, antes do "})();"
-// =============================
-(function installOverlayKiller(){
-  const SELS = [
-    "#rcfWriteModal",
-    ".rcf-gear-backdrop",
-    "#toolsDrawer",
-    ".tools",
-    ".overlay",
-    ".backdrop",
-    "#overlay",
-    "#backdrop"
-  ];
-
-  function isVisible(el){
-    if (!el) return false;
-    const cs = getComputedStyle(el);
-    if (cs.display === "none" || cs.visibility === "hidden" || cs.opacity === "0") return false;
-    const r = el.getBoundingClientRect();
-    return r.width > 0 && r.height > 0;
-  }
-
-  function killIfBlocking(){
-    // se tiver algum overlay visível, mas não era pra estar “ativo”, desliga pointer events
-    for (const sel of SELS){
-      const el = document.querySelector(sel);
-      if (!el) continue;
-      if (!isVisible(el)) continue;
-
-      // se for o WriteModal e estiver fechado, pode estar invisível porém “visível” por bug -> mata
-      // se for drawer/gear/backdrop sem class open, mata também
-      const isOpen =
-        el.classList.contains("open") ||
-        (el.id === "rcfWriteModal" && (el.style.display === "flex"));
-
-      if (!isOpen){
-        el.style.pointerEvents = "none";
-      }
-    }
-  }
-
-  // roda sempre que tocar em qualquer lugar
-  document.addEventListener("touchend", (ev) => {
-    const t = ev.changedTouches && ev.changedTouches[0];
-    if (!t) return;
-
-    // antes: tenta matar overlays suspeitos
-    killIfBlocking();
-
-    // log rápido de quem está por cima do ponto tocado
-    const top = document.elementFromPoint(t.clientX, t.clientY);
-    if (top && window.RCF_LOGGER && window.RCF_LOGGER.push){
-      const cs = getComputedStyle(top);
-      window.RCF_LOGGER.push("touch", `TOP=${top.tagName}#${top.id}.${String(top.className||"").slice(0,60)} z=${cs.zIndex} pe=${cs.pointerEvents}`);
-    }
-  }, { passive: true, capture: true });
-
-  // quando mudar de view, também limpa overlays
-  const oldSetView = window.RCF && window.RCF.setView;
-  // se não tiver exportado, a gente só escuta mudanças nos botões
-  document.addEventListener("click", () => killIfBlocking(), { capture: true, passive: // =============================
-// RCF GLOBAL ACTION FIX (FINAL)
-// =============================
-(function installGlobalActionDelegation(){
-
-  function fire(fn){
-    try { fn(); }
-    catch(e){
-      try { Logger.write("deleg err:", e?.message||e); } catch {}
-    }
-  }
-
-  function handler(ev){
-    const btn = ev.target?.closest?.("button");
-    if (!btn || !btn.id) return;
-
-    const id = btn.id;
-
-    // Só intercepta os que estavam morrendo
-    const targets = [
-      "btnPinSave",
-      "btnPinRemove",
-      "btnGoDiagnose",
-      "btnGoAdmin",
-      "btnAdminDiag",
-      "btnAdminClear",
-      "btnAdminApply",
-      "btnAdminDiscard"
-    ];
-
-    if (!targets.includes(id)) return;
-
-    ev.preventDefault?.();
-    ev.stopPropagation?.();
-
-    switch(id){
-
-      // ===== SEGURANÇA =====
-      case "btnPinSave":
-        fire(() => {
-          const input = document.querySelector("#pinInput");
-          const val = input?.value?.trim();
-          if (!val || val.length < 4){
-            setStatusPill("PIN inválido ❌");
-            return;
-          }
-          Storage.set("pin", val);
-          setStatusPill("PIN salvo ✅");
-        });
-        break;
-
-      case "btnPinRemove":
-        fire(() => {
-          Storage.del("pin");
-          setStatusPill("PIN removido ✅");
-        });
-        break;
-
-      // ===== DIAG / ADMIN NAV =====
-      case "btnGoDiagnose":
-        fire(() => setView("diagnostics"));
-        break;
-
-      case "btnGoAdmin":
-        fire(() => setView("admin"));
-        break;
-
-      // ===== ADMIN CORE =====
-      case "btnAdminDiag":
-        fire(() => {
-          uiMsg("#adminOut", Admin.diagnostics());
-          setStatusPill("Diag OK ✅");
-        });
-        break;
-
-      case "btnAdminClear":
-        fire(() => {
-          Logger.clear();
-          setStatusPill("Logs limpos ✅");
-        });
-        break;
-
-      case "btnAdminApply":
-        fire(() => {
-          if (!State.pending.patch){
-            setStatusPill("Sem patch ❌");
-            return;
-          }
-          const r = applyPatchset(State.pending.patch);
-          if (r.ok){
-            clearPendingPatch();
-            refreshAfterPatch();
-            setStatusPill("Patch aplicado ✅");
-          } else {
-            setStatusPill("Erro patch ❌");
-          }
-        });
-        break;
-
-      case "btnAdminDiscard":
-        fire(() => {
-          clearPendingPatch();
-          setStatusPill("Patch descartado ✅");
-        });
-        break;
-    }
-  }
-
-  document.addEventListener("touchend", handler, { capture:true, passive:false });
-  document.addEventListener("click", handler, { capture:true, passive:false });
-
-  try { Logger.write("GLOBAL ACTION FIX ON ✅"); } catch {}
 
 })();
