@@ -6,20 +6,49 @@
   <meta name="theme-color" content="#0b1220" />
   <title>RControl Factory</title>
 
-  <!-- IMPORTANTe: caminhos RELATIVOS (sem / no começo) -->
+  <!-- caminhos RELATIVOS (pra /app funcionar sozinho) -->
   <link rel="stylesheet" href="./styles.css" />
 
+  <!-- iOS PWA -->
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 </head>
 
 <body>
-  <!-- DEBUG: se aparecer isso, pelo menos o HTML carregou -->
-  <div id="bootStatus" class="mono small" style="margin:12px">Carregando…</div>
+  <!-- DEBUG na tela (se JS quebrar, a gente vê) -->
+  <pre id="bootStatus" class="mono small" style="margin:12px">Boot: carregando…</pre>
 
   <div id="app"></div>
 
-  <!-- scripts RELATIVOS -->
+  <script>
+    // mostra erro na tela (iOS às vezes não mostra nada)
+    (function () {
+      const box = document.getElementById("bootStatus");
+      function log(s){ try{ box.textContent += "\n" + s; }catch(e){} }
+
+      window.addEventListener("error", (e) => {
+        log("ERRO: " + (e.message || e.error || "desconhecido"));
+      });
+
+      window.addEventListener("unhandledrejection", (e) => {
+        log("PROMISE: " + (e.reason?.message || e.reason || "desconhecido"));
+      });
+
+      // mata SW antigo que esteja com escopo errado (evita bug “um clique e morre” + branco)
+      if ("serviceWorker" in navigator) {
+        navigator.serviceWorker.getRegistrations().then((regs) => {
+          regs.forEach((r) => {
+            // se tiver SW pegando o site inteiro, desinstala
+            if (!String(r.scope || "").includes("/app/")) r.unregister();
+          });
+        }).catch(()=>{});
+      }
+
+      log("Boot: scripts vão carregar…");
+    })();
+  </script>
+
+  <!-- ordem segura -->
   <script defer src="./js/ui.touchfix.js"></script>
   <script defer src="./app.js"></script>
 
@@ -31,14 +60,18 @@
   <script defer src="./js/core/github_sync.js"></script>
   <script defer src="./js/core/mother_selfupdate.js"></script>
 
-  <!-- SW: como o sw.js tá dentro de /app -->
+  <!-- SW: registra com ESCOPO /app/ (pra não interferir na raiz) -->
   <script>
     (function(){
       if (!("serviceWorker" in navigator)) return;
       window.addEventListener("load", async () => {
         try {
-          await navigator.serviceWorker.register("./sw.js", { scope: "/" });
+          await navigator.serviceWorker.register("./sw.js", { scope: "/app/" });
+          const box = document.getElementById("bootStatus");
+          if (box) box.textContent += "\nSW: registrado (/app/)";
         } catch(e){
+          const box = document.getElementById("bootStatus");
+          if (box) box.textContent += "\nSW ERRO: " + (e?.message || e);
           console.warn("SW erro:", e);
         }
       });
