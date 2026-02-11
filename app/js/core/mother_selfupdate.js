@@ -318,3 +318,96 @@
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
   else init();
 })();
+/* =========================================================
+   RCF • AUTO-INJECT (GitHub) — SAFE ADDON
+   - Lê app/import/mother_index.json no GitHub
+   - Se tiver versão nova: puxa bundle e aplica
+   - Se não achar funções internas, ele só avisa no console
+========================================================= */
+(function(){
+  const LS_CFG  = "RCF_GH_CFG";                 // { owner, repo, branch, path, token }
+  const LS_VER  = "RCF_MOTHER_APPLIED_VERSION"; // versão aplicada
+  const LS_AUTO = "RCF_MOTHER_AUTO";            // "1" liga auto-apply
+
+  function jparse(s){ try { return JSON.parse(s); } catch { return null; } }
+  function cfg(){
+    const c = jparse(localStorage.getItem(LS_CFG)||"");
+    if (!c || !c.owner || !c.repo || !c.branch || !c.token) return null;
+    return c;
+  }
+  function localVer(){ return String(localStorage.getItem(LS_VER)||"0"); }
+  function setLocalVer(v){ localStorage.setItem(LS_VER, String(v)); }
+
+  async function ghGetText(c, path){
+    const url = `https://api.github.com/repos/${c.owner}/${c.repo}/contents/${path}?ref=${c.branch}`;
+    const r = await fetch(url, {
+      headers: {
+        "Authorization": `Bearer ${c.token}`,
+        "Accept": "application/vnd.github+json"
+      }
+    });
+    if (!r.ok) throw new Error("GitHub GET falhou: " + r.status);
+    const data = await r.json();
+    const b64 = (data.content||"").replace(/\n/g,"");
+    const txt = decodeURIComponent(escape(atob(b64)));
+    return txt;
+  }
+
+  function findApply(){
+    const M = window.RCF_MOTHER || window.MOTHER || null;
+    const apply =
+      (M && (M.applyBundleText || M.applyBundleFromText || M.applyPastedBundle || M.applyText)) ||
+      null;
+    return { M, apply };
+  }
+
+  async function check(){
+    const c = cfg();
+    if (!c) return null;
+
+    const idxTxt = await ghGetText(c, "app/import/mother_index.json");
+    const idx = jparse(idxTxt);
+    if (!idx?.latest?.version || !idx?.latest?.bundlePath) return null;
+
+    const remoteVer = String(idx.latest.version);
+    const hasUpdate = Number(remoteVer) > Number(localVer());
+    return { remoteVer, hasUpdate, bundlePath: idx.latest.bundlePath };
+  }
+
+  async function pullAndApply(bundlePath, remoteVer){
+    const c = cfg();
+    const { apply } = findApply();
+
+    const raw = await ghGetText(c, bundlePath);
+
+    if (!apply) {
+      console.warn("[RCF] AutoInject: não achei função apply no Mother. Bundle puxado, mas não aplicado.");
+      return false;
+    }
+
+    apply(raw);                 // aplica usando sua engine atual
+    setLocalVer(remoteVer);     // marca versão aplicada
+    console.log("[RCF] AutoInject OK:", remoteVer);
+    return true;
+  }
+
+  async function boot(){
+    try {
+      const info = await check();
+      if (!info || !info.hasUpdate) return;
+
+      const auto = (localStorage.getItem(LS_AUTO) || "1") === "1";
+      if (!auto) {
+        console.log("[RCF] Update disponível (auto desligado):", info.remoteVer);
+        return;
+      }
+
+      await pullAndApply(info.bundlePath, info.remoteVer);
+    } catch (e) {
+      console.warn("[RCF] AutoInject falhou:", e);
+    }
+  }
+
+  // roda após carregar tudo
+  window.addEventListener("load", () => setTimeout(boot, 700));
+})();
