@@ -978,9 +978,18 @@
     init();
   }
 
-  window.RCF = window.RCF || {};
+    window.RCF = window.RCF || {};
   window.RCF.state = State;
   window.RCF.log = (...a) => Logger.write(...a);
+
+  // expõe setView pra ui.touchfix conseguir navegar sem depender de binds
+  window.RCF.setView = (name) => setView(name);
+
+  // expõe refresh de logs
+  window.RCF.refreshLogs = () => refreshLogsViews();
+
+  // expõe diagnóstico do admin (fallback)
+  window.RCF.adminDiagnostics = () => Admin.diagnostics();
 // =============================
 // RCF: Anti-overlay killer (miolo morre depois do 1º clique)
 // Cole perto do fim do app.js, antes do "})();"
