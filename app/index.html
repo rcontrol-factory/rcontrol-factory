@@ -6,27 +6,28 @@
   <meta name="theme-color" content="#0b1220" />
   <title>RControl Factory</title>
 
-  <!-- TUDO RELATIVO (porque este arquivo está em /app/) -->
+  <!-- Tudo RELATIVO (porque no Pages seu publish tá como /app virando root) -->
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="styles.css?v=999" />
 
-  <!-- iOS nicer -->
+  <!-- iOS -->
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 
   <style>
-    /* FIX iOS: checkbox/label clicável */
-    label[for] { cursor: pointer; }
+    /* iOS: deixa checkbox/label clicável + evita highlight */
+    label { cursor: pointer; }
     input[type="checkbox"]{
-      width: 22px; height: 22px;
-      accent-color: #22c55e;
+      width:22px;height:22px;
       -webkit-tap-highlight-color: transparent;
     }
   </style>
 </head>
 
 <body>
+  <noscript>Ative o JavaScript para usar a Factory.</noscript>
+
   <div id="app">
     <!-- TOPBAR -->
     <header class="topbar">
@@ -159,32 +160,29 @@
     </main>
   </div>
 
-  <!-- ✅ SW ÚNICO: /app/js/sw.js (scope /app/) -->
+  <!-- SW register: ÚNICO SW é ./sw.js (dentro de /app) -->
   <script>
     (function(){
-      if (!("serviceWorker" in navigator)) return;
-      window.addEventListener("load", async () => {
-        try {
-          const reg = await navigator.serviceWorker.register("/app/js/sw.js", { scope: "/app/" });
-          reg.update?.();
-        } catch (e) {
-          console.warn("SW register falhou:", e);
-        }
+      if (!('serviceWorker' in navigator)) return;
+      window.addEventListener('load', function(){
+        navigator.serviceWorker.register('./sw.js', { scope: './' })
+          .then(function(reg){ try{ reg.update && reg.update(); }catch(e){} })
+          .catch(function(){});
       });
     })();
   </script>
 
-  <!-- CORE (ordem importa) -->
-  <script defer src="app.js"></script>
+  <!-- CORE -->
+  <script defer src="app.js?v=999"></script>
 
-  <!-- CORE modules (precisam existir em /app/js/core/) -->
-  <script defer src="js/core/vfs_overrides.js"></script>
-  <script defer src="js/core/thompson.js"></script>
-  <script defer src="js/core/github_sync.js"></script>
-  <script defer src="js/core/mother_selfupdate.js"></script>
+  <!-- CORE modules -->
+  <script defer src="js/core/vfs_overrides.js?v=999"></script>
+  <script defer src="js/core/thompson.js?v=999"></script>
+  <script defer src="js/core/github_sync.js?v=999"></script>
+  <script defer src="js/core/mother_selfupdate.js?v=999"></script>
 
   <!-- UI layer -->
-  <script defer src="js/router.js"></script>
-  <script defer src="js/admin.js"></script>
+  <script defer src="js/router.js?v=999"></script>
+  <script defer src="js/admin.js?v=999"></script>
 </body>
 </html>
