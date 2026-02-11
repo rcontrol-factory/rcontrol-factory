@@ -981,5 +981,69 @@
   window.RCF = window.RCF || {};
   window.RCF.state = State;
   window.RCF.log = (...a) => Logger.write(...a);
+// =============================
+// RCF: Anti-overlay killer (miolo morre depois do 1º clique)
+// Cole perto do fim do app.js, antes do "})();"
+// =============================
+(function installOverlayKiller(){
+  const SELS = [
+    "#rcfWriteModal",
+    ".rcf-gear-backdrop",
+    "#toolsDrawer",
+    ".tools",
+    ".overlay",
+    ".backdrop",
+    "#overlay",
+    "#backdrop"
+  ];
 
+  function isVisible(el){
+    if (!el) return false;
+    const cs = getComputedStyle(el);
+    if (cs.display === "none" || cs.visibility === "hidden" || cs.opacity === "0") return false;
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  }
+
+  function killIfBlocking(){
+    // se tiver algum overlay visível, mas não era pra estar “ativo”, desliga pointer events
+    for (const sel of SELS){
+      const el = document.querySelector(sel);
+      if (!el) continue;
+      if (!isVisible(el)) continue;
+
+      // se for o WriteModal e estiver fechado, pode estar invisível porém “visível” por bug -> mata
+      // se for drawer/gear/backdrop sem class open, mata também
+      const isOpen =
+        el.classList.contains("open") ||
+        (el.id === "rcfWriteModal" && (el.style.display === "flex"));
+
+      if (!isOpen){
+        el.style.pointerEvents = "none";
+      }
+    }
+  }
+
+  // roda sempre que tocar em qualquer lugar
+  document.addEventListener("touchend", (ev) => {
+    const t = ev.changedTouches && ev.changedTouches[0];
+    if (!t) return;
+
+    // antes: tenta matar overlays suspeitos
+    killIfBlocking();
+
+    // log rápido de quem está por cima do ponto tocado
+    const top = document.elementFromPoint(t.clientX, t.clientY);
+    if (top && window.RCF_LOGGER && window.RCF_LOGGER.push){
+      const cs = getComputedStyle(top);
+      window.RCF_LOGGER.push("touch", `TOP=${top.tagName}#${top.id}.${String(top.className||"").slice(0,60)} z=${cs.zIndex} pe=${cs.pointerEvents}`);
+    }
+  }, { passive: true, capture: true });
+
+  // quando mudar de view, também limpa overlays
+  const oldSetView = window.RCF && window.RCF.setView;
+  // se não tiver exportado, a gente só escuta mudanças nos botões
+  document.addEventListener("click", () => killIfBlocking(), { capture: true, passive: true });
+
+})();
 })();
