@@ -1,211 +1,177 @@
 /* =========================================================
-  RControl Factory — js/core/thompson.js (MVP)
-  Thompson = motor que recebe bundle da Mãe e aplica overrides
-  - load/validate bundle
-  - dry-run
-  - apply -> VFS overrides (se existir) ou fallback localStorage
-  - history + rollback (1 passo)
+  RControl Factory — core/thompson.js (FULL)
+  THOMPSON = Guardião / Policy Gate do Self-Update (Mãe)
+
+  Modos:
+   - SAFE (condicional): só permite override em arquivos "seguros"
+   - UNLOCK (livre): permite qualquer arquivo (ainda valida estrutura)
+
+  Exposto em:
+   window.RCF_THOMPSON.validateBundle(bundle, { mode })
+
+  Bundle esperado:
+   {
+     meta?: { name, version, createdAt, note? },
+     files: { "/js/core/ui_bindings.js": "...", ... }
+   }
+
 ========================================================= */
 (function () {
   "use strict";
 
-  const KEY_BUNDLE = "rcf:mother_bundle";
-  const KEY_BUNDLE_AT = "rcf:mother_bundle_at";
-  const KEY_VFS = "rcf:vfs_overrides";         // fallback
-  const KEY_HIST = "rcf:mother_hist";          // histórico simples
+  const nowISO = () => new Date().toISOString();
 
-  function safeText(v){ return (v===undefined||v===null) ? "" : String(v); }
-  function nowISO(){ return new Date().toISOString(); }
-
-  function log(msg){
-    try{
-      if (window.RCF_LOGGER && typeof window.RCF_LOGGER.push === "function") window.RCF_LOGGER.push("log", msg);
-      else if (window.RCF && typeof window.RCF.log === "function") window.RCF.log(msg);
-      else console.log("[THOMPSON]", msg);
+  function log(msg, obj) {
+    try {
+      if (window.RCF && typeof window.RCF.log === "function") {
+        window.RCF.log(msg, obj || "");
+      } else {
+        console.log("[THOMPSON]", msg, obj || "");
+      }
     } catch {}
   }
 
-  function readJSON(key, fb){
-    try{
-      const raw = localStorage.getItem(key);
-      if(!raw) return fb;
-      return JSON.parse(raw);
-    } catch { return fb; }
-  }
-  function writeJSON(key, obj){
-    try{ localStorage.setItem(key, JSON.stringify(obj)); } catch {}
+  function isObj(x) { return x && typeof x === "object" && !Array.isArray(x); }
+
+  function normalizePath(p) {
+    let s = String(p || "").trim();
+    if (!s) return "";
+    // força começar com /
+    if (!s.startsWith("/")) s = "/" + s;
+    // remove // duplicado
+    s = s.replace(/\/{2,}/g, "/");
+    return s;
   }
 
-  function normalizeBundle(b){
-    if (!b || typeof b !== "object") return null;
-    const meta = (b.meta && typeof b.meta === "object") ? b.meta : {};
-    const files = (b.files && typeof b.files === "object") ? b.files : null;
-    if (!files) return null;
+  function applyMacros(content) {
+    const s = String(content ?? "");
+    return s.replace(/\{\{DATE\}\}/g, nowISO());
+  }
 
-    // normaliza paths: sempre começando com "/"
-    const outFiles = {};
-    Object.keys(files).forEach((k)=>{
-      const p = String(k||"").trim();
-      if(!p) return;
-      const path = p.startsWith("/") ? p : ("/" + p);
-      outFiles[path] = safeText(files[k]);
+  // ✅ allowlist SAFE: mexer só no que não “mata” a Factory
+  // (você pode ajustar depois, mas isso já evita BO pesado)
+  const SAFE_ALLOW_PREFIXES = [
+    "/js/core/ui_",              // ui_safety.js, ui_bindings.js, ui_gear etc
+    "/js/core/mother_",          // mother_selfupdate.js
+    "/js/core/vfs_",             // vfs_overrides.js
+    "/js/core/logger.js",        // logs
+    "/js/admin.js",              // camada admin fora do core
+    "/styles.css",               // visual
+    "/privacy.html",
+    "/terms.html"
+  ];
+
+  // ❌ bloqueados no SAFE
+  const SAFE_BLOCK_PREFIXES = [
+    "/sw.js",
+    "/manifest.json",
+    "/index.html",
+    "/app.js",                   // o cérebro principal
+    "/js/app.js",
+    "/js/core/storage.js",
+    "/js/core/patch.js",
+    "/js/core/patchset.js",
+    "/js/core/commands.js",
+    "/js/core/selfheal.js",
+    "/js/core/autofix.js",
+    "/js/core/policy.js",
+    "/js/core/risk.js",
+    "/js/core/diagnostics.js",
+  ];
+
+  function startsWithAny(path, list) {
+    return list.some((p) => {
+      if (p.endsWith("/")) return path.startsWith(p);
+      return path === p || path.startsWith(p + "/") || path.startsWith(p);
     });
-
-    return { meta, files: outFiles };
   }
 
-  function validateBundle(b){
-    const nb = normalizeBundle(b);
-    if(!nb) return { ok:false, err:"Bundle inválido: precisa ter {files:{...}}." };
-
-    const paths = Object.keys(nb.files);
-    if(!paths.length) return { ok:false, err:"Bundle sem arquivos (files vazio)." };
-
-    // trava de segurança (whitelist simples) — pode ajustar depois
-    const allowed = [
-      "/core/", "/js/core/", "/js/", "/app.js", "/index.html", "/styles.css", "/manifest.json"
-    ];
-    const denied = [];
-
-    for (const p of paths){
-      const ok = allowed.some(prefix => p.startsWith(prefix) || p === prefix);
-      if(!ok) denied.push(p);
-    }
-
-    if (denied.length){
-      return {
-        ok:false,
-        err:"Bundle bloqueado (paths fora do permitido):\n- " + denied.join("\n- ")
-      };
-    }
-
-    return { ok:true, bundle: nb };
+  function allowedInSafe(path) {
+    if (startsWithAny(path, SAFE_BLOCK_PREFIXES)) return false;
+    // precisa bater allowlist (por prefixo) OU ser exatamente um arquivo allow explícito
+    return startsWithAny(path, SAFE_ALLOW_PREFIXES);
   }
 
-  function getBundle(){
-    return readJSON(KEY_BUNDLE, null);
-  }
-
-  function setBundle(bundle){
-    writeJSON(KEY_BUNDLE, bundle);
-    localStorage.setItem(KEY_BUNDLE_AT, nowISO());
-  }
-
-  function addHist(entry){
-    const hist = readJSON(KEY_HIST, []);
-    hist.unshift(entry);
-    while(hist.length > 10) hist.pop();
-    writeJSON(KEY_HIST, hist);
-  }
-
-  function dryRun(bundle){
-    const v = validateBundle(bundle);
-    if(!v.ok) return { ok:false, msg:v.err };
-
-    const b = v.bundle;
-    const files = Object.keys(b.files);
-
+  function summarize(bundle) {
+    const meta = bundle.meta || {};
+    const files = bundle.files || {};
+    const keys = Object.keys(files);
     return {
-      ok:true,
-      meta: {
-        name: safeText(b.meta?.name || "bundle"),
-        version: safeText(b.meta?.version || "1.0"),
-        createdAt: safeText(b.meta?.createdAt || "")
-      },
-      filesCount: files.length,
-      files
+      name: meta.name || "-",
+      version: meta.version || "-",
+      createdAt: meta.createdAt || "-",
+      files: keys.length
     };
   }
 
-  function applyToVFS(filesMap){
-    // 1) tenta usar API do teu VFS se existir
-    const V = window.RCF_VFS_OVERRIDES;
-    if (V){
-      // tenta padrões diferentes sem quebrar
-      if (typeof V.applyBundle === "function") return V.applyBundle(filesMap);
-      if (typeof V.apply === "function") return V.apply(filesMap);
-      if (typeof V.setFiles === "function") return V.setFiles(filesMap);
-      if (typeof V.setFile === "function"){
-        Object.keys(filesMap).forEach(p => V.setFile(p, filesMap[p]));
-        return true;
+  function validateStructure(bundle) {
+    if (!isObj(bundle)) return { ok: false, err: "Bundle não é objeto" };
+    if (!isObj(bundle.files)) return { ok: false, err: "Bundle sem 'files' (objeto)" };
+    const keys = Object.keys(bundle.files);
+    if (!keys.length) return { ok: false, err: "Bundle 'files' está vazio" };
+
+    // valida chaves + valores
+    for (const k of keys) {
+      const p = normalizePath(k);
+      if (!p) return { ok: false, err: "Caminho vazio em files" };
+      const v = bundle.files[k];
+      if (typeof v !== "string") return { ok: false, err: `Conteúdo não-string em ${k}` };
+    }
+    return { ok: true };
+  }
+
+  function validateBundle(bundle, opts = {}) {
+    const mode = String(opts.mode || "safe").toLowerCase(); // safe | unlock
+    const s = validateStructure(bundle);
+    if (!s.ok) return { ok: false, mode, reason: s.err, allowed: [], blocked: [], dryRun: [] };
+
+    const filesIn = bundle.files;
+    const allowed = [];
+    const blocked = [];
+    const dryRun = [];
+
+    for (const rawPath of Object.keys(filesIn)) {
+      const path = normalizePath(rawPath);
+
+      // normaliza e troca macro
+      const content = applyMacros(filesIn[rawPath]);
+
+      const rec = { path, bytes: content.length };
+
+      if (mode === "unlock") {
+        allowed.push(path);
+        dryRun.push(rec);
+        continue;
+      }
+
+      // SAFE
+      if (allowedInSafe(path)) {
+        allowed.push(path);
+        dryRun.push(rec);
+      } else {
+        blocked.push(path);
       }
     }
 
-    // 2) fallback: salva num map local (SW/VFS pode ler isso)
-    const cur = readJSON(KEY_VFS, { files:{} });
-    cur.files = cur.files && typeof cur.files === "object" ? cur.files : {};
-    Object.assign(cur.files, filesMap);
-    cur.updatedAt = nowISO();
-    writeJSON(KEY_VFS, cur);
-    return true;
-  }
-
-  function apply(bundle){
-    const v = validateBundle(bundle);
-    if(!v.ok) return { ok:false, msg:v.err };
-
-    const b = v.bundle;
-
-    // salva bundle atual
-    setBundle({ meta: b.meta, files: b.files });
-
-    // histórico (pra rollback 1 passo)
-    addHist({
-      at: nowISO(),
-      meta: b.meta || {},
-      files: Object.keys(b.files)
-    });
-
-    // aplica no VFS
-    try{
-      applyToVFS(b.files);
-      log("THOMPSON apply OK (" + Object.keys(b.files).length + " files)");
-      return { ok:true, msg:"APPLY OK ✅ (" + Object.keys(b.files).length + " arquivos)" };
-    } catch (e){
-      return { ok:false, msg:"Falha ao aplicar no VFS: " + (e?.message || String(e)) };
+    if (mode !== "unlock" && blocked.length) {
+      return {
+        ok: false,
+        mode,
+        reason: "SAFE bloqueou arquivos críticos ou fora da allowlist",
+        allowed,
+        blocked,
+        dryRun
+      };
     }
+
+    return { ok: true, mode, reason: "OK", allowed, blocked, dryRun };
   }
 
-  function exportCurrent(){
-    const b = getBundle();
-    if(!b) return { ok:false, msg:"Sem bundle salvo." };
-    return { ok:true, json: JSON.stringify(b, null, 2) };
-  }
+  // API pública
+  window.RCF_THOMPSON = window.RCF_THOMPSON || {};
+  window.RCF_THOMPSON.validateBundle = validateBundle;
+  window.RCF_THOMPSON._summarize = summarize;
 
-  function rollback1(){
-    // rollback simples: limpa overrides e bundle
-    try{
-      localStorage.removeItem(KEY_BUNDLE);
-      localStorage.removeItem(KEY_BUNDLE_AT);
-    } catch {}
-    try{
-      // zera overrides fallback
-      writeJSON(KEY_VFS, { files:{}, updatedAt: nowISO() });
-    } catch {}
-    log("THOMPSON rollback1 OK");
-    return { ok:true, msg:"Rollback (voltar 1) ✅" };
-  }
+  log("THOMPSON v2 ✅ pronto (safe/unlock)");
 
-  function resetAll(){
-    try{
-      localStorage.removeItem(KEY_BUNDLE);
-      localStorage.removeItem(KEY_BUNDLE_AT);
-      localStorage.removeItem(KEY_HIST);
-      localStorage.removeItem(KEY_VFS);
-    } catch {}
-    log("THOMPSON resetAll OK");
-    return { ok:true, msg:"Zerar tudo ✅" };
-  }
-
-  // Expose API
-  window.RCF_THOMPSON = {
-    dryRun,
-    apply,
-    exportCurrent,
-    rollback1,
-    resetAll,
-    getBundle
-  };
-
-  log("THOMPSON v1 ✅ carregado");
 })();
