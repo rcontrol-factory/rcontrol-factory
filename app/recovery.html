@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>RCF Recovery</title>
+  <meta name="robots" content="noindex,nofollow" />
+  <style>
+    body{margin:0;padding:16px;font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace;background:#0b1220;color:#fff}
+    .ok{color:#16c784} .bad{color:#ff6b6b} .muted{color:rgba(255,255,255,.65)}
+    pre{white-space:pre-wrap;background:rgba(0,0,0,.35);padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,.08)}
+    button{padding:10px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);color:#fff}
+  </style>
+</head>
+<body>
+  <h2>RCF RECOVERY</h2>
+  <div class="muted">Isso roda sem CSS do app e sem depender do SW.</div>
+
+  <p>
+    <button id="btnPurge">PURGE TOTAL (SW + CACHE)</button>
+    <button id="btnGo">ABRIR APP (/app/)</button>
+  </p>
+
+  <h3>Testes de arquivos</h3>
+  <pre id="out">Carregando…</pre>
+
+  <script>
+    const out = document.getElementById("out");
+    function line(s){ out.textContent += s + "\n"; }
+
+    async function test(url){
+      try{
+        const r = await fetch(url + "?t=" + Date.now(), { cache:"no-store" });
+        const txt = await r.text();
+        line((r.ok? "✅ ":"❌ ") + url + "  status=" + r.status + "  bytes=" + (txt||"").length);
+        if(!r.ok){
+          line("---- body ----");
+          line((txt||"").slice(0,300));
+          line("--------------");
+        }
+      }catch(e){
+        line("💥 " + url + "  ERR=" + (e && e.message ? e.message : String(e)));
+      }
+    }
+
+    async function purge(){
+      out.textContent = "";
+      line("PURGE: começando…");
+
+      try{
+        if("serviceWorker" in navigator){
+          const regs = await navigator.serviceWorker.getRegistrations();
+          line("SW regs=" + regs.length);
+          for(const r of regs){ await r.unregister(); }
+          line("SW: unregister OK");
+        } else {
+          line("SW: não suportado");
+        }
+      }catch(e){ line("SW purge ERR: " + e); }
+
+      try{
+        if(window.caches){
+          const keys = await caches.keys();
+          line("Caches=" + keys.join(", "));
+          await Promise.all(keys.map(k => caches.delete(k)));
+          line("Caches: delete OK");
+        } else {
+          line("Cache API: não suportada");
+        }
+      }catch(e){ line("Cache purge ERR: " + e); }
+
+      line("PURGE: fim ✅");
+      line("");
+      line("Agora testando arquivos reais…");
+      await runTests();
+    }
+
+    async function runTests(){
+      await test("/app/index.html");
+      await test("/app/styles.css");
+      await test("/app/app.js");
+      await test("/sw.js");
+      line("");
+      line("Se /app/styles.css ou /app/app.js der ❌, o caminho/arquivo tá errado no repo.");
+    }
+
+    document.getElementById("btnPurge").onclick = purge;
+    document.getElementById("btnGo").onclick = () => location.href = "/app/?t=" + Date.now();
+
+    // auto-run
+    out.textContent = "";
+    runTests();
+  </script>
+</body>
+</html>
