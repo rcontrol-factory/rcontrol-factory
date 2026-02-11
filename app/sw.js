@@ -1,150 +1,142 @@
-/* RControl Factory — sw.js (FULL) — Mother Overrides
-   - Cache básico offline-first
-   - Override via localStorage (bundle salvo pela Mãe)
-   - Quando existir override para uma URL, SW responde por cima
+/* RControl Factory — /app/sw.js (FULL)
+   - Offline-first simples
+   - Cache versionado (mata cache velho)
+   - skipWaiting + clients.claim
+   - Suporte a overrides via postMessage:
+       RCF_OVERRIDE_PUT {path, content, contentType}
+       RCF_OVERRIDE_CLEAR
+   - Intercepta fetch e, se tiver override, responde com ele.
 */
 
-const CACHE_NAME = "rcf-cache-v1.3"; // se mudar algo, incremente aqui
+const CACHE_VERSION = "rcf-cache-v20260210_3";
+const ASSETS = [
+  "./",
+  "./index.html",
+  "./styles.css",
+  "./app.js",
 
-// arquivos básicos do app (ajuste se quiser adicionar mais)
-const APP_SHELL = [
-  "/",
-  "/index.html",
-  "/styles.css",
-  "/app.js",
-  "/manifest.json",
+  "./js/admin.js",
+  "./js/ai.builder.js",
 
-  // js (seu layout atual)
-  "/js/core/logger.js",
-  "/js/core/storage.js",
-  "/js/core/errors.js",
-  "/js/core/policy.js",
-  "/js/core/risk.js",
-  "/js/core/snapshot.js",
-  "/js/core/patch.js",
-  "/js/core/patchset.js",
-  "/js/core/diagnostics.js",
-  "/js/core/commands.js",
-  "/js/core/ui_safety.js",
-  "/js/core/ui_bindings.js",
-  "/js/core/selfheal.js",
-  "/js/core/autofix.js",
+  "./js/core/logger.js",
+  "./js/core/storage.js",
+  "./js/core/errors.js",
+  "./js/core/policy.js",
+  "./js/core/risk.js",
+  "./js/core/snapshot.js",
+  "./js/core/patch.js",
+  "./js/core/patchset.js",
+  "./js/core/diagnostics.js",
+  "./js/core/commands.js",
+  "./js/core/ui_safety.js",
+  "./js/core/ui_bindings.js",
+  "./js/core/selfheal.js",
+  "./js/core/autofix.js",
+  "./js/core/vfs_overrides.js",
+  "./js/core/thompson.js",
+  "./js/core/mother_selfupdate.js",
 
-  "/js/admin.js",
-  "/js/ai.builder.js"
+  "./manifest.json",
+  "./privacy.html",
+  "./terms.html"
 ];
 
-// ===== Helpers =====
-function normalizePath(url) {
-  // transforma https://site/app/js/x.js -> /js/x.js
-  try {
-    const u = new URL(url);
-    return u.pathname || "/";
-  } catch {
-    return "/";
-  }
-}
+// overrides no SW (memória + persistência em cache separado)
+const OV_CACHE = "rcf-overrides-v1";
 
-// Lê overrides do bundle via localStorage **usando clients** (SW não acessa localStorage direto)
-// Então a gente pede pra página responder com o bundle.
-async function getBundleFromClient() {
-  const allClients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
-  if (!allClients || !allClients.length) return null;
-
-  // pergunta para o primeiro client
-  const client = allClients[0];
-  const channel = new MessageChannel();
-
-  const p = new Promise((resolve) => {
-    const t = setTimeout(() => resolve(null), 650);
-    channel.port1.onmessage = (ev) => {
-      clearTimeout(t);
-      resolve(ev.data || null);
-    };
-  });
-
-  client.postMessage({ type: "RCF_GET_MOTHER_BUNDLE" }, [channel.port2]);
-  return await p;
-}
-
-async function tryOverrideResponse(req) {
-  // Só aplica override em GET
-  if (req.method !== "GET") return null;
-
-  const path = normalizePath(req.url);
-
-  // Não sobrescrever sw.js por segurança
-  if (path === "/sw.js") return null;
-
-  const bundle = await getBundleFromClient();
-  if (!bundle || !bundle.files || typeof bundle.files !== "object") return null;
-
-  const text = bundle.files[path];
-  if (typeof text !== "string") return null;
-
-  // content-type simples
-  let contentType = "text/plain; charset=utf-8";
-  if (path.endsWith(".js")) contentType = "application/javascript; charset=utf-8";
-  if (path.endsWith(".css")) contentType = "text/css; charset=utf-8";
-  if (path.endsWith(".html")) contentType = "text/html; charset=utf-8";
-  if (path.endsWith(".json")) contentType = "application/json; charset=utf-8";
-
-  return new Response(text, {
-    status: 200,
-    headers: {
-      "Content-Type": contentType,
-      "X-RCF-Override": "1"
-    }
-  });
-}
-
-// ===== SW lifecycle =====
 self.addEventListener("install", (event) => {
-  event.waitUntil(
-    (async () => {
-      const cache = await caches.open(CACHE_NAME);
-      await cache.addAll(APP_SHELL);
-      self.skipWaiting();
-    })()
-  );
+  event.waitUntil((async () => {
+    self.skipWaiting();
+    const cache = await caches.open(CACHE_VERSION);
+    // tenta pré-cache, mas não quebra se algum não existir
+    try { await cache.addAll(ASSETS); } catch {}
+  })());
 });
 
 self.addEventListener("activate", (event) => {
-  event.waitUntil(
-    (async () => {
-      const keys = await caches.keys();
-      await Promise.all(keys.map((k) => (k === CACHE_NAME ? null : caches.delete(k))));
-      self.clients.claim();
-    })()
-  );
+  event.waitUntil((async () => {
+    // limpa caches antigos
+    const keys = await caches.keys();
+    await Promise.all(keys.map((k) => {
+      if (k !== CACHE_VERSION && k !== OV_CACHE) return caches.delete(k);
+    }));
+    await self.clients.claim();
+  })());
 });
 
-// ===== Fetch: override > cache > network =====
+async function getOverride(url) {
+  const ov = await caches.open(OV_CACHE);
+  const key = new Request(url, { method: "GET" });
+  const hit = await ov.match(key);
+  return hit || null;
+}
+
+async function putOverride(path, content, contentType) {
+  const ov = await caches.open(OV_CACHE);
+  const absUrl = new URL(path, self.location.origin).toString();
+  const res = new Response(content, {
+    headers: { "Content-Type": contentType || "text/plain; charset=utf-8" }
+  });
+  await ov.put(absUrl, res);
+  return absUrl;
+}
+
+async function clearOverrides() {
+  await caches.delete(OV_CACHE);
+  await caches.open(OV_CACHE);
+}
+
+self.addEventListener("message", (event) => {
+  const msg = event.data || {};
+  (async () => {
+    try {
+      if (msg.type === "RCF_OVERRIDE_PUT") {
+        const abs = await putOverride(msg.path, msg.content, msg.contentType);
+        event.source?.postMessage({ type: "RCF_OVERRIDE_PUT_OK", ok: true, path: msg.path, abs });
+      }
+
+      if (msg.type === "RCF_OVERRIDE_CLEAR") {
+        await clearOverrides();
+        event.source?.postMessage({ type: "RCF_OVERRIDE_CLEAR_OK", ok: true });
+      }
+    } catch (e) {
+      event.source?.postMessage({ type: "RCF_OVERRIDE_ERR", ok: false, msg: e?.message || String(e) });
+    }
+  })();
+});
+
 self.addEventListener("fetch", (event) => {
   const req = event.request;
+  if (req.method !== "GET") return;
 
-  event.respondWith(
-    (async () => {
-      // 1) Override primeiro (Mãe manda)
-      const overridden = await tryOverrideResponse(req);
-      if (overridden) return overridden;
+  const url = new URL(req.url);
 
-      // 2) Cache
-      const cache = await caches.open(CACHE_NAME);
-      const cached = await cache.match(req);
-      if (cached) return cached;
+  // só controla o escopo /app/ (evita pegar coisa fora)
+  if (!url.pathname.includes("/app/") && url.pathname !== "/app") {
+    return;
+  }
 
-      // 3) Network (e guarda no cache se for GET)
-      try {
-        const res = await fetch(req);
-        if (req.method === "GET" && res && res.status === 200) {
-          cache.put(req, res.clone());
-        }
-        return res;
-      } catch (e) {
-        // fallback simples
-        return cached || new Response("Offline", { status: 503 });
-      }
-    })()
-  );
+  event.respondWith((async () => {
+    // 1) override tem prioridade
+    const ov = await getOverride(req.url);
+    if (ov) return ov;
+
+    // 2) cache-first para assets
+    const cache = await caches.open(CACHE_VERSION);
+    const cached = await cache.match(req);
+    if (cached) return cached;
+
+    // 3) rede e depois cache
+    try {
+      const fresh = await fetch(req);
+      // cache só se ok
+      if (fresh && fresh.ok) cache.put(req, fresh.clone());
+      return fresh;
+    } catch (e) {
+      // fallback: tenta index
+      const fallback = await cache.match("./index.html");
+      if (fallback) return fallback;
+      throw e;
+    }
+  })());
 });
