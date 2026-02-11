@@ -1,319 +1,319 @@
 /* =========================================================
-  RControl Factory — js/core/thompson.js — v1.1
-  THOMPSON = "cérebro" (prompt -> patch)
-  - SAFE por padrão: gera patch, NÃO aplica.
-  - LIVRE: pode aplicar via MAE.applyBundle() (se existir).
-  - Integra com UI do Agent (#agentCmd/#btnAgentRun/#agentOut)
-  - Logs no padrão RCF
+  RControl Factory — core/thompson.js (FULL) — v1.0
+  "Thompson" = motor de overrides da Mãe (Self-Update)
+
+  Armazena overrides + histórico em localStorage e (se existir)
+  também pode mandar pro Service Worker via RCF_VFS (opcional).
+
+  API: window.RCF_THOMPSON
+   - parseBundle(raw)
+   - loadOverrides()
+   - dryRun(bundle, current)
+   - guardApply(bundle, mode)   // mode: "safe" | "auto"
+   - apply(bundle)
+   - rollback(n=1)
+   - exportCurrent()
+   - resetAll()
+   - getHistory()
+
+  Bundle esperado:
+  {
+    meta: { name, version, createdAt },
+    files: { "/core/x.js": "...", "/app.js": "..." }
+  }
 ========================================================= */
 
 (function () {
   "use strict";
 
-  const $ = (id) => document.getElementById(id);
+  // ---------- helpers ----------
+  const nowISO = () => new Date().toISOString();
+  const safeText = (v) => (v === undefined || v === null) ? "" : String(v);
 
-  // ---------- logger ----------
-  function log(msg) {
-    try {
-      if (window.RCF_LOGGER && typeof window.RCF_LOGGER.push === "function") {
-        window.RCF_LOGGER.push("log", msg);
-        return;
+  function safeParse(raw) {
+    try { return JSON.parse(String(raw || "")); } catch (e) { return null; }
+  }
+
+  function safeStringify(obj) {
+    try { return JSON.stringify(obj); } catch { return String(obj); }
+  }
+
+  function deepClone(v) {
+    return safeParse(safeStringify(v)) ?? v;
+  }
+
+  function replaceDateTokens(obj) {
+    const iso = nowISO();
+    const walk = (v) => {
+      if (typeof v === "string") return v.split("{{DATE}}").join(iso);
+      if (Array.isArray(v)) return v.map(walk);
+      if (v && typeof v === "object") {
+        const out = {};
+        for (const k of Object.keys(v)) out[k] = walk(v[k]);
+        return out;
       }
-    } catch {}
-    try { console.log("[THOMPSON]", msg); } catch {}
+      return v;
+    };
+    return walk(obj);
   }
 
-  function write(id, text) {
-    const el = $(id);
-    if (el) el.textContent = String(text ?? "");
+  function normalizeBundle(bundle) {
+    const b = (bundle && typeof bundle === "object") ? deepClone(bundle) : {};
+    if (!b.meta || typeof b.meta !== "object") b.meta = {};
+    if (!b.meta.name) b.meta.name = "mother-bundle";
+    if (!b.meta.version) b.meta.version = "1.0";
+    if (!b.meta.createdAt) b.meta.createdAt = "{{DATE}}";
+    if (!b.files || typeof b.files !== "object") b.files = {};
+    return replaceDateTokens(b);
   }
 
-  function status(text) {
-    const el = $("statusText");
-    if (el) el.textContent = String(text ?? "");
+  function listFiles(filesObj) {
+    if (!filesObj || typeof filesObj !== "object") return [];
+    return Object.keys(filesObj).filter(Boolean).sort();
   }
 
-  // ---------- cfg (SAFE/LIVRE) ----------
-  const CFG_KEY = "rcf:cfg";
-  function readCfg() {
+  // ---------- storage keys ----------
+  const KEY_OVERRIDES = "rcf:thompson:overrides"; // { "/path": {content, contentType, updatedAt} }
+  const KEY_HISTORY   = "rcf:thompson:history";   // [{ at, meta, overridesSnapshot }]
+  const KEY_CURRENT_META = "rcf:thompson:meta";   // { name, version, createdAt, appliedAt }
+
+  function loadJSON(key, fallback) {
     try {
-      const raw = localStorage.getItem(CFG_KEY);
-      if (!raw) return { mode: "safe" };
-      const cfg = JSON.parse(raw);
-      return cfg && typeof cfg === "object" ? cfg : { mode: "safe" };
+      const raw = localStorage.getItem(key);
+      if (!raw) return fallback;
+      const obj = JSON.parse(raw);
+      return (obj === undefined || obj === null) ? fallback : obj;
     } catch {
-      return { mode: "safe" };
+      return fallback;
     }
   }
 
-  function isLivre() {
-    const cfg = readCfg();
-    return String(cfg.mode || "").toLowerCase() === "livre";
+  function saveJSON(key, obj) {
+    try { localStorage.setItem(key, JSON.stringify(obj)); } catch {}
   }
 
-  // ---------- iOS safe tap ----------
-  const TAP_GUARD_MS = 450;
-  let _lastTapAt = 0;
-
-  function bindTap(el, fn) {
-    if (!el) return;
-
-    const handler = (e) => {
-      const now = Date.now();
-      if (now - _lastTapAt < TAP_GUARD_MS) {
-        try { e.preventDefault(); e.stopPropagation(); } catch {}
-        return;
-      }
-      _lastTapAt = now;
-
-      try { e.preventDefault(); e.stopPropagation(); } catch {}
-      try { fn(e); } catch (err) {
-        write("agentOut", "ERRO: " + (err?.message || String(err)));
-      }
-    };
-
-    el.style.pointerEvents = "auto";
-    el.style.touchAction = "manipulation";
-    el.style.webkitTapHighlightColor = "transparent";
-
-    el.addEventListener("touchend", handler, { passive: false, capture: true });
-    el.addEventListener("click", handler, { passive: false, capture: true });
+  function delKey(key) {
+    try { localStorage.removeItem(key); } catch {}
   }
 
-  // ---------- patch format ----------
-  // patch = { meta:{...}, files:{ "/path/file.js": "conteudo" }, notes:[...] }
-  function makePatch(meta, files, notes) {
-    return {
-      meta: {
-        name: meta?.name || "thompson-patch",
-        version: meta?.version || "1.0",
-        createdAt: new Date().toISOString()
-      },
-      files: files || {},
-      notes: Array.isArray(notes) ? notes : []
-    };
-  }
-
-  // ---------- simple prompt parsing ----------
-  // suportado:
-  // 1) "help"
-  // 2) "status"
-  // 3) "patch: { ...json... }"  (cola JSON)
-  // 4) "make test" (gera um patch de teste)
-  function parsePrompt(raw) {
-    const text = String(raw || "").trim();
-    if (!text) return { cmd: "empty" };
-
-    if (text === "help") return { cmd: "help" };
-    if (text === "status") return { cmd: "status" };
-
-    if (text.toLowerCase().startsWith("patch:")) {
-      const jsonPart = text.slice(6).trim();
-      return { cmd: "patch_json", jsonPart };
-    }
-
-    if (text.toLowerCase().includes("make test")) {
-      return { cmd: "make_test" };
-    }
-
-    // default: tratar como "task" (só descreve)
-    return { cmd: "task", text };
-  }
-
-  // ---------- apply (via MAE) ----------
-  function canApply() {
-    // precisa estar em LIVRE e ter MAE com applyBundle
-    if (!isLivre()) return false;
-    return !!(window.MAE && typeof window.MAE.applyBundle === "function");
-  }
-
-  async function applyPatch(patch) {
-    // aplica como "bundle" do formato da Mãe
-    // bundle esperado: { meta, files }
-    if (!canApply()) {
-      return { ok: false, reason: "SAFE ou MAE.applyBundle indisponível" };
-    }
-    try {
-      const res = await window.MAE.applyBundle({
-        meta: patch.meta,
-        files: patch.files
-      }, { source: "thompson" });
-
-      return { ok: true, res };
-    } catch (e) {
-      return { ok: false, reason: e?.message || String(e) };
-    }
-  }
-
-  // ---------- engine ----------
-  let lastPatch = null;
-
-  function renderHelp() {
-    return [
-      "THOMPSON comandos:",
-      "- help",
-      "- status",
-      "- make test",
-      "- patch: {JSON}  (cole um patch pronto)",
-      "",
-      "Modo atual: " + (isLivre() ? "LIVRE ✅ (pode aplicar se MAE permitir)" : "SAFE ✅ (somente gerar patch)")
-    ].join("\n");
-  }
-
-  function renderStatus() {
-    return [
-      "THOMPSON STATUS",
-      "- modo: " + (isLivre() ? "LIVRE" : "SAFE"),
-      "- mae.applyBundle: " + (window.MAE && typeof window.MAE.applyBundle === "function" ? "OK" : "não"),
-      "- lastPatch: " + (lastPatch ? "sim" : "não")
-    ].join("\n");
-  }
-
-  function buildTestPatch() {
-    const files = {
-      "/core/TESTE_THOMPSON.txt": "THOMPSON OK em {{DATE}}"
-    };
-    return makePatch({ name: "thompson-test", version: "1.0" }, files, [
-      "Patch de teste gerado pelo Thompson."
-    ]);
-  }
-
-  function tryParseJson(jsonPart) {
-    try { return JSON.parse(jsonPart); } catch { return null; }
-  }
-
-  async function runPrompt(raw) {
-    const p = parsePrompt(raw);
-
-    if (p.cmd === "empty") {
-      write("agentOut", "Digite um comando (help).");
-      return;
-    }
-
-    if (p.cmd === "help") {
-      write("agentOut", renderHelp());
-      return;
-    }
-
-    if (p.cmd === "status") {
-      write("agentOut", renderStatus());
-      return;
-    }
-
-    if (p.cmd === "make_test") {
-      lastPatch = buildTestPatch();
-
-      const out = [
-        "PATCH GERADO ✅",
-        "name: " + lastPatch.meta.name,
-        "version: " + lastPatch.meta.version,
-        "files: " + Object.keys(lastPatch.files).length,
-        "",
-        "SAFE: não aplica sozinho.",
-        "Se quiser aplicar: mude cfg.mode=livre e rode 'apply last' (vamos ligar isso já já)."
-      ].join("\n");
-
-      write("agentOut", out);
-      return;
-    }
-
-    if (p.cmd === "patch_json") {
-      const obj = tryParseJson(p.jsonPart);
-      if (!obj || typeof obj !== "object") {
-        write("agentOut", "JSON inválido no patch.");
-        return;
-      }
-
-      // normaliza
-      const meta = obj.meta || { name: "patch-colado", version: "1.0" };
-      const files = obj.files || {};
-      lastPatch = makePatch(meta, files, obj.notes || []);
-
-      write("agentOut", [
-        "PATCH CARREGADO ✅",
-        "name: " + lastPatch.meta.name,
-        "version: " + lastPatch.meta.version,
-        "files: " + Object.keys(lastPatch.files).length,
-        "",
-        isLivre()
-          ? "Modo LIVRE: pronto pra aplicar (se MAE permitir)."
-          : "Modo SAFE: pronto, mas não aplica sozinho."
-      ].join("\n"));
-
-      return;
-    }
-
-    // cmd "task" (texto livre)
-    lastPatch = makePatch(
-      { name: "task-only", version: "1.0" },
-      {},
-      ["Prompt recebido (sem gerar patch automático):", p.text]
-    );
-
-    write("agentOut", [
-      "Recebi seu pedido ✅",
-      "Ainda não gerei patch automático pra isso.",
-      "Cole 'help' pra ver comandos.",
-      "",
-      "Pedido:",
-      p.text
-    ].join("\n"));
-  }
-
-  // ---------- UI bindings ----------
-  function initUI() {
-    // log de startup
-    log("THOMPSON v1.1 carregado ✅");
-    status("OK ✅");
-
-    // escreve no logsOut se existir
-    try {
-      const logsBox = $("logsBox");
-      if (logsBox && typeof logsBox.textContent === "string" && logsBox.textContent.includes("Logs")) {
-        // não mexe muito
-      }
-    } catch {}
-
-    // integra com Agent tab
-    const btnRun = $("btnAgentRun");
-    const btnClear = $("btnAgentClear");
-    const cmdInput = $("agentCmd");
-
-    bindTap(btnRun, async () => {
-      const raw = cmdInput ? cmdInput.value : "";
-      await runPrompt(raw);
-    });
-
-    bindTap(btnClear, () => {
-      if (cmdInput) cmdInput.value = "";
-      write("agentOut", "Pronto.");
-    });
-
-    // atalho: Enter no input
-    if (cmdInput) {
-      cmdInput.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          try { btnRun && btnRun.click(); } catch {}
-        }
-      });
-    }
-  }
-
-  // ---------- expose API ----------
-  window.THOMPSON = {
-    version: "1.1",
-    run: runPrompt,
-    getLastPatch: () => lastPatch,
-    applyLast: async () => {
-      if (!lastPatch) return { ok: false, reason: "Sem patch" };
-      return await applyPatch(lastPatch);
-    }
+  // ---------- content types ----------
+  const CONTENT_TYPES = {
+    ".js": "application/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".html": "text/html; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".txt": "text/plain; charset=utf-8"
   };
 
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", initUI);
-  } else {
-    initUI();
+  function ext(path) {
+    const m = String(path || "").toLowerCase().match(/\.[a-z0-9]+$/);
+    return m ? m[0] : ".txt";
   }
+
+  function guessContentType(path) {
+    return CONTENT_TYPES[ext(path)] || "text/plain; charset=utf-8";
+  }
+
+  // ---------- critical files (safe guard) ----------
+  // Aqui ficam os “arquivos que podem te trancar” se aplicados errado.
+  // Ajuste essa lista depois, mas já deixa seguro agora.
+  const CRITICAL_PREFIXES = [
+    "/index.html",
+    "/app.js",
+    "/core/",
+    "/sw.js",
+    "/service-worker.js",
+    "/manifest.json"
+  ];
+
+  function isCritical(path) {
+    const p = String(path || "");
+    return CRITICAL_PREFIXES.some((pre) => p === pre || p.startsWith(pre));
+  }
+
+  // ---------- overrides ----------
+  function loadOverrides() {
+    const ov = loadJSON(KEY_OVERRIDES, {});
+    return (ov && typeof ov === "object") ? ov : {};
+  }
+
+  function saveOverrides(ov) {
+    saveJSON(KEY_OVERRIDES, ov);
+  }
+
+  function getHistory() {
+    const h = loadJSON(KEY_HISTORY, []);
+    return Array.isArray(h) ? h : [];
+  }
+
+  function pushHistory(snapshot) {
+    const h = getHistory();
+    h.unshift(snapshot);
+    // limita histórico pra não crescer infinito
+    while (h.length > 20) h.pop();
+    saveJSON(KEY_HISTORY, h);
+  }
+
+  // ---------- DRY RUN ----------
+  function dryRun(bundle, currentOverrides) {
+    const b = normalizeBundle(bundle);
+    const current = (currentOverrides && typeof currentOverrides === "object") ? currentOverrides : loadOverrides();
+
+    const incoming = listFiles(b.files);
+    const changed = [];
+    const added = [];
+    const critical = [];
+
+    for (const p of incoming) {
+      const newContent = safeText(b.files[p]);
+      const exists = !!current[p];
+      if (!exists) {
+        added.push(p);
+      } else {
+        const oldContent = safeText(current[p]?.content);
+        if (oldContent !== newContent) changed.push(p);
+      }
+      if (isCritical(p)) critical.push(p);
+    }
+
+    return {
+      meta: b.meta,
+      totalFiles: incoming.length,
+      added,
+      changed,
+      critical
+    };
+  }
+
+  // ---------- SAFE GUARD ----------
+  function guardApply(bundle, mode) {
+    const m = (mode === "auto") ? "auto" : "safe";
+    const rep = dryRun(bundle, loadOverrides());
+    const needsConfirm = (m === "safe" && rep.critical.length > 0);
+    return { needsConfirm, criticalFiles: rep.critical };
+  }
+
+  // ---------- APPLY ----------
+  async function apply(bundle) {
+    const b = normalizeBundle(bundle);
+
+    const ov = loadOverrides();
+    const beforeSnapshot = deepClone(ov);
+
+    // snapshot no histórico antes de mexer
+    pushHistory({
+      at: nowISO(),
+      meta: deepClone(b.meta),
+      overridesSnapshot: beforeSnapshot
+    });
+
+    const paths = listFiles(b.files);
+
+    for (const p of paths) {
+      const content = safeText(b.files[p]);
+      const contentType = guessContentType(p);
+      ov[p] = { content, contentType, updatedAt: nowISO() };
+    }
+
+    saveOverrides(ov);
+    saveJSON(KEY_CURRENT_META, {
+      name: b.meta?.name || "mother-bundle",
+      version: b.meta?.version || "1.0",
+      createdAt: b.meta?.createdAt || "",
+      appliedAt: nowISO(),
+      files: paths.length
+    });
+
+    // opcional: se existe RCF_VFS (SW channel), tenta enviar pro SW também
+    // Isso NÃO é obrigatório pra funcionar agora; é upgrade.
+    if (window.RCF_VFS && typeof window.RCF_VFS.put === "function") {
+      for (const p of paths) {
+        try {
+          await window.RCF_VFS.put(p, safeText(b.files[p]), guessContentType(p));
+        } catch {
+          // se falhar, não quebra. localStorage já ficou aplicado.
+        }
+      }
+    }
+
+    return { ok: true, meta: b.meta, totalFiles: paths.length };
+  }
+
+  // ---------- ROLLBACK ----------
+  function rollback(n = 1) {
+    const steps = Math.max(1, Number(n || 1) | 0);
+    const h = getHistory();
+    if (!h.length) return { ok: false, msg: "Sem histórico para rollback." };
+
+    const target = h[Math.min(steps - 1, h.length - 1)];
+    if (!target || !target.overridesSnapshot) return { ok: false, msg: "Snapshot inválido." };
+
+    saveOverrides(target.overridesSnapshot);
+
+    // remove os snapshots consumidos
+    const remaining = h.slice(steps);
+    saveJSON(KEY_HISTORY, remaining);
+
+    return { ok: true, msg: "Rollback aplicado. Voltei " + steps + " passo(s)." };
+  }
+
+  // ---------- EXPORT ----------
+  function exportCurrent() {
+    const meta = loadJSON(KEY_CURRENT_META, {});
+    const ov = loadOverrides();
+    const files = {};
+    for (const p of Object.keys(ov || {})) {
+      files[p] = safeText(ov[p]?.content);
+    }
+    return {
+      meta: {
+        name: meta?.name || "mother-bundle",
+        version: meta?.version || "1.0",
+        createdAt: meta?.createdAt || nowISO(),
+        appliedAt: meta?.appliedAt || ""
+      },
+      files
+    };
+  }
+
+  // ---------- RESET ----------
+  function resetAll() {
+    delKey(KEY_OVERRIDES);
+    delKey(KEY_HISTORY);
+    delKey(KEY_CURRENT_META);
+
+    // se tem SW override, tenta limpar
+    if (window.RCF_VFS && typeof window.RCF_VFS.clearAll === "function") {
+      try { window.RCF_VFS.clearAll(); } catch {}
+    }
+  }
+
+  // ---------- PARSE ----------
+  function parseBundle(raw) {
+    const obj = safeParse(raw);
+    if (!obj) return { ok: false, error: "JSON inválido." };
+    const b = normalizeBundle(obj);
+    if (!b.files || typeof b.files !== "object") return { ok: false, error: "Bundle sem 'files'." };
+    return { ok: true, bundle: b };
+  }
+
+  // ---------- expose ----------
+  window.RCF_THOMPSON = {
+    parseBundle,
+    loadOverrides,
+    dryRun,
+    guardApply,
+    apply,
+    rollback,
+    exportCurrent,
+    resetAll,
+    getHistory
+  };
+
+  // marca no log (se existir)
+  try {
+    if (window.RCF_LOGGER && typeof window.RCF_LOGGER.push === "function") {
+      window.RCF_LOGGER.push("log", "THOMPSON v1.0 carregado ✅");
+    }
+  } catch {}
 })();
