@@ -6,27 +6,33 @@
   <meta name="theme-color" content="#0b1220" />
   <title>RControl Factory</title>
 
-  <!-- TUDO RELATIVO (porque estamos dentro de /app/) -->
+  <!-- tudo RELATIVO porque este arquivo roda em /app/ -->
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" href="icon-192.png" />
   <link rel="stylesheet" href="styles.css" />
 
-  <!-- iOS nicer -->
+  <!-- iOS PWA -->
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 
   <style>
-    /* iOS: evita “toque morto” por overlay/scroll */
-    html, body { -webkit-text-size-adjust: 100%; }
-    body { touch-action: manipulation; }
-    .rcf-clickfix, .rcf-clickfix * { -webkit-tap-highlight-color: transparent; }
+    /* FIX iOS: clique travado (overlay fantasma) */
+    body{ position:relative; isolation:isolate; }
+    #app, .topbar, .tabs, .views, .view, .card { position:relative; z-index:1; }
+    .rcf-clickfix { pointer-events:auto !important; }
     label[for]{ cursor:pointer; }
-    input[type="checkbox"]{ width:22px;height:22px; accent-color:#22c55e; }
+    input[type="checkbox"]{
+      width:22px;height:22px;
+      -webkit-tap-highlight-color: transparent;
+      accent-color:#22c55e;
+    }
   </style>
 </head>
 
-<body class="rcf-clickfix">
-  <div id="app">
+<body>
+  <noscript>Ative o JavaScript para usar a Factory.</noscript>
+
+  <div id="app" class="rcf-clickfix">
     <!-- TOPBAR -->
     <header class="topbar">
       <div class="brand">
@@ -39,7 +45,9 @@
 
       <div class="right">
         <div id="statusText" class="pill">OK ✅</div>
-        <button id="btnGear" class="iconbtn" type="button" aria-label="Settings">⚙️</button>
+
+        <!-- SEM engrenagem (a central é a aba Settings) -->
+        <!-- <button id="btnGear" class="iconbtn" type="button" aria-label="Settings">⚙️</button> -->
       </div>
     </header>
 
@@ -60,7 +68,6 @@
         <div class="card">
           <h1>Bem-vindo 👋</h1>
           <p class="hint">Crie apps e publique depois (primeiro vamos estabilizar).</p>
-
           <div class="row">
             <button class="btn" id="btnNewAppQuick" type="button">+ Criar novo app</button>
             <button class="btn" id="btnOpenEditor" type="button">Abrir Editor</button>
@@ -78,7 +85,6 @@
         <div class="card">
           <h2>Novo App</h2>
           <p class="hint">Crie um app (nome + slug). Depois você vai para o Editor.</p>
-
           <div class="row">
             <input id="newAppName" class="input" placeholder="Nome (ex: MeuApp)" />
             <input id="newAppSlug" class="input" placeholder="Slug (ex: meuapp)" />
@@ -87,7 +93,6 @@
             <button id="btnCreateApp" class="btn primary" type="button">Criar</button>
             <button id="btnGenSlug" class="btn" type="button">Gerar slug</button>
           </div>
-
           <pre id="newAppOut" class="mono small">Pronto.</pre>
         </div>
       </section>
@@ -96,16 +101,13 @@
         <div class="card">
           <h2>Editor</h2>
           <p class="hint">Edite arquivos do app ativo e salve.</p>
-
           <div id="editorTop" class="row">
             <select id="fileSelect" class="input"></select>
             <button id="btnSaveFile" class="btn ok" type="button">Salvar</button>
             <button id="btnReloadFiles" class="btn" type="button">Recarregar</button>
           </div>
-
           <textarea id="fileEditor" class="textarea mono" spellcheck="false"
             placeholder="Selecione um app para ver arquivos."></textarea>
-
           <pre id="editorOut" class="mono small">Pronto.</pre>
         </div>
       </section>
@@ -134,11 +136,12 @@
         </div>
       </section>
 
+      <!-- SETTINGS: agora é a CENTRAL (no lugar da engrenagem) -->
       <section id="view-settings" class="view">
         <div class="card">
           <h2>Settings</h2>
           <p class="hint">Central de configurações (sem engrenagem).</p>
-          <pre id="settingsOut" class="mono small">Pronto.</pre>
+          <div id="settingsMount" class="hint">Carregando…</div>
         </div>
       </section>
 
@@ -146,19 +149,17 @@
         <div class="card">
           <h2>Admin</h2>
           <p class="hint">Diagnóstico / manutenção / self-update.</p>
-
           <div class="row">
             <button id="btnDiagnose" class="btn" type="button">Diagnosticar</button>
             <button id="btnResetSafe" class="btn danger" type="button">Zerar (safe)</button>
           </div>
-
           <pre id="adminOut" class="mono small">Pronto.</pre>
         </div>
       </section>
     </main>
   </div>
 
-  <!-- SW ÚNICO: /app/sw.js -->
+  <!-- SW (ÚNICO): /app/sw.js -->
   <script>
     (function(){
       if (!("serviceWorker" in navigator)) return;
@@ -173,25 +174,6 @@
     })();
   </script>
 
-  <!-- FIX iOS: Gear SEMPRE abre Settings (mesmo se JS do gear sumir ou overlay travar) -->
-  <script>
-    (function(){
-      function openSettings(){
-        // tenta usar o router se existir
-        try { window.RCF?.Router?.go?.("settings"); return; } catch(e){}
-        // fallback: clica na tab
-        const t = document.querySelector('.tab[data-view="settings"]');
-        if (t) t.click();
-      }
-      window.addEventListener("load", () => {
-        const gear = document.getElementById("btnGear");
-        if (!gear) return;
-        gear.addEventListener("click", openSettings, true);
-        gear.addEventListener("touchend", (e)=>{ e.preventDefault(); openSettings(); }, {passive:false});
-      });
-    })();
-  </script>
-
   <!-- CORE (ordem importa) -->
   <script defer src="app.js"></script>
 
@@ -200,14 +182,33 @@
   <script defer src="js/core/thompson.js"></script>
   <script defer src="js/core/github_sync.js"></script>
   <script defer src="js/core/mother_selfupdate.js"></script>
+  <script defer src="js/core/publish_queue.js"></script>
 
   <!-- UI layer -->
   <script defer src="js/router.js"></script>
   <script defer src="js/admin.js"></script>
 
-  <!-- (se existirem no seu projeto, pode manter; se não existirem, REMOVE pra não dar erro 404) -->
-  <!-- <script defer src="js/core/publish_queue.js"></script> -->
-  <!-- <script defer src="js/agent.router.js"></script> -->
-  <!-- <script defer src="js/agent.nlp.js"></script> -->
+  <!-- SETTINGS renderer (isso é o que tava sumindo!) -->
+  <script defer src="js/settings.js"></script>
+
+  <!-- iOS HARD FIX: se algum overlay travar, captura clique e repassa -->
+  <script>
+    (function(){
+      const CAPTURE_FIX = (ev) => {
+        try{
+          const t = ev.target;
+          if (!t) return;
+          // se clicou num botão/label/input e mesmo assim nada aconteceu, garante foco/click real
+          if (t.tagName === "BUTTON") t.focus?.();
+          if (t.tagName === "LABEL") {
+            const id = t.getAttribute("for");
+            if (id) document.getElementById(id)?.click?.();
+          }
+        }catch(e){}
+      };
+      document.addEventListener("click", CAPTURE_FIX, true);
+      document.addEventListener("touchend", CAPTURE_FIX, true);
+    })();
+  </script>
 </body>
 </html>
