@@ -1,174 +1,72 @@
 <!doctype html>
-<html lang="pt-BR">
+<html lang="pt-br">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <meta name="theme-color" content="#0b1220" />
   <title>RControl Factory</title>
 
-  <link rel="manifest" href="manifest.json" />
-  <link rel="icon" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="manifest" href="/app/manifest.json" />
+  <link rel="stylesheet" href="/app/styles.css" />
 
-  <!-- iOS nicer -->
+  <!-- iOS PWA -->
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+
+  <style>
+    /* FIX iOS: checkbox/label clicável e sem overlay fantasma */
+    label[for] { cursor: pointer; }
+    input[type="checkbox"]{
+      width: 22px; height: 22px;
+      accent-color: #22c55e;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .rcf-clickfix { pointer-events: auto !important; }
+  </style>
 </head>
 
 <body>
-  <div id="app">
-    <!-- TOPBAR -->
-    <header class="topbar">
-      <div class="brand">
-        <div class="dot"></div>
-        <div>
-          <div class="title">RControl Factory</div>
-          <div class="sub">Factory interna • PWA • Offline-first</div>
-        </div>
-      </div>
+  <noscript>Ative o JavaScript para usar a Factory.</noscript>
 
-      <div class="right">
-        <div id="statusText" class="pill">OK ✅</div>
-        <button id="btnGear" class="iconbtn" type="button" aria-label="Settings">⚙️</button>
-      </div>
-    </header>
+  <!-- Root -->
+  <div id="app" class="rcf-clickfix"></div>
 
-    <!-- TABS -->
-    <nav class="tabs">
-      <button class="tab" data-view="dashboard" type="button">Dashboard</button>
-      <button class="tab" data-view="newapp" type="button">New App</button>
-      <button class="tab" data-view="editor" type="button">Editor</button>
-      <button class="tab" data-view="generator" type="button">Generator</button>
-      <button class="tab" data-view="agent" type="button">Agente</button>
-      <button class="tab" data-view="settings" type="button">Settings</button>
-      <button class="tab" data-view="admin" type="button">Admin</button>
-    </nav>
+  <!-- Core (estável) -->
+  <script defer src="/app/app.js"></script>
 
-    <!-- VIEWS -->
-    <main class="views">
-      <section id="view-dashboard" class="view">
-        <div class="card">
-          <h1>Bem-vindo 👋</h1>
-          <p class="hint">Crie apps e publique depois (primeiro vamos estabilizar).</p>
+  <!-- Router / UI (se existirem no seu projeto) -->
+  <script defer src="/app/js/router.js"></script>
+  <script defer src="/app/js/ui.topbar.js"></script>
+  <script defer src="/app/js/ui.gear.js"></script>
 
-          <div class="row">
-            <button class="btn" id="btnNewAppQuick" type="button">+ Criar novo app</button>
-            <button class="btn" id="btnOpenEditor" type="button">Abrir Editor</button>
-            <button class="btn" id="btnBackup" type="button">Exportar backup</button>
-          </div>
-        </div>
+  <!-- Admin / Mãe -->
+  <script defer src="/app/js/admin.js"></script>
 
-        <div class="card">
-          <h2>Apps salvos</h2>
-          <div id="appsList" class="hint">Nenhum app salvo ainda.</div>
-        </div>
-      </section>
+  <!-- Core modules (pastas core) -->
+  <script defer src="/app/js/core/thompson.js"></script>
+  <script defer src="/app/js/core/mother_selfupdate.js"></script>
+  <script defer src="/app/js/core/github_sync.js"></script>
+  <script defer src="/app/js/core/publish_queue.js"></script>
 
-      <section id="view-newapp" class="view">
-        <div class="card">
-          <h2>Novo App</h2>
-          <p class="hint">Crie um app (nome + slug). Depois você vai para o Editor.</p>
+  <!-- Agent (se existir) -->
+  <script defer src="/app/js/agent.router.js"></script>
+  <script defer src="/app/js/agent.nlp.js"></script>
 
-          <div class="row">
-            <input id="newAppName" class="input" placeholder="Nome (ex: MeuApp)" />
-            <input id="newAppSlug" class="input" placeholder="Slug (ex: meuapp)" />
-          </div>
-          <div class="row">
-            <button id="btnCreateApp" class="btn primary" type="button">Criar</button>
-            <button id="btnGenSlug" class="btn" type="button">Gerar slug</button>
-          </div>
-
-          <pre id="newAppOut" class="mono small">Pronto.</pre>
-        </div>
-      </section>
-
-      <section id="view-editor" class="view">
-        <div class="card">
-          <h2>Editor</h2>
-          <p class="hint">Edite arquivos do app ativo e salve.</p>
-
-          <div id="editorTop" class="row">
-            <select id="fileSelect" class="input"></select>
-            <button id="btnSaveFile" class="btn ok" type="button">Salvar</button>
-            <button id="btnReloadFiles" class="btn" type="button">Recarregar</button>
-          </div>
-
-          <textarea id="fileEditor" class="textarea mono" spellcheck="false"
-            placeholder="Selecione um app para ver arquivos."></textarea>
-
-          <pre id="editorOut" class="mono small">Pronto.</pre>
-        </div>
-      </section>
-
-      <section id="view-generator" class="view">
-        <div class="card">
-          <h2>Generator</h2>
-          <p class="hint">Gera ZIP do app selecionado.</p>
-          <div class="row">
-            <button id="btnBuildZip" class="btn primary" type="button">Build ZIP</button>
-          </div>
-          <pre id="genOut" class="mono small">Pronto.</pre>
-        </div>
-      </section>
-
-      <section id="view-agent" class="view">
-        <div class="card">
-          <h2>Agente</h2>
-          <p class="hint">Comandos naturais + patchset.</p>
-          <textarea id="agentInput" class="textarea mono" spellcheck="false" placeholder="Digite um comando…"></textarea>
-          <div class="row">
-            <button id="btnAgentRun" class="btn primary" type="button">Executar</button>
-            <button id="btnAgentHelp" class="btn" type="button">Ajuda</button>
-          </div>
-          <pre id="agentOut" class="mono small">Pronto.</pre>
-        </div>
-      </section>
-
-      <section id="view-settings" class="view">
-        <div class="card">
-          <h2>Settings</h2>
-          <p class="hint">Configurações locais.</p>
-          <pre id="settingsOut" class="mono small">Pronto.</pre>
-        </div>
-      </section>
-
-      <section id="view-admin" class="view">
-        <div class="card">
-          <h2>Admin</h2>
-          <p class="hint">Diagnóstico / manutenção / self-update.</p>
-
-          <div class="row">
-            <button id="btnDiagnose" class="btn" type="button">Diagnosticar</button>
-            <button id="btnResetSafe" class="btn danger" type="button">Zerar (safe)</button>
-          </div>
-
-          <pre id="adminOut" class="mono small">Pronto.</pre>
-        </div>
-      </section>
-    </main>
-  </div>
-
-  <!-- SW (só UM: app/sw.js) -->
+  <!-- SW register -->
   <script>
     (function(){
-      if (!('serviceWorker' in navigator)) return;
-      window.addEventListener('load', function(){
-        navigator.serviceWorker.register('./sw.js').catch(function(){});
+      if (!("serviceWorker" in navigator)) return;
+      window.addEventListener("load", async () => {
+        try {
+          // IMPORTANTE: único SW é /app/sw.js
+          const reg = await navigator.serviceWorker.register("/app/sw.js", { scope: "/app/" });
+          // opcional: força atualizar quando abrir
+          reg.update?.();
+        } catch (e) {
+          console.warn("SW register falhou:", e);
+        }
       });
     })();
   </script>
-
-  <!-- CORE (ordem importa) -->
-  <script defer src="app.js"></script>
-
-  <!-- CORE modules (precisam existir em /app/js/core/) -->
-  <script defer src="js/core/vfs_overrides.js"></script>
-  <script defer src="js/core/thompson.js"></script>
-  <script defer src="js/core/github_sync.js"></script>
-  <script defer src="js/core/mother_selfupdate.js"></script>
-
-  <!-- UI layer -->
-  <script defer src="js/router.js"></script>
-  <script defer src="js/admin.js"></script>
 </body>
 </html>
