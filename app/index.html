@@ -247,7 +247,7 @@
     <button class="dockbtn" data-view="logs" type="button">Logs</button>
   </div>
 
-  <!-- CORE (ordem importa) -->
+   <!-- CORE (ordem importa) -->
   <script src="core/logger.js"></script>
   <script src="core/storage.js"></script>
   <script src="core/errors.js"></script>
@@ -264,18 +264,15 @@
   <script src="core/ui_safety.js"></script>
   <script src="core/ui_bindings.js"></script>
 
-  <!-- OVERRIDES + THOMPSON + MÃE -->
-  <script src="core/vfs_overrides.js"></script>
-  <script src="core/thompson.js"></script>
-  <script src="js/core/mother_selfupdate.js"></script>
-
   <script src="core/selfheal.js"></script>
   <script src="core/autofix.js"></script>
 
-  <!-- ADMIN (lembrando: o seu é app/js/admin.js) -->
-  <script src="app/js/admin.js"></script>
+  <!-- SYNC CORE -->
+  <script src="core/github_sync.js"></script>
 
-  <script src="core/ai.builder.js"></script>
+  <!-- ADMIN APP -->
+  <script src="app/js/admin.js"></script>
+  <script src="app/js/admin.github.js"></script>
 
   <!-- APP (por último) -->
   <script src="app.js"></script>
