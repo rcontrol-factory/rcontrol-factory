@@ -1,267 +1,174 @@
 <!doctype html>
-<html lang="pt-br">
+<html lang="pt-BR">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <meta name="theme-color" content="#070b12" />
+  <meta name="theme-color" content="#0b1220" />
   <title>RControl Factory</title>
 
   <link rel="manifest" href="manifest.json" />
-  <link rel="stylesheet" href="styles.css?v=20260210_3" />
+  <link rel="icon" href="icon-192.png" />
+  <link rel="stylesheet" href="styles.css" />
+
+  <!-- iOS nicer -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 </head>
 
-<body id="rcfMotherBox">
-  <!-- TOPBAR / UI -->
-  <header class="topbar">
-    <div class="brand">
-      <div class="dot"></div>
-      <div class="brand-text">
-        <div class="title">RControl Factory</div>
-        <div class="subtitle">Factory interna • PWA • Offline-first</div>
+<body>
+  <div id="app">
+    <!-- TOPBAR -->
+    <header class="topbar">
+      <div class="brand">
+        <div class="dot"></div>
+        <div>
+          <div class="title">RControl Factory</div>
+          <div class="sub">Factory interna • PWA • Offline-first</div>
+        </div>
       </div>
-    </div>
 
-    <nav class="tabs" id="tabs">
+      <div class="right">
+        <div id="statusText" class="pill">OK ✅</div>
+        <button id="btnGear" class="iconbtn" type="button" aria-label="Settings">⚙️</button>
+      </div>
+    </header>
+
+    <!-- TABS -->
+    <nav class="tabs">
       <button class="tab" data-view="dashboard" type="button">Dashboard</button>
       <button class="tab" data-view="newapp" type="button">New App</button>
       <button class="tab" data-view="editor" type="button">Editor</button>
       <button class="tab" data-view="generator" type="button">Generator</button>
       <button class="tab" data-view="agent" type="button">Agente</button>
-      <div class="spacer"></div>
-
-      <div class="status-pill">
-        <span id="statusText">OK</span>
-        <span class="ok">✅</span>
-      </div>
-
-      <button class="gear" id="btnTools" type="button">⚙️</button>
+      <button class="tab" data-view="settings" type="button">Settings</button>
+      <button class="tab" data-view="admin" type="button">Admin</button>
     </nav>
-  </header>
 
-  <!-- CONTEÚDO -->
-  <main class="container" id="app">
-    <!-- Dashboard -->
-    <section class="view active" id="view-dashboard">
-      <div class="card hero">
-        <h1>Bem-vindo 👋</h1>
-        <p>Crie apps e publique depois (primeiro vamos estabilizar).</p>
+    <!-- VIEWS -->
+    <main class="views">
+      <section id="view-dashboard" class="view">
+        <div class="card">
+          <h1>Bem-vindo 👋</h1>
+          <p class="hint">Crie apps e publique depois (primeiro vamos estabilizar).</p>
 
-        <div class="row">
-          <button class="btn primary" id="btnCreateApp" type="button">+ Criar novo app</button>
-          <button class="btn" id="btnOpenEditor" type="button">Abrir Editor</button>
-          <button class="btn" id="btnExportBackup" type="button">Exportar backup</button>
-        </div>
-
-        <div class="row">
-          <button class="btn" data-view="agent" type="button">Agente</button>
-          <button class="btn" data-view="admin" type="button">Admin</button>
-          <button class="btn" data-view="tools" type="button">Ferramentas</button>
-        </div>
-      </div>
-
-      <div class="card">
-        <h2>Apps salvos</h2>
-        <div class="apps" id="appsList">
-          <div class="hint">Nenhum app salvo ainda.</div>
-        </div>
-      </div>
-
-      <div class="card">
-        <h2>Status</h2>
-        <div class="status-box">
-          <div class="badge">Pronto ✅</div>
-          <div class="hint" id="statusBoxHint">Factory carregada.</div>
-        </div>
-      </div>
-    </section>
-
-    <!-- New App -->
-    <section class="view" id="view-newapp">
-      <div class="card">
-        <h2>Novo App</h2>
-        <p class="hint">Crie um app (nome + slug). Depois você vai para o Editor.</p>
-        <div class="form">
-          <div class="row" style="width:100%">
-            <input id="newAppName" placeholder="Nome (ex: MeuApp)" />
+          <div class="row">
+            <button class="btn" id="btnNewAppQuick" type="button">+ Criar novo app</button>
+            <button class="btn" id="btnOpenEditor" type="button">Abrir Editor</button>
+            <button class="btn" id="btnBackup" type="button">Exportar backup</button>
           </div>
-          <div class="row" style="width:100%">
-            <input id="newAppSlug" placeholder="Slug (ex: meuapp)" />
+        </div>
+
+        <div class="card">
+          <h2>Apps salvos</h2>
+          <div id="appsList" class="hint">Nenhum app salvo ainda.</div>
+        </div>
+      </section>
+
+      <section id="view-newapp" class="view">
+        <div class="card">
+          <h2>Novo App</h2>
+          <p class="hint">Crie um app (nome + slug). Depois você vai para o Editor.</p>
+
+          <div class="row">
+            <input id="newAppName" class="input" placeholder="Nome (ex: MeuApp)" />
+            <input id="newAppSlug" class="input" placeholder="Slug (ex: meuapp)" />
           </div>
           <div class="row">
-            <button class="btn primary" id="btnNewAppCreate" type="button">Criar</button>
-            <button class="btn" id="btnNewAppSlug" type="button">Gerar slug</button>
+            <button id="btnCreateApp" class="btn primary" type="button">Criar</button>
+            <button id="btnGenSlug" class="btn" type="button">Gerar slug</button>
           </div>
-          <pre class="mono small" id="newAppOut">Pronto.</pre>
+
+          <pre id="newAppOut" class="mono small">Pronto.</pre>
         </div>
-      </div>
-    </section>
+      </section>
 
-    <!-- Editor -->
-    <section class="view" id="view-editor">
-      <div class="card">
-        <h2>Editor</h2>
-        <p class="hint">Edite arquivos do app ativo e salve.</p>
+      <section id="view-editor" class="view">
+        <div class="card">
+          <h2>Editor</h2>
+          <p class="hint">Edite arquivos do app ativo e salve.</p>
 
-        <div class="row">
-          <div class="badge" id="activeAppBadge">Sem app ativo</div>
-          <button class="btn ok" id="btnSaveFile" type="button">Salvar arquivo</button>
-          <button class="btn danger" id="btnResetFile" type="button">Reset arquivo</button>
+          <div id="editorTop" class="row">
+            <select id="fileSelect" class="input"></select>
+            <button id="btnSaveFile" class="btn ok" type="button">Salvar</button>
+            <button id="btnReloadFiles" class="btn" type="button">Recarregar</button>
+          </div>
+
+          <textarea id="fileEditor" class="textarea mono" spellcheck="false"
+            placeholder="Selecione um app para ver arquivos."></textarea>
+
+          <pre id="editorOut" class="mono small">Pronto.</pre>
         </div>
+      </section>
 
-        <div class="files" id="filesList"></div>
-
-        <div class="editor">
-          <div class="editor-head" id="currentFileLabel">Arquivo atual: —</div>
-          <textarea id="fileContent" spellcheck="false"></textarea>
+      <section id="view-generator" class="view">
+        <div class="card">
+          <h2>Generator</h2>
+          <p class="hint">Gera ZIP do app selecionado.</p>
+          <div class="row">
+            <button id="btnBuildZip" class="btn primary" type="button">Build ZIP</button>
+          </div>
+          <pre id="genOut" class="mono small">Pronto.</pre>
         </div>
+      </section>
 
-        <pre class="mono small" id="editorOut">Pronto.</pre>
-      </div>
-    </section>
-
-    <!-- Generator -->
-    <section class="view" id="view-generator">
-      <div class="card">
-        <h2>Generator</h2>
-        <p class="hint">Gera ZIP/Export (stub). Vamos ligar isso depois.</p>
-
-        <div class="row">
-          <button class="btn primary" id="btnExportBuild" type="button">Export Build (bundle)</button>
-          <button class="btn" id="btnPreviewApp" type="button">Preview App</button>
+      <section id="view-agent" class="view">
+        <div class="card">
+          <h2>Agente</h2>
+          <p class="hint">Comandos naturais + patchset.</p>
+          <textarea id="agentInput" class="textarea mono" spellcheck="false" placeholder="Digite um comando…"></textarea>
+          <div class="row">
+            <button id="btnAgentRun" class="btn primary" type="button">Executar</button>
+            <button id="btnAgentHelp" class="btn" type="button">Ajuda</button>
+          </div>
+          <pre id="agentOut" class="mono small">Pronto.</pre>
         </div>
+      </section>
 
-        <pre class="mono small" id="generatorOut">Pronto.</pre>
-      </div>
-    </section>
-
-    <!-- Agent -->
-    <section class="view" id="view-agent">
-      <div class="card">
-        <h2>Agente</h2>
-        <p class="hint">Comandos naturais + atalhos. (vamos evoluir com os prompts)</p>
-
-        <div class="cmd">
-          <input id="agentInput" placeholder="Ex: cria um app chamado AgroControl" />
+      <section id="view-settings" class="view">
+        <div class="card">
+          <h2>Settings</h2>
+          <p class="hint">Configurações locais.</p>
+          <pre id="settingsOut" class="mono small">Pronto.</pre>
         </div>
+      </section>
 
-        <div class="row" style="margin-top:10px">
-          <button class="btn primary" id="btnAgentRun" type="button">Executar</button>
-          <button class="btn" id="btnAgentClear" type="button">Limpar</button>
-          <button class="btn ok" id="btnAgentApply" type="button">Aplicar sugestão</button>
-          <button class="btn danger" id="btnAgentDiscard" type="button">Descartar</button>
+      <section id="view-admin" class="view">
+        <div class="card">
+          <h2>Admin</h2>
+          <p class="hint">Diagnóstico / manutenção / self-update.</p>
+
+          <div class="row">
+            <button id="btnDiagnose" class="btn" type="button">Diagnosticar</button>
+            <button id="btnResetSafe" class="btn danger" type="button">Zerar (safe)</button>
+          </div>
+
+          <pre id="adminOut" class="mono small">Pronto.</pre>
         </div>
-
-        <pre class="mono" id="agentOut">Pronto.</pre>
-      </div>
-    </section>
-
-    <!-- Admin -->
-    <section class="view" id="view-admin">
-      <div class="card">
-        <h2>Admin</h2>
-        <p class="hint">Diagnóstico / manutenção / self-update.</p>
-        <div class="row">
-          <button class="btn" id="btnAdminDiag" type="button">Diagnosticar</button>
-          <button class="btn danger" id="btnAdminReset" type="button">Zerar (safe)</button>
-        </div>
-        <pre class="mono small" id="adminOut">Pronto.</pre>
-      </div>
-      <!-- A “Mãe” entra aqui via js/core/mother_selfupdate.js -->
-    </section>
-
-    <!-- Diagnostics -->
-    <section class="view" id="view-diagnostics">
-      <div class="card">
-        <h2>Diag</h2>
-        <div class="row">
-          <button class="btn" id="btnDiagRefresh" type="button">Atualizar</button>
-          <button class="btn" id="btnDiagCopy" type="button">Copiar</button>
-          <button class="btn danger" id="btnDiagClear" type="button">Limpar</button>
-        </div>
-        <pre class="mono small" id="diagBox">Diag…</pre>
-      </div>
-    </section>
-
-    <!-- Logs -->
-    <section class="view" id="view-logs">
-      <div class="card">
-        <h2>LOGS • Registro</h2>
-        <p class="hint">Visualização dedicada dos logs do Factory.</p>
-        <div class="row">
-          <button class="btn" id="btnLogsRefresh" type="button">Atualizar</button>
-          <button class="btn" id="btnLogsCopy" type="button">Copiar</button>
-          <button class="btn danger" id="btnLogsClear" type="button">Limpar</button>
-        </div>
-        <pre class="mono small" id="logsBox">Logs…</pre>
-      </div>
-    </section>
-  </main>
-
-  <!-- DOCK -->
-  <div class="dock" id="dock">
-    <button class="dockbtn" data-view="agent" type="button">Agent</button>
-    <button class="dockbtn" data-view="admin" type="button">Admin</button>
-    <button class="dockbtn" data-view="diagnostics" type="button">Diag</button>
-    <button class="dockbtn" data-view="logs" type="button">Logs</button>
+      </section>
+    </main>
   </div>
 
-  <!-- ========= BOOT LOGGER (bem cedo) ========= -->
+  <!-- SW (só UM: app/sw.js) -->
   <script>
     (function(){
-      try {
-        window.__RCF_BOOT = window.__RCF_BOOT || [];
-        const push = (m)=>window.__RCF_BOOT.push("BOOT: " + m);
-        push("index.html carregou");
-      } catch {}
+      if (!('serviceWorker' in navigator)) return;
+      window.addEventListener('load', function(){
+        navigator.serviceWorker.register('./sw.js').catch(function(){});
+      });
     })();
   </script>
 
-  <!-- ========= CORE (ORDEM IMPORTA) ========= -->
-  <script src="js/core/logger.js?v=20260210_3"></script>
-  <script src="js/core/storage.js?v=20260210_3"></script>
-  <script src="js/core/errors.js?v=20260210_3"></script>
-  <script src="js/core/policy.js?v=20260210_3"></script>
-  <script src="js/core/risk.js?v=20260210_3"></script>
+  <!-- CORE (ordem importa) -->
+  <script defer src="app.js"></script>
 
-  <script src="js/core/snapshot.js?v=20260210_3"></script>
-  <script src="js/core/patch.js?v=20260210_3"></script>
-  <script src="js/core/patchset.js?v=20260210_3"></script>
+  <!-- CORE modules (precisam existir em /app/js/core/) -->
+  <script defer src="js/core/vfs_overrides.js"></script>
+  <script defer src="js/core/thompson.js"></script>
+  <script defer src="js/core/github_sync.js"></script>
+  <script defer src="js/core/mother_selfupdate.js"></script>
 
-  <script src="js/core/diagnostics.js?v=20260210_3"></script>
-  <script src="js/core/commands.js?v=20260210_3"></script>
-
-  <script src="js/core/ui_safety.js?v=20260210_3"></script>
-  <script src="js/core/ui_bindings.js?v=20260210_3"></script>
-
-  <script src="js/core/selfheal.js?v=20260210_3"></script>
-  <script src="js/core/autofix.js?v=20260210_3"></script>
-
-  <!-- overrides + thompson + mãe -->
-  <script src="js/core/vfs_overrides.js?v=20260210_3"></script>
-  <script src="js/core/thompson.js?v=20260210_3"></script>
-  <script src="js/core/mother_selfupdate.js?v=20260210_3"></script>
-
-  <!-- ========= ADMIN + AI ========= -->
-  <script src="js/admin.js?v=20260210_3"></script>
-  <script src="js/ai.builder.js?v=20260210_3"></script>
-
-  <!-- ========= APP (POR ÚLTIMO) ========= -->
-  <script src="app.js?v=20260210_3"></script>
-
-  <!-- ========= SERVICE WORKER (robusto) ========= -->
-  <script>
-    (function(){
-      async function regSW(){
-        if (!("serviceWorker" in navigator)) return;
-        try {
-          const reg = await navigator.serviceWorker.register("sw.js?v=20260210_3", { scope: "./" });
-          console.log("[RCF] SW registered:", reg.scope);
-        } catch (e) {
-          console.log("[RCF] SW register fail:", e && e.message ? e.message : e);
-        }
-      }
-      regSW();
-    })();
-  </script>
+  <!-- UI layer -->
+  <script defer src="js/router.js"></script>
+  <script defer src="js/admin.js"></script>
 </body>
 </html>
