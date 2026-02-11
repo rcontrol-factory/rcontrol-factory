@@ -1,77 +1,103 @@
-// /app/js/ui.gear.js
+/* =========================================================
+  RControl Factory — /app/js/ui.gear.js (FULL)
+  FIX iOS: botões dentro da engrenagem/drawer não clicam
+========================================================= */
 (() => {
   "use strict";
 
-  const $ = (s, r=document) => r.querySelector(s);
+  const $ = (id) => document.getElementById(id);
 
-  function openGear() {
-    // remove se já existir
-    closeGear();
+  const TAP_GUARD_MS = 350;
+  let _lastTapAt = 0;
 
-    const backdrop = document.createElement("div");
-    backdrop.className = "rcf-gear-backdrop";
-    backdrop.addEventListener("click", (e) => {
-      if (e.target === backdrop) closeGear();
+  function bindTap(el, fn) {
+    if (!el) return;
+    const handler = (e) => {
+      const now = Date.now();
+      if (now - _lastTapAt < TAP_GUARD_MS) {
+        try { e.preventDefault(); e.stopPropagation(); } catch {}
+        return;
+      }
+      _lastTapAt = now;
+
+      try { e.preventDefault(); e.stopPropagation(); } catch {}
+      try { fn(e); } catch (err) {
+        console.warn("[GEAR] click error:", err);
+      }
+    };
+
+    // iOS safe
+    el.style.pointerEvents = "auto";
+    el.style.touchAction = "manipulation";
+    el.style.webkitTapHighlightColor = "transparent";
+
+    el.addEventListener("touchend", handler, { passive: false, capture: true });
+    el.addEventListener("click", handler, { passive: false, capture: true });
+  }
+
+  function openDrawer() {
+    const drawer = $("toolsDrawer");
+    if (!drawer) return;
+    drawer.classList.add("open");
+    drawer.setAttribute("aria-hidden", "false");
+
+    // força pointer events (mata overlay/bug iOS)
+    drawer.style.pointerEvents = "auto";
+    drawer.style.zIndex = "99999";
+    drawer.querySelectorAll("*").forEach((n) => {
+      if (n && n.style) {
+        n.style.pointerEvents = "auto";
+        n.style.touchAction = "manipulation";
+      }
+    });
+  }
+
+  function closeDrawer() {
+    const drawer = $("toolsDrawer");
+    if (!drawer) return;
+    drawer.classList.remove("open");
+    drawer.setAttribute("aria-hidden", "true");
+    drawer.style.pointerEvents = "none";
+  }
+
+  function init() {
+    const btnOpen1 = $("btnOpenTools");   // topo
+    const btnOpen2 = $("btnOpenTools2");  // dashboard
+    const btnClose = $("btnCloseTools");
+    const drawer = $("toolsDrawer");
+
+    // Abrir/fechar drawer
+    bindTap(btnOpen1, openDrawer);
+    bindTap(btnOpen2, openDrawer);
+    bindTap(btnClose, closeDrawer);
+
+    // FIX: botões dentro do drawer não clicam
+    bindTap($("btnClearLogs"), () => {
+      // se existir logger, limpa
+      if (window.RCF_LOGGER?.clear) window.RCF_LOGGER.clear();
+      const box = $("logsBox");
+      if (box) box.textContent = "Logs limpos ✅";
     });
 
-    const sheet = document.createElement("div");
-    sheet.className = "rcf-gear-sheet";
+    bindTap($("btnCopyLogs"), async () => {
+      const txt = $("logsBox")?.textContent || "";
+      try { await navigator.clipboard.writeText(txt); } catch {}
+      const box = $("logsBox");
+      if (box) box.textContent = (txt ? txt : "Logs...") + "\n\nCopiado ✅";
+    });
 
-    sheet.innerHTML = `
-      <h3>⚙️ Menu</h3>
-      <div class="rcf-gear-grid">
-        <button class="btn" id="gearGoSettings" type="button">Settings</button>
-        <button class="btn" id="gearGoAdmin" type="button">Admin</button>
-        <button class="btn" id="gearGoDiag" type="button">Diag</button>
-        <button class="btn" id="gearGoLogs" type="button">Logs</button>
-        <button class="btn danger" id="gearClose" type="button">Fechar</button>
-      </div>
-      <p class="hint" style="margin:10px 0 0 0; opacity:.8;">
-        (Se algum botão não existir no seu build, ele só não faz nada.)
-      </p>
-    `;
-
-    backdrop.appendChild(sheet);
-    document.body.appendChild(backdrop);
-
-    $("#gearClose", sheet)?.addEventListener("click", closeGear);
-
-    // Navegação: tenta usar router existente, senão clica na tab
-    function go(view){
-      closeGear();
-      if (window.RCF_ROUTER?.go) return window.RCF_ROUTER.go(view);
-      const tab = document.querySelector(`.tab[data-view="${view}"]`);
-      tab?.click();
+    // Se clicar fora (opcional), fecha
+    if (drawer) {
+      drawer.addEventListener("click", (e) => {
+        // clica no fundo do drawer (não em botão) -> não fecha
+        // (mantém simples)
+      }, { capture: true });
     }
-
-    $("#gearGoSettings", sheet)?.addEventListener("click", () => go("settings"));
-    $("#gearGoAdmin", sheet)?.addEventListener("click", () => go("admin"));
-    $("#gearGoDiag", sheet)?.addEventListener("click", () => go("diag"));
-    $("#gearGoLogs", sheet)?.addEventListener("click", () => go("logs"));
   }
 
-  function closeGear(){
-    document.querySelectorAll(".rcf-gear-backdrop").forEach(el => el.remove());
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
   }
-
-  function bindGear(){
-    const btn = $("#btnGear");
-    if (!btn) return;
-
-    // iOS fallback: captura no topo (se overlay travar)
-    btn.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      openGear();
-    }, { passive:false });
-
-    // fallback extra: se por algum motivo click não vier, pega pointerup
-    btn.addEventListener("pointerup", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      openGear();
-    }, { passive:false });
-  }
-
-  window.addEventListener("load", () => setTimeout(bindGear, 200));
 })();
