@@ -6,40 +6,27 @@
   <meta name="theme-color" content="#0b1220" />
   <title>RControl Factory</title>
 
-  <link rel="stylesheet" href="/app/styles.css" />
+  <!-- Redireciona sempre para a pasta do app -->
+  <meta http-equiv="refresh" content="0; url=/app/" />
+  <link rel="canonical" href="/app/" />
 
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <style>
+    body{margin:0;font-family:-apple-system,system-ui,Segoe UI,Roboto,Helvetica,Arial;background:#0b1220;color:#fff}
+    .box{padding:24px}
+    a{color:#16c784}
+  </style>
 </head>
-
 <body>
-  <div id="app"></div>
+  <div class="box">
+    Redirecionando para <a href="/app/">/app/</a>…
+  </div>
 
-  <!-- CORE -->
-  <script defer src="/app/app.js"></script>
-
-  <!-- ROUTER/ADMIN (se existirem) -->
-  <script defer src="/app/js/router.js"></script>
-  <script defer src="/app/js/admin.js"></script>
-
-  <!-- CORE MODULES -->
-  <script defer src="/app/js/core/vfs_overrides.js"></script>
-  <script defer src="/app/js/core/thompson.js"></script>
-  <script defer src="/app/js/core/github_sync.js"></script>
-  <script defer src="/app/js/core/mother_selfupdate.js"></script>
-
-  <!-- SW REGISTER -->
   <script>
+    // fallback (caso meta refresh falhe)
     (function(){
-      if (!("serviceWorker" in navigator)) return;
-      window.addEventListener("load", async () => {
-        try {
-          await navigator.serviceWorker.register("/app/sw.js", { scope: "/" });
-          console.log("SW ok");
-        } catch(e){
-          console.warn("SW erro:", e);
-        }
-      });
+      if (location.pathname === "/" || location.pathname === "/index.html") {
+        location.replace("/app/");
+      }
     })();
   </script>
 </body>
