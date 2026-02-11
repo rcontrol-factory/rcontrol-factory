@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#0b1220" />
   <title>RControl Factory</title>
 
-  <!-- TUDO RELATIVO (porque este arquivo está dentro de /app/) -->
+  <!-- TUDO RELATIVO (porque este arquivo está em /app/) -->
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" href="icon-192.png" />
   <link rel="stylesheet" href="styles.css" />
@@ -16,21 +16,18 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 
   <style>
-    /* iOS: melhora clique em checkbox/labels e evita “tap fantasma” */
+    /* FIX iOS: checkbox/label clicável */
     label[for] { cursor: pointer; }
     input[type="checkbox"]{
       width: 22px; height: 22px;
       accent-color: #22c55e;
       -webkit-tap-highlight-color: transparent;
     }
-    .rcf-clickfix { pointer-events: auto !important; }
   </style>
 </head>
 
 <body>
-  <noscript>Ative o JavaScript para usar a Factory.</noscript>
-
-  <div id="app" class="rcf-clickfix">
+  <div id="app">
     <!-- TOPBAR -->
     <header class="topbar">
       <div class="brand">
@@ -162,13 +159,13 @@
     </main>
   </div>
 
-  <!-- SW (único): /app/js/sw.js com scope /app/ -->
+  <!-- ✅ SW ÚNICO: /app/js/sw.js (scope /app/) -->
   <script>
     (function(){
       if (!("serviceWorker" in navigator)) return;
       window.addEventListener("load", async () => {
         try {
-          const reg = await navigator.serviceWorker.register("./js/sw.js", { scope: "./" });
+          const reg = await navigator.serviceWorker.register("/app/js/sw.js", { scope: "/app/" });
           reg.update?.();
         } catch (e) {
           console.warn("SW register falhou:", e);
@@ -180,7 +177,7 @@
   <!-- CORE (ordem importa) -->
   <script defer src="app.js"></script>
 
-  <!-- CORE modules -->
+  <!-- CORE modules (precisam existir em /app/js/core/) -->
   <script defer src="js/core/vfs_overrides.js"></script>
   <script defer src="js/core/thompson.js"></script>
   <script defer src="js/core/github_sync.js"></script>
