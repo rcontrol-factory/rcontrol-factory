@@ -162,13 +162,13 @@
     </main>
   </div>
 
-  <!-- SW (único): /app/sw.js com scope /app/ -->
+  <!-- SW (único): /app/js/sw.js com scope /app/ -->
   <script>
     (function(){
       if (!("serviceWorker" in navigator)) return;
       window.addEventListener("load", async () => {
         try {
-          const reg = await navigator.serviceWorker.register("./sw.js", { scope: "./" });
+          const reg = await navigator.serviceWorker.register("./js/sw.js", { scope: "./" });
           reg.update?.();
         } catch (e) {
           console.warn("SW register falhou:", e);
