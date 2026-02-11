@@ -6,75 +6,70 @@
   <meta name="theme-color" content="#0b1220" />
   <title>RControl Factory</title>
 
-  <!-- CSS local -->
-  <link rel="stylesheet" href="/app/styles.css" />
+  <!-- CSS RELATIVO (não usa /app/styles.css) -->
+  <link rel="stylesheet" href="./styles.css" />
 
   <!-- iOS PWA -->
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-
-  <!-- Sem cache chato (ajuda iOS) -->
-  <meta http-equiv="Cache-Control" content="no-store" />
-  <meta http-equiv="Pragma" content="no-cache" />
 </head>
 
 <body>
-  <!-- Fallback de boot (se JS quebrar você vê) -->
-  <pre id="bootlog" style="margin:0;padding:12px;font:12px ui-monospace,Menlo,monospace;color:#bfe;opacity:.9">
-Boot: carregando…
+  <!-- Se ficar branco, pelo menos isso aparece -->
+  <pre id="boot"
+       style="position:fixed;top:0;left:0;right:0;padding:10px;margin:0;
+              background:#fff;color:#111;font:12px/1.3 ui-monospace,Menlo,monospace;z-index:999999">
+Boot: carregando...
   </pre>
 
   <div id="app"></div>
 
-  <!-- CORE primeiro -->
-  <script src="/app/app.js"></script>
-
-  <!-- (opcionais) seus módulos -->
-  <script src="/app/js/router.js"></script>
-  <script src="/app/js/admin.js"></script>
-
-  <script src="/app/js/core/vfs_overrides.js"></script>
-  <script src="/app/js/core/thompson.js"></script>
-  <script src="/app/js/core/github_sync.js"></script>
-  <script src="/app/js/core/mother_selfupdate.js"></script>
-
-  <!-- SW REGISTER (SAFE) -->
   <script>
-    (function () {
-      var boot = document.getElementById("bootlog");
-      function log(x){ if(boot) boot.textContent += x + "\n"; }
+    (function(){
+      const boot = document.getElementById("boot");
+      function log(s){ if(boot) boot.textContent += "\n" + s; }
+      window.addEventListener("error", (e)=> log("JS ERRO: " + (e.message||e.error||e)));
+      window.addEventListener("unhandledrejection", (e)=> log("PROMISE ERRO: " + (e.reason?.message||e.reason||e)));
 
-      log("Boot: scripts vão carregar…");
-
-      if (!("serviceWorker" in navigator)) {
-        log("SW: navegador sem suporte.");
-        return;
-      }
-
-      window.addEventListener("load", async () => {
-        try {
-          // ✅ scope certo: /app/
-          const reg = await navigator.serviceWorker.register("/app/sw.js", { scope: "/app/" });
-          log("SW: registrado ✅ scope=/app/");
-
-          // Se não tiver controller, pede 1 reload e pronto
-          if (!navigator.serviceWorker.controller) {
-            log("SW: sem controller (1º load). Recarregue 1x.");
-          }
-        } catch (e) {
-          log("SW ERRO: " + (e && e.message ? e.message : String(e)));
-          console.warn("SW erro:", e);
-        }
-      });
+      log("Boot: scripts vão carregar...");
     })();
   </script>
 
+  <!-- CORE (RELATIVO) -->
+  <script defer src="./app.js"></script>
+
+  <!-- TOUCH FIX (RELATIVO) -->
+  <script defer src="./js/ui.touchfix.js"></script>
+
+  <!-- ROUTER -->
+  <script defer src="./js/router.js"></script>
+
+  <!-- ADMIN -->
+  <script defer src="./js/admin.js"></script>
+
+  <!-- CORE MODULES -->
+  <script defer src="./js/core/vfs_overrides.js"></script>
+  <script defer src="./js/core/thompson.js"></script>
+  <script defer src="./js/core/github_sync.js"></script>
+  <script defer src="./js/core/mother_selfupdate.js"></script>
+
+  <!-- SW REGISTER (RELATIVO!) -->
   <script>
-    // some com bootlog quando o app montar
-    setTimeout(() => {
-      var el = document.getElementById("bootlog");
-      if (el) el.style.display = "none";
-    }, 2500);
+    (function(){
+      if (!("serviceWorker" in navigator)) return;
+      window.addEventListener("load", async () => {
+        try {
+          // sw.js dentro de /app/
+          await navigator.serviceWorker.register("./sw.js", { scope: "/" });
+          const boot = document.getElementById("boot");
+          if (boot) boot.textContent += "\nSW: registrado OK";
+          setTimeout(()=>{ if(boot) boot.style.display="none"; }, 1200);
+        } catch(e){
+          const boot = document.getElementById("boot");
+          if (boot) boot.textContent += "\nSW ERRO: " + (e.message||e);
+        }
+      });
+    })();
   </script>
 </body>
 </html>
