@@ -1043,106 +1043,117 @@
   // quando mudar de view, também limpa overlays
   const oldSetView = window.RCF && window.RCF.setView;
   // se não tiver exportado, a gente só escuta mudanças nos botões
-  document.addEventListener("click", () => killIfBlocking(), { capture: true, passive: true });
-// =============================
-// RCF FIX: Delegação global (botões do miolo param após 1 clique)
-// Cole antes do "})();" final
+  document.addEventListener("click", () => killIfBlocking(), { capture: true, passive: // =============================
+// RCF GLOBAL ACTION FIX (FINAL)
 // =============================
 (function installGlobalActionDelegation(){
-  const fire = (fn) => { try { fn(); } catch (e) { try { Logger.write("deleg err:", e?.message||e); } catch {} } };
 
-  function onAction(id){
-    switch(id){
-
-      // ===== SETTINGS / Segurança =====
-      case "btnPinSave":
-        // se você tem função já pronta em admin.js/settings.js, chama via window
-        if (window.RCF_SETTINGS?.pinSave) return fire(() => window.RCF_SETTINGS.pinSave());
-        // fallback: só log pra você saber que capturou
-        return fire(() => setStatusPill("PIN: clique capturado ✅"));
-
-      case "btnPinRemove":
-        if (window.RCF_SETTINGS?.pinRemove) return fire(() => window.RCF_SETTINGS.pinRemove());
-        return fire(() => setStatusPill("PIN remove: clique capturado ✅"));
-
-      // ===== LOGS (Settings) =====
-      case "btnLogsRefresh":
-        return fire(() => {
-          refreshLogsViews();
-          setStatusPill("Logs atualizados ✅");
-          setTimeout(() => setStatusPill("OK ✅"), 600);
-        });
-
-      case "btnLogsClear":
-        return fire(() => {
-          Logger.clear();
-          const out = document.querySelector("#logsOut");
-          if (out) out.textContent = "";
-          setStatusPill("Logs limpos ✅");
-          setTimeout(() => setStatusPill("OK ✅"), 600);
-        });
-
-      case "btnLogsCopy":
-        return fire(async () => {
-          const txt = Logger.getAll().join("\n");
-          try { await navigator.clipboard.writeText(txt); } catch {}
-          setStatusPill("Logs copiados ✅");
-          setTimeout(() => setStatusPill("OK ✅"), 800);
-        });
-
-      case "btnLogsExport":
-        return fire(() => {
-          // export simples em .txt (download)
-          const txt = Logger.getAll().join("\n");
-          const blob = new Blob([txt], { type: "text/plain;charset=utf-8" });
-          const a = document.createElement("a");
-          a.href = URL.createObjectURL(blob);
-          a.download = "rcf-logs.txt";
-          a.click();
-          setTimeout(() => URL.revokeObjectURL(a.href), 800);
-          setStatusPill("Export .txt ✅");
-          setTimeout(() => setStatusPill("OK ✅"), 800);
-        });
-
-      // ===== ADMIN (se tiver ids) =====
-      case "btnAdminDiag":
-        return fire(() => { uiMsg("#adminOut", Admin.diagnostics()); });
-
-      case "btnAdminClear":
-        return fire(() => { Logger.clear(); setStatusPill("Logs limpos ✅"); setTimeout(()=>setStatusPill("OK ✅"),600); });
-
-      default:
-        return;
+  function fire(fn){
+    try { fn(); }
+    catch(e){
+      try { Logger.write("deleg err:", e?.message||e); } catch {}
     }
   }
 
   function handler(ev){
-    const t = ev.target && ev.target.closest ? ev.target.closest("button, a, [role='button']") : null;
-    if (!t) return;
+    const btn = ev.target?.closest?.("button");
+    if (!btn || !btn.id) return;
 
-    const id = t.id || "";
-    if (!id) return;
+    const id = btn.id;
 
-    // só intercepta ids que a gente controla
-    const known = [
-      "btnPinSave","btnPinRemove",
-      "btnLogsRefresh","btnLogsClear","btnLogsCopy","btnLogsExport",
-      "btnAdminDiag","btnAdminClear"
+    // Só intercepta os que estavam morrendo
+    const targets = [
+      "btnPinSave",
+      "btnPinRemove",
+      "btnGoDiagnose",
+      "btnGoAdmin",
+      "btnAdminDiag",
+      "btnAdminClear",
+      "btnAdminApply",
+      "btnAdminDiscard"
     ];
-    if (!known.includes(id)) return;
 
-    // evita duplo touchend+click
+    if (!targets.includes(id)) return;
+
     ev.preventDefault?.();
     ev.stopPropagation?.();
 
-    onAction(id);
+    switch(id){
+
+      // ===== SEGURANÇA =====
+      case "btnPinSave":
+        fire(() => {
+          const input = document.querySelector("#pinInput");
+          const val = input?.value?.trim();
+          if (!val || val.length < 4){
+            setStatusPill("PIN inválido ❌");
+            return;
+          }
+          Storage.set("pin", val);
+          setStatusPill("PIN salvo ✅");
+        });
+        break;
+
+      case "btnPinRemove":
+        fire(() => {
+          Storage.del("pin");
+          setStatusPill("PIN removido ✅");
+        });
+        break;
+
+      // ===== DIAG / ADMIN NAV =====
+      case "btnGoDiagnose":
+        fire(() => setView("diagnostics"));
+        break;
+
+      case "btnGoAdmin":
+        fire(() => setView("admin"));
+        break;
+
+      // ===== ADMIN CORE =====
+      case "btnAdminDiag":
+        fire(() => {
+          uiMsg("#adminOut", Admin.diagnostics());
+          setStatusPill("Diag OK ✅");
+        });
+        break;
+
+      case "btnAdminClear":
+        fire(() => {
+          Logger.clear();
+          setStatusPill("Logs limpos ✅");
+        });
+        break;
+
+      case "btnAdminApply":
+        fire(() => {
+          if (!State.pending.patch){
+            setStatusPill("Sem patch ❌");
+            return;
+          }
+          const r = applyPatchset(State.pending.patch);
+          if (r.ok){
+            clearPendingPatch();
+            refreshAfterPatch();
+            setStatusPill("Patch aplicado ✅");
+          } else {
+            setStatusPill("Erro patch ❌");
+          }
+        });
+        break;
+
+      case "btnAdminDiscard":
+        fire(() => {
+          clearPendingPatch();
+          setStatusPill("Patch descartado ✅");
+        });
+        break;
+    }
   }
 
-  // captura alto (pega mesmo se alguém re-renderizar)
-  document.addEventListener("touchend", handler, { capture: true, passive: false });
-  document.addEventListener("click", handler, { capture: true, passive: false });
+  document.addEventListener("touchend", handler, { capture:true, passive:false });
+  document.addEventListener("click", handler, { capture:true, passive:false });
 
-  try { Logger.write("delegation: ON ✅"); } catch {}
-})();
-})();
+  try { Logger.write("GLOBAL ACTION FIX ON ✅"); } catch {}
+
 })();
