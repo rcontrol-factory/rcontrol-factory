@@ -176,8 +176,8 @@
     <!-- ADMIN -->
     <section class="view" id="view-admin">
       <div class="card">
-        <h2>ADMIN • IA Offline</h2>
-        <p class="hint">Admin + Self-Update (Mãe) + GitHub Sync (privado). Você controla no SAFE.</p>
+        <h2>ADMIN • IA Offline v2 (70%)</h2>
+        <p class="hint">Ajuda a atualizar a Factory (corrigir UI, melhorar ações). Você aprova manualmente.</p>
 
         <div class="row">
           <button class="btn primary" id="btnAdminDiag" type="button">Executar</button>
@@ -189,7 +189,7 @@
         <h2>Plano + Sugestão</h2>
         <pre class="mono" id="adminOut">Pronto.</pre>
       </div>
-      <!-- A área MAE/Thompson/GitHub vai ser INJETADA pelo app/js/admin.js -->
+      <!-- A MÃE (MAINTENANCE) É INJETADA AQUI PELO app/js/admin.js -->
     </section>
 
     <!-- DIAGNOSTICS -->
@@ -268,11 +268,8 @@
   <script src="core/selfheal.js"></script>
   <script src="core/autofix.js"></script>
 
-  
-  <script src="core/thompson.js"></script>
-  <script src="app/js/github_sync.js"></script>
-
-  <!-- ADMIN (CORRETO) -->
+  <!-- THOMPSON + ADMIN (MÃE) -->
+  <script src="app/js/core/thompson.js"></script>
   <script src="app/js/admin.js"></script>
 
   <!-- APP (por último) -->
