@@ -6,30 +6,17 @@
   <meta name="theme-color" content="#0b1220" />
   <title>RControl Factory</title>
 
-  <!-- RELATIVO (porque este arquivo fica em /app/) -->
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" href="icon-192.png" />
   <link rel="stylesheet" href="styles.css" />
 
+  <!-- iOS nicer -->
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-
-  <style>
-    /* FIX iOS: checkbox clicável */
-    label[for]{ cursor:pointer; }
-    input[type="checkbox"]{
-      width:22px; height:22px;
-      accent-color:#22c55e;
-      -webkit-tap-highlight-color:transparent;
-    }
-    .rcf-clickfix{ pointer-events:auto !important; }
-  </style>
 </head>
 
 <body>
-  <noscript>Ative o JavaScript para usar a Factory.</noscript>
-
-  <div id="app" class="rcf-clickfix">
+  <div id="app">
     <!-- TOPBAR -->
     <header class="topbar">
       <div class="brand">
@@ -63,6 +50,7 @@
         <div class="card">
           <h1>Bem-vindo 👋</h1>
           <p class="hint">Crie apps e publique depois (primeiro vamos estabilizar).</p>
+
           <div class="row">
             <button class="btn" id="btnNewAppQuick" type="button">+ Criar novo app</button>
             <button class="btn" id="btnOpenEditor" type="button">Abrir Editor</button>
@@ -80,6 +68,7 @@
         <div class="card">
           <h2>Novo App</h2>
           <p class="hint">Crie um app (nome + slug). Depois você vai para o Editor.</p>
+
           <div class="row">
             <input id="newAppName" class="input" placeholder="Nome (ex: MeuApp)" />
             <input id="newAppSlug" class="input" placeholder="Slug (ex: meuapp)" />
@@ -88,6 +77,7 @@
             <button id="btnCreateApp" class="btn primary" type="button">Criar</button>
             <button id="btnGenSlug" class="btn" type="button">Gerar slug</button>
           </div>
+
           <pre id="newAppOut" class="mono small">Pronto.</pre>
         </div>
       </section>
@@ -96,13 +86,16 @@
         <div class="card">
           <h2>Editor</h2>
           <p class="hint">Edite arquivos do app ativo e salve.</p>
+
           <div id="editorTop" class="row">
             <select id="fileSelect" class="input"></select>
             <button id="btnSaveFile" class="btn ok" type="button">Salvar</button>
             <button id="btnReloadFiles" class="btn" type="button">Recarregar</button>
           </div>
+
           <textarea id="fileEditor" class="textarea mono" spellcheck="false"
             placeholder="Selecione um app para ver arquivos."></textarea>
+
           <pre id="editorOut" class="mono small">Pronto.</pre>
         </div>
       </section>
@@ -143,30 +136,32 @@
         <div class="card">
           <h2>Admin</h2>
           <p class="hint">Diagnóstico / manutenção / self-update.</p>
+
           <div class="row">
             <button id="btnDiagnose" class="btn" type="button">Diagnosticar</button>
             <button id="btnResetSafe" class="btn danger" type="button">Zerar (safe)</button>
           </div>
+
           <pre id="adminOut" class="mono small">Pronto.</pre>
         </div>
       </section>
     </main>
   </div>
 
-  <!-- SW: único é app/sw.js (registrado a partir do /app/) -->
+  <!-- SW (só UM: app/sw.js) -->
   <script>
     (function(){
       if (!('serviceWorker' in navigator)) return;
       window.addEventListener('load', function(){
-        navigator.serviceWorker.register('./sw.js', { scope: './' }).catch(function(){});
+        navigator.serviceWorker.register('./sw.js').catch(function(){});
       });
     })();
   </script>
 
-  <!-- CORE -->
+  <!-- CORE (ordem importa) -->
   <script defer src="app.js"></script>
 
-  <!-- CORE modules -->
+  <!-- CORE modules (precisam existir em /app/js/core/) -->
   <script defer src="js/core/vfs_overrides.js"></script>
   <script defer src="js/core/thompson.js"></script>
   <script defer src="js/core/github_sync.js"></script>
