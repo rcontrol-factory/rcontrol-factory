@@ -6,23 +6,19 @@
   <meta name="theme-color" content="#0b1220" />
   <title>RControl Factory</title>
 
-  <!-- evita cache chato -->
-  <meta http-equiv="Cache-Control" content="no-store" />
-  <meta http-equiv="Pragma" content="no-cache" />
+  <!-- Evita cache te enganando -->
+  <meta http-equiv="cache-control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="pragma" content="no-cache" />
+  <meta http-equiv="expires" content="0" />
 </head>
-<body style="margin:0;background:#070b12;color:#fff;font-family:system-ui;display:flex;align-items:center;justify-content:center;min-height:100vh">
-  <div style="opacity:.85">
-    <div style="font-weight:800;font-size:18px;margin-bottom:8px">RControl Factory</div>
-    <div style="opacity:.7">Redirecionando…</div>
-  </div>
+<body style="margin:0;font-family:system-ui;background:#fff;color:#111">
+  <pre id="boot" style="padding:16px;white-space:pre-wrap">Boot: redirect → /app/ ...</pre>
 
   <script>
-    // Sempre jogar pra /app/ (sem /app/app e sem tela branca)
     (function () {
-      var target = "/app/";
-      // mantém querystring (ex: ?v=999)
-      var qs = location.search || "";
-      location.replace(target + qs);
+      // Força abrir /app/ (com cache-bust)
+      var v = Date.now();
+      location.replace("/app/?v=" + v);
     })();
   </script>
 </body>
