@@ -1,18 +1,19 @@
 /* =========================================================
-  RControl Factory — js/core/mother_selfupdate.js (FULL)
-  UI da Mãe (Admin) + integra Thompson:
+  RControl Factory — app/js/core/mother_selfupdate.js (FULL)
+  Mãe (Admin) + Thompson + GitHub Sync (SAFE)
   - Apply /import/mother_bundle.json
-  - Dry-run (prévia)
+  - Dry-run
   - Apply bundle colado
   - Rollback (voltar 1)
   - Exportar bundle atual
   - Zerar tudo
 
-  + GitHub Sync PRIVADO (SAFE):
-  - Pull/Push do arquivo (default): app/import/mother_bundle.json
+  + GitHub Sync SAFE (Pull/Push do mother_bundle.json)
+  + Auto-check no BOOT: avisa update e dá "Atualizar agora"
 
-  MODO SAFE (condicional):
-  - Se bundle mexe em arquivo crítico -> pede confirmação no UI
+  Requer:
+  - window.RCF_THOMPSON (thompson.js)
+  - window.RCF_GH_SYNC (github_sync.js) [opcional, mas recomendado]
 ========================================================= */
 
 (function () {
@@ -21,17 +22,19 @@
   const $ = (id) => document.getElementById(id);
   const T = () => window.RCF_THOMPSON;
 
+  const LS_LAST_SHA = "RCF_GH_LAST_SHA_MOTHER";
+
   const TAP_GUARD_MS = 450;
   let _lastTapAt = 0;
 
   function bindTap(el, fn){
     if (!el) return;
-    const handler = (e) => {
+    const handler = async (e) => {
       const now = Date.now();
       if (now - _lastTapAt < TAP_GUARD_MS) { try{e.preventDefault();e.stopPropagation();}catch{}; return; }
       _lastTapAt = now;
       try{ e.preventDefault(); e.stopPropagation(); }catch{}
-      try{ fn(e); }catch(err){ out("motherMaintOut", "ERRO: " + (err?.message || String(err))); }
+      try{ await fn(e); }catch(err){ out("motherMaintOut", "ERRO: " + (err?.message || String(err))); }
     };
     el.style.pointerEvents = "auto";
     el.style.touchAction = "manipulation";
@@ -67,22 +70,8 @@
     }
   }
 
-  // ---------- GitHub Sync loader ----------
-  async function ensureGitHubSyncLoaded(){
-    if (window.RCF_GITHUB) return true;
-
-    // injeta script (pra não depender do index.html)
-    return new Promise((resolve) => {
-      try {
-        const s = document.createElement("script");
-        s.src = "js/core/github_sync.js?v=" + Date.now();
-        s.onload = () => resolve(!!window.RCF_GITHUB);
-        s.onerror = () => resolve(false);
-        document.head.appendChild(s);
-      } catch {
-        resolve(false);
-      }
-    });
+  function hasGitHubSync(){
+    return !!(window.RCF_GH_SYNC && typeof window.RCF_GH_SYNC.pullJson === "function");
   }
 
   function ensureCard(){
@@ -114,34 +103,33 @@
         <button class="btn danger" id="btnMotherResetAll" type="button">Zerar tudo</button>
       </div>
 
-      <hr style="border:0;border-top:1px solid rgba(255,255,255,.08);margin:14px 0" />
+      <hr style="margin:14px 0; border:0; border-top:1px solid rgba(255,255,255,.08)" />
 
       <h3 style="margin:0 0 8px 0">GitHub Sync (Privado) — SAFE</h3>
-      <p class="hint" style="margin-top:0">
-        Puxa/Empurra o arquivo do bundle no seu repo privado. Assim você atualiza em um aparelho e puxa no outro.
-      </p>
+      <p class="hint" style="margin-top:0">Puxa/Empurra o arquivo do bundle no seu repo privado. Assim você atualiza em um aparelho e puxa no outro.</p>
 
       <div class="row" style="flex-wrap:wrap; gap:10px">
-        <input id="ghOwner" placeholder="owner (ex: MateusSantana)" style="flex:1;min-width:160px" />
-        <input id="ghRepo" placeholder="repo (ex: FactoryPWA)" style="flex:1;min-width:160px" />
+        <input class="input" id="ghOwner" placeholder="owner (ex: rcontrol-factory)" style="flex:1; min-width:160px" />
+        <input class="input" id="ghRepo" placeholder="repo (ex: rcontrol-factory)" style="flex:1; min-width:160px" />
       </div>
-
       <div class="row" style="flex-wrap:wrap; gap:10px; margin-top:8px">
-        <input id="ghBranch" placeholder="branch (ex: main)" style="flex:1;min-width:140px" />
-        <input id="ghPath" placeholder="path (ex: app/import/mother_bundle.json)" style="flex:2;min-width:220px" />
+        <input class="input" id="ghBranch" placeholder="branch" value="main" style="flex:1; min-width:140px" />
+        <input class="input" id="ghPath" placeholder="path" value="app/import/mother_bundle.json" style="flex:2; min-width:220px" />
       </div>
-
       <div class="row" style="flex-wrap:wrap; gap:10px; margin-top:8px">
-        <input id="ghToken" placeholder="TOKEN (PAT) — contents:read/write" style="flex:1;min-width:260px" />
+        <input class="input" id="ghToken" placeholder="TOKEN (PAT) — contents:read/write" style="flex:2; min-width:220px" />
         <button class="btn" id="btnGhSaveCfg" type="button">Salvar config</button>
       </div>
 
-      <div class="row" style="flex-wrap:wrap; gap:10px; margin-top:8px">
-        <button class="btn" id="btnGhPull" type="button">⬇️ Pull (baixar do GitHub)</button>
-        <button class="btn ok" id="btnGhPush" type="button">⬆️ Push (enviar p/ GitHub)</button>
+      <div class="row" style="flex-wrap:wrap; gap:10px; margin-top:10px">
+        <button class="btn" id="btnGhPull" type="button">⬇ Pull (baixar do GitHub)</button>
+        <button class="btn ok" id="btnGhPush" type="button">⬆ Push (enviar p/ GitHub)</button>
+        <button class="btn primary" id="btnGhUpdateNow" type="button">⚡ Atualizar agora</button>
       </div>
 
       <pre class="mono small" id="ghOut" style="margin-top:10px">GitHub: pronto.</pre>
+
+      <hr style="margin:14px 0; border:0; border-top:1px solid rgba(255,255,255,.08)" />
 
       <div class="hint" style="margin:10px 0 6px 0">Cole um bundle JSON aqui:</div>
       <textarea id="motherBundleTextarea" spellcheck="false"
@@ -316,102 +304,107 @@
     log("MAE reset all");
   }
 
-  // ---------- GitHub UI ----------
-  function ghOut(text){
+  // ---------------- GitHub Sync (SAFE) ----------------
+  function ghOut(txt){
     const el = $("ghOut");
-    if (el) el.textContent = String(text || "");
+    if (el) el.textContent = String(txt || "");
   }
 
-  function loadGhCfgToUI(){
-    const G = window.RCF_GITHUB;
-    if (!G) return;
-    const cfg = G.getCfg();
-    if ($("ghOwner")) $("ghOwner").value = cfg.owner || "";
-    if ($("ghRepo")) $("ghRepo").value = cfg.repo || "";
-    if ($("ghBranch")) $("ghBranch").value = cfg.branch || "main";
-    if ($("ghPath")) $("ghPath").value = cfg.path || "app/import/mother_bundle.json";
-    if ($("ghToken")) $("ghToken").value = cfg.token ? "••••••••••" : "";
+  function readCfgFromUI(){
+    return {
+      owner: ($("ghOwner")?.value || "").trim(),
+      repo: ($("ghRepo")?.value || "").trim(),
+      branch: ($("ghBranch")?.value || "main").trim(),
+      path: ($("ghPath")?.value || "app/import/mother_bundle.json").trim(),
+      token: ($("ghToken")?.value || "").trim()
+    };
   }
 
-  function readGhCfgFromUI(){
-    // token: se o user colar, salva; se ele deixar "••••", mantém o atual
-    const G = window.RCF_GITHUB;
-    const cur = G.getCfg();
-
-    const owner = String($("ghOwner")?.value || "").trim();
-    const repo  = String($("ghRepo")?.value || "").trim();
-    const branch = String($("ghBranch")?.value || "main").trim() || "main";
-    const path = String($("ghPath")?.value || "app/import/mother_bundle.json").trim() || "app/import/mother_bundle.json";
-
-    let tokenRaw = String($("ghToken")?.value || "").trim();
-    let token = cur.token || "";
-    if (tokenRaw && tokenRaw !== "••••••••••") token = tokenRaw;
-
-    return { owner, repo, branch, path, token };
+  function fillCfgUI(cfg){
+    const c = cfg || {};
+    if ($("ghOwner")) $("ghOwner").value = c.owner || "";
+    if ($("ghRepo")) $("ghRepo").value = c.repo || "";
+    if ($("ghBranch")) $("ghBranch").value = c.branch || "main";
+    if ($("ghPath")) $("ghPath").value = c.path || "app/import/mother_bundle.json";
+    // token: por segurança, não auto-preenche se estiver vazio
+    if ($("ghToken") && c.token) $("ghToken").value = c.token;
   }
 
-  async function ghSaveCfg(){
-    const ok = await ensureGitHubSyncLoaded();
-    if (!ok) { ghOut("❌ Não carregou github_sync.js"); return; }
-
-    const G = window.RCF_GITHUB;
-    const cfg = readGhCfgFromUI();
-    G.setCfg(cfg);
-    ghOut("✅ Config salva (local).");
-    loadGhCfgToUI();
+  function saveCfg(){
+    if (!hasGitHubSync()) { ghOut("GitHub Sync: módulo não carregou (RCF_GH_SYNC ausente)."); return; }
+    const cfg = readCfgFromUI();
+    window.RCF_GH_SYNC.saveCfg(cfg);
+    ghOut("GitHub: config salva ✅");
   }
 
   async function ghPullToTextarea(){
-    const ok = await ensureGitHubSyncLoaded();
-    if (!ok) { ghOut("❌ Não carregou github_sync.js"); return; }
-
-    const G = window.RCF_GITHUB;
-    const cfg = readGhCfgFromUI();
-    G.setCfg(cfg);
-
-    ghOut("⬇️ Pull… (baixando do GitHub)");
-    const r = await G.getFile(cfg);
-    if (!r.ok) {
-      ghOut("❌ Pull falhou: " + r.msg + (r.status ? (" (HTTP " + r.status + ")") : ""));
-      return;
-    }
-
+    if (!hasGitHubSync()) { ghOut("GitHub Sync: módulo não carregou (RCF_GH_SYNC ausente)."); return; }
+    ghOut("GitHub: puxando…");
+    const r = await window.RCF_GH_SYNC.pullJson();
+    if (!r.ok) { ghOut("❌ Pull falhou: " + (r.msg || r.raw || "erro")); return; }
+    const txt = JSON.stringify(r.json, null, 2);
     const ta = $("motherBundleTextarea");
-    if (ta) ta.value = r.content || "";
-
-    ghOut("✅ Pull OK. Bundle carregado no textarea.\nsha: " + (r.sha || "-"));
+    if (ta) ta.value = txt;
+    ghOut("✅ Pull OK. SHA: " + (r.sha || "-") + "\nBundle jogado no textarea.");
+    return r;
   }
 
   async function ghPushFromTextarea(){
-    const ok = await ensureGitHubSyncLoaded();
-    if (!ok) { ghOut("❌ Não carregou github_sync.js"); return; }
-
-    const G = window.RCF_GITHUB;
-    const cfg = readGhCfgFromUI();
-    G.setCfg(cfg);
-
-    const ta = $("motherBundleTextarea");
-    const content = ta ? String(ta.value || "") : "";
-    if (!content.trim()) { ghOut("❌ Textarea vazio."); return; }
-
-    // SAFE: antes de push, tenta validar bundle via Thompson parse
-    try {
-      const r = T().parseBundle(content);
-      if (!r.ok) { ghOut("❌ Bundle inválido: " + r.error); return; }
-    } catch {}
-
-    ghOut("⬆️ Push… (enviando pro GitHub)");
-    const msg = "RCF: update mother_bundle.json (via Mãe)";
-    const r = await G.putFile(cfg, content, msg);
-
-    if (!r.ok) {
-      ghOut("❌ Push falhou: " + r.msg + (r.status ? (" (HTTP " + r.status + ")") : ""));
-      return;
-    }
-
-    ghOut("✅ Push OK. Atualizado no GitHub.\n(commit via contents API)");
+    if (!hasGitHubSync()) { ghOut("GitHub Sync: módulo não carregou (RCF_GH_SYNC ausente)."); return; }
+    ghOut("GitHub: enviando…");
+    const bundle = parsePasted();
+    const r = await window.RCF_GH_SYNC.pushJson(bundle, "RCF: update mother_bundle.json");
+    if (!r.ok) { ghOut("❌ Push falhou: " + (r.msg || r.raw || "erro")); return; }
+    ghOut("✅ Push OK. Atualizado no GitHub.\n(commit via contents API)\nSHA: " + (r.sha || "-"));
+    return r;
   }
 
+  async function ghUpdateNow(){
+    // 1 clique: Pull -> Dry-run -> Apply
+    ghOut("⚡ Atualizando agora… (Pull + Dry-run + Apply)");
+    const pulled = await ghPullToTextarea();
+    if (!pulled || !pulled.ok) return;
+
+    // aplica o bundle puxado
+    status("Aplicando…");
+    const bundle = pulled.json;
+    const rep = doDryRun(bundle);
+    checkGuard(bundle);
+
+    const r = T().apply(bundle);
+    status("Atualizado ✅");
+    out("motherMaintOut", renderReport(rep));
+    refreshHistoryHint();
+    log("MAE update now ok: " + (r.meta?.name || ""));
+
+    // marca SHA aplicado
+    try { localStorage.setItem(LS_LAST_SHA, String(pulled.sha || "")); } catch {}
+    ghOut("✅ Atualizado ✅ (Pull+Apply)\nSHA aplicado: " + (pulled.sha || "-"));
+  }
+
+  async function ghAutoCheckOnBoot(){
+    if (!hasGitHubSync()) return;
+    // só checa se tem config mínima
+    const cfg = window.RCF_GH_SYNC.loadCfg();
+    if (!(cfg.owner && cfg.repo && cfg.branch && cfg.path && cfg.token)) return;
+
+    ghOut("GitHub: checando update…");
+    const peek = await window.RCF_GH_SYNC.peekRemote();
+    if (!peek.ok) { ghOut("GitHub: sem check (" + (peek.msg || peek.raw || "erro") + ")"); return; }
+
+    const last = (localStorage.getItem(LS_LAST_SHA) || "").trim();
+    const remote = String(peek.sha || "").trim();
+
+    if (remote && remote !== last) {
+      ghOut("✅ Update disponível ✅\nSHA remoto: " + remote + "\nClique em “⚡ Atualizar agora”.");
+      // também sinaliza no status
+      status("Update disponível ✅");
+    } else {
+      ghOut("GitHub: tudo atualizado ✅");
+    }
+  }
+
+  // ---------------- bind / init ----------------
   function bind(){
     ensureCard();
 
@@ -422,10 +415,16 @@
     bindTap($("btnMotherExport"), () => actionExport());
     bindTap($("btnMotherResetAll"), () => actionResetAll());
 
-    // GitHub
-    bindTap($("btnGhSaveCfg"), () => ghSaveCfg());
+    // GitHub binds
+    bindTap($("btnGhSaveCfg"), () => saveCfg());
     bindTap($("btnGhPull"), () => ghPullToTextarea());
     bindTap($("btnGhPush"), () => ghPushFromTextarea());
+    bindTap($("btnGhUpdateNow"), () => ghUpdateNow());
+
+    // tenta preencher UI com cfg salva
+    try {
+      if (hasGitHubSync()) fillCfgUI(window.RCF_GH_SYNC.loadCfg());
+    } catch {}
 
     // sinal no adminOut
     const aout = $("adminOut");
@@ -434,16 +433,18 @@
     refreshHistoryHint();
     status("OK ✅");
 
-    // tenta carregar cfg na UI
-    ensureGitHubSyncLoaded().then((ok) => {
-      if (ok) { loadGhCfgToUI(); ghOut("GitHub: pronto. (Sync v1)"); }
-      else { ghOut("GitHub: github_sync.js ainda não carregou (ok, você pode usar mesmo assim)."); }
+    // AUTO-CHECK (opção #1): ao abrir
+    ghAutoCheckOnBoot();
+
+    // bônus: re-checa quando volta pro app (troca de aba)
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") ghAutoCheckOnBoot();
     });
   }
 
   function init(){
     if (!T()) {
-      out("adminOut", "ERRO: Thompson não carregou (RCF_THOMPSON inexistente). Verifique <script src='js/core/thompson.js'> antes deste arquivo.");
+      out("adminOut", "ERRO: Thompson não carregou (RCF_THOMPSON inexistente). Verifique thompson.js antes deste arquivo.");
       return;
     }
     bind();
