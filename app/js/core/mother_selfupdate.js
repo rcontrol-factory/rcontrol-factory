@@ -1,5 +1,5 @@
 /* =========================================================
-  RControl Factory — js/core/mother_selfupdate.js (FULL) v2.2
+  RControl Factory — js/core/mother_selfupdate.js (FULL)
   UI da Mãe (Admin) + integra Thompson:
   - Apply /import/mother_bundle.json
   - Dry-run (prévia)
@@ -8,9 +8,8 @@
   - Exportar bundle atual
   - Zerar tudo
 
-  + NOVO (v2.2):
-  - Publish Queue (OFFLINE): enfileirar bundles aplicados
-  - Ver fila / Exportar fila / Limpar fila
+  + GitHub Sync PRIVADO (SAFE):
+  - Pull/Push do arquivo (default): app/import/mother_bundle.json
 
   MODO SAFE (condicional):
   - Se bundle mexe em arquivo crítico -> pede confirmação no UI
@@ -21,10 +20,6 @@
 
   const $ = (id) => document.getElementById(id);
   const T = () => window.RCF_THOMPSON;
-  const Q = () => window.RCF_PUBLISH_QUEUE;
-
-  // sinal pra outros scripts não duplicarem a UI da Mãe
-  window.RCF_MOTHER_UI = true;
 
   const TAP_GUARD_MS = 450;
   let _lastTapAt = 0;
@@ -72,6 +67,24 @@
     }
   }
 
+  // ---------- GitHub Sync loader ----------
+  async function ensureGitHubSyncLoaded(){
+    if (window.RCF_GITHUB) return true;
+
+    // injeta script (pra não depender do index.html)
+    return new Promise((resolve) => {
+      try {
+        const s = document.createElement("script");
+        s.src = "js/core/github_sync.js?v=" + Date.now();
+        s.onload = () => resolve(!!window.RCF_GITHUB);
+        s.onerror = () => resolve(false);
+        document.head.appendChild(s);
+      } catch {
+        resolve(false);
+      }
+    });
+  }
+
   function ensureCard(){
     const adminView = $("view-admin");
     if (!adminView) return;
@@ -101,16 +114,34 @@
         <button class="btn danger" id="btnMotherResetAll" type="button">Zerar tudo</button>
       </div>
 
-      <hr style="border:0;border-top:1px solid rgba(255,255,255,.08);margin:12px 0">
+      <hr style="border:0;border-top:1px solid rgba(255,255,255,.08);margin:14px 0" />
 
-      <div class="hint" style="margin:0 0 8px 0">Publish Queue (OFFLINE) — (publicação real via API fica para depois)</div>
+      <h3 style="margin:0 0 8px 0">GitHub Sync (Privado) — SAFE</h3>
+      <p class="hint" style="margin-top:0">
+        Puxa/Empurra o arquivo do bundle no seu repo privado. Assim você atualiza em um aparelho e puxa no outro.
+      </p>
 
       <div class="row" style="flex-wrap:wrap; gap:10px">
-        <button class="btn" id="btnQueueEnqueueFromPaste" type="button">Enfileirar bundle colado</button>
-        <button class="btn" id="btnQueueView" type="button">Ver fila</button>
-        <button class="btn" id="btnQueueExport" type="button">Exportar fila</button>
-        <button class="btn danger" id="btnQueueClear" type="button">Limpar fila</button>
+        <input id="ghOwner" placeholder="owner (ex: MateusSantana)" style="flex:1;min-width:160px" />
+        <input id="ghRepo" placeholder="repo (ex: FactoryPWA)" style="flex:1;min-width:160px" />
       </div>
+
+      <div class="row" style="flex-wrap:wrap; gap:10px; margin-top:8px">
+        <input id="ghBranch" placeholder="branch (ex: main)" style="flex:1;min-width:140px" />
+        <input id="ghPath" placeholder="path (ex: app/import/mother_bundle.json)" style="flex:2;min-width:220px" />
+      </div>
+
+      <div class="row" style="flex-wrap:wrap; gap:10px; margin-top:8px">
+        <input id="ghToken" placeholder="TOKEN (PAT) — contents:read/write" style="flex:1;min-width:260px" />
+        <button class="btn" id="btnGhSaveCfg" type="button">Salvar config</button>
+      </div>
+
+      <div class="row" style="flex-wrap:wrap; gap:10px; margin-top:8px">
+        <button class="btn" id="btnGhPull" type="button">⬇️ Pull (baixar do GitHub)</button>
+        <button class="btn ok" id="btnGhPush" type="button">⬆️ Push (enviar p/ GitHub)</button>
+      </div>
+
+      <pre class="mono small" id="ghOut" style="margin-top:10px">GitHub: pronto.</pre>
 
       <div class="hint" style="margin:10px 0 6px 0">Cole um bundle JSON aqui:</div>
       <textarea id="motherBundleTextarea" spellcheck="false"
@@ -143,7 +174,6 @@
 
       <pre class="mono small" id="motherMaintOut" style="margin-top:10px">Pronto.</pre>
       <div class="hint" id="motherHistHint" style="margin-top:8px"></div>
-      <div class="hint" id="queueHint" style="margin-top:6px"></div>
     `;
 
     const firstCard = adminView.querySelector(".card");
@@ -199,19 +229,11 @@
     el.textContent = `Histórico: ${h.length} snapshot(s). Último: ${top?.at || "-"}`;
   }
 
-  function refreshQueueHint(){
-    const el = $("queueHint");
-    if (!el) return;
-    const qq = Q()?.list?.() || [];
-    el.textContent = `Fila: ${qq.length} item(s). (OFFLINE)`;
-  }
-
   function doDryRun(bundle){
     const current = T().loadOverrides();
     const rep = T().dryRun(bundle, current);
     out("motherMaintOut", renderReport(rep));
     refreshHistoryHint();
-    refreshQueueHint();
     return rep;
   }
 
@@ -231,18 +253,6 @@
     }
   }
 
-  function enqueueApplied(bundle, source){
-    try {
-      if (!Q() || typeof Q().enqueue !== "function") return;
-      Q().enqueue(bundle, {
-        source: source || "unknown",
-        mode: getModeSafe(),
-        note: "Applied locally (overrides) — ready to publish later"
-      });
-      refreshQueueHint();
-    } catch {}
-  }
-
   async function actionApplyFile(){
     status("Aplicando…");
     out("motherMaintOut", "Carregando /import/mother_bundle.json …");
@@ -250,16 +260,11 @@
     const rep = doDryRun(bundle);
     checkGuard(bundle);
 
-    T().apply(bundle);
-
-    // ✅ Novo: enfileira automaticamente
-    enqueueApplied(bundle, "import_file");
-
+    const r = T().apply(bundle);
     status("Bundle salvo ✅");
-    log("MAE apply file ok: " + (bundle?.meta?.name || ""));
+    log("MAE apply file ok: " + (r.meta?.name || ""));
     out("motherMaintOut", renderReport(rep));
     refreshHistoryHint();
-    refreshQueueHint();
   }
 
   function actionDryRun(){
@@ -275,16 +280,11 @@
     const rep = doDryRun(bundle);
     checkGuard(bundle);
 
-    T().apply(bundle);
-
-    // ✅ Novo: enfileira automaticamente
-    enqueueApplied(bundle, "pasted");
-
+    const r = T().apply(bundle);
     status("Bundle salvo ✅");
-    log("MAE apply pasted ok: " + (bundle?.meta?.name || ""));
+    log("MAE apply pasted ok: " + (r.meta?.name || ""));
     out("motherMaintOut", renderReport(rep));
     refreshHistoryHint();
-    refreshQueueHint();
   }
 
   function actionRollback(){
@@ -294,7 +294,6 @@
     status("Rollback ✅");
     out("motherMaintOut", "✅ " + r.msg + "\n\nRecarregue a página se necessário.");
     refreshHistoryHint();
-    refreshQueueHint();
     log("MAE rollback ok");
   }
 
@@ -306,7 +305,6 @@
     out("motherMaintOut", "✅ Bundle atual exportado (copiado no clipboard).\nfiles: " + Object.keys(bundle.files||{}).length);
     status("Export ok ✅");
     refreshHistoryHint();
-    refreshQueueHint();
   }
 
   function actionResetAll(){
@@ -315,61 +313,103 @@
     out("motherMaintOut", "✅ ZERADO.\nOverrides e histórico removidos.");
     status("Zerado ✅");
     refreshHistoryHint();
-    refreshQueueHint();
     log("MAE reset all");
   }
 
-  // ------- Queue actions -------
-  function actionQueueEnqueueFromPaste(){
-    status("Enfileirando…");
-    if (!Q()) throw new Error("Publish Queue não carregou (RCF_PUBLISH_QUEUE).");
-    const bundle = parsePasted();
-    Q().enqueue(bundle, { source:"manual_enqueue", mode:getModeSafe() });
-    out("motherMaintOut", "✅ Enfileirado na fila OFFLINE.\n(Quando ligar API, a gente publica.)");
-    status("Fila ✅");
-    refreshQueueHint();
+  // ---------- GitHub UI ----------
+  function ghOut(text){
+    const el = $("ghOut");
+    if (el) el.textContent = String(text || "");
   }
 
-  function actionQueueView(){
-    if (!Q()) throw new Error("Publish Queue não carregou (RCF_PUBLISH_QUEUE).");
-    const q = Q().list();
-    if (!q.length) {
-      out("motherMaintOut", "Fila vazia.");
-      refreshQueueHint();
+  function loadGhCfgToUI(){
+    const G = window.RCF_GITHUB;
+    if (!G) return;
+    const cfg = G.getCfg();
+    if ($("ghOwner")) $("ghOwner").value = cfg.owner || "";
+    if ($("ghRepo")) $("ghRepo").value = cfg.repo || "";
+    if ($("ghBranch")) $("ghBranch").value = cfg.branch || "main";
+    if ($("ghPath")) $("ghPath").value = cfg.path || "app/import/mother_bundle.json";
+    if ($("ghToken")) $("ghToken").value = cfg.token ? "••••••••••" : "";
+  }
+
+  function readGhCfgFromUI(){
+    // token: se o user colar, salva; se ele deixar "••••", mantém o atual
+    const G = window.RCF_GITHUB;
+    const cur = G.getCfg();
+
+    const owner = String($("ghOwner")?.value || "").trim();
+    const repo  = String($("ghRepo")?.value || "").trim();
+    const branch = String($("ghBranch")?.value || "main").trim() || "main";
+    const path = String($("ghPath")?.value || "app/import/mother_bundle.json").trim() || "app/import/mother_bundle.json";
+
+    let tokenRaw = String($("ghToken")?.value || "").trim();
+    let token = cur.token || "";
+    if (tokenRaw && tokenRaw !== "••••••••••") token = tokenRaw;
+
+    return { owner, repo, branch, path, token };
+  }
+
+  async function ghSaveCfg(){
+    const ok = await ensureGitHubSyncLoaded();
+    if (!ok) { ghOut("❌ Não carregou github_sync.js"); return; }
+
+    const G = window.RCF_GITHUB;
+    const cfg = readGhCfgFromUI();
+    G.setCfg(cfg);
+    ghOut("✅ Config salva (local).");
+    loadGhCfgToUI();
+  }
+
+  async function ghPullToTextarea(){
+    const ok = await ensureGitHubSyncLoaded();
+    if (!ok) { ghOut("❌ Não carregou github_sync.js"); return; }
+
+    const G = window.RCF_GITHUB;
+    const cfg = readGhCfgFromUI();
+    G.setCfg(cfg);
+
+    ghOut("⬇️ Pull… (baixando do GitHub)");
+    const r = await G.getFile(cfg);
+    if (!r.ok) {
+      ghOut("❌ Pull falhou: " + r.msg + (r.status ? (" (HTTP " + r.status + ")") : ""));
       return;
     }
-    const top = q[0];
-    const name = top?.bundle?.meta?.name || "-";
-    const ver  = top?.bundle?.meta?.version || "-";
-    out("motherMaintOut",
-      `Fila: ${q.length} item(s)\n` +
-      `Topo: ${name} v${ver}\n` +
-      `at: ${top.at}\n` +
-      `status: ${top.status}\n` +
-      `files: ${Object.keys(top.bundle?.files||{}).length}\n\n` +
-      `Dica: "Exportar fila" copia tudo (json).`
-    );
-    refreshQueueHint();
+
+    const ta = $("motherBundleTextarea");
+    if (ta) ta.value = r.content || "";
+
+    ghOut("✅ Pull OK. Bundle carregado no textarea.\nsha: " + (r.sha || "-"));
   }
 
-  function actionQueueExport(){
-    status("Exportando fila…");
-    if (!Q()) throw new Error("Publish Queue não carregou (RCF_PUBLISH_QUEUE).");
-    const dump = Q().exportAll();
-    const txt = JSON.stringify(dump, null, 2);
-    try { navigator.clipboard.writeText(txt); } catch {}
-    out("motherMaintOut", "✅ Fila exportada (tentei copiar no clipboard).\nitems: " + (dump.items?.length || 0));
-    status("Export fila ✅");
-    refreshQueueHint();
-  }
+  async function ghPushFromTextarea(){
+    const ok = await ensureGitHubSyncLoaded();
+    if (!ok) { ghOut("❌ Não carregou github_sync.js"); return; }
 
-  function actionQueueClear(){
-    status("Limpando fila…");
-    if (!Q()) throw new Error("Publish Queue não carregou (RCF_PUBLISH_QUEUE).");
-    Q().clear();
-    out("motherMaintOut", "✅ Fila limpa.");
-    status("Fila limpa ✅");
-    refreshQueueHint();
+    const G = window.RCF_GITHUB;
+    const cfg = readGhCfgFromUI();
+    G.setCfg(cfg);
+
+    const ta = $("motherBundleTextarea");
+    const content = ta ? String(ta.value || "") : "";
+    if (!content.trim()) { ghOut("❌ Textarea vazio."); return; }
+
+    // SAFE: antes de push, tenta validar bundle via Thompson parse
+    try {
+      const r = T().parseBundle(content);
+      if (!r.ok) { ghOut("❌ Bundle inválido: " + r.error); return; }
+    } catch {}
+
+    ghOut("⬆️ Push… (enviando pro GitHub)");
+    const msg = "RCF: update mother_bundle.json (via Mãe)";
+    const r = await G.putFile(cfg, content, msg);
+
+    if (!r.ok) {
+      ghOut("❌ Push falhou: " + r.msg + (r.status ? (" (HTTP " + r.status + ")") : ""));
+      return;
+    }
+
+    ghOut("✅ Push OK. Atualizado no GitHub.\n(commit via contents API)");
   }
 
   function bind(){
@@ -382,17 +422,23 @@
     bindTap($("btnMotherExport"), () => actionExport());
     bindTap($("btnMotherResetAll"), () => actionResetAll());
 
-    bindTap($("btnQueueEnqueueFromPaste"), () => actionQueueEnqueueFromPaste());
-    bindTap($("btnQueueView"), () => actionQueueView());
-    bindTap($("btnQueueExport"), () => actionQueueExport());
-    bindTap($("btnQueueClear"), () => actionQueueClear());
+    // GitHub
+    bindTap($("btnGhSaveCfg"), () => ghSaveCfg());
+    bindTap($("btnGhPull"), () => ghPullToTextarea());
+    bindTap($("btnGhPush"), () => ghPushFromTextarea());
 
+    // sinal no adminOut
     const aout = $("adminOut");
-    if (aout) aout.textContent = (aout.textContent || "Pronto.") + "\n\nMAE v2.2 ✅ (queue OFFLINE)";
+    if (aout) aout.textContent = (aout.textContent || "Pronto.") + "\n\nMAE+THOMPSON ✅ carregado (mother_selfupdate.js)";
 
     refreshHistoryHint();
-    refreshQueueHint();
     status("OK ✅");
+
+    // tenta carregar cfg na UI
+    ensureGitHubSyncLoaded().then((ok) => {
+      if (ok) { loadGhCfgToUI(); ghOut("GitHub: pronto. (Sync v1)"); }
+      else { ghOut("GitHub: github_sync.js ainda não carregou (ok, você pode usar mesmo assim)."); }
+    });
   }
 
   function init(){
