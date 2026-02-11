@@ -1,167 +1,144 @@
 /* =========================================================
-  RCF — app/js/core/github_sync.js
-  GitHub Contents API (SAFE helper)
+  RCF — /app/js/core/github_repo_sync.js
+  GitHub Contents API — FULL SYNC (bundle.files -> repo paths)
   - cfg via localStorage: "RCF_GH_CFG"
-    { owner, repo, branch, path, token }
-
+    { owner, repo, branch, token }
   API:
-    window.RCF_GH_SYNC.saveCfg(cfg)
-    window.RCF_GH_SYNC.loadCfg()
-    window.RCF_GH_SYNC.peekRemote() -> {ok, sha, url}
-    window.RCF_GH_SYNC.pullJson() -> {ok, sha, json}
-    window.RCF_GH_SYNC.pushJson(json, message) -> {ok, sha}
+    RCF_GH_FULL.saveCfg(cfg)
+    RCF_GH_FULL.loadCfg()
+    RCF_GH_FULL.pushBundle(bundle, opts)
+    RCF_GH_FULL.pullFile(pathInRepo)  // opcional
 ========================================================= */
 
-(function () {
+(() => {
   "use strict";
 
-  const LS_KEY = "RCF_GH_CFG";
+  const KEY = "RCF_GH_CFG";
 
-  function b64ToUtf8(b64) {
-    // base64 -> utf8 (iOS safe)
-    const bin = atob(String(b64 || "").replace(/\s/g, ""));
-    const bytes = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    try { return new TextDecoder("utf-8").decode(bytes); }
-    catch { // fallback
-      let s = "";
-      for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
-      return decodeURIComponent(escape(s));
-    }
+  function b64encodeUtf8(str){
+    // btoa não suporta UTF-8 direto
+    const bytes = new TextEncoder().encode(String(str ?? ""));
+    let bin = "";
+    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    return btoa(bin);
   }
 
-  function utf8ToB64(str) {
-    // utf8 -> base64 (iOS safe)
-    const s = String(str ?? "");
-    try {
-      const bytes = new TextEncoder().encode(s);
-      let bin = "";
-      for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-      return btoa(bin);
-    } catch {
-      return btoa(unescape(encodeURIComponent(s)));
-    }
+  function normRepoPath(p){
+    // bundle usa "/app/..." e repo usa "app/..."
+    let s = String(p || "").trim();
+    if (!s) throw new Error("path vazio");
+    if (s.startsWith("/")) s = s.slice(1);
+    return s;
   }
 
-  function cleanCfg(cfg) {
-    const c = cfg && typeof cfg === "object" ? cfg : {};
-    return {
-      owner: String(c.owner || "").trim(),
-      repo: String(c.repo || "").trim(),
-      branch: String(c.branch || "main").trim(),
-      path: String(c.path || "app/import/mother_bundle.json").trim(),
-      token: String(c.token || "").trim()
+  function apiBase(cfg){
+    return `https://api.github.com/repos/${cfg.owner}/${cfg.repo}/contents/`;
+  }
+
+  function loadCfg(){
+    try { return JSON.parse(localStorage.getItem(KEY) || "null"); }
+    catch { return null; }
+  }
+
+  function saveCfg(cfg){
+    const clean = {
+      owner: String(cfg.owner || "").trim(),
+      repo: String(cfg.repo || "").trim(),
+      branch: String(cfg.branch || "main").trim(),
+      token: String(cfg.token || "").trim(),
     };
+    if (!clean.owner || !clean.repo || !clean.token) throw new Error("CFG incompleta (owner/repo/token).");
+    localStorage.setItem(KEY, JSON.stringify(clean));
+    return clean;
   }
 
-  function saveCfg(cfg) {
-    const c = cleanCfg(cfg);
-    localStorage.setItem(LS_KEY, JSON.stringify(c));
-    return c;
-  }
-
-  function loadCfg() {
-    try {
-      const raw = localStorage.getItem(LS_KEY);
-      if (!raw) return cleanCfg({});
-      return cleanCfg(JSON.parse(raw));
-    } catch {
-      return cleanCfg({});
-    }
-  }
-
-  function hasCfg(cfg) {
-    const c = cleanCfg(cfg);
-    return !!(c.owner && c.repo && c.branch && c.path && c.token);
-  }
-
-  function apiUrl(cfg) {
-    const c = cleanCfg(cfg);
-    // NOTE: path precisa estar URL-encoded corretamente
-    const p = encodeURIComponent(c.path).replace(/%2F/g, "/");
-    return `https://api.github.com/repos/${encodeURIComponent(c.owner)}/${encodeURIComponent(c.repo)}/contents/${p}?ref=${encodeURIComponent(c.branch)}`;
-  }
-
-  async function ghFetch(cfg, url, opts) {
-    const c = cleanCfg(cfg);
-    const headers = {
+  async function ghFetch(url, cfg, init){
+    const headers = Object.assign({
       "Accept": "application/vnd.github+json",
-      "Authorization": "Bearer " + c.token
-    };
-    const res = await fetch(url, {
-      method: opts?.method || "GET",
-      headers: { ...headers, ...(opts?.headers || {}) },
-      body: opts?.body ? JSON.stringify(opts.body) : undefined
-    });
+      "Authorization": `Bearer ${cfg.token}`,
+      "X-GitHub-Api-Version": "2022-11-28",
+    }, (init && init.headers) || {});
+    const res = await fetch(url, Object.assign({}, init, { headers }));
     const text = await res.text();
     let json = null;
-    try { json = JSON.parse(text); } catch {}
+    try { json = text ? JSON.parse(text) : null; } catch {}
     if (!res.ok) {
-      const msg = (json && (json.message || json.error)) ? (json.message || json.error) : ("HTTP " + res.status);
-      return { ok: false, status: res.status, msg, raw: text };
+      const msg = (json && (json.message || json.error)) ? (json.message || json.error) : text;
+      throw new Error(`GitHub HTTP ${res.status}: ${msg}`);
     }
-    return { ok: true, status: res.status, json: json || {} };
+    return json;
   }
 
-  async function peekRemote(cfg) {
-    const c = cleanCfg(cfg);
-    if (!hasCfg(c)) return { ok: false, msg: "Config GitHub incompleta." };
-    const url = apiUrl(c);
-    const r = await ghFetch(c, url);
-    if (!r.ok) return r;
-    const sha = r.json?.sha || "";
-    return { ok: true, sha, url };
-  }
-
-  async function pullJson(cfg) {
-    const c = cleanCfg(cfg);
-    if (!hasCfg(c)) return { ok: false, msg: "Config GitHub incompleta." };
-
-    const url = apiUrl(c);
-    const r = await ghFetch(c, url);
-    if (!r.ok) return r;
-
-    const sha = r.json?.sha || "";
-    const content = r.json?.content || "";
-    if (!content) return { ok: false, msg: "Arquivo vazio/sem content no GitHub." };
-
-    const txt = b64ToUtf8(content);
-    let parsed = null;
-    try { parsed = JSON.parse(txt); } catch (e) {
-      return { ok: false, msg: "JSON inválido no GitHub: " + (e?.message || String(e)) };
+  async function getShaIfExists(cfg, pathInRepo){
+    const url = apiBase(cfg) + encodeURIComponent(pathInRepo).replaceAll("%2F", "/") + `?ref=${encodeURIComponent(cfg.branch)}`;
+    try {
+      const j = await ghFetch(url, cfg, { method: "GET" });
+      return j && j.sha ? j.sha : null;
+    } catch (e) {
+      // 404 = não existe ainda
+      if (String(e.message || "").includes("HTTP 404")) return null;
+      throw e;
     }
-    return { ok: true, sha, json: parsed };
   }
 
-  async function pushJson(cfg, jsonObj, message) {
-    const c = cleanCfg(cfg);
-    if (!hasCfg(c)) return { ok: false, msg: "Config GitHub incompleta." };
-
-    // pega sha atual (se existir)
-    const peek = await peekRemote(c);
-    const currentSha = peek.ok ? (peek.sha || null) : null;
-
-    const url = apiUrl(c);
-    const txt = JSON.stringify(jsonObj, null, 2);
+  async function putFile(cfg, pathInRepo, content, commitMsg){
+    const sha = await getShaIfExists(cfg, pathInRepo);
+    const url = apiBase(cfg) + encodeURIComponent(pathInRepo).replaceAll("%2F", "/");
     const body = {
-      message: String(message || "RCF: update mother_bundle.json"),
-      content: utf8ToB64(txt),
-      branch: c.branch
+      message: commitMsg,
+      content: b64encodeUtf8(String(content ?? "")),
+      branch: cfg.branch,
     };
-    if (currentSha) body.sha = currentSha;
+    if (sha) body.sha = sha;
 
-    const r = await ghFetch(c, url, { method: "PUT", body });
-    if (!r.ok) return r;
-
-    const newSha = r.json?.content?.sha || r.json?.sha || "";
-    return { ok: true, sha: newSha, json: r.json };
+    return ghFetch(url, cfg, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
   }
 
-  window.RCF_GH_SYNC = {
-    saveCfg,
-    loadCfg,
-    peekRemote: () => peekRemote(loadCfg()),
-    pullJson: () => pullJson(loadCfg()),
-    pushJson: (jsonObj, message) => pushJson(loadCfg(), jsonObj, message)
-  };
+  async function pushBundle(bundle, opts = {}){
+    const cfg = loadCfg();
+    if (!cfg || !cfg.owner || !cfg.repo || !cfg.token) {
+      throw new Error("CFG do GitHub não configurada. Preencha e salve na UI.");
+    }
+
+    const files = (bundle && bundle.files && typeof bundle.files === "object") ? bundle.files : null;
+    if (!files) throw new Error("Bundle sem .files");
+    const keys = Object.keys(files);
+    if (!keys.length) throw new Error("Bundle vazio (0 files).");
+
+    const name = bundle?.meta?.name || "bundle";
+    const ver  = bundle?.meta?.version || "0";
+    const commitMsg = opts.commitMsg || `RCF sync: ${name} ${ver}`;
+
+    const results = [];
+    // push sequencial (mais estável no iOS e evita rate-limit)
+    for (const k of keys) {
+      const repoPath = normRepoPath(k);
+      const content = files[k];
+      await putFile(cfg, repoPath, content, commitMsg);
+      results.push(repoPath);
+    }
+    return { ok: true, pushed: results, commitMsg };
+  }
+
+  // opcional: puxar um arquivo do repo
+  async function pullFile(pathInRepo){
+    const cfg = loadCfg();
+    if (!cfg) throw new Error("CFG não configurada.");
+    const p = normRepoPath(pathInRepo);
+    const url = apiBase(cfg) + encodeURIComponent(p).replaceAll("%2F", "/") + `?ref=${encodeURIComponent(cfg.branch)}`;
+    const j = await ghFetch(url, cfg, { method: "GET" });
+    if (!j || !j.content) throw new Error("Arquivo sem content.");
+    // decode base64 -> utf8
+    const bin = atob(String(j.content).replaceAll("\n",""));
+    const bytes = new Uint8Array(bin.length);
+    for (let i=0;i<bin.length;i++) bytes[i] = bin.charCodeAt(i);
+    const txt = new TextDecoder().decode(bytes);
+    return { ok:true, path:p, text:txt, sha:j.sha };
+  }
+
+  window.RCF_GH_FULL = { saveCfg, loadCfg, pushBundle, pullFile };
 })();
