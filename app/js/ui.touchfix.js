@@ -1,126 +1,169 @@
 /* /app/js/ui.touchfix.js
-   RCF TouchFix HARD (iOS/Android)
-   - Se um overlay invisível capturar o toque, a gente procura o botão REAL com elementsFromPoint()
-   - Força click() no elemento clicável mais adequado
-   - Loga no console quando precisou “salvar” o clique
+   RCF — Click/Tap Hardening (iOS Safari)
+   Objetivo: garantir que botões do “miolo” (Settings/Admin/Manutenção)
+   respondam SEM depender de binds individuais que “morrem”.
 */
-
 (() => {
   "use strict";
 
-  const CLICKABLE_SEL = [
-    "button",
-    "a[href]",
-    "input[type=button]",
-    "input[type=submit]",
-    "input[type=checkbox]",
-    "label",
-    ".btn",
-    ".tab",
-    ".dockbtn"
-  ].join(",");
+  const log = (...a) => {
+    try { (window.RCF?.log ? window.RCF.log : console.log)(...a); } catch {}
+  };
 
-  function isVisible(el) {
-    if (!el || el.nodeType !== 1) return false;
-    const cs = getComputedStyle(el);
-    if (cs.display === "none" || cs.visibility === "hidden" || cs.opacity === "0") return false;
-    const r = el.getBoundingClientRect();
-    return r.width > 0 && r.height > 0;
+  const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent);
+
+  // pega o botão/elemento clicável “de verdade”
+  function pickActionTarget(ev) {
+    const t = ev.target;
+    if (!t || !t.closest) return null;
+
+    // Não interferir em campos editáveis
+    if (t.closest("input, textarea, select")) return null;
+
+    // Elementos clicáveis do RCF
+    return t.closest(
+      "button, a, .btn, .tab, .dockbtn, [data-view], label, .file-item"
+    );
   }
 
-  function isPointerActive(el) {
-    const cs = getComputedStyle(el);
-    return cs.pointerEvents !== "none";
-  }
+  // executa ações por id (fallback quando listeners individuais falham)
+  function runById(id) {
+    if (!id) return false;
 
-  function isClickable(el) {
-    if (!el || el.nodeType !== 1) return false;
-    if (!isVisible(el)) return false;
-    if (!isPointerActive(el)) return false;
-
-    // se for label, só vale se estiver associado a input ou tiver onclick
-    if (el.tagName === "LABEL") return true;
-
-    if (el.matches(CLICKABLE_SEL)) return true;
-
-    // pega pai mais próximo que seja clicável
-    const up = el.closest ? el.closest(CLICKABLE_SEL) : null;
-    return !!up;
-  }
-
-  function pickBestClickable(x, y) {
-    const stack = document.elementsFromPoint ? document.elementsFromPoint(x, y) : [document.elementFromPoint(x, y)];
-    for (const el of stack) {
-      if (!el) continue;
-
-      // se tocar num filho dentro de um botão, sobe pro botão
-      const up = el.closest ? el.closest(CLICKABLE_SEL) : el;
-      const cand = up || el;
-
-      if (cand && isClickable(cand)) return cand;
-    }
-    return null;
-  }
-
-  let lastTap = { x: 0, y: 0, t: 0, moved: false };
-
-  // Marca início do toque
-  document.addEventListener("touchstart", (ev) => {
-    const t = ev.touches && ev.touches[0];
-    if (!t) return;
-    lastTap = { x: t.clientX, y: t.clientY, t: Date.now(), moved: false };
-  }, { passive: true, capture: true });
-
-  // Se arrastar muito, não força click
-  document.addEventListener("touchmove", (ev) => {
-    const t = ev.touches && ev.touches[0];
-    if (!t) return;
-    const dx = Math.abs(t.clientX - lastTap.x);
-    const dy = Math.abs(t.clientY - lastTap.y);
-    if (dx > 10 || dy > 10) lastTap.moved = true;
-  }, { passive: true, capture: true });
-
-  // Resgate do clique
-  document.addEventListener("touchend", (ev) => {
-    // não atrapalhar digitação/seleção
-    const target = ev.target;
-    if (target && target.closest) {
-      if (target.closest("input, textarea, select")) return;
-    }
-
-    const dt = Date.now() - lastTap.t;
-    if (lastTap.moved) return;
-    if (dt > 550) return; // long press, não
-
-    const changed = ev.changedTouches && ev.changedTouches[0];
-    const x = changed ? changed.clientX : lastTap.x;
-    const y = changed ? changed.clientY : lastTap.y;
-
-    const best = pickBestClickable(x, y);
-    if (!best) return;
-
-    // Se o toque caiu em um overlay, o target não será o botão.
-    // Aí a gente força o click no botão “real”.
-    const targetClickable = (target && target.closest) ? target.closest(CLICKABLE_SEL) : null;
-
-    if (best && best !== target && best !== targetClickable) {
-      try {
-        ev.preventDefault();  // evita “tap fantasma”
-        ev.stopPropagation();
-
-        // Se for label, manda click nela (ela vai acionar input)
-        if (best.tagName === "LABEL") {
-          best.click();
-        } else {
-          best.click();
-        }
-
-        // debug rápido
-        console.log("[RCF_TOUCHFIX] rescued click ->", best.tagName, best.id || "", best.className || "");
-      } catch (e) {
-        console.warn("[RCF_TOUCHFIX] rescue failed", e);
+    // ===== SETTINGS / SEGURANÇA =====
+    if (id === "btnPinSave") {
+      const v = (document.querySelector("#pinInput")?.value || "").trim();
+      if (!/^[0-9]{4,8}$/.test(v)) {
+        log("PIN inválido (4-8 dígitos).");
+        return true;
       }
+      try { localStorage.setItem("rcf:adminPin", v); } catch {}
+      log("PIN salvo ✅");
+      return true;
     }
-  }, { passive: false, capture: true });
 
+    if (id === "btnPinRemove") {
+      try { localStorage.removeItem("rcf:adminPin"); } catch {}
+      log("PIN removido ✅");
+      return true;
+    }
+
+    // ===== LOGS =====
+    if (id === "btnLogsRefresh") {
+      try {
+        window.RCF?.log?.("Logs atualizados ✅");
+        // força refresh se existir helper no app.js
+        window.RCF?.refreshLogs?.();
+      } catch {}
+      return true;
+    }
+
+    if (id === "btnLogsClear") {
+      try { window.RCF_LOGGER?.clear?.(); } catch {}
+      try { window.RCF?.log?.("Logs limpos ✅"); } catch {}
+      return true;
+    }
+
+    if (id === "btnLogsCopy") {
+      const txt = (window.RCF_LOGGER?.dump?.() || "");
+      navigator.clipboard?.writeText?.(txt).catch(()=>{});
+      log("Logs copiados ✅");
+      return true;
+    }
+
+    if (id === "btnLogsExport") {
+      // export .txt
+      const txt = (window.RCF_LOGGER?.dump?.() || "");
+      try {
+        const blob = new Blob([txt], { type: "text/plain;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "rcf-logs.txt";
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => {
+          URL.revokeObjectURL(url);
+          a.remove();
+        }, 300);
+      } catch {}
+      log("Export logs ✅");
+      return true;
+    }
+
+    // ===== ATALHOS =====
+    if (id === "btnGoDiagnose") {
+      try { window.RCF?.setView?.("diagnostics"); } catch {}
+      return true;
+    }
+
+    if (id === "btnGoAdmin") {
+      try { window.RCF?.setView?.("admin"); } catch {}
+      return true;
+    }
+
+    // ===== ADMIN (fallback) =====
+    if (id === "btnAdminDiag") {
+      try {
+        const out = document.querySelector("#adminOut");
+        if (out && window.RCF?.adminDiagnostics) out.textContent = window.RCF.adminDiagnostics();
+      } catch {}
+      log("Diag ✅");
+      return true;
+    }
+
+    if (id === "btnAdminZeroSafe") {
+      // “zerar safe”: limpa overrides do SW (se tiver)
+      try { window.RCF_VFS?.clearAll?.(); } catch {}
+      log("Zerar (safe) ✅");
+      return true;
+    }
+
+    // ===== MAE / MANUTENÇÃO =====
+    if (id === "btnMotherApplyJson") { log("Aplicar mother_bundle.json (hook)"); return true; }
+    if (id === "btnMotherDryRun") { log("Dry-run (hook)"); return true; }
+    if (id === "btnMotherRollback") { log("Rollback (hook)"); return true; }
+    if (id === "btnMotherExport") { log("Export bundle atual (hook)"); return true; }
+    if (id === "btnMotherResetAll") { log("Zerar tudo (hook)"); return true; }
+
+    return false;
+  }
+
+  // iOS: um toque pode “matar” cliques seguintes quando o preventDefault acontece errado.
+  // Aqui a gente faz um “bridge” bem estável: captura touchend e click.
+  let guard = 0;
+
+  function handler(ev) {
+    const target = pickActionTarget(ev);
+    if (!target) return;
+
+    // evita repetição muito rápida
+    const t = Date.now();
+    if (t - guard < 120) return;
+    guard = t;
+
+    // se é touchend, a gente garante que vira ação imediatamente
+    if (ev.type === "touchend") {
+      try { ev.preventDefault(); ev.stopPropagation(); } catch {}
+      const id = target.id || target.getAttribute("id");
+      if (runById(id)) return;
+
+      // fallback final: dispara click de verdade
+      try { target.click(); } catch {}
+      return;
+    }
+
+    // click normal: roda fallback se necessário
+    const id = target.id || target.getAttribute("id");
+    if (runById(id)) {
+      try { ev.preventDefault(); ev.stopPropagation(); } catch {}
+      return;
+    }
+  }
+
+  // captura ANTES de qualquer outra coisa
+  document.addEventListener("touchend", handler, { capture: true, passive: false });
+  document.addEventListener("click", handler, { capture: true, passive: false });
+
+  if (isIOS) log("ui.touchfix loaded ✅ (iOS hardening)");
 })();
