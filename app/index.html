@@ -2,25 +2,46 @@
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Redirecionando…</title>
-</head>
-<body>
-  <div style="font-family: system-ui; padding: 18px;">
-    Redirecionando…
-  </div>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#0b1220" />
+  <title>RControl Factory</title>
 
+  <link rel="stylesheet" href="/app/styles.css" />
+
+  <!-- iOS PWA -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+</head>
+
+<body>
+  <div id="app"></div>
+
+  <!-- CORE -->
+  <script defer src="/app/app.js"></script>
+
+  <!-- UI / ROUTER -->
+  <script defer src="/app/js/ui.touchfix.js"></script>
+  <script defer src="/app/js/router.js"></script>
+  <script defer src="/app/js/admin.js"></script>
+
+  <!-- CORE MODULES -->
+  <script defer src="/app/js/core/vfs_overrides.js"></script>
+  <script defer src="/app/js/core/thompson.js"></script>
+  <script defer src="/app/js/core/github_sync.js"></script>
+  <script defer src="/app/js/core/mother_selfupdate.js"></script>
+
+  <!-- SW REGISTER (usa o SW da RAIZ) -->
   <script>
-    // evita loop: se já estiver na raiz, não faz nada
     (function(){
-      try {
-        if (location.pathname === "/" || location.pathname === "/index.html") return;
-        // se estiver em /app ou /app/qualquer-coisa, manda pra raiz
-        if (location.pathname.startsWith("/app")) {
-          location.replace("/");
-          return;
+      if (!("serviceWorker" in navigator)) return;
+      window.addEventListener("load", async () => {
+        try {
+          // registra o SW da raiz, com scope "/"
+          await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+        } catch(e){
+          console.warn("SW erro:", e);
         }
-      } catch {}
+      });
     })();
   </script>
 </body>
