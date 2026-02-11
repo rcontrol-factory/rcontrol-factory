@@ -1,177 +1,319 @@
 /* =========================================================
-  RControl Factory — core/thompson.js (FULL)
-  THOMPSON = Guardião / Policy Gate do Self-Update (Mãe)
-
-  Modos:
-   - SAFE (condicional): só permite override em arquivos "seguros"
-   - UNLOCK (livre): permite qualquer arquivo (ainda valida estrutura)
-
-  Exposto em:
-   window.RCF_THOMPSON.validateBundle(bundle, { mode })
-
-  Bundle esperado:
-   {
-     meta?: { name, version, createdAt, note? },
-     files: { "/js/core/ui_bindings.js": "...", ... }
-   }
-
+  RControl Factory — js/core/thompson.js — v1.1
+  THOMPSON = "cérebro" (prompt -> patch)
+  - SAFE por padrão: gera patch, NÃO aplica.
+  - LIVRE: pode aplicar via MAE.applyBundle() (se existir).
+  - Integra com UI do Agent (#agentCmd/#btnAgentRun/#agentOut)
+  - Logs no padrão RCF
 ========================================================= */
+
 (function () {
   "use strict";
 
-  const nowISO = () => new Date().toISOString();
+  const $ = (id) => document.getElementById(id);
 
-  function log(msg, obj) {
+  // ---------- logger ----------
+  function log(msg) {
     try {
-      if (window.RCF && typeof window.RCF.log === "function") {
-        window.RCF.log(msg, obj || "");
-      } else {
-        console.log("[THOMPSON]", msg, obj || "");
+      if (window.RCF_LOGGER && typeof window.RCF_LOGGER.push === "function") {
+        window.RCF_LOGGER.push("log", msg);
+        return;
       }
     } catch {}
+    try { console.log("[THOMPSON]", msg); } catch {}
   }
 
-  function isObj(x) { return x && typeof x === "object" && !Array.isArray(x); }
-
-  function normalizePath(p) {
-    let s = String(p || "").trim();
-    if (!s) return "";
-    // força começar com /
-    if (!s.startsWith("/")) s = "/" + s;
-    // remove // duplicado
-    s = s.replace(/\/{2,}/g, "/");
-    return s;
+  function write(id, text) {
+    const el = $(id);
+    if (el) el.textContent = String(text ?? "");
   }
 
-  function applyMacros(content) {
-    const s = String(content ?? "");
-    return s.replace(/\{\{DATE\}\}/g, nowISO());
+  function status(text) {
+    const el = $("statusText");
+    if (el) el.textContent = String(text ?? "");
   }
 
-  // ✅ allowlist SAFE: mexer só no que não “mata” a Factory
-  // (você pode ajustar depois, mas isso já evita BO pesado)
-  const SAFE_ALLOW_PREFIXES = [
-    "/js/core/ui_",              // ui_safety.js, ui_bindings.js, ui_gear etc
-    "/js/core/mother_",          // mother_selfupdate.js
-    "/js/core/vfs_",             // vfs_overrides.js
-    "/js/core/logger.js",        // logs
-    "/js/admin.js",              // camada admin fora do core
-    "/styles.css",               // visual
-    "/privacy.html",
-    "/terms.html"
-  ];
-
-  // ❌ bloqueados no SAFE
-  const SAFE_BLOCK_PREFIXES = [
-    "/sw.js",
-    "/manifest.json",
-    "/index.html",
-    "/app.js",                   // o cérebro principal
-    "/js/app.js",
-    "/js/core/storage.js",
-    "/js/core/patch.js",
-    "/js/core/patchset.js",
-    "/js/core/commands.js",
-    "/js/core/selfheal.js",
-    "/js/core/autofix.js",
-    "/js/core/policy.js",
-    "/js/core/risk.js",
-    "/js/core/diagnostics.js",
-  ];
-
-  function startsWithAny(path, list) {
-    return list.some((p) => {
-      if (p.endsWith("/")) return path.startsWith(p);
-      return path === p || path.startsWith(p + "/") || path.startsWith(p);
-    });
+  // ---------- cfg (SAFE/LIVRE) ----------
+  const CFG_KEY = "rcf:cfg";
+  function readCfg() {
+    try {
+      const raw = localStorage.getItem(CFG_KEY);
+      if (!raw) return { mode: "safe" };
+      const cfg = JSON.parse(raw);
+      return cfg && typeof cfg === "object" ? cfg : { mode: "safe" };
+    } catch {
+      return { mode: "safe" };
+    }
   }
 
-  function allowedInSafe(path) {
-    if (startsWithAny(path, SAFE_BLOCK_PREFIXES)) return false;
-    // precisa bater allowlist (por prefixo) OU ser exatamente um arquivo allow explícito
-    return startsWithAny(path, SAFE_ALLOW_PREFIXES);
+  function isLivre() {
+    const cfg = readCfg();
+    return String(cfg.mode || "").toLowerCase() === "livre";
   }
 
-  function summarize(bundle) {
-    const meta = bundle.meta || {};
-    const files = bundle.files || {};
-    const keys = Object.keys(files);
+  // ---------- iOS safe tap ----------
+  const TAP_GUARD_MS = 450;
+  let _lastTapAt = 0;
+
+  function bindTap(el, fn) {
+    if (!el) return;
+
+    const handler = (e) => {
+      const now = Date.now();
+      if (now - _lastTapAt < TAP_GUARD_MS) {
+        try { e.preventDefault(); e.stopPropagation(); } catch {}
+        return;
+      }
+      _lastTapAt = now;
+
+      try { e.preventDefault(); e.stopPropagation(); } catch {}
+      try { fn(e); } catch (err) {
+        write("agentOut", "ERRO: " + (err?.message || String(err)));
+      }
+    };
+
+    el.style.pointerEvents = "auto";
+    el.style.touchAction = "manipulation";
+    el.style.webkitTapHighlightColor = "transparent";
+
+    el.addEventListener("touchend", handler, { passive: false, capture: true });
+    el.addEventListener("click", handler, { passive: false, capture: true });
+  }
+
+  // ---------- patch format ----------
+  // patch = { meta:{...}, files:{ "/path/file.js": "conteudo" }, notes:[...] }
+  function makePatch(meta, files, notes) {
     return {
-      name: meta.name || "-",
-      version: meta.version || "-",
-      createdAt: meta.createdAt || "-",
-      files: keys.length
+      meta: {
+        name: meta?.name || "thompson-patch",
+        version: meta?.version || "1.0",
+        createdAt: new Date().toISOString()
+      },
+      files: files || {},
+      notes: Array.isArray(notes) ? notes : []
     };
   }
 
-  function validateStructure(bundle) {
-    if (!isObj(bundle)) return { ok: false, err: "Bundle não é objeto" };
-    if (!isObj(bundle.files)) return { ok: false, err: "Bundle sem 'files' (objeto)" };
-    const keys = Object.keys(bundle.files);
-    if (!keys.length) return { ok: false, err: "Bundle 'files' está vazio" };
+  // ---------- simple prompt parsing ----------
+  // suportado:
+  // 1) "help"
+  // 2) "status"
+  // 3) "patch: { ...json... }"  (cola JSON)
+  // 4) "make test" (gera um patch de teste)
+  function parsePrompt(raw) {
+    const text = String(raw || "").trim();
+    if (!text) return { cmd: "empty" };
 
-    // valida chaves + valores
-    for (const k of keys) {
-      const p = normalizePath(k);
-      if (!p) return { ok: false, err: "Caminho vazio em files" };
-      const v = bundle.files[k];
-      if (typeof v !== "string") return { ok: false, err: `Conteúdo não-string em ${k}` };
+    if (text === "help") return { cmd: "help" };
+    if (text === "status") return { cmd: "status" };
+
+    if (text.toLowerCase().startsWith("patch:")) {
+      const jsonPart = text.slice(6).trim();
+      return { cmd: "patch_json", jsonPart };
     }
-    return { ok: true };
+
+    if (text.toLowerCase().includes("make test")) {
+      return { cmd: "make_test" };
+    }
+
+    // default: tratar como "task" (só descreve)
+    return { cmd: "task", text };
   }
 
-  function validateBundle(bundle, opts = {}) {
-    const mode = String(opts.mode || "safe").toLowerCase(); // safe | unlock
-    const s = validateStructure(bundle);
-    if (!s.ok) return { ok: false, mode, reason: s.err, allowed: [], blocked: [], dryRun: [] };
-
-    const filesIn = bundle.files;
-    const allowed = [];
-    const blocked = [];
-    const dryRun = [];
-
-    for (const rawPath of Object.keys(filesIn)) {
-      const path = normalizePath(rawPath);
-
-      // normaliza e troca macro
-      const content = applyMacros(filesIn[rawPath]);
-
-      const rec = { path, bytes: content.length };
-
-      if (mode === "unlock") {
-        allowed.push(path);
-        dryRun.push(rec);
-        continue;
-      }
-
-      // SAFE
-      if (allowedInSafe(path)) {
-        allowed.push(path);
-        dryRun.push(rec);
-      } else {
-        blocked.push(path);
-      }
-    }
-
-    if (mode !== "unlock" && blocked.length) {
-      return {
-        ok: false,
-        mode,
-        reason: "SAFE bloqueou arquivos críticos ou fora da allowlist",
-        allowed,
-        blocked,
-        dryRun
-      };
-    }
-
-    return { ok: true, mode, reason: "OK", allowed, blocked, dryRun };
+  // ---------- apply (via MAE) ----------
+  function canApply() {
+    // precisa estar em LIVRE e ter MAE com applyBundle
+    if (!isLivre()) return false;
+    return !!(window.MAE && typeof window.MAE.applyBundle === "function");
   }
 
-  // API pública
-  window.RCF_THOMPSON = window.RCF_THOMPSON || {};
-  window.RCF_THOMPSON.validateBundle = validateBundle;
-  window.RCF_THOMPSON._summarize = summarize;
+  async function applyPatch(patch) {
+    // aplica como "bundle" do formato da Mãe
+    // bundle esperado: { meta, files }
+    if (!canApply()) {
+      return { ok: false, reason: "SAFE ou MAE.applyBundle indisponível" };
+    }
+    try {
+      const res = await window.MAE.applyBundle({
+        meta: patch.meta,
+        files: patch.files
+      }, { source: "thompson" });
 
-  log("THOMPSON v2 ✅ pronto (safe/unlock)");
+      return { ok: true, res };
+    } catch (e) {
+      return { ok: false, reason: e?.message || String(e) };
+    }
+  }
 
+  // ---------- engine ----------
+  let lastPatch = null;
+
+  function renderHelp() {
+    return [
+      "THOMPSON comandos:",
+      "- help",
+      "- status",
+      "- make test",
+      "- patch: {JSON}  (cole um patch pronto)",
+      "",
+      "Modo atual: " + (isLivre() ? "LIVRE ✅ (pode aplicar se MAE permitir)" : "SAFE ✅ (somente gerar patch)")
+    ].join("\n");
+  }
+
+  function renderStatus() {
+    return [
+      "THOMPSON STATUS",
+      "- modo: " + (isLivre() ? "LIVRE" : "SAFE"),
+      "- mae.applyBundle: " + (window.MAE && typeof window.MAE.applyBundle === "function" ? "OK" : "não"),
+      "- lastPatch: " + (lastPatch ? "sim" : "não")
+    ].join("\n");
+  }
+
+  function buildTestPatch() {
+    const files = {
+      "/core/TESTE_THOMPSON.txt": "THOMPSON OK em {{DATE}}"
+    };
+    return makePatch({ name: "thompson-test", version: "1.0" }, files, [
+      "Patch de teste gerado pelo Thompson."
+    ]);
+  }
+
+  function tryParseJson(jsonPart) {
+    try { return JSON.parse(jsonPart); } catch { return null; }
+  }
+
+  async function runPrompt(raw) {
+    const p = parsePrompt(raw);
+
+    if (p.cmd === "empty") {
+      write("agentOut", "Digite um comando (help).");
+      return;
+    }
+
+    if (p.cmd === "help") {
+      write("agentOut", renderHelp());
+      return;
+    }
+
+    if (p.cmd === "status") {
+      write("agentOut", renderStatus());
+      return;
+    }
+
+    if (p.cmd === "make_test") {
+      lastPatch = buildTestPatch();
+
+      const out = [
+        "PATCH GERADO ✅",
+        "name: " + lastPatch.meta.name,
+        "version: " + lastPatch.meta.version,
+        "files: " + Object.keys(lastPatch.files).length,
+        "",
+        "SAFE: não aplica sozinho.",
+        "Se quiser aplicar: mude cfg.mode=livre e rode 'apply last' (vamos ligar isso já já)."
+      ].join("\n");
+
+      write("agentOut", out);
+      return;
+    }
+
+    if (p.cmd === "patch_json") {
+      const obj = tryParseJson(p.jsonPart);
+      if (!obj || typeof obj !== "object") {
+        write("agentOut", "JSON inválido no patch.");
+        return;
+      }
+
+      // normaliza
+      const meta = obj.meta || { name: "patch-colado", version: "1.0" };
+      const files = obj.files || {};
+      lastPatch = makePatch(meta, files, obj.notes || []);
+
+      write("agentOut", [
+        "PATCH CARREGADO ✅",
+        "name: " + lastPatch.meta.name,
+        "version: " + lastPatch.meta.version,
+        "files: " + Object.keys(lastPatch.files).length,
+        "",
+        isLivre()
+          ? "Modo LIVRE: pronto pra aplicar (se MAE permitir)."
+          : "Modo SAFE: pronto, mas não aplica sozinho."
+      ].join("\n"));
+
+      return;
+    }
+
+    // cmd "task" (texto livre)
+    lastPatch = makePatch(
+      { name: "task-only", version: "1.0" },
+      {},
+      ["Prompt recebido (sem gerar patch automático):", p.text]
+    );
+
+    write("agentOut", [
+      "Recebi seu pedido ✅",
+      "Ainda não gerei patch automático pra isso.",
+      "Cole 'help' pra ver comandos.",
+      "",
+      "Pedido:",
+      p.text
+    ].join("\n"));
+  }
+
+  // ---------- UI bindings ----------
+  function initUI() {
+    // log de startup
+    log("THOMPSON v1.1 carregado ✅");
+    status("OK ✅");
+
+    // escreve no logsOut se existir
+    try {
+      const logsBox = $("logsBox");
+      if (logsBox && typeof logsBox.textContent === "string" && logsBox.textContent.includes("Logs")) {
+        // não mexe muito
+      }
+    } catch {}
+
+    // integra com Agent tab
+    const btnRun = $("btnAgentRun");
+    const btnClear = $("btnAgentClear");
+    const cmdInput = $("agentCmd");
+
+    bindTap(btnRun, async () => {
+      const raw = cmdInput ? cmdInput.value : "";
+      await runPrompt(raw);
+    });
+
+    bindTap(btnClear, () => {
+      if (cmdInput) cmdInput.value = "";
+      write("agentOut", "Pronto.");
+    });
+
+    // atalho: Enter no input
+    if (cmdInput) {
+      cmdInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          try { btnRun && btnRun.click(); } catch {}
+        }
+      });
+    }
+  }
+
+  // ---------- expose API ----------
+  window.THOMPSON = {
+    version: "1.1",
+    run: runPrompt,
+    getLastPatch: () => lastPatch,
+    applyLast: async () => {
+      if (!lastPatch) return { ok: false, reason: "Sem patch" };
+      return await applyPatch(lastPatch);
+    }
+  };
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initUI);
+  } else {
+    initUI();
+  }
 })();
