@@ -6,76 +6,75 @@
   <meta name="theme-color" content="#0b1220" />
   <title>RControl Factory</title>
 
-  <!-- caminhos RELATIVOS (pra /app funcionar sozinho) -->
-  <link rel="stylesheet" href="./styles.css" />
+  <!-- CSS local -->
+  <link rel="stylesheet" href="/app/styles.css" />
 
   <!-- iOS PWA -->
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+
+  <!-- Sem cache chato (ajuda iOS) -->
+  <meta http-equiv="Cache-Control" content="no-store" />
+  <meta http-equiv="Pragma" content="no-cache" />
 </head>
 
 <body>
-  <!-- DEBUG na tela (se JS quebrar, a gente vê) -->
-  <pre id="bootStatus" class="mono small" style="margin:12px">Boot: carregando…</pre>
+  <!-- Fallback de boot (se JS quebrar você vê) -->
+  <pre id="bootlog" style="margin:0;padding:12px;font:12px ui-monospace,Menlo,monospace;color:#bfe;opacity:.9">
+Boot: carregando…
+  </pre>
 
   <div id="app"></div>
 
+  <!-- CORE primeiro -->
+  <script src="/app/app.js"></script>
+
+  <!-- (opcionais) seus módulos -->
+  <script src="/app/js/router.js"></script>
+  <script src="/app/js/admin.js"></script>
+
+  <script src="/app/js/core/vfs_overrides.js"></script>
+  <script src="/app/js/core/thompson.js"></script>
+  <script src="/app/js/core/github_sync.js"></script>
+  <script src="/app/js/core/mother_selfupdate.js"></script>
+
+  <!-- SW REGISTER (SAFE) -->
   <script>
-    // mostra erro na tela (iOS às vezes não mostra nada)
     (function () {
-      const box = document.getElementById("bootStatus");
-      function log(s){ try{ box.textContent += "\n" + s; }catch(e){} }
-
-      window.addEventListener("error", (e) => {
-        log("ERRO: " + (e.message || e.error || "desconhecido"));
-      });
-
-      window.addEventListener("unhandledrejection", (e) => {
-        log("PROMISE: " + (e.reason?.message || e.reason || "desconhecido"));
-      });
-
-      // mata SW antigo que esteja com escopo errado (evita bug “um clique e morre” + branco)
-      if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.getRegistrations().then((regs) => {
-          regs.forEach((r) => {
-            // se tiver SW pegando o site inteiro, desinstala
-            if (!String(r.scope || "").includes("/app/")) r.unregister();
-          });
-        }).catch(()=>{});
-      }
+      var boot = document.getElementById("bootlog");
+      function log(x){ if(boot) boot.textContent += x + "\n"; }
 
       log("Boot: scripts vão carregar…");
-    })();
-  </script>
 
-  <!-- ordem segura -->
-  <script defer src="./js/ui.touchfix.js"></script>
-  <script defer src="./app.js"></script>
+      if (!("serviceWorker" in navigator)) {
+        log("SW: navegador sem suporte.");
+        return;
+      }
 
-  <script defer src="./js/router.js"></script>
-  <script defer src="./js/admin.js"></script>
-
-  <script defer src="./js/core/vfs_overrides.js"></script>
-  <script defer src="./js/core/thompson.js"></script>
-  <script defer src="./js/core/github_sync.js"></script>
-  <script defer src="./js/core/mother_selfupdate.js"></script>
-
-  <!-- SW: registra com ESCOPO /app/ (pra não interferir na raiz) -->
-  <script>
-    (function(){
-      if (!("serviceWorker" in navigator)) return;
       window.addEventListener("load", async () => {
         try {
-          await navigator.serviceWorker.register("./sw.js", { scope: "/app/" });
-          const box = document.getElementById("bootStatus");
-          if (box) box.textContent += "\nSW: registrado (/app/)";
-        } catch(e){
-          const box = document.getElementById("bootStatus");
-          if (box) box.textContent += "\nSW ERRO: " + (e?.message || e);
+          // ✅ scope certo: /app/
+          const reg = await navigator.serviceWorker.register("/app/sw.js", { scope: "/app/" });
+          log("SW: registrado ✅ scope=/app/");
+
+          // Se não tiver controller, pede 1 reload e pronto
+          if (!navigator.serviceWorker.controller) {
+            log("SW: sem controller (1º load). Recarregue 1x.");
+          }
+        } catch (e) {
+          log("SW ERRO: " + (e && e.message ? e.message : String(e)));
           console.warn("SW erro:", e);
         }
       });
     })();
+  </script>
+
+  <script>
+    // some com bootlog quando o app montar
+    setTimeout(() => {
+      var el = document.getElementById("bootlog");
+      if (el) el.style.display = "none";
+    }, 2500);
   </script>
 </body>
 </html>
