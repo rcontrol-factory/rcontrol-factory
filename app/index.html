@@ -6,17 +6,31 @@
   <meta name="theme-color" content="#0b1220" />
   <title>RControl Factory</title>
 
-  <link rel="manifest" href="manifest.json" />
-  <link rel="icon" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css" />
+  <!-- ABSOLUTO: evita quebrar se abrir pelo / ou pelo /app/ -->
+  <link rel="manifest" href="/app/manifest.json" />
+  <link rel="icon" href="/app/icon-192.png" />
+  <link rel="stylesheet" href="/app/styles.css" />
 
   <!-- iOS nicer -->
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+
+  <style>
+    /* FIX iOS: checkbox/label clicável */
+    label[for] { cursor: pointer; }
+    input[type="checkbox"]{
+      width: 22px; height: 22px;
+      accent-color: #22c55e;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .rcf-clickfix { pointer-events: auto !important; }
+  </style>
 </head>
 
 <body>
-  <div id="app">
+  <noscript>Ative o JavaScript para usar a Factory.</noscript>
+
+  <div id="app" class="rcf-clickfix">
     <!-- TOPBAR -->
     <header class="topbar">
       <div class="brand">
@@ -148,27 +162,32 @@
     </main>
   </div>
 
-  <!-- SW (só UM: app/sw.js) -->
+  <!-- SW: ÚNICO é /app/sw.js -->
   <script>
     (function(){
-      if (!('serviceWorker' in navigator)) return;
-      window.addEventListener('load', function(){
-        navigator.serviceWorker.register('./sw.js').catch(function(){});
+      if (!("serviceWorker" in navigator)) return;
+      window.addEventListener("load", async () => {
+        try {
+          const reg = await navigator.serviceWorker.register("/app/sw.js", { scope: "/app/" });
+          reg.update?.();
+        } catch (e) {
+          console.warn("SW register falhou:", e);
+        }
       });
     })();
   </script>
 
   <!-- CORE (ordem importa) -->
-  <script defer src="app.js"></script>
+  <script defer src="/app/app.js"></script>
 
   <!-- CORE modules (precisam existir em /app/js/core/) -->
-  <script defer src="js/core/vfs_overrides.js"></script>
-  <script defer src="js/core/thompson.js"></script>
-  <script defer src="js/core/github_sync.js"></script>
-  <script defer src="js/core/mother_selfupdate.js"></script>
+  <script defer src="/app/js/core/vfs_overrides.js"></script>
+  <script defer src="/app/js/core/thompson.js"></script>
+  <script defer src="/app/js/core/github_sync.js"></script>
+  <script defer src="/app/js/core/mother_selfupdate.js"></script>
 
   <!-- UI layer -->
-  <script defer src="js/router.js"></script>
-  <script defer src="js/admin.js"></script>
+  <script defer src="/app/js/router.js"></script>
+  <script defer src="/app/js/admin.js"></script>
 </body>
 </html>
