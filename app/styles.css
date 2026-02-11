@@ -511,3 +511,25 @@ label{ pointer-events:auto !important; cursor:pointer; }
 #backdrop {
   pointer-events: none !important;
 }
+/* === RCF FIX: iOS/Chrome click hardening === */
+#app, .views, .view, .card, .tabs, .topbar {
+  pointer-events: auto !important;
+  position: relative;
+}
+
+button, a, .btn, .tab, input, textarea, select, label {
+  pointer-events: auto !important;
+  touch-action: manipulation !important;
+  -webkit-tap-highlight-color: transparent;
+}
+
+input[type="checkbox"]{
+  -webkit-appearance: auto !important;
+  appearance: auto !important;
+  width: 22px;
+  height: 22px;
+}
+
+/* overlays comuns: nunca podem bloquear toque quando não estão abertos */
+.tools { pointer-events: none !important; }
+.tools.open { pointer-events: auto !important; }
