@@ -1,28 +1,17 @@
 /* =========================================================
-  RControl Factory — app/js/admin.js (v3 FULL)
-  MAE (Self-Update) + THOMPSON (SAFE/CONDICIONAL)
+  RControl Factory — app/js/admin.js (FULL) — ADMIN v4
+  - Renderiza MAE (Self-Update) dentro do Admin
+  - Thompson: dry-run, apply, rollback, export, reset
+  - GitHub Sync: configurar token/owner/repo/branch
+  - SAFE (condicional): arquivos críticos exigem checkbox
 
-  - Renderiza card MAINTENANCE no Admin
-  - Botões iOS-safe: touchend + click (capture + preventDefault)
-  - Fluxos:
-      • Aplicar /import/mother_bundle.json (com cache-bust)
-      • Dry-run (prévia do bundle colado)
-      • Aplicar bundle colado
-      • Rollback (voltar 1)
-      • Exportar bundle atual
-      • Zerar tudo
-  - SAFE condicional:
-      • Se bundle tocar arquivos críticos -> exige checkbox "Confirmo..."
+  Requisito: core/thompson.js + app/js/github_sync.js carregados antes.
 ========================================================= */
-
 (function () {
   "use strict";
 
   const $ = (id) => document.getElementById(id);
 
-  // -----------------------------
-  // iOS safe tap
-  // -----------------------------
   const TAP_GUARD_MS = 450;
   let _lastTapAt = 0;
 
@@ -38,202 +27,72 @@
       _lastTapAt = now;
 
       try { e.preventDefault(); e.stopPropagation(); } catch {}
-      try { await fn(e); }
-      catch (err) {
-        writeOut("motherMaintOut", "❌ ERRO: " + (err?.message || String(err)));
+      try { await fn(e); } catch (err) {
+        out("motherMaintOut", "❌ ERRO: " + (err?.message || String(err)));
         setStatus("Falha ❌");
-        log("MAE click error: " + (err?.message || String(err)));
+        log("ADMIN error: " + (err?.message || String(err)));
       }
     };
 
-    try {
-      el.style.pointerEvents = "auto";
-      el.style.touchAction = "manipulation";
-      el.style.webkitTapHighlightColor = "transparent";
-    } catch {}
+    el.style.pointerEvents = "auto";
+    el.style.touchAction = "manipulation";
+    el.style.webkitTapHighlightColor = "transparent";
 
     el.addEventListener("touchend", handler, { passive: false, capture: true });
     el.addEventListener("click", handler, { passive: false, capture: true });
   }
 
-  // -----------------------------
-  // UI helpers
-  // -----------------------------
   function setStatus(text) {
     const el = $("statusText");
     if (el) el.textContent = String(text || "");
   }
 
-  function writeOut(id, text) {
+  function out(id, text) {
     const el = $(id);
     if (el) el.textContent = String(text || "");
   }
 
   function log(msg) {
     try {
-      if (window.RCF_LOGGER && typeof window.RCF_LOGGER.push === "function") {
-        window.RCF_LOGGER.push("log", msg);
-      } else if (window.RCF && typeof window.RCF.log === "function") {
-        window.RCF.log(msg);
-      } else {
-        console.log("[RCF ADMIN]", msg);
-      }
+      if (window.RCF_LOGGER && typeof window.RCF_LOGGER.push === "function") window.RCF_LOGGER.push("log", msg);
+      else if (window.RCF && typeof window.RCF.log === "function") window.RCF.log(msg);
+      else console.log("[RCF ADMIN]", msg);
     } catch {}
   }
 
-  // -----------------------------
-  // Thompson adapter
-  // -----------------------------
-  function getThompson() {
-    return window.RCF_THOMPSON || window.THOMPSON || null;
-  }
-
-  async function callT(methodNames, ...args) {
-    const T = getThompson();
-    if (!T) return { ok: false, msg: "THOMPSON não encontrado (window.RCF_THOMPSON)." };
-
-    for (const name of methodNames) {
-      const fn = T && T[name];
-      if (typeof fn === "function") {
-        try {
-          const r = await fn.apply(T, args);
-          return { ok: true, res: r, used: name };
-        } catch (e) {
-          return { ok: false, msg: `THOMPSON.${name} erro: ` + (e?.message || String(e)) };
-        }
-      }
+  function getMode() {
+    // SAFE por padrão
+    try {
+      const m = window.RCF?.state?.cfg?.mode;
+      return (m === "auto") ? "auto" : "safe";
+    } catch {
+      return "safe";
     }
-    return { ok: false, msg: "THOMPSON sem método: " + methodNames.join(" | ") };
   }
 
-  // -----------------------------
-  // SAFE / Condicional
-  // -----------------------------
-  const CRITICAL_PATHS = [
-    "/index.html",
-    "/app.js",
-    "/core/ui_bindings.js",
-    "/core/commands.js",
-    "/core/patchset.js",
-    "/core/patch.js",
-    "/core/selfheal.js",
-    "/sw.js",
-    "/service-worker.js",
-  ];
-
-  function isCriticalPath(p) {
-    const path = String(p || "").trim();
-    return CRITICAL_PATHS.includes(path);
+  function T() {
+    return window.RCF_THOMPSON || null;
   }
 
-  function guardBundleOrThrow(bundle) {
-    // Padrão: SAFE sempre. Se tocar critical -> exige checkbox.
-    const files = bundle?.files && typeof bundle.files === "object" ? Object.keys(bundle.files) : [];
-    const critical = files.filter(isCriticalPath);
-
-    if (critical.length) {
-      const chk = $("motherConfirmCritical");
-      const ok = !!(chk && chk.checked);
-      if (!ok) {
-        throw new Error(
-          "SAFE MODE: bundle toca arquivo CRÍTICO.\n" +
-          "Marque 'Confirmo aplicar...' antes.\n\nCríticos:\n- " +
-          critical.slice(0, 12).join("\n- ") +
-          (critical.length > 12 ? `\n… +${critical.length - 12}` : "")
-        );
-      }
-    }
-
-    return { files, critical };
+  function GH() {
+    return window.RCF_GITHUB_SYNC || null;
   }
 
-  // -----------------------------
-  // Bundle helpers
-  // -----------------------------
   function safeParseJSON(raw) {
     try { return JSON.parse(String(raw || "")); } catch { return null; }
   }
 
-  function replaceDateTokens(obj) {
-    const iso = new Date().toISOString();
-    const walk = (v) => {
-      if (typeof v === "string") return v.split("{{DATE}}").join(iso);
-      if (Array.isArray(v)) return v.map(walk);
-      if (v && typeof v === "object") {
-        const out = {};
-        for (const k of Object.keys(v)) out[k] = walk(v[k]);
-        return out;
-      }
-      return v;
-    };
-    return walk(obj);
+  function fmtList(title, arr) {
+    const a = Array.isArray(arr) ? arr : [];
+    if (!a.length) return title + ": (vazio)";
+    return title + ":\n" + a.slice(0, 30).map(x => "• " + x).join("\n") + (a.length > 30 ? ("\n… + " + (a.length - 30)) : "");
   }
 
-  function ensureMeta(bundle) {
-    if (!bundle || typeof bundle !== "object") return bundle;
-    if (!bundle.meta) bundle.meta = {};
-    if (!bundle.meta.name) bundle.meta.name = "mother-bundle";
-    if (!bundle.meta.version) bundle.meta.version = "1.0";
-    if (!bundle.meta.createdAt) bundle.meta.createdAt = "{{DATE}}";
-    return bundle;
-  }
-
-  function summarizeBundle(bundle) {
-    const files = bundle?.files && typeof bundle.files === "object" ? Object.keys(bundle.files) : [];
-    const meta = bundle?.meta || {};
-    return [
-      "name: " + (meta.name || "-"),
-      "version: " + (meta.version || "-"),
-      "createdAt: " + (meta.createdAt || "-"),
-      "files: " + files.length
-    ].join("\n");
-  }
-
-  function renderDryRunReport(rep, bundle, guardInfo) {
-    const lines = [];
-    lines.push("DRY-RUN ✅");
-    lines.push(summarizeBundle(bundle));
-    lines.push("");
-    lines.push("Arquivos no bundle: " + (guardInfo.files.length || 0));
-    guardInfo.files.slice(0, 20).forEach(p => lines.push("• " + p));
-    if (guardInfo.files.length > 20) lines.push("… + " + (guardInfo.files.length - 20));
-
-    if (guardInfo.critical.length) {
-      lines.push("");
-      lines.push("⚠️ CRÍTICOS detectados:");
-      guardInfo.critical.slice(0, 20).forEach(p => lines.push("• " + p));
-      if (guardInfo.critical.length > 20) lines.push("… + " + (guardInfo.critical.length - 20));
-    }
-
-    // se Thompson retornar alguma lista útil, tenta mostrar
-    try {
-      const rr = rep || {};
-      const changed = rr.changed || rr.overwrite || rr.files || null;
-      if (Array.isArray(changed) && changed.length) {
-        lines.push("");
-        lines.push("Thompson preview:");
-        changed.slice(0, 20).forEach(p => lines.push("• " + p));
-        if (changed.length > 20) lines.push("… + " + (changed.length - 20));
-      }
-    } catch {}
-
-    return lines.join("\n");
-  }
-
-  // -----------------------------
-  // Render card
-  // -----------------------------
-  function renderMaintenanceCard() {
+  function renderCard() {
     const adminView = $("view-admin");
     if (!adminView) return;
 
     if ($("motherMaintCard")) return;
-
-    try {
-      adminView.style.pointerEvents = "auto";
-      adminView.style.position = "relative";
-      adminView.style.zIndex = "1";
-    } catch {}
 
     const card = document.createElement("div");
     card.className = "card";
@@ -242,7 +101,10 @@
 
     card.innerHTML = `
       <h2 style="margin-top:4px">MAINTENANCE • Self-Update (Mãe)</h2>
-      <p class="hint">SAFE condicional: sempre faz DRY-RUN; se tocar arquivo crítico exige confirmação.</p>
+      <p class="hint">
+        SAFE (condicional): se mexer em arquivo crítico, precisa marcar confirmação.
+        Se GitHub estiver conectado, o Thompson faz push automático.
+      </p>
 
       <div class="row" style="flex-wrap:wrap; gap:10px">
         <button class="btn primary" id="btnMotherApplyFile" type="button">Aplicar /import/mother_bundle.json</button>
@@ -283,197 +145,266 @@
 }</textarea>
 
       <pre class="mono small" id="motherMaintOut" style="margin-top:10px">Pronto.</pre>
+      <div class="hint" id="motherHistHint" style="margin-top:8px"></div>
+
+      <hr style="border:0;border-top:1px solid rgba(255,255,255,.08);margin:16px 0">
+
+      <h2 style="margin-top:0">GitHub Sync (Privado)</h2>
+      <p class="hint">
+        Objetivo: parar de copiar/colar e ter sincronização entre dispositivos.
+        O token fica só no seu aparelho (localStorage).
+      </p>
+
+      <div class="form">
+        <div class="row"><input id="ghOwner" placeholder="owner (seu usuário/org) — ex: MateusSantana" /></div>
+        <div class="row"><input id="ghRepo"  placeholder="repo — ex: rcontrol-factory-private" /></div>
+        <div class="row"><input id="ghBranch" placeholder="branch (opcional) — ex: main" /></div>
+        <div class="row"><input id="ghToken" placeholder="token (PAT) — cole aqui" /></div>
+        <div class="row">
+          <button class="btn ok" id="btnGhSave" type="button">Salvar conexão</button>
+          <button class="btn danger" id="btnGhClear" type="button">Desconectar</button>
+          <button class="btn" id="btnGhTest" type="button">Testar push (TESTE.txt)</button>
+        </div>
+      </div>
+
+      <pre class="mono small" id="ghOut">Pronto.</pre>
     `;
 
     const firstCard = adminView.querySelector(".card");
     if (firstCard && firstCard.parentNode) firstCard.parentNode.insertBefore(card, firstCard.nextSibling);
     else adminView.appendChild(card);
 
-    // força pointer-events
-    card.querySelectorAll("*").forEach((el) => {
-      try { el.style.pointerEvents = "auto"; el.style.touchAction = "manipulation"; } catch {}
+    // Força pointer-events em tudo (mata overlay travando clique)
+    card.querySelectorAll("*").forEach(el => {
+      try {
+        el.style.pointerEvents = "auto";
+        el.style.touchAction = "manipulation";
+      } catch {}
     });
   }
 
-  // -----------------------------
-  // Load bundles
-  // -----------------------------
+  function refreshHistoryHint() {
+    const el = $("motherHistHint");
+    if (!el) return;
+    const h = T().getHistory();
+    if (!h.length) { el.textContent = "Histórico: (vazio)"; return; }
+    el.textContent = `Histórico: ${h.length} snapshot(s). Último: ${h[0]?.at || "-"}`;
+  }
+
   async function loadBundleFromImport() {
     const url = "/import/mother_bundle.json?ts=" + Date.now();
-    setStatus("Carregando…");
-    writeOut("motherMaintOut", "Carregando: " + url);
-
     const res = await fetch(url, { cache: "no-store" });
     if (!res.ok) throw new Error("HTTP " + res.status);
-
     return await res.json();
   }
 
-  function loadBundleFromPaste() {
+  function parsePastedBundle() {
     const ta = $("motherBundleTextarea");
     const raw = ta ? String(ta.value || "") : "";
-    const json = safeParseJSON(raw);
-    if (!json) throw new Error("JSON inválido.");
-    return json;
+    const r = T().parseBundle(raw);
+    if (!r.ok) throw new Error(r.error);
+    return r.bundle;
   }
 
-  // -----------------------------
-  // Actions
-  // -----------------------------
-  async function doDryRun(bundle) {
-    const b = replaceDateTokens(ensureMeta(bundle));
-    const guardInfo = guardBundleOrThrow({ files: b.files }); // só pra extrair lista; confirmação só exigimos no APPLY
-    // dry-run pelo Thompson se existir
-    const r = await callT(["dryRun", "preview", "plan", "simulate"], b, { mode: "safe" });
-    return { bundle: b, rep: r.ok ? r.res : null, ok: r.ok, msg: r.ok ? ("OK (" + r.used + ")") : r.msg, guardInfo };
-  }
-
-  async function doApply(bundle) {
-    const b = replaceDateTokens(ensureMeta(bundle));
-
-    // SAFE condicional: trava críticos sem checkbox
-    const files = b?.files && typeof b.files === "object" ? Object.keys(b.files) : [];
-    const critical = files.filter(isCriticalPath);
-    if (critical.length) {
+  function requireSafeConfirmIfNeeded(bundle) {
+    const mode = getMode(); // safe|auto
+    const guard = T().guardApply(bundle, mode);
+    if (guard.needsConfirm) {
       const chk = $("motherConfirmCritical");
       const ok = !!(chk && chk.checked);
       if (!ok) {
         throw new Error(
-          "SAFE MODE: bundle toca arquivo CRÍTICO.\n" +
-          "Marque 'Confirmo aplicar...' antes.\n\nCríticos:\n- " +
-          critical.slice(0, 12).join("\n- ")
+          "SAFE MODE: bundle tem arquivo crítico.\n" +
+          "Marque a confirmação antes de aplicar.\n" +
+          "Críticos:\n- " + guard.criticalFiles.slice(0, 8).join("\n- ")
         );
       }
     }
-
-    // aplica via Thompson
-    const r = await callT(["apply", "commit", "install"], b, { mode: "safe" });
-    if (!r.ok) throw new Error(r.msg);
-    return { used: r.used, bundle: b };
   }
 
-  async function onApplyFile() {
+  function renderDryRun(rep) {
+    const lines = [];
+    lines.push("DRY-RUN ✅");
+    lines.push("name: " + (rep.meta?.name || "-"));
+    lines.push("version: " + (rep.meta?.version || "-"));
+    lines.push("createdAt: " + (rep.meta?.createdAt || "-"));
+    lines.push("files: " + (rep.totalFiles || 0));
+    lines.push("");
+    lines.push(fmtList("ADICIONADOS", rep.added));
+    lines.push("");
+    lines.push(fmtList("ALTERADOS", rep.changed));
+    if (rep.critical && rep.critical.length) {
+      lines.push("");
+      lines.push("⚠️ CRÍTICOS (SAFE pede confirmação):");
+      lines.push(rep.critical.slice(0, 30).map(p => "• " + p).join("\n") + (rep.critical.length > 30 ? ("\n… + " + (rep.critical.length - 30)) : ""));
+    }
+    return lines.join("\n");
+  }
+
+  async function actionDryRun() {
+    setStatus("Dry-run…");
+    const bundle = parsePastedBundle();
+    const rep = T().dryRun(bundle, T().loadOverrides());
+    out("motherMaintOut", renderDryRun(rep));
+    refreshHistoryHint();
+    setStatus("Dry-run ✅");
+  }
+
+  async function actionApplyFile() {
+    setStatus("Aplicando…");
+    out("motherMaintOut", "Carregando /import/mother_bundle.json …");
     const bundle = await loadBundleFromImport();
-    const b = replaceDateTokens(ensureMeta(bundle));
 
-    // mostra DRY-RUN antes
-    setStatus("Dry-run…");
-    const dr = await callT(["dryRun", "preview", "plan", "simulate"], b, { mode: "safe" });
+    const rep = T().dryRun(bundle, T().loadOverrides());
+    out("motherMaintOut", renderDryRun(rep));
 
-    const guardInfo = { files: Object.keys(b.files || {}), critical: Object.keys(b.files || {}).filter(isCriticalPath) };
-    writeOut("motherMaintOut", renderDryRunReport(dr.ok ? dr.res : null, b, guardInfo));
+    requireSafeConfirmIfNeeded(bundle);
 
-    // aplica
-    setStatus("Aplicando…");
-    const ap = await doApply(b);
-
-    writeOut("motherMaintOut",
-      renderDryRunReport(dr.ok ? dr.res : null, b, guardInfo) +
-      "\n\nAPPLY ✅ (" + ap.used + ")\n" + summarizeBundle(ap.bundle)
-    );
-
+    await T().apply(bundle);
+    refreshHistoryHint();
     setStatus("Bundle salvo ✅");
-    log("MAE apply file OK");
+    log("MAE: apply file OK");
+    out("motherMaintOut", renderDryRun(rep) + "\n\nAPPLY ✅ concluído.\nSe GitHub estiver conectado, foi push automático.");
   }
 
-  async function onDryRunPasted() {
-    const bundle = loadBundleFromPaste();
-    const b = replaceDateTokens(ensureMeta(bundle));
-
-    setStatus("Dry-run…");
-    const dr = await callT(["dryRun", "preview", "plan", "simulate"], b, { mode: "safe" });
-
-    const guardInfo = { files: Object.keys(b.files || {}), critical: Object.keys(b.files || {}).filter(isCriticalPath) };
-    writeOut("motherMaintOut", renderDryRunReport(dr.ok ? dr.res : null, b, guardInfo));
-    setStatus(dr.ok ? "Dry-run ✅" : "Dry-run (fallback) ✅");
-  }
-
-  async function onApplyPasted() {
-    const bundle = loadBundleFromPaste();
-    const b = replaceDateTokens(ensureMeta(bundle));
-
-    setStatus("Dry-run…");
-    const dr = await callT(["dryRun", "preview", "plan", "simulate"], b, { mode: "safe" });
-    const guardInfo = { files: Object.keys(b.files || {}), critical: Object.keys(b.files || {}).filter(isCriticalPath) };
-
-    writeOut("motherMaintOut", renderDryRunReport(dr.ok ? dr.res : null, b, guardInfo));
-
+  async function actionApplyPasted() {
     setStatus("Aplicando…");
-    const ap = await doApply(b);
+    const bundle = parsePastedBundle();
 
-    writeOut("motherMaintOut",
-      renderDryRunReport(dr.ok ? dr.res : null, b, guardInfo) +
-      "\n\nAPPLY ✅ (" + ap.used + ")\n" + summarizeBundle(ap.bundle)
-    );
+    const rep = T().dryRun(bundle, T().loadOverrides());
+    out("motherMaintOut", renderDryRun(rep));
 
+    requireSafeConfirmIfNeeded(bundle);
+
+    await T().apply(bundle);
+    refreshHistoryHint();
     setStatus("Bundle salvo ✅");
-    log("MAE apply pasted OK");
+    log("MAE: apply pasted OK");
+    out("motherMaintOut", renderDryRun(rep) + "\n\nAPPLY ✅ concluído.\nSe GitHub estiver conectado, foi push automático.");
   }
 
-  async function onRollback1() {
+  async function actionRollback1() {
     setStatus("Rollback…");
-    const r = await callT(["rollback", "rollback1"], 1);
+    const r = T().rollback(1);
     if (!r.ok) throw new Error(r.msg);
-    writeOut("motherMaintOut", "✅ Rollback feito (voltar 1) ✅ (" + r.used + ")\nRecarregue a página se precisar.");
+    refreshHistoryHint();
     setStatus("Rollback ✅");
-    log("MAE rollback1");
+    out("motherMaintOut", "✅ " + r.msg + "\n\nRecarregue a página se necessário.");
+    log("MAE: rollback OK");
   }
 
-  async function onExportCurrent() {
+  async function actionExport() {
     setStatus("Exportando…");
-    const r = await callT(["exportCurrent", "export", "dump"], {});
-    if (!r.ok) throw new Error(r.msg);
-
-    let txt = "";
-    try { txt = JSON.stringify(r.res, null, 2); } catch { txt = String(r.res); }
-
+    const bundle = T().exportCurrent();
+    const txt = JSON.stringify(bundle, null, 2);
     const ta = $("motherBundleTextarea");
     if (ta) ta.value = txt;
-
     try { await navigator.clipboard.writeText(txt); } catch {}
-    writeOut("motherMaintOut", "✅ Export OK (" + r.used + ")\nBundle jogado no textarea (e tentei copiar).");
+    out("motherMaintOut", "✅ Export OK (copiei pro clipboard e joguei no textarea)\nfiles: " + Object.keys(bundle.files || {}).length);
     setStatus("Export ✅");
-    log("MAE export");
+    refreshHistoryHint();
   }
 
-  async function onResetAll() {
+  async function actionResetAll() {
     setStatus("Zerando…");
-    const r = await callT(["resetAll", "clearAll", "wipe"], {});
-    if (!r.ok) throw new Error(r.msg);
-    writeOut("motherMaintOut", "✅ Zerou tudo ✅ (" + r.used + ")");
-    setStatus("OK ✅");
-    log("MAE resetAll");
+    T().resetAll();
+    refreshHistoryHint();
+    out("motherMaintOut", "✅ ZERADO.\nOverrides e histórico removidos.");
+    setStatus("Zerado ✅");
+    log("MAE: reset all");
   }
 
-  // -----------------------------
-  // Boot
-  // -----------------------------
-  function bind() {
-    renderMaintenanceCard();
+  // -------------------------
+  // GitHub actions
+  // -------------------------
+  function ghLoadUI() {
+    const gh = GH();
+    if (!gh) return;
 
-    bindTap($("btnMotherApplyFile"), onApplyFile);
-    bindTap($("btnMotherDryRun"), onDryRunPasted);
-    bindTap($("btnMotherApplyPasted"), onApplyPasted);
-    bindTap($("btnMotherRollback1"), onRollback1);
-    bindTap($("btnMotherExport"), onExportCurrent);
-    bindTap($("btnMotherResetAll"), onResetAll);
+    const c = gh.cfgGet();
+    if ($("ghOwner")) $("ghOwner").value = c.owner || "";
+    if ($("ghRepo")) $("ghRepo").value = c.repo || "";
+    if ($("ghBranch")) $("ghBranch").value = c.branch || "main";
+    if ($("ghToken")) $("ghToken").value = c.token ? "••••••••" : "";
+    out("ghOut", gh.isConfigured() ? "Conectado ✅ (token oculto)" : "Não conectado.");
+  }
 
-    const T = getThompson();
-    const adminOut = $("adminOut");
-    const line = "MAE v3 ✅ " + (T ? "Thompson OK" : "Thompson NÃO encontrado");
-    if (adminOut) adminOut.textContent = ((adminOut.textContent || "Pronto.").trim() + "\n\n" + line);
+  async function ghSave() {
+    const gh = GH();
+    if (!gh) throw new Error("GitHub Sync não carregou.");
 
-    log(line);
+    const owner = ($("ghOwner")?.value || "").trim();
+    const repo = ($("ghRepo")?.value || "").trim();
+    const branch = ($("ghBranch")?.value || "main").trim();
+
+    let token = ($("ghToken")?.value || "").trim();
+    // se o usuário deixou "••••", mantém o token antigo
+    if (token.startsWith("••")) token = gh.cfgGet().token || "";
+
+    if (!owner || !repo || !token) throw new Error("Preencha owner, repo e token.");
+
+    gh.cfgSet({ owner, repo, branch, token });
+    out("ghOut", "Salvo ✅. Agora o Thompson pode dar push automático.");
+    setStatus("GitHub ✅");
+    log("GitHub cfg salvo");
+  }
+
+  async function ghClear() {
+    const gh = GH();
+    if (!gh) return;
+    gh.clearConfig();
+    out("ghOut", "Desconectado ✅");
     setStatus("OK ✅");
+    log("GitHub cfg limpo");
+    ghLoadUI();
+  }
+
+  async function ghTest() {
+    const gh = GH();
+    if (!gh || !gh.isConfigured()) throw new Error("GitHub não configurado.");
+    setStatus("Testando GitHub…");
+
+    const path = "/core/TESTE_GITHUB.txt";
+    const content = "RCF GitHub Sync OK — " + new Date().toISOString();
+
+    await gh.putFile(path, content, "RCF test push");
+    out("ghOut", "✅ Push OK: " + path);
+    setStatus("GitHub OK ✅");
+    log("GitHub push teste OK");
   }
 
   function init() {
-    bind();
+    if (!T()) {
+      out("adminOut", "ERRO: Thompson não carregou. Verifique <script src='core/thompson.js'> antes do app/js/admin.js");
+      return;
+    }
+
+    renderCard();
+
+    bindTap($("btnMotherApplyFile"), actionApplyFile);
+    bindTap($("btnMotherDryRun"), actionDryRun);
+    bindTap($("btnMotherApplyPasted"), actionApplyPasted);
+    bindTap($("btnMotherRollback1"), actionRollback1);
+    bindTap($("btnMotherExport"), actionExport);
+    bindTap($("btnMotherResetAll"), actionResetAll);
+
+    bindTap($("btnGhSave"), ghSave);
+    bindTap($("btnGhClear"), ghClear);
+    bindTap($("btnGhTest"), ghTest);
+
+    refreshHistoryHint();
+    ghLoadUI();
+
+    const adminOut = $("adminOut");
+    if (adminOut) {
+      const prev = (adminOut.textContent || "Pronto.").trim();
+      adminOut.textContent = prev + "\n\nMAE v4 ✅ Thompson OK" + (GH() ? " | GitHubSync OK" : " | GitHubSync ausente");
+    }
+
+    setStatus("OK ✅");
+    log("ADMIN v4 carregado ✅");
   }
 
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", init);
-  } else {
-    init();
-  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
+  else init();
 })();
