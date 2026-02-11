@@ -3,11 +3,25 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <meta http-equiv="refresh" content="0; url=/" />
-  <title>Redirect</title>
+  <title>Redirecionando…</title>
 </head>
 <body>
-  Redirecionando...
-  <script>location.replace("/");</script>
+  <div style="font-family: system-ui; padding: 18px;">
+    Redirecionando…
+  </div>
+
+  <script>
+    // evita loop: se já estiver na raiz, não faz nada
+    (function(){
+      try {
+        if (location.pathname === "/" || location.pathname === "/index.html") return;
+        // se estiver em /app ou /app/qualquer-coisa, manda pra raiz
+        if (location.pathname.startsWith("/app")) {
+          location.replace("/");
+          return;
+        }
+      } catch {}
+    })();
+  </script>
 </body>
 </html>
