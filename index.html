@@ -6,40 +6,254 @@
   <meta name="theme-color" content="#0b1220" />
   <title>RControl Factory</title>
 
-  <!-- CSS vem da pasta /app -->
   <link rel="stylesheet" href="/app/styles.css" />
 
-  <!-- iOS PWA -->
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 </head>
 
 <body>
 
-  <div id="app"></div>
+  <!-- TOPBAR -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="dot"></div>
+      <div class="brand-text">
+        <div class="title">RControl Factory</div>
+        <div class="subtitle">Factory interna • PWA • Offline-first</div>
+      </div>
+      <div class="spacer"></div>
+      <div class="status-pill" id="statusPill">
+        <span id="statusText" class="ok">OK ✅</span>
+      </div>
+    </div>
 
-  <!-- CORE -->
-  <div id="bootErr" style="white-space:pre-wrap;font-family:monospace;color:#fff;background:#b00020;padding:12px;border-radius:12px;margin:12px;display:none;"></div>
-<script>
-  window.addEventListener("error", (e) => {
-    const box = document.getElementById("bootErr");
-    if (!box) return;
-    box.style.display = "block";
-    box.textContent = "JS ERROR:\n" + (e.message || e.error || e) + "\n" + (e.filename || "") + ":" + (e.lineno || "") ;
-  });
-</script>
+    <nav class="tabs">
+      <button class="tab active" data-view="dashboard">Dashboard</button>
+      <button class="tab" data-view="newapp">New App</button>
+      <button class="tab" data-view="editor">Editor</button>
+      <button class="tab" data-view="generator">Generator</button>
+      <button class="tab" data-view="agent">Agente</button>
+      <button class="tab" data-view="settings">Settings</button>
+      <button class="tab" data-view="admin">Admin</button>
+
+      <div class="spacer"></div>
+
+      <button class="gear" id="btnOpenTools" title="Tools">⚙️</button>
+    </nav>
+  </header>
+
+  <!-- MAIN -->
+  <main class="container" id="app">
+    <!-- DASHBOARD -->
+    <section class="view active" id="view-dashboard">
+      <div class="card hero">
+        <h1>Dashboard</h1>
+        <p class="hint" id="activeAppText">Sem app ativo ✅</p>
+        <div class="row">
+          <button class="btn primary" id="btnCreateNewApp">Criar novo app</button>
+          <button class="btn" id="btnOpenEditor">Abrir Editor</button>
+          <button class="btn" id="btnExportBackup">Copiar Backup (JSON)</button>
+        </div>
+        <div class="apps" id="appsList"></div>
+      </div>
+    </section>
+
+    <!-- NEW APP -->
+    <section class="view" id="view-newapp">
+      <div class="card hero">
+        <h1>New App</h1>
+        <p class="hint">Crie um app local (storage) para editar e exportar.</p>
+
+        <div class="row form">
+          <input id="newAppName" placeholder="Nome do app (ex: AgroControl)" />
+          <input id="newAppSlug" placeholder="Slug (ex: agrocontrol)" />
+        </div>
+
+        <div class="row">
+          <button class="btn" id="btnAutoSlug">Auto slug</button>
+          <button class="btn primary" id="btnDoCreateApp">Criar</button>
+        </div>
+
+        <pre class="mono small" id="newAppOut">Pronto.</pre>
+      </div>
+    </section>
+
+    <!-- EDITOR -->
+    <section class="view" id="view-editor">
+      <div class="card hero">
+        <h1>Editor</h1>
+        <p class="hint" id="editorHead">Arquivo atual: -</p>
+
+        <div class="row">
+          <div class="files" id="filesList" style="flex:1"></div>
+        </div>
+
+        <div class="editor">
+          <div class="editor-head">Conteúdo</div>
+          <textarea id="fileContent" spellcheck="false"></textarea>
+        </div>
+
+        <div class="row">
+          <button class="btn ok" id="btnSaveFile">Salvar</button>
+          <button class="btn danger" id="btnResetFile">Reset</button>
+        </div>
+
+        <pre class="mono small" id="editorOut">Pronto.</pre>
+      </div>
+    </section>
+
+    <!-- GENERATOR -->
+    <section class="view" id="view-generator">
+      <div class="card hero">
+        <h1>Generator</h1>
+        <p class="hint">Gera ZIP do app selecionado (stub por enquanto).</p>
+        <div class="row">
+          <button class="btn primary" id="btnGenZip">Build ZIP</button>
+          <button class="btn" id="btnGenPreview">Preview</button>
+        </div>
+        <pre class="mono small" id="genOut">Pronto.</pre>
+      </div>
+    </section>
+
+    <!-- AGENT -->
+    <section class="view" id="view-agent">
+      <div class="card hero">
+        <h1>Agente</h1>
+        <p class="hint">Comandos naturais + patchset.</p>
+
+        <div class="row cmd">
+          <input id="agentCmd" placeholder='Ex: help | list | create "Meu App" meu-app' />
+        </div>
+
+        <div class="row">
+          <button class="btn primary" id="btnAgentRun">Executar</button>
+          <button class="btn" id="btnAgentClear">Limpar</button>
+        </div>
+
+        <pre class="mono" id="agentOut">Pronto.</pre>
+      </div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section class="view" id="view-settings">
+      <div class="card hero">
+        <h1>Settings</h1>
+        <p class="hint">Central de configurações (sem engrenagem).</p>
+        <pre class="mono small" id="settingsMount">Pronto.</pre>
+      </div>
+
+      <div class="card" id="settings-security">
+        <h2>Segurança</h2>
+        <p class="hint">Define um PIN (4–8 dígitos) para ações críticas no Admin.</p>
+        <div class="row">
+          <input id="pinInput" placeholder="Definir PIN (4–8 dígitos)" inputmode="numeric" />
+          <button class="btn primary" id="btnPinSave">Salvar PIN</button>
+          <button class="btn danger" id="btnPinRemove">Remover PIN</button>
+        </div>
+        <pre class="mono small" id="pinOut">Pronto.</pre>
+      </div>
+
+      <div class="card" id="settings-logs">
+        <h2>Logs</h2>
+        <p class="hint">Ver / exportar / limpar logs locais.</p>
+        <div class="row">
+          <button class="btn" id="btnLogsRefresh">Atualizar</button>
+          <button class="btn primary" id="btnLogsExport">Exportar .txt</button>
+          <button class="btn danger" id="btnLogsClear">Limpar logs</button>
+          <button class="btn" id="btnLogsCopy">Copiar</button>
+        </div>
+        <pre class="mono small" id="logsOut"></pre>
+      </div>
+
+      <div class="card" id="settings-diag">
+        <h2>Diag / Atalhos</h2>
+        <p class="hint">Atalhos rápidos.</p>
+        <div class="row">
+          <button class="btn" id="btnGoDiagnose">Diagnosticar</button>
+          <button class="btn" id="btnGoAdmin">Abrir Admin</button>
+        </div>
+        <pre class="mono small">Pronto.</pre>
+      </div>
+    </section>
+
+    <!-- ADMIN -->
+    <section class="view" id="view-admin">
+      <div class="card hero">
+        <h1>Admin</h1>
+        <p class="hint">Diagnóstico / manutenção / self-update.</p>
+        <div class="row">
+          <button class="btn" id="btnAdminDiag">Diagnosticar</button>
+          <button class="btn danger" id="btnAdminZeroSafe">Zerar (safe)</button>
+        </div>
+        <pre class="mono" id="adminOut">Pronto.</pre>
+      </div>
+
+      <div class="card" id="rcfMotherBox">
+        <h2>MAINTENANCE • Self-Update (Mãe)</h2>
+        <p class="hint">Área da mãe (stub). Depois plugamos os botões reais.</p>
+        <div class="row">
+          <button class="btn primary" id="btnMotherApplyJson">Aplicar /import/mother_bundle.json</button>
+          <button class="btn" id="btnMotherDryRun">Dry-run</button>
+          <button class="btn danger" id="btnMotherRollback">Rollback</button>
+        </div>
+        <div class="row">
+          <button class="btn" id="btnMotherExport">Exportar bundle atual</button>
+          <button class="btn danger" id="btnMotherResetAll">Zerar tudo</button>
+        </div>
+        <textarea class="mono" placeholder="Cole um bundle JSON aqui (stub)"></textarea>
+      </div>
+    </section>
+
+    <!-- DIAGNOSTICS VIEW (se usar) -->
+    <section class="view" id="view-diagnostics">
+      <div class="card hero">
+        <h1>Diagnostics</h1>
+        <div class="row">
+          <button class="btn primary" id="btnDiagRun">Rodar</button>
+          <button class="btn danger" id="btnDiagClear">Limpar</button>
+        </div>
+        <pre class="mono" id="diagOut">Pronto.</pre>
+      </div>
+    </section>
+
+    <!-- LOGS VIEW (se usar) -->
+    <section class="view" id="view-logs">
+      <div class="card hero">
+        <h1>Logs</h1>
+        <div class="row">
+          <button class="btn" id="btnLogsRefresh">Atualizar</button>
+          <button class="btn danger" id="btnLogsClear">Limpar</button>
+          <button class="btn" id="btnLogsCopy">Copiar</button>
+        </div>
+        <pre class="mono" id="logsViewBox"></pre>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- TOOLS DRAWER -->
+  <aside class="tools" id="toolsDrawer" aria-hidden="true">
+    <div class="tools-head">
+      <div style="font-weight:800">Tools</div>
+      <button class="btn small" id="btnCloseTools">Fechar</button>
+    </div>
+    <div class="tools-body">
+      <div class="row">
+        <button class="btn danger small" id="btnClearLogs">Limpar logs</button>
+        <button class="btn small" id="btnCopyLogs">Copiar logs</button>
+      </div>
+      <pre class="mono small" id="logsBox"></pre>
+    </div>
+  </aside>
+
+  <!-- SCRIPTS (ordem importante) -->
+  <script defer src="/app/js/ui.touchfix.js"></script>
   <script defer src="/app/app.js"></script>
 
-  <!-- TOUCH FIX (anti botão travado) -->
-  <script defer src="/app/js/ui.touchfix.js"></script>
-
-  <!-- ROUTER -->
   <script defer src="/app/js/router.js"></script>
-
-  <!-- ADMIN -->
   <script defer src="/app/js/admin.js"></script>
 
-  <!-- CORE MODULES -->
   <script defer src="/app/js/core/vfs_overrides.js"></script>
   <script defer src="/app/js/core/thompson.js"></script>
   <script defer src="/app/js/core/github_sync.js"></script>
