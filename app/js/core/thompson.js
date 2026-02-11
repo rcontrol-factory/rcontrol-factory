@@ -1,7 +1,7 @@
 /* =========================================================
-  RControl Factory — core/thompson.js (FULL) — THOMPSON v1.0
+  RControl Factory — app/js/core/thompson.js (FULL) — THOMPSON v1.1
   Função: permitir a Mãe se auto-atualizar SEM copia/cola:
-  - Overrides (bundle.files) salvos no localStorage
+  - Overrides (bundle.files) no localStorage
   - Snapshot automático + rollback
   - Dry-run (prévia) + guard SAFE (arquivos críticos)
   - Export do estado atual
@@ -11,51 +11,44 @@
 (() => {
   "use strict";
 
-  const KEY_OVR = "rcf:th:overrides";     // { "/path": {content, contentType, at} }
-  const KEY_HIST = "rcf:th:history";      // [ {at, overrides} ] (top = mais recente)
-  const KEY_LAST = "rcf:th:last_apply";   // string
-
+  const KEY_OVR  = "rcf:th:overrides";   // { "/path": {content, contentType, at} }
+  const KEY_HIST = "rcf:th:history";     // [ {at, overrides} ] (top = mais recente)
+  const KEY_LAST = "rcf:th:last_apply";  // string ISO
   const MAX_HIST = 8;
 
   const CONTENT_TYPES = {
-    ".js": "application/javascript; charset=utf-8",
-    ".css": "text/css; charset=utf-8",
+    ".js":   "application/javascript; charset=utf-8",
+    ".css":  "text/css; charset=utf-8",
     ".html": "text/html; charset=utf-8",
     ".json": "application/json; charset=utf-8",
-    ".txt": "text/plain; charset=utf-8"
+    ".txt":  "text/plain; charset=utf-8"
   };
 
+  // SAFE: arquivos “críticos” pedem confirmação na Mãe
   const CRITICAL_PREFIX = [
     "/index.html",
     "/app.js",
     "/sw.js",
     "/manifest.json",
     "/core/",
+    "/app/js/core/"
   ];
 
-  function ext(path) {
-    const m = String(path || "").toLowerCase().match(/\.[a-z0-9]+$/);
-    return m ? m[0] : ".txt";
-  }
+  const isObj = (v) => v && typeof v === "object" && !Array.isArray(v);
 
-  function nowISO() {
-    return new Date().toISOString();
-  }
+  function nowISO() { return new Date().toISOString(); }
 
   function safeJsonParse(raw, fallback) {
     try { return JSON.parse(raw); } catch { return fallback; }
   }
 
-  function safeJsonStringify(obj) {
-    try { return JSON.stringify(obj); } catch { return String(obj); }
-  }
-
   function deepClone(o) {
-    return safeJsonParse(safeJsonStringify(o), o);
+    return safeJsonParse(JSON.stringify(o), o);
   }
 
-  function isObj(v) {
-    return v && typeof v === "object" && !Array.isArray(v);
+  function ext(path) {
+    const m = String(path || "").toLowerCase().match(/\.[a-z0-9]+$/);
+    return m ? m[0] : ".txt";
   }
 
   function normalizePath(p) {
@@ -90,11 +83,12 @@
     if (!b.meta.name) b.meta.name = "mother-bundle";
     if (!b.meta.version) b.meta.version = "1.0";
     if (!b.meta.createdAt) b.meta.createdAt = "{{DATE}}";
+    if (!isObj(b.files)) b.files = {};
     return b;
   }
 
   // -------------------------
-  // Storage
+  // Overrides Storage
   // -------------------------
   function loadOverrides() {
     const raw = localStorage.getItem(KEY_OVR);
@@ -158,12 +152,14 @@
       const path = normalizePath(k);
       const content = String(files[k] ?? "");
       const curEntry = cur[path];
+
       if (!curEntry) added.push(path);
       else {
         const curContent = String(curEntry.content ?? "");
         if (curContent === content) same.push(path);
         else changed.push(path);
       }
+
       if (isCritical(path)) critical.push(path);
     }
 
@@ -182,10 +178,11 @@
   }
 
   // -------------------------
-  // Apply / rollback
+  // Apply / rollback / export
   // -------------------------
   async function apply(bundle, opts = {}) {
     const b = replaceDateTokens(ensureMeta(deepClone(bundle)));
+
     const cur = loadOverrides();
     pushSnapshot(cur);
 
@@ -204,17 +201,18 @@
 
     saveOverrides(next);
 
-    // Se GitHub Sync estiver configurado, “empurra” os arquivos mudados
+    // Se existir GitHub Sync (opcional), não trava o apply se falhar
     try {
-      if (window.RCF_GITHUB_SYNC && window.RCF_GITHUB_SYNC.isConfigured()) {
-        const rep = dryRun(b, cur);
-        const toPush = [...rep.added, ...rep.changed];
-        if (toPush.length) {
-          await window.RCF_GITHUB_SYNC.pushFilesFromOverrides(toPush, next, b.meta);
+      if (window.RCF_GITHUB_SYNC && typeof window.RCF_GITHUB_SYNC.isConfigured === "function") {
+        if (window.RCF_GITHUB_SYNC.isConfigured()) {
+          const rep = dryRun(b, cur);
+          const toPush = [...rep.added, ...rep.changed];
+          if (toPush.length && typeof window.RCF_GITHUB_SYNC.pushFilesFromOverrides === "function") {
+            await window.RCF_GITHUB_SYNC.pushFilesFromOverrides(toPush, next, b.meta);
+          }
         }
       }
     } catch (e) {
-      // Não falha o apply por causa do GitHub; só loga
       try { console.warn("[THOMPSON] GitHub push falhou:", e); } catch {}
     }
 
@@ -225,11 +223,11 @@
     const n = Math.max(1, Number(steps || 1) | 0);
     const hist = getHistory();
     if (!hist.length) return { ok: false, msg: "Sem histórico para rollback." };
+
     const snap = hist[n - 1];
     if (!snap) return { ok: false, msg: "Rollback inválido. Hist atual: " + hist.length };
 
     saveOverrides(snap.overrides || {});
-    // remove até n snapshots (as n primeiras)
     hist.splice(0, n);
     saveHistory(hist);
 
@@ -247,9 +245,9 @@
   }
 
   function resetAll() {
-    localStorage.removeItem(KEY_OVR);
-    localStorage.removeItem(KEY_HIST);
-    localStorage.removeItem(KEY_LAST);
+    try { localStorage.removeItem(KEY_OVR); } catch {}
+    try { localStorage.removeItem(KEY_HIST); } catch {}
+    try { localStorage.removeItem(KEY_LAST); } catch {}
   }
 
   // -------------------------
@@ -267,8 +265,5 @@
     getHistory
   };
 
-  try {
-    if (window.RCF && typeof window.RCF.log === "function") window.RCF.log("THOMPSON v1.0 carregado ✅");
-    else console.log("[RCF] THOMPSON v1.0 carregado ✅");
-  } catch {}
+  try { console.log("[RCF] THOMPSON v1.1 carregado ✅"); } catch {}
 })();
