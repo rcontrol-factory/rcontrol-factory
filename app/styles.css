@@ -561,3 +561,36 @@ input[type="checkbox"]{
 #backdrop {
   pointer-events: none !important;
 }
+/* ===========================
+   RCF HARD FIX (iOS): cliques nunca podem morrer
+   Cola NO FINAL do styles.css
+   =========================== */
+
+html, body, #app {
+  pointer-events: auto !important;
+}
+
+.view, .card, .container, .row, .tabs, .topbar, section, main, nav {
+  pointer-events: auto !important;
+}
+
+/* tudo clicável */
+button, a, .btn, .tab, input, textarea, select, label {
+  pointer-events: auto !important;
+  touch-action: manipulation !important;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* overlays genéricos nunca podem bloquear */
+.overlay, .backdrop, #overlay, #backdrop {
+  pointer-events: none !important;
+}
+
+/* drawer: fechado não pega toque / aberto pega */
+.tools { pointer-events: none !important; }
+.tools.open, .tools.open * { pointer-events: auto !important; }
+
+/* Se existir algum “layer invisível” no fundo */
+.bg, .background, .glass, .blur, .vignette {
+  pointer-events: none !important;
+}
