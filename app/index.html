@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#0b1220" />
   <title>RControl Factory</title>
 
-  <!-- TUDO RELATIVO (porque este arquivo é /app/index.html) -->
+  <!-- TUDO RELATIVO (porque estamos dentro de /app/) -->
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" href="icon-192.png" />
   <link rel="stylesheet" href="styles.css" />
@@ -14,11 +14,18 @@
   <!-- iOS nicer -->
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+
+  <style>
+    /* iOS: evita “toque morto” por overlay/scroll */
+    html, body { -webkit-text-size-adjust: 100%; }
+    body { touch-action: manipulation; }
+    .rcf-clickfix, .rcf-clickfix * { -webkit-tap-highlight-color: transparent; }
+    label[for]{ cursor:pointer; }
+    input[type="checkbox"]{ width:22px;height:22px; accent-color:#22c55e; }
+  </style>
 </head>
 
-<body>
-  <noscript>Ative o JavaScript para usar a Factory.</noscript>
-
+<body class="rcf-clickfix">
   <div id="app">
     <!-- TOPBAR -->
     <header class="topbar">
@@ -32,7 +39,7 @@
 
       <div class="right">
         <div id="statusText" class="pill">OK ✅</div>
-        <!-- REMOVIDO: engrenagem (dava bug de toque no iOS) -->
+        <button id="btnGear" class="iconbtn" type="button" aria-label="Settings">⚙️</button>
       </div>
     </header>
 
@@ -49,8 +56,6 @@
 
     <!-- VIEWS -->
     <main class="views">
-
-      <!-- DASHBOARD -->
       <section id="view-dashboard" class="view">
         <div class="card">
           <h1>Bem-vindo 👋</h1>
@@ -69,7 +74,6 @@
         </div>
       </section>
 
-      <!-- NEW APP -->
       <section id="view-newapp" class="view">
         <div class="card">
           <h2>Novo App</h2>
@@ -88,7 +92,6 @@
         </div>
       </section>
 
-      <!-- EDITOR -->
       <section id="view-editor" class="view">
         <div class="card">
           <h2>Editor</h2>
@@ -107,7 +110,6 @@
         </div>
       </section>
 
-      <!-- GENERATOR -->
       <section id="view-generator" class="view">
         <div class="card">
           <h2>Generator</h2>
@@ -119,7 +121,6 @@
         </div>
       </section>
 
-      <!-- AGENT -->
       <section id="view-agent" class="view">
         <div class="card">
           <h2>Agente</h2>
@@ -133,73 +134,14 @@
         </div>
       </section>
 
-      <!-- SETTINGS (CENTRAL DE CONFIG) -->
       <section id="view-settings" class="view">
         <div class="card">
           <h2>Settings</h2>
           <p class="hint">Central de configurações (sem engrenagem).</p>
           <pre id="settingsOut" class="mono small">Pronto.</pre>
         </div>
-
-        <!-- GITHUB SYNC (SAFE) -->
-        <div class="card">
-          <h2>GitHub Sync (Privado) — SAFE</h2>
-          <p class="hint">Puxa/empurra o bundle no seu repo privado. Assim você atualiza em um aparelho e puxa no outro.</p>
-
-          <div class="row">
-            <input id="ghOwner" class="input" placeholder="owner (ex: rcontrol-factory)" />
-            <input id="ghRepo" class="input" placeholder="repo (ex: rcontrol-factory)" />
-          </div>
-
-          <div class="row">
-            <input id="ghBranch" class="input" value="main" placeholder="branch (ex: main)" />
-            <input id="ghPath" class="input" value="app/import/mother_bundle.json" placeholder="path (ex: app/import/mother_bundle.json)" />
-          </div>
-
-          <div class="row">
-            <input id="ghToken" class="input" placeholder="TOKEN (PAT) — contents:read/write" />
-            <button id="btnGhSave" class="btn" type="button">Salvar config</button>
-          </div>
-
-          <div class="row">
-            <button id="btnGhPull" class="btn" type="button">⬇️ Pull (baixar do GitHub)</button>
-            <button id="btnGhPush" class="btn ok" type="button">⬆️ Push (enviar p/ GitHub)</button>
-            <button id="btnGhUpdateNow" class="btn primary" type="button">⚡ Atualizar agora</button>
-          </div>
-
-          <pre id="ghOut" class="mono small">Pronto.</pre>
-        </div>
-
-        <!-- SEGURANÇA (PIN) -->
-        <div class="card">
-          <h2>Segurança</h2>
-          <p class="hint">Define um PIN para liberar ações críticas no Admin (recomendado).</p>
-
-          <div class="row">
-            <input id="adminPin" class="input" placeholder="Definir PIN (4-8 dígitos)" inputmode="numeric" />
-            <button id="btnSetPin" class="btn primary" type="button">Salvar PIN</button>
-            <button id="btnClearPin" class="btn danger" type="button">Remover PIN</button>
-          </div>
-
-          <pre id="secOut" class="mono small">Pronto.</pre>
-        </div>
-
-        <!-- DIAG / LOGS -->
-        <div class="card">
-          <h2>Diag / Logs</h2>
-          <p class="hint">Atalhos rápidos (o Admin continua com ações críticas).</p>
-
-          <div class="row">
-            <button id="btnRunDiag" class="btn" type="button">Diagnosticar</button>
-            <button id="btnOpenAdmin" class="btn" type="button">Abrir Admin</button>
-            <button id="btnClearLogs2" class="btn danger" type="button">Limpar logs</button>
-          </div>
-
-          <pre id="diagOut" class="mono small">Pronto.</pre>
-        </div>
       </section>
 
-      <!-- ADMIN -->
       <section id="view-admin" class="view">
         <div class="card">
           <h2>Admin</h2>
@@ -213,11 +155,10 @@
           <pre id="adminOut" class="mono small">Pronto.</pre>
         </div>
       </section>
-
     </main>
   </div>
 
-  <!-- SW (único): /app/sw.js com scope /app/ -->
+  <!-- SW ÚNICO: /app/sw.js -->
   <script>
     (function(){
       if (!("serviceWorker" in navigator)) return;
@@ -232,10 +173,29 @@
     })();
   </script>
 
+  <!-- FIX iOS: Gear SEMPRE abre Settings (mesmo se JS do gear sumir ou overlay travar) -->
+  <script>
+    (function(){
+      function openSettings(){
+        // tenta usar o router se existir
+        try { window.RCF?.Router?.go?.("settings"); return; } catch(e){}
+        // fallback: clica na tab
+        const t = document.querySelector('.tab[data-view="settings"]');
+        if (t) t.click();
+      }
+      window.addEventListener("load", () => {
+        const gear = document.getElementById("btnGear");
+        if (!gear) return;
+        gear.addEventListener("click", openSettings, true);
+        gear.addEventListener("touchend", (e)=>{ e.preventDefault(); openSettings(); }, {passive:false});
+      });
+    })();
+  </script>
+
   <!-- CORE (ordem importa) -->
   <script defer src="app.js"></script>
 
-  <!-- CORE modules (precisam existir em /app/js/core/) -->
+  <!-- CORE modules -->
   <script defer src="js/core/vfs_overrides.js"></script>
   <script defer src="js/core/thompson.js"></script>
   <script defer src="js/core/github_sync.js"></script>
@@ -245,11 +205,9 @@
   <script defer src="js/router.js"></script>
   <script defer src="js/admin.js"></script>
 
-  <!-- Settings controller (novo) -->
-  <script defer src="js/settings.js"></script>
-
-  <!-- Agent (se existir) -->
-  <script defer src="js/agent.router.js"></script>
-  <script defer src="js/agent.nlp.js"></script>
+  <!-- (se existirem no seu projeto, pode manter; se não existirem, REMOVE pra não dar erro 404) -->
+  <!-- <script defer src="js/core/publish_queue.js"></script> -->
+  <!-- <script defer src="js/agent.router.js"></script> -->
+  <!-- <script defer src="js/agent.nlp.js"></script> -->
 </body>
 </html>
