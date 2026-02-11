@@ -17,9 +17,9 @@
         <div class="title">RControl Factory</div>
         <div class="subtitle">Factory interna • PWA • Offline-first</div>
         <div class="subtitle">
-          <a href="privacy.html" style="color:rgba(255,255,255,.65);text-decoration:none;">Privacidade</a>
+          <a href="#" style="color:rgba(255,255,255,.65);text-decoration:none;">Privacidade</a>
           •
-          <a href="terms.html" style="color:rgba(255,255,255,.65);text-decoration:none;">Termos</a>
+          <a href="#" style="color:rgba(255,255,255,.65);text-decoration:none;">Termos</a>
         </div>
       </div>
     </div>
@@ -176,8 +176,8 @@
     <!-- ADMIN -->
     <section class="view" id="view-admin">
       <div class="card">
-        <h2>ADMIN • IA Offline v2 (70%)</h2>
-        <p class="hint">Ajuda a atualizar a Factory (corrigir UI, melhorar ações). Você aprova manualmente.</p>
+        <h2>ADMIN • IA Offline</h2>
+        <p class="hint">Admin + Self-Update (Mãe) + GitHub Sync (privado). Você controla no SAFE.</p>
 
         <div class="row">
           <button class="btn primary" id="btnAdminDiag" type="button">Executar</button>
@@ -189,6 +189,7 @@
         <h2>Plano + Sugestão</h2>
         <pre class="mono" id="adminOut">Pronto.</pre>
       </div>
+      <!-- A área MAE/Thompson/GitHub vai ser INJETADA pelo app/js/admin.js -->
     </section>
 
     <!-- DIAGNOSTICS -->
@@ -247,7 +248,7 @@
     <button class="dockbtn" data-view="logs" type="button">Logs</button>
   </div>
 
-   <!-- CORE (ordem importa) -->
+  <!-- CORE (ordem importa) -->
   <script src="core/logger.js"></script>
   <script src="core/storage.js"></script>
   <script src="core/errors.js"></script>
@@ -267,12 +268,12 @@
   <script src="core/selfheal.js"></script>
   <script src="core/autofix.js"></script>
 
-  <!-- SYNC CORE -->
-  <script src="core/github_sync.js"></script>
+  <!-- THOMPSON + GitHub Sync (antes do Admin) -->
+  <script src="core/thompson.js"></script>
+  <script src="app/js/github_sync.js"></script>
 
-  <!-- ADMIN APP -->
+  <!-- ADMIN (CORRETO) -->
   <script src="app/js/admin.js"></script>
-  <script src="app/js/admin.github.js"></script>
 
   <!-- APP (por último) -->
   <script src="app.js"></script>
