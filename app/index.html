@@ -3,47 +3,54 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <meta name="theme-color" content="#0b1020" />
-
   <title>RControl Factory</title>
-
-  <!-- PWA -->
-  <link rel="manifest" href="/manifest.json" />
-
-  <!-- iOS PWA (não quebra nada se não tiver ícones ainda) -->
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="RControl Factory" />
-
-  <!-- CSS -->
-  <link rel="stylesheet" href="/styles.css" />
+  <meta name="theme-color" content="#0b1020" />
+  <link rel="manifest" href="./manifest.json" />
+  <link rel="stylesheet" href="./styles.css" />
 </head>
-
 <body>
   <noscript>Ative o JavaScript para usar o app.</noscript>
 
-  <!-- IMPORTANTE: o core do RCF usa #rcfRoot (seu log mostra isso) -->
-  <div id="rcfRoot">
-    <div style="padding:14px;font-family:system-ui">Carregando…</div>
+  <div id="app">
+    <div id="bootStatus" style="padding:14px;font-family:system-ui;color:#fff;opacity:.85">
+      Carregando…
+    </div>
   </div>
 
   <script>
-    // Registra SW no mesmo origin.
-    // Em Cloudflare Pages com "Build output: app", o arquivo app/sw.js vira /sw.js no deploy.
+    // SW (raiz do site publicado = pasta /app do repo)
     (function () {
-      try {
-        if (!("serviceWorker" in navigator)) return;
+      if (!("serviceWorker" in navigator)) return;
+      navigator.serviceWorker.register("./sw.js", { scope: "./" }).catch(() => {});
+    })();
 
-        // Evita registrar em modos/ambientes estranhos
-        if (location.protocol !== "https:" && location.hostname !== "localhost") return;
+    // Se não bootar em 3.5s, mostra aviso (app.js não carregou ou crashou)
+    (function () {
+      const el = document.getElementById("bootStatus");
+      const t = setTimeout(() => {
+        try {
+          // se teu app seta algum lock, ele entra aqui
+          const booted = !!(window.__RCF_BOOTED__ || window.RCF || window.RCF_APP);
+          if (!booted) {
+            el.innerHTML =
+              "⚠️ Travou no boot. Provável <b>app.js</b> não carregou ou deu erro.<br><br>" +
+              "➡️ Abra <b>Logs</b> (se conseguir) ou use <b>recovery.html</b>.<br>" +
+              "<a href='./recovery.html' style='color:#7dd3fc'>Abrir Recovery</a>";
+          }
+        } catch {}
+      }, 3500);
 
-        // registra e pronto (seu botão "Unregister SW" já resolve limpeza)
-        navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch(function(){});
-      } catch {}
+      // se algum código bootar e remover/substituir o #app, ok.
+      window.addEventListener("load", () => clearTimeout(t));
     })();
   </script>
 
-  <!-- Core -->
-  <script src="/app.js" defer></script>
+  <!-- Carrega app.js com detector de erro -->
+  <script src="./app.js" defer onerror="
+    (function(){
+      var el=document.getElementById('bootStatus');
+      if(el){ el.innerHTML='❌ Falhou carregar <b>app.js</b>. Verifique caminho/arquivo e cache.<br><a href=./recovery.html style=color:#7dd3fc>Recovery</a>'; }
+    })();
+  "></script>
 </body>
 </html>
