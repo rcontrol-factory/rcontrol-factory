@@ -1,186 +1,143 @@
-/* builderPanel.js — UI mínima do Builder SAFE (injeta no ADMIN sem mexer no app.js) */
+/* builderPanel.js — UI simples do BUILDER SAFE (Admin)
+   Requisitos:
+   - window.RCF_BUILDER_SAFE.cmd()
+   - window.RCF_PATCH_QUEUE
+*/
 
 (() => {
   "use strict";
 
-  const PANEL_ID = "rcfBuilderSafePanel";
-
-  function $(sel, root=document) { return root.querySelector(sel); }
-
-  function getView() {
-    try { return window.RCF?.state?.active?.view || ""; } catch { return ""; }
+  function el(tag, attrs = {}, children = []) {
+    const n = document.createElement(tag);
+    Object.entries(attrs).forEach(([k, v]) => {
+      if (k === "class") n.className = v;
+      else if (k === "style") n.setAttribute("style", v);
+      else if (k.startsWith("on") && typeof v === "function") n.addEventListener(k.slice(2), v);
+      else n.setAttribute(k, v);
+    });
+    children.forEach(c => n.appendChild(typeof c === "string" ? document.createTextNode(c) : c));
+    return n;
   }
 
-  function ensureBuilderDeps() {
-    const ok =
-      !!window.RCF_BUILDER_SAFE &&
-      !!window.RCF_PATCH_QUEUE &&
-      !!window.RCF_ORGANIZER &&
-      !!window.RCF_APPLY_PIPELINE;
-    return ok;
+  function safeCmdAvailable() {
+    return !!(window.RCF_BUILDER_SAFE && typeof window.RCF_BUILDER_SAFE.cmd === "function");
   }
 
-  function findAdminHost() {
-    // tenta achar um lugar “estável” pra enfiar o painel
-    // 1) root principal do app
-    const root = $("#rcfRoot") || $("#app") || document.body;
-
-    // tenta achar um card/section onde já tem Admin / GitHub Sync
-    // se não achar, injeta no topo do root mesmo
-    return root;
+  function patchPeek() {
+    try { return window.RCF_PATCH_QUEUE?.peek?.() || null; } catch { return null; }
   }
 
-  function makePanel() {
-    const wrap = document.createElement("section");
-    wrap.id = PANEL_ID;
-    wrap.style.marginTop = "14px";
-
-    wrap.innerHTML = `
-      <div style="
-        padding:14px;
-        border:1px solid rgba(255,255,255,.10);
-        border-radius:16px;
-        background: rgba(0,0,0,.18);
-        backdrop-filter: blur(10px);
-      ">
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
-          <div>
-            <div style="font-weight:700;font-size:18px;letter-spacing:.2px;">Builder SAFE</div>
-            <div style="opacity:.75;font-size:12px;margin-top:2px;">
-              Comandos: help, list, set file, write, preview, apply, discard, show
-            </div>
-          </div>
-          <div style="font-size:12px;opacity:.75;">
-            stable: <span id="rcfBuilderStableBadge">?</span>
-          </div>
-        </div>
-
-        <div style="margin-top:12px; display:flex; gap:10px; flex-wrap:wrap;">
-          <input id="rcfBuilderCmd" placeholder="Digite um comando (ex: help)" style="
-            flex:1;
-            min-width:220px;
-            padding:12px 12px;
-            border-radius:14px;
-            border:1px solid rgba(255,255,255,.10);
-            background: rgba(0,0,0,.22);
-            color: rgba(255,255,255,.92);
-            outline:none;
-          "/>
-
-          <button id="rcfBuilderRun" style="
-            padding:12px 14px;
-            border-radius:14px;
-            border:1px solid rgba(255,255,255,.10);
-            background: rgba(0,255,170,.12);
-            color: rgba(255,255,255,.92);
-          ">Run</button>
-
-          <button id="rcfBuilderPreview" style="
-            padding:12px 14px;
-            border-radius:14px;
-            border:1px solid rgba(255,255,255,.10);
-            background: rgba(255,255,255,.06);
-            color: rgba(255,255,255,.92);
-          ">Preview</button>
-
-          <button id="rcfBuilderDiscard" style="
-            padding:12px 14px;
-            border-radius:14px;
-            border:1px solid rgba(255,255,255,.10);
-            background: rgba(255,90,90,.10);
-            color: rgba(255,255,255,.92);
-          ">Discard</button>
-        </div>
-
-        <div style="margin-top:10px; font-size:12px; opacity:.75;">
-          Dica: <b>write</b> → cole o código → finalize com <b>/end</b>
-        </div>
-
-        <pre id="rcfBuilderOut" style="
-          margin-top:12px;
-          min-height:140px;
-          max-height:320px;
-          overflow:auto;
-          padding:12px;
-          border-radius:14px;
-          border:1px solid rgba(255,255,255,.10);
-          background: rgba(0,0,0,.28);
-          color: rgba(255,255,255,.92);
-          white-space: pre-wrap;
-          word-break: break-word;
-          -webkit-overflow-scrolling: touch;
-          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-          font-size: 13px;
-          line-height: 1.35;
-        "></pre>
-      </div>
-    `;
-
-    return wrap;
+  function formatPending() {
+    const p = patchPeek();
+    if (!p) return "Sem patch pendente.";
+    return [
+      "PENDING PATCH",
+      `id: ${p.id}`,
+      `type: ${p.type}`,
+      `intent: ${p.intent}`,
+      `risk: ${p.risk}`,
+      `target: ${p.targetPath}`,
+      `overwriteBlocked: ${p.overwriteBlocked}`,
+      `duplicates: ${p.duplicates?.length ? p.duplicates.join(", ") : "-"}`,
+      "",
+      "diffPreview:",
+      p.diffPreview || "(sem diff)"
+    ].join("\n");
   }
 
-  async function runCmd(text) {
-    const out = $("#rcfBuilderOut");
-    if (!out) return;
+  function mount(container) {
+    if (!container) return;
+    if (container.querySelector("#rcfBuilderPanel")) return; // já montado
 
-    if (!ensureBuilderDeps()) {
-      out.textContent =
-        "❌ Dependências do Builder não carregaram.\n" +
-        "Precisa existir: RCF_BUILDER_SAFE, RCF_PATCH_QUEUE, RCF_ORGANIZER, RCF_APPLY_PIPELINE.";
-      return;
-    }
+    const out = el("pre", {
+      id: "rcfBuilderOut",
+      style: [
+        "margin-top:10px",
+        "padding:12px",
+        "border-radius:14px",
+        "border:1px solid rgba(255,255,255,.10)",
+        "background:rgba(0,0,0,.25)",
+        "color:rgba(255,255,255,.92)",
+        "white-space:pre-wrap",
+        "word-break:break-word",
+        "overflow:auto",
+        "-webkit-overflow-scrolling:touch",
+        "min-height:140px",
+        "font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
+        "font-size:13px",
+        "line-height:1.35"
+      ].join(";")
+    }, []);
 
-    try {
-      const res = await window.RCF_BUILDER_SAFE.cmd(text);
-      out.textContent = String(res || "");
-    } catch (e) {
-      out.textContent = "❌ Erro: " + (e?.message || e);
-    }
-  }
-
-  function refreshStableBadge() {
-    const el = $("#rcfBuilderStableBadge");
-    if (!el) return;
-    el.textContent = window.RCF_STABLE ? "TRUE ✅" : "FALSE ❌";
-  }
-
-  function bindPanel(panel) {
-    const cmd = $("#rcfBuilderCmd", panel);
-    const run = $("#rcfBuilderRun", panel);
-    const prev = $("#rcfBuilderPreview", panel);
-    const disc = $("#rcfBuilderDiscard", panel);
-
-    run.addEventListener("click", () => runCmd(cmd.value));
-    prev.addEventListener("click", () => runCmd("preview"));
-    disc.addEventListener("click", () => runCmd("discard"));
-
-    cmd.addEventListener("keydown", (ev) => {
-      if (ev.key === "Enter") {
-        ev.preventDefault();
-        runCmd(cmd.value);
-      }
+    const input = el("input", {
+      id: "rcfBuilderInput",
+      type: "text",
+      placeholder: "Digite comando (ex: help, write, preview, apply)...",
+      style: [
+        "width:100%",
+        "padding:12px 14px",
+        "border-radius:14px",
+        "border:1px solid rgba(255,255,255,.10)",
+        "background:rgba(0,0,0,.20)",
+        "color:rgba(255,255,255,.92)",
+        "outline:none"
+      ].join(";")
     });
 
-    refreshStableBadge();
-    setInterval(refreshStableBadge, 1200);
-  }
+    const btnRun = el("button", { class: "btn", type: "button" }, ["Run"]);
+    const btnHelp = el("button", { class: "btn", type: "button" }, ["help"]);
+    const btnPreview = el("button", { class: "btn", type: "button" }, ["preview"]);
+    const btnApply = el("button", { class: "btn btnPrimary", type: "button" }, ["apply"]);
+    const btnDiscard = el("button", { class: "btn btnDanger", type: "button" }, ["discard"]);
+    const btnPending = el("button", { class: "btn", type: "button" }, ["show pending"]);
 
-  function mountIfNeeded() {
-    if (getView() !== "admin") return;
+    function print(msg) {
+      out.textContent = String(msg || "");
+    }
 
-    if (document.getElementById(PANEL_ID)) return;
+    async function run(line) {
+      if (!safeCmdAvailable()) {
+        print("❌ RCF_BUILDER_SAFE não carregou. Verifique se /app/js/builder/builderSafe.js foi importado/rodou.");
+        return;
+      }
+      try {
+        const res = await window.RCF_BUILDER_SAFE.cmd(line);
+        print(res);
+      } catch (e) {
+        print("❌ erro: " + (e?.message || String(e)));
+      }
+    }
 
-    const host = findAdminHost();
-    const panel = makePanel();
+    btnRun.addEventListener("click", () => run(input.value));
+    btnHelp.addEventListener("click", () => run("help"));
+    btnPreview.addEventListener("click", () => run("preview"));
+    btnApply.addEventListener("click", () => run("apply"));
+    btnDiscard.addEventListener("click", () => run("discard"));
+    btnPending.addEventListener("click", () => print(formatPending()));
 
-    // injeta no topo do host (mais seguro), mas você pode mudar pra append se quiser
-    host.prepend(panel);
-    bindPanel(panel);
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") run(input.value);
+    });
+
+    // painel
+    const panel = el("div", { id: "rcfBuilderPanel", style: "margin-top:14px" }, [
+      el("div", { style:"display:flex;align-items:center;justify-content:space-between;gap:10px" }, [
+        el("h2", { style:"margin:0;font-size:18px" }, ["Builder SAFE"]),
+        el("div", { style:"opacity:.75;font-size:12px" }, [ "patches + rollback" ])
+      ]),
+      el("div", { style:"margin-top:10px;display:flex;gap:8px;flex-wrap:wrap" }, [
+        btnHelp, btnPending, btnPreview, btnApply, btnDiscard
+      ]),
+      el("div", { style:"margin-top:10px" }, [ input ]),
+      el("div", { style:"margin-top:10px" }, [ out ])
+    ]);
 
     // mensagem inicial
-    runCmd("help");
+    print("Pronto. Digite 'help' ou clique no botão help.");
+
+    container.appendChild(panel);
   }
 
-  // loop leve pra detectar troca de view
-  setInterval(mountIfNeeded, 700);
+  // API: o Admin chama isso depois de renderizar
+  window.RCF_BUILDER_PANEL = { mount };
 })();
