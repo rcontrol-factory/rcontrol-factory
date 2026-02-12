@@ -98,24 +98,7 @@ ${message}
   // -----------------------------
   // Utils
   // -----------------------------
-/* RControl Factory — app.js (STABILITY CORE + RESTORE UI BASE)
-   - UI completa (tabs + views) dentro de #app
-   - Agent/Editor/Apps/Logs
-   - Settings: PIN + Logs
-   - Admin: GitHub + Maintenance (Mãe)
-   - STABILITY CORE: ErrorGuard + SafeInit + FallbackScreen
-   - Auto-load core modules when needed (vfs_overrides, github_sync, diagnostics)
-   - Auto-boot Diagnostics (core/diagnostics.js) no init
-   - Cloudflare Pages build output = app (site na raiz /)
-*/
-
-(() => {
-  "use strict";
-
-  // -----------------------------
-  // Utils
-  // -----------------------------
-  const $ = (sel, root = document) => root.querySelector(sel);
+ const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
   const nowISO = () => new Date().toISOString();
 
@@ -1193,6 +1176,4 @@ ${message}
 
   window.RCF = window.RCF || {};
   window.RCF.state = State;
-  window.RCF.log = (...a) => Logger.write(...a);
-
-})();
+  window.RCF.log = (...a) => Logger.writ
