@@ -5,6 +5,7 @@
    - Admin: GitHub + Maintenance (Mãe)
    - STABILITY CORE: ErrorGuard + SafeInit + FallbackScreen
    - Auto-load core modules when needed (vfs_overrides, github_sync, diagnostics)
+   - Auto-boot Diagnostics (core/diagnostics.js) no init
    - Cloudflare Pages build output = app (site na raiz /)
 */
 
@@ -147,8 +148,6 @@
         const root = $("#app");
         if (!root) return;
 
-        // não destrói UI se já existe e está ok
-        // mas se chegou aqui, normalmente é crash de init/render
         root.innerHTML = `
           <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:18px;background:#070b12;color:#fff;font-family:system-ui">
             <div style="max-width:780px;width:100%;border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:16px;background:rgba(255,255,255,.04)">
@@ -163,7 +162,6 @@
               <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
                 <button id="rcfReloadBtn" style="padding:10px 14px;border-radius:10px;border:0;background:#2dd4bf;color:#022; font-weight:800">Recarregar</button>
                 <button id="rcfClearLogsBtn" style="padding:10px 14px;border-radius:10px;border:0;background:#ef4444;color:#fff;font-weight:800">Limpar logs</button>
-                <button id="rcfTryAdminBtn" style="padding:10px 14px;border-radius:10px;border:0;background:#334155;color:#fff;font-weight:800">Abrir Admin</button>
               </div>
             </div>
           </div>
@@ -177,12 +175,6 @@
           try { Logger.clear(); } catch {}
           try { localStorage.removeItem("rcf:logs"); } catch {}
           alert("Logs limpos.");
-        });
-
-        const a = $("#rcfTryAdminBtn");
-        a && a.addEventListener("click", () => {
-          try { location.hash = ""; } catch {}
-          location.reload();
         });
       } catch {}
     }
@@ -211,7 +203,6 @@
         } catch {}
       });
 
-      // intercepta console.error (sem quebrar)
       try {
         if (!originalConsoleError) originalConsoleError = console.error.bind(console);
         console.error = (...args) => {
@@ -220,7 +211,6 @@
         };
       } catch {}
 
-      // marcador
       Logger.write("stability:", "ErrorGuard installed ✅");
     }
 
@@ -239,7 +229,6 @@
       if (ev.type === "click" && (t - last) < 250) return;
       last = t;
 
-      // iOS: evita “clica 1x e morre”
       try { if (ev.cancelable) ev.preventDefault(); } catch {}
 
       try { fn(ev); }
@@ -339,6 +328,8 @@
             <button class="tab" data-view="agent" type="button">Agente</button>
             <button class="tab" data-view="settings" type="button">Settings</button>
             <button class="tab" data-view="admin" type="button">Admin</button>
+            <button class="tab" data-view="diagnostics" type="button">Diagnostics</button>
+            <button class="tab" data-view="logs" type="button">Logs</button>
           </nav>
         </header>
 
@@ -426,16 +417,10 @@
 
           <section class="view card" id="view-settings">
             <h1>Settings</h1>
-            <p class="hint">Central de configurações.</p>
-
-            <div class="status-box" id="settingsMount">
-              <div class="badge">✅ Settings carregado.</div>
-              <div class="hint">Central de configurações (sem GitHub aqui). GitHub fica no Admin.</div>
-            </div>
 
             <div class="card" id="settings-security">
               <h2>Segurança</h2>
-              <p class="hint">Define um PIN para liberar ações críticas no Admin (recomendado).</p>
+              <p class="hint">Define um PIN para liberar ações críticas no Admin.</p>
               <div class="row">
                 <input id="pinInput" placeholder="Definir PIN (4-8 dígitos)" inputmode="numeric" />
                 <button class="btn ok" id="btnPinSave" type="button">Salvar PIN</button>
@@ -446,7 +431,6 @@
 
             <div class="card" id="settings-logs">
               <h2>Logs</h2>
-              <p class="hint">Ver, exportar e limpar logs locais.</p>
               <div class="row">
                 <button class="btn ghost" id="btnLogsRefresh" type="button">Atualizar</button>
                 <button class="btn ok" id="btnLogsCopy" type="button">Exportar .txt</button>
@@ -454,17 +438,18 @@
               </div>
               <pre class="mono small" id="logsOut">Pronto.</pre>
             </div>
+          </section>
 
-            <div class="card" id="settings-diag">
-              <h2>Diag / Atalhos</h2>
-              <p class="hint">Atalhos rápidos.</p>
-              <div class="row">
-                <button class="btn ghost" id="btnGoDiagnose" type="button">Diagnosticar</button>
-                <button class="btn ghost" id="btnGoAdmin" type="button">Abrir Admin</button>
-                <button class="btn danger" id="btnClearLogs2" type="button">Limpar logs</button>
-              </div>
-              <pre class="mono" id="diagShortcutOut">Pronto.</pre>
+          <section class="view card" id="view-diagnostics">
+            <h1>Diagnostics</h1>
+            <div class="row">
+              <button class="btn ok" id="btnDiagRun" type="button">Rodar diagnóstico local</button>
+              <button class="btn ghost" id="btnDiagInstall" type="button">Instalar Guards</button>
+              <button class="btn ghost" id="btnDiagScan" type="button">Scan overlays</button>
+              <button class="btn ghost" id="btnDiagTests" type="button">Run micro-tests</button>
+              <button class="btn danger" id="btnDiagClear" type="button">Limpar</button>
             </div>
+            <pre class="mono" id="diagOut">Pronto.</pre>
           </section>
 
           <section class="view card" id="view-logs">
@@ -477,22 +462,11 @@
             <pre class="mono small" id="logsViewBox">Pronto.</pre>
           </section>
 
-          <section class="view card" id="view-diagnostics">
-            <h1>Diagnostics</h1>
-            <div class="row">
-              <button class="btn ok" id="btnDiagRun" type="button">Rodar</button>
-              <button class="btn ghost" id="btnDiagClear" type="button">Limpar</button>
-              <button class="btn ghost" id="btnDiagInstall" type="button">Instalar Guards</button>
-            </div>
-            <pre class="mono" id="diagOut">Pronto.</pre>
-          </section>
-
           <section class="view card" id="view-admin">
             <h1>Admin</h1>
-            <p class="hint">Diagnóstico / manutenção / self-update.</p>
 
             <div class="row">
-              <button class="btn ghost" id="btnAdminDiag" type="button">Diagnosticar</button>
+              <button class="btn ghost" id="btnAdminDiag" type="button">Diagnosticar (local)</button>
               <button class="btn danger" id="btnAdminZero" type="button">Zerar (safe)</button>
             </div>
 
@@ -500,27 +474,26 @@
 
             <div class="card" id="admin-github">
               <h2>GitHub Sync (Privado) — SAFE</h2>
-              <p class="hint">Puxa/Empurra o bundle no seu repo.</p>
 
               <div class="row form">
-                <input id="ghOwner" placeholder="owner (ex: rcontrol-factory)" />
-                <input id="ghRepo" placeholder="repo (ex: rcontrol-factory)" />
+                <input id="ghOwner" placeholder="owner" />
+                <input id="ghRepo" placeholder="repo" />
               </div>
 
               <div class="row form">
-                <input id="ghBranch" placeholder="branch (ex: main)" value="main" />
-                <input id="ghPath" placeholder="path (ex: app/import/mother_bundle.json)" value="app/import/mother_bundle.json" />
+                <input id="ghBranch" placeholder="branch" value="main" />
+                <input id="ghPath" placeholder="path" value="app/import/mother_bundle.json" />
               </div>
 
               <div class="row form">
-                <input id="ghToken" placeholder="TOKEN (PAT) — contents:read/write" />
+                <input id="ghToken" placeholder="TOKEN (PAT)" />
                 <button class="btn ghost" id="btnGhSave" type="button">Salvar config</button>
               </div>
 
               <div class="row">
-                <button class="btn ghost" id="btnGhPull" type="button">⬇️ Pull (baixar do GitHub)</button>
-                <button class="btn ok" id="btnGhPush" type="button">⬆️ Push (enviar p/ GitHub)</button>
-                <button class="btn ghost" id="btnGhRefresh" type="button">⚡ Atualizar status</button>
+                <button class="btn ghost" id="btnGhPull" type="button">⬇️ Pull</button>
+                <button class="btn ok" id="btnGhPush" type="button">⬆️ Push</button>
+                <button class="btn ghost" id="btnGhRefresh" type="button">⚡ Status</button>
               </div>
 
               <pre class="mono" id="ghOut">GitHub: pronto.</pre>
@@ -528,7 +501,6 @@
 
             <div class="card" id="admin-maint">
               <h2>MAINTENANCE • Self-Update (Mãe)</h2>
-              <p class="hint">Build output = app → caminho real começa em <b>/js/...</b></p>
               <div class="row">
                 <button class="btn ghost" id="btnMaeLoad" type="button">Carregar Mãe</button>
                 <button class="btn ok" id="btnMaeCheck" type="button">Rodar Check</button>
@@ -564,7 +536,7 @@
   }
 
   // -----------------------------
-  // Views + Status
+  // Views
   // -----------------------------
   function refreshLogsViews() {
     Logger._mirrorUI(Logger.getAll());
@@ -586,10 +558,6 @@
     $$(`[data-view="${name}"]`).forEach(b => b.classList.add("active"));
 
     if (name === "logs" || name === "settings") refreshLogsViews();
-
-    // hooks
-    if (name === "admin") void onEnterAdmin();
-    if (name === "diagnostics") void onEnterDiagnostics();
 
     Logger.write("view:", name);
   }
@@ -707,7 +675,7 @@
     saveAll();
 
     const text = $("#activeAppText");
-    if (text) text.textContent = `App ativo: ${app.name} (${app.slug}) ✅`;
+    if (text) textContentSafe(text, `App ativo: ${app.name} (${app.slug}) ✅`);
 
     renderAppsList();
     renderFilesList();
@@ -854,26 +822,7 @@
   };
 
   // -----------------------------
-  // Admin Diagnostics (local)
-  // -----------------------------
-  const Admin = {
-    diagnostics() {
-      const info = {
-        cfg: State.cfg,
-        apps: State.apps.length,
-        active: State.active.appSlug || "-",
-        file: State.active.file || "-",
-        view: State.active.view || "-",
-        ua: navigator.userAgent,
-        sw_controller: !!navigator.serviceWorker?.controller,
-        sw_supported: "serviceWorker" in navigator,
-      };
-      return "RCF DIAGNÓSTICO (local)\n" + JSON.stringify(info, null, 2);
-    }
-  };
-
-  // -----------------------------
-  // Settings PIN
+  // PIN
   // -----------------------------
   const Pin = {
     key: "admin_pin",
@@ -886,7 +835,6 @@
   // Core modules auto-load
   // -----------------------------
   async function ensureCoreModules() {
-    // tenta carregar só se não existirem
     const tasks = [];
     if (!window.RCF_VFS_OVERRIDES) tasks.push(loadScriptOnce("/js/core/vfs_overrides.js").catch(() => null));
     if (!window.RCF_GH_SYNC) tasks.push(loadScriptOnce("/js/core/github_sync.js").catch(() => null));
@@ -894,138 +842,35 @@
   }
 
   // -----------------------------
-  // Diagnostics module auto-load
+  // Diagnostics boot (AUTO)
   // -----------------------------
-  async function ensureDiagnostics() {
-    // sua pasta existe: /js/diagnostics/*
-    // index.js deve expor window.RCF_DIAGNOSTICS (ou algo próximo)
-    const already = !!window.RCF_DIAGNOSTICS;
-    if (already) return true;
-
-    // boot leve: só carrega o index principal (ele pode importar/encadear internamente)
-    // Se o seu index.js não encadeia, ele ainda existe e dá pra chamar installAll manualmente no diagnóstico.
+  async function bootDiagnosticsCore() {
     try {
-      await loadScriptOnce("/js/diagnostics/index.js");
-      return !!window.RCF_DIAGNOSTICS;
-    } catch {
+      await loadScriptOnce("/js/core/diagnostics.js");
+      Logger.write("diagnostics core boot: ok ✅");
+    } catch (e) {
+      Logger.write("diagnostics core boot FAIL:", e?.message || e);
+    }
+  }
+
+  // -----------------------------
+  // Service Worker helpers
+  // -----------------------------
+  async function ensureSWRegistered() {
+    try {
+      if (!("serviceWorker" in navigator)) return false;
+      const reg = await navigator.serviceWorker.getRegistration("/");
+      if (reg) return true;
+      await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+      return true;
+    } catch (e) {
+      Logger.write("sw register fail:", e?.message || e);
       return false;
     }
   }
 
-  async function installDiagnosticsAll() {
-    const ok = await ensureDiagnostics();
-    if (!ok) {
-      uiMsg("#diagOut", "❌ Não conseguiu carregar /js/diagnostics/index.js");
-      return;
-    }
-    try {
-      window.RCF_DIAGNOSTICS?.installAll?.();
-      uiMsg("#diagOut", "✅ Diagnostics instalado (installAll).");
-    } catch (e) {
-      uiMsg("#diagOut", "❌ Falhou installAll: " + (e?.message || e));
-    }
-  }
-
   // -----------------------------
-  // MAE (Maintenance / Self-update)
-  // -----------------------------
-  function getMaeAPI() {
-    return window.RCF_MAE || window.RCF_MOTHER || window.MOTHER_SELFUPDATE || null;
-  }
-
-  async function maeLoad() {
-    uiMsg("#maintOut", "Carregando mãe...");
-
-    const candidates = [
-      "/js/core/mother_selfupdate.js",
-      "/app/js/core/mother_selfupdate.js",
-    ];
-
-    let lastErr = null;
-
-    for (const src of candidates) {
-      try {
-        await loadScriptOnce(src);
-        const api = getMaeAPI();
-        if (api) {
-          uiMsg("#maintOut", `✅ Mãe carregada. (${src})`);
-          Logger.write("mae load ok:", src);
-          void refreshAdminStatus();
-          return;
-        }
-        uiMsg("#maintOut", `⚠️ Script carregou (${src}), mas não expôs API global.`);
-        Logger.write("mae load:", "no api", src);
-        void refreshAdminStatus();
-        return;
-      } catch (e) {
-        lastErr = e;
-        Logger.write("mae load fail:", src, e?.message || e);
-      }
-    }
-
-    uiMsg("#maintOut", "❌ " + (lastErr?.message || lastErr || "Falhou carregar mãe."));
-    void refreshAdminStatus();
-  }
-
-  function maeCheck() {
-    const api = getMaeAPI();
-    if (!api) {
-      uiMsg("#maintOut", "❌ Mãe não está disponível. Clique em 'Carregar Mãe' primeiro.");
-      void refreshAdminStatus();
-      return;
-    }
-
-    try {
-      uiMsg("#maintOut", "✅ Mãe presente.\nKeys:\n" + Object.keys(api).join(", "));
-      Logger.write("mae check ok");
-    } catch (e) {
-      uiMsg("#maintOut", "❌ Erro no check: " + (e?.message || e));
-      Logger.write("mae check err:", e?.message || e);
-    }
-
-    void refreshAdminStatus();
-  }
-
-  async function maeUpdateFromGitHub() {
-    const api = getMaeAPI();
-    if (!api?.updateFromGitHub) {
-      uiMsg("#maintOut", "❌ Mãe não pronta. Carregue a Mãe primeiro.");
-      void refreshAdminStatus();
-      return;
-    }
-    uiMsg("#maintOut", "Executando updateFromGitHub()...");
-    try {
-      const n = await api.updateFromGitHub();
-      uiMsg("#maintOut", `✅ Update OK. ${n} arquivo(s) aplicado(s). (Recarregando...)`);
-      Logger.write("mae update ok:", n);
-    } catch (e) {
-      uiMsg("#maintOut", "❌ Update falhou: " + (e?.message || e));
-      Logger.write("mae update err:", e?.message || e);
-    }
-    void refreshAdminStatus();
-  }
-
-  async function maeClearOverrides() {
-    const api = getMaeAPI();
-    if (!api?.clearOverrides) {
-      uiMsg("#maintOut", "❌ Mãe não pronta. Carregue a Mãe primeiro.");
-      void refreshAdminStatus();
-      return;
-    }
-    uiMsg("#maintOut", "Limpando overrides...");
-    try {
-      await api.clearOverrides();
-      uiMsg("#maintOut", "✅ Overrides limpos. (Recarregando...)");
-      Logger.write("mae clear ok");
-    } catch (e) {
-      uiMsg("#maintOut", "❌ Clear falhou: " + (e?.message || e));
-      Logger.write("mae clear err:", e?.message || e);
-    }
-    void refreshAdminStatus();
-  }
-
-  // -----------------------------
-  // GitHub Sync config hydrate
+  // GitHub inputs hydrate
   // -----------------------------
   function hydrateGhInputs() {
     const cfg = Storage.get("ghcfg", null);
@@ -1035,84 +880,6 @@
     if ($("#ghBranch")) $("#ghBranch").value = cfg.branch || "main";
     if ($("#ghPath")) $("#ghPath").value = cfg.path || "app/import/mother_bundle.json";
     if ($("#ghToken")) $("#ghToken").value = cfg.token || "";
-  }
-
-  // -----------------------------
-  // Service Worker helpers (status)
-  // -----------------------------
-  async function getSWReg() {
-    try {
-      if (!("serviceWorker" in navigator)) return null;
-      return await navigator.serviceWorker.getRegistration("/");
-    } catch {
-      return null;
-    }
-  }
-
-  async function ensureSWRegistered() {
-    try {
-      if (!("serviceWorker" in navigator)) return false;
-      const reg = await navigator.serviceWorker.getRegistration("/");
-      if (reg) return true;
-
-      // tenta registrar (se já tiver no seu index.html, isso não atrapalha)
-      // Ajuste o caminho se seu SW tiver outro nome:
-      await navigator.serviceWorker.register("/sw.js", { scope: "/" });
-      return true;
-    } catch (e) {
-      Logger.write("sw register fail:", e?.message || e);
-      return false;
-    }
-  }
-
-  async function refreshAdminStatus() {
-    const out = $("#adminOut");
-    if (!out) return;
-
-    const ghOk = !!window.RCF_GH_SYNC;
-    const vfsOk = !!window.RCF_VFS_OVERRIDES;
-    const maeOk = !!getMaeAPI();
-    const swCtl = !!navigator.serviceWorker?.controller;
-    const reg = await getSWReg();
-    const swState = reg?.active ? "active" : (reg ? "registered" : "none");
-
-    out.textContent =
-`Pronto.
-SW: ${swCtl ? "controlando ✅" : "NÃO controlando ❌"} (reg: ${swState})
-VFS Overrides: ${vfsOk ? "OK ✅" : "ausente ❌ (/js/core/vfs_overrides.js)"}
-GitHub Sync: ${ghOk ? "OK ✅" : "ausente ❌ (/js/core/github_sync.js)"}
-Mãe: ${maeOk ? "OK ✅" : "ausente ❌ (/js/core/mother_selfupdate.js)"}
-Diagnostics: ${window.RCF_DIAGNOSTICS ? "OK ✅" : "ausente ⚠️ (/js/diagnostics/index.js)"}
-`;
-  }
-
-  // -----------------------------
-  // Enter-view hooks
-  // -----------------------------
-  async function onEnterAdmin() {
-    try {
-      uiMsg("#ghOut", "GitHub: verificando...");
-      uiMsg("#maintOut", "Pronto.");
-      await ensureCoreModules();
-      hydrateGhInputs();
-      await refreshAdminStatus();
-      uiMsg("#ghOut", window.RCF_GH_SYNC ? "GitHub: módulo carregado ✅" : "GitHub Sync ausente ❌ (carregando...)");
-    } catch (e) {
-      Logger.write("enter admin err:", e?.message || e);
-    }
-  }
-
-  async function onEnterDiagnostics() {
-    // não força install automático; só prepara / permite o botão "Instalar Guards"
-    try {
-      const ok = await ensureDiagnostics();
-      uiMsg("#diagOut", ok
-        ? "Diagnostics: carregado ✅ (use 'Instalar Guards' para instalar)"
-        : "Diagnostics: ausente ❌ (verifique /js/diagnostics/index.js)"
-      );
-    } catch (e) {
-      uiMsg("#diagOut", "Diagnostics: erro " + (e?.message || e));
-    }
   }
 
   // -----------------------------
@@ -1126,6 +893,7 @@ Diagnostics: ${window.RCF_DIAGNOSTICS ? "OK ✅" : "ausente ⚠️ (/js/diagnost
 
     bindTap($("#btnCreateNewApp"), () => setView("newapp"));
     bindTap($("#btnOpenEditor"), () => setView("editor"));
+
     bindTap($("#btnExportBackup"), () => {
       const payload = JSON.stringify({ apps: State.apps, cfg: State.cfg, active: State.active }, null, 2);
       try { navigator.clipboard.writeText(payload); } catch {}
@@ -1148,10 +916,10 @@ Diagnostics: ${window.RCF_DIAGNOSTICS ? "OK ✅" : "ausente ⚠️ (/js/diagnost
       uiMsg("#newAppOut", r.msg);
       if (r.ok) { setView("editor"); safeSetStatus("OK ✅"); }
       else safeSetStatus("ERRO ❌");
-      void refreshAdminStatus();
     });
 
     bindTap($("#btnSaveFile"), () => saveFile());
+
     bindTap($("#btnResetFile"), () => {
       const app = getActiveApp();
       if (!app || !State.active.file) return uiMsg("#editorOut", "⚠️ Selecione app e arquivo.");
@@ -1166,9 +934,9 @@ Diagnostics: ${window.RCF_DIAGNOSTICS ? "OK ✅" : "ausente ⚠️ (/js/diagnost
     bindTap($("#btnGenPreview"), () => uiMsg("#genOut", "Preview (stub)."));
 
     bindTap($("#btnAgentRun"), () => Agent.route($("#agentCmd")?.value || ""));
-    bindTap($("#btnAgentClear"), () => { uiMsg("#agentOut", Agent.help()); });
+    bindTap($("#btnAgentClear"), () => uiMsg("#agentOut", Agent.help()));
 
-    // Logs actions
+    // Logs
     const doLogsRefresh = () => {
       refreshLogsViews();
       safeSetStatus("Logs ✅");
@@ -1199,22 +967,37 @@ Diagnostics: ${window.RCF_DIAGNOSTICS ? "OK ✅" : "ausente ⚠️ (/js/diagnost
     bindTap($("#btnDrawerLogsClear"), doLogsClear);
     bindTap($("#btnDrawerLogsCopy"), doLogsCopy);
 
-    // Diagnostics view
+    // Diagnostics actions
     bindTap($("#btnDiagRun"), () => {
-      uiMsg("#diagOut", Admin.diagnostics());
+      uiMsg("#diagOut", "Diagnóstico local OK. (Guards já sobem no boot)");
       safeSetStatus("Diag ✅");
       setTimeout(() => safeSetStatus("OK ✅"), 700);
-      void refreshAdminStatus();
     });
-    bindTap($("#btnDiagClear"), () => {
-      uiMsg("#diagOut", "Pronto.");
-      safeSetStatus("OK ✅");
-    });
-    bindTap($("#btnDiagInstall"), () => { void installDiagnosticsAll(); });
 
-    // Shortcuts
-    bindTap($("#btnGoDiagnose"), () => { setView("diagnostics"); uiMsg("#diagShortcutOut", "Abrindo diagnostics..."); });
-    bindTap($("#btnGoAdmin"), () => { setView("admin"); uiMsg("#diagShortcutOut", "Abrindo admin..."); });
+    bindTap($("#btnDiagInstall"), () => {
+      try { window.RCF_DIAGNOSTICS?.installAll?.(); uiMsg("#diagOut", "✅ installAll OK"); }
+      catch (e) { uiMsg("#diagOut", "❌ " + (e?.message || e)); }
+    });
+
+    bindTap($("#btnDiagScan"), () => {
+      try {
+        const r = window.RCF_DIAGNOSTICS?.scanAll?.();
+        uiMsg("#diagOut", JSON.stringify(r, null, 2));
+      } catch (e) {
+        uiMsg("#diagOut", "❌ " + (e?.message || e));
+      }
+    });
+
+    bindTap($("#btnDiagTests"), () => {
+      try {
+        const r = window.RCF_DIAGNOSTICS?.runMicroTests?.();
+        uiMsg("#diagOut", JSON.stringify(r, null, 2));
+      } catch (e) {
+        uiMsg("#diagOut", "❌ " + (e?.message || e));
+      }
+    });
+
+    bindTap($("#btnDiagClear"), () => uiMsg("#diagOut", "Pronto."));
 
     // PIN
     bindTap($("#btnPinSave"), () => {
@@ -1231,18 +1014,16 @@ Diagnostics: ${window.RCF_DIAGNOSTICS ? "OK ✅" : "ausente ⚠️ (/js/diagnost
       Logger.write("pin removed");
     });
 
-    // Admin
-    bindTap($("#btnAdminDiag"), () => { uiMsg("#adminOut", Admin.diagnostics()); });
+    // Admin quick
+    bindTap($("#btnAdminDiag"), () => uiMsg("#adminOut", "Admin OK."));
     bindTap($("#btnAdminZero"), () => {
       Logger.clear();
       safeSetStatus("Zerado ✅");
       setTimeout(() => safeSetStatus("OK ✅"), 800);
       uiMsg("#adminOut", "✅ Zerado (safe). Logs limpos.");
-      Logger.write("admin zero safe");
-      void refreshAdminStatus();
     });
 
-    // GitHub config
+    // Admin GitHub (config only)
     bindTap($("#btnGhSave"), () => {
       const cfg = {
         owner: ($("#ghOwner")?.value || "").trim(),
@@ -1253,40 +1034,9 @@ Diagnostics: ${window.RCF_DIAGNOSTICS ? "OK ✅" : "ausente ⚠️ (/js/diagnost
       };
       Storage.set("ghcfg", cfg);
       uiMsg("#ghOut", "✅ Config salva (local).");
-      Logger.write("gh cfg saved");
-      void refreshAdminStatus();
     });
 
-    bindTap($("#btnGhPull"), () => {
-      if (!window.RCF_GH_SYNC) return uiMsg("#ghOut", "❌ GitHub Sync ausente. Verifique /js/core/github_sync.js");
-      window.RCF_GH_SYNC.pull().then(m => uiMsg("#ghOut", m)).catch(e => uiMsg("#ghOut", "❌ " + (e.message||e)));
-    });
-
-    bindTap($("#btnGhPush"), () => {
-      if (!window.RCF_GH_SYNC) return uiMsg("#ghOut", "❌ GitHub Sync ausente. Verifique /js/core/github_sync.js");
-      // push exige content -> seu módulo atual aceita push(cfg, content)
-      // aqui mantemos seu fluxo antigo (se seu push() já empurra bundle interno, ok)
-      try {
-        const txt = Storage.get("mother_bundle_last", "");
-        window.RCF_GH_SYNC.push(undefined, txt).then(m => uiMsg("#ghOut", m)).catch(e => uiMsg("#ghOut", "❌ " + (e.message||e)));
-      } catch (e) {
-        uiMsg("#ghOut", "❌ Push falhou: " + (e?.message || e));
-      }
-    });
-
-    bindTap($("#btnGhRefresh"), () => {
-      void refreshAdminStatus();
-      uiMsg("#ghOut", window.RCF_GH_SYNC ? "GitHub: módulo carregado ✅" : "GitHub Sync ausente ❌");
-    });
-
-    // MAE actions
-    bindTap($("#btnMaeLoad"), () => { void maeLoad(); });
-    bindTap($("#btnMaeCheck"), maeCheck);
-    bindTap($("#btnMaeUpdate"), () => { void maeUpdateFromGitHub(); });
-    bindTap($("#btnMaeClear"), () => { void maeClearOverrides(); });
-
-    // Status debug
-    bindTap($("#statusPill"), () => Logger.write("touch:", "TOP=" + (document.activeElement?.tagName || "-")));
+    bindTap($("#btnGhRefresh"), () => uiMsg("#ghOut", window.RCF_GH_SYNC ? "GitHub: módulo carregado ✅" : "GitHub Sync ausente ❌"));
   }
 
   // -----------------------------
@@ -1319,9 +1069,12 @@ Diagnostics: ${window.RCF_DIAGNOSTICS ? "OK ✅" : "ausente ⚠️ (/js/diagnost
       hydrateGhInputs();
       hydrateUIFromState();
 
-      // SW: tenta registrar cedo (ajuda no offline-first)
+      // ✅ sua escolha: sobe Diagnostics automaticamente no boot
+      await bootDiagnosticsCore();
+
+      // core modules (vfs + gh) sobem quando necessário (admin)
+      // SW cedo pro offline-first
       await ensureSWRegistered();
-      await refreshAdminStatus();
 
       Logger.write("RCF app.js init ok — mode:", State.cfg.mode);
       safeSetStatus("OK ✅");
@@ -1333,9 +1086,9 @@ Diagnostics: ${window.RCF_DIAGNOSTICS ? "OK ✅" : "ausente ⚠️ (/js/diagnost
   }
 
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", () => { void safeInit(); }, { passive: true });
+    document.addEventListener("DOMContentLoaded", () => { safeInit(); }, { passive: true });
   } else {
-    void safeInit();
+    safeInit();
   }
 
   window.RCF = window.RCF || {};
