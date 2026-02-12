@@ -1,55 +1,62 @@
-/* RControl Factory — Service Worker (ROOT)
-   Scope: "/"
-   Estratégia:
-   - cache-first pro core
-   - network-first com fallback pro /app/index.html em navegação
-   - overrides via postMessage (opcional)
-*/
-
 "use strict";
 
-const CORE_CACHE = "rcf-core-v3";
-const OVERRIDE_CACHE = "rcf-overrides-v1";
+/* RControl Factory — Service Worker (Pages build output = app)
+   Agora o site publicado NÃO tem /app prefix.
+   Tudo é servido na raiz: /index.html /app.js /js/*
+*/
+
+const CORE_CACHE = "rcf-core-v3";        // subiu versão pra forçar limpar cache antigo
+const OVERRIDE_CACHE = "rcf-overrides-v3";
 
 const CORE_ASSETS = [
   "/",
   "/index.html",
-  "/app/",
-  "/app/index.html",
-  "/app/styles.css",
-  "/app/app.js",
+  "/styles.css",
+  "/app.js",
+  "/manifest.json",
 
   // módulos (se existirem)
-  "/app/js/ui.touchfix.js",
-  "/app/js/router.js",
-  "/app/js/admin.js",
-  "/app/js/core/vfs_overrides.js",
-  "/app/js/core/thompson.js",
-  "/app/js/core/github_sync.js",
-  "/app/js/core/mother_selfupdate.js",
-  "/app/manifest.json"
+  "/js/ui.touchfix.js",
+  "/js/router.js",
+  "/js/admin.js",
+  "/js/templates.js",
+  "/js/templates.catalog.js",
+  "/js/settings.js",
+  "/js/ui.topbar.js",
+  "/js/ui.gear.js",
+  "/js/agent.router.js",
+  "/js/agent.nlp.js",
+  "/js/ai.js",
+  "/js/ai.v2.js",
+
+  // core (se existirem)
+  "/js/core/vfs_overrides.js",
+  "/js/core/github_sync.js",
+  "/js/core/mother_selfupdate.js",
+  "/js/core/thompson.js",
+  "/js/core/policy.js",
+  "/js/core/registry.js",
 ];
 
 self.addEventListener("install", (event) => {
   event.waitUntil((async () => {
-    self.skipWaiting();
+    await self.skipWaiting();
     const cache = await caches.open(CORE_CACHE);
-    await Promise.allSettled(CORE_ASSETS.map((u) => cache.add(u)));
+    await Promise.allSettled(CORE_ASSETS.map((url) => cache.add(url)));
   })());
 });
 
 self.addEventListener("activate", (event) => {
   event.waitUntil((async () => {
-    self.clients.claim();
+    await self.clients.claim();
     const keys = await caches.keys();
-    await Promise.all(
-      keys.map((k) => {
-        if (k !== CORE_CACHE && k !== OVERRIDE_CACHE) return caches.delete(k);
-      })
-    );
+    await Promise.all(keys.map((k) => {
+      if (k !== CORE_CACHE && k !== OVERRIDE_CACHE) return caches.delete(k);
+    }));
   })());
 });
 
+/* Overrides via postMessage */
 function normalizePath(p) {
   let path = String(p || "").trim();
   if (!path.startsWith("/")) path = "/" + path;
@@ -59,7 +66,6 @@ function urlFromPath(path) {
   return new URL(normalizePath(path), self.registration.scope).toString();
 }
 
-/* Overrides (opcional) */
 self.addEventListener("message", (event) => {
   const data = event.data || {};
   const src = event.source;
@@ -74,69 +80,66 @@ self.addEventListener("message", (event) => {
         const cache = await caches.open(OVERRIDE_CACHE);
         const headers = new Headers({
           "Content-Type": contentType,
-          "Cache-Control": "no-store"
+          "Cache-Control": "no-store",
         });
 
         await cache.put(urlFromPath(path), new Response(content, { status: 200, headers }));
-        src && src.postMessage({ type: "RCF_OVERRIDE_PUT_OK", path });
-        return;
+        src?.postMessage({ type: "RCF_OVERRIDE_PUT_OK", path });
       }
 
       if (data.type === "RCF_OVERRIDE_CLEAR") {
         await caches.delete(OVERRIDE_CACHE);
-        src && src.postMessage({ type: "RCF_OVERRIDE_CLEAR_OK" });
-        return;
+        src?.postMessage({ type: "RCF_OVERRIDE_CLEAR_OK" });
       }
     } catch (e) {
-      src && src.postMessage({ type: "RCF_OVERRIDE_ERR", error: String(e?.message || e) });
+      src?.postMessage({ type: "RCF_OVERRIDE_ERR", error: String(e?.message || e) });
     }
   })());
 });
 
+/* Fetch: override > core cache > network (runtime cache leve) */
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.method !== "GET") return;
 
-  const url = new URL(req.url);
-
   event.respondWith((async () => {
-    // 1) override cache
+    // 1) override (match por request)
     const oCache = await caches.open(OVERRIDE_CACHE);
-    const oHit = await oCache.match(req.url);
+    const oHit = await oCache.match(req);
     if (oHit) return oHit;
 
-    // 2) navegação: network-first, fallback pro app
-    if (req.mode === "navigate") {
-      try {
-        const net = await fetch(req);
-        if (net && net.ok) return net;
-        throw new Error("net not ok");
-      } catch {
-        const cCache = await caches.open(CORE_CACHE);
-        const fallback = await cCache.match("/app/index.html");
-        return fallback || new Response("Offline", { status: 503 });
-      }
-    }
-
-    // 3) arquivos: cache-first, senão rede + runtime cache
+    // 2) core cache
     const cCache = await caches.open(CORE_CACHE);
     const cHit = await cCache.match(req);
     if (cHit) return cHit;
 
+    // 3) network + runtime cache
     try {
       const net = await fetch(req);
-      if (url.origin === self.location.origin && net && net.ok) {
+
+      const url = new URL(req.url);
+      if (url.origin === self.location.origin) {
         const isStatic =
-          url.pathname.startsWith("/app/") ||
+          url.pathname.startsWith("/js/") ||
           url.pathname.endsWith(".js") ||
           url.pathname.endsWith(".css") ||
           url.pathname.endsWith(".html") ||
           url.pathname.endsWith(".json");
-        if (isStatic) cCache.put(req, net.clone()).catch(() => {});
+
+        if (isStatic && net && net.ok) cCache.put(req, net.clone()).catch(() => {});
       }
+
       return net;
     } catch {
-      return new Response("Offline", { status: 503, headers: { "Content-Type": "text/plain; charset=utf-8" } });
+      // fallback offline
+      if (req.mode === "navigate") {
+        const fallback = await cCache.match("/index.html");
+        if (fallback) return fallback;
+      }
+      return new Response("Offline", {
+        status: 503,
+        headers: { "Content-Type": "text/plain; charset=utf-8" },
+      });
     }
   })());
 });
