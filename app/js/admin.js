@@ -1,5 +1,5 @@
 /* RControl Factory — Admin UI (app/js/admin.js) */
-/* Objetivo: Admin estável no iOS + checkbox/touch fix + GH Sync status */
+/* Objetivo: Admin estável no iOS + checkbox/touch fix + GH Sync status + Builder SAFE mount */
 
 (function () {
   const W = window;
@@ -31,6 +31,8 @@
     ghToken: "gh_token",
     ghMsg: "gh_msg",
     motherMsg: "mother_msg",
+    builderMsg: "builder_msg",
+    builderMount: "builder_mount",
   };
 
   function ensureRoot() {
@@ -75,9 +77,27 @@
     return !!(W.RCF_MOTHER && typeof W.RCF_MOTHER.applyBundle === "function");
   }
 
+  // ===== Builder SAFE status helpers =====
+  function hasBuilderCore() {
+    return !!(W.RCF_BUILDER_SAFE && typeof W.RCF_BUILDER_SAFE.cmd === "function");
+  }
+  function hasPatchQueue() {
+    return !!(W.RCF_PATCH_QUEUE && typeof W.RCF_PATCH_QUEUE.enqueue === "function" && typeof W.RCF_PATCH_QUEUE.peek === "function");
+  }
+  function hasBuilderPanel() {
+    return !!(W.RCF_BUILDER_PANEL && typeof W.RCF_BUILDER_PANEL.mount === "function");
+  }
+
   function renderAdmin() {
     const root = ensureRoot();
     const gh = getGHConfig();
+
+    const ghStatus = hasGHModule() ? "OK ✅" : "módulo não carregou (RCF_GH_SYNC ausente) ❌";
+    const motherStatus = hasMotherModule() ? "OK ✅" : "módulo não carregou (RCF_MOTHER ausente) ❌";
+
+    const builderCoreStatus = hasBuilderCore() ? "RCF_BUILDER_SAFE OK ✅" : "RCF_BUILDER_SAFE ausente ❌";
+    const patchQueueStatus = hasPatchQueue() ? "RCF_PATCH_QUEUE OK ✅" : "RCF_PATCH_QUEUE ausente ❌";
+    const builderPanelStatus = hasBuilderPanel() ? "RCF_BUILDER_PANEL OK ✅" : "RCF_BUILDER_PANEL ausente (sem UI) ⚠️";
 
     root.innerHTML = `
       <div class="card">
@@ -90,9 +110,12 @@
 
         <div class="box" style="margin-top:12px">
           <div><b>Pronto.</b></div>
-          <div>MAE+THOMPSON ✅ carregado (mother_selfupdate.js)</div>
-          <div>MAE UI carregada ✅ (app/js/admin.js)</div>
-          <div>GitHub Sync: ${hasGHModule() ? "OK ✅" : "módulo não carregou (RCF_GH_SYNC ausente) ❌"}</div>
+          <div>MAE+THOMPSON: ${motherStatus}</div>
+          <div>GitHub Sync: ${ghStatus}</div>
+          <div style="margin-top:6px"><b>Builder SAFE:</b></div>
+          <div>${builderCoreStatus}</div>
+          <div>${patchQueueStatus}</div>
+          <div>${builderPanelStatus}</div>
         </div>
       </div>
 
@@ -116,6 +139,17 @@
         </div>
 
         <div id="${IDS.ghMsg}" class="box" style="margin-top:10px">GitHub: pronto. (Sync v1)</div>
+      </div>
+
+      <div class="card" style="margin-top:14px">
+        <h2>Builder SAFE</h2>
+        <div class="muted">Comandos + fila de patch + apply com rollback. (Autopilot OFF)</div>
+
+        <div id="${IDS.builderMsg}" class="box" style="margin-top:10px">
+          Pronto. (aguardando painel)
+        </div>
+
+        <div id="${IDS.builderMount}" style="margin-top:10px"></div>
       </div>
 
       <div class="card" style="margin-top:14px">
@@ -153,6 +187,7 @@
 
     wireAdmin(root);
     forceIOSCheckboxFix(root);
+    mountBuilderPanelIfAvailable(root);
   }
 
   function msg(id, text, ok = true) {
@@ -160,6 +195,31 @@
     if (!el) return;
     el.textContent = text;
     el.style.borderColor = ok ? "rgba(34,197,94,.35)" : "rgba(239,68,68,.35)";
+  }
+
+  // ===== Builder mount =====
+  function mountBuilderPanelIfAvailable(root) {
+    const mount = document.getElementById(IDS.builderMount);
+    if (!mount) return;
+
+    // texto de status claro
+    const parts = [];
+    if (!hasBuilderCore()) parts.push("Falta carregar: /app/js/builder/builderSafe.js (RCF_BUILDER_SAFE)");
+    if (!hasPatchQueue()) parts.push("Falta carregar: /app/js/engine/patchQueue.js (RCF_PATCH_QUEUE)");
+    if (!hasBuilderPanel()) parts.push("Falta carregar: /app/js/builder/builderPanel.js (RCF_BUILDER_PANEL UI)");
+
+    if (parts.length) {
+      msg(IDS.builderMsg, "⚠️ Builder SAFE ainda sem UI:\n- " + parts.join("\n- "), false);
+      return;
+    }
+
+    try {
+      // monta o painel dentro do card do Admin
+      W.RCF_BUILDER_PANEL.mount(mount);
+      msg(IDS.builderMsg, "✅ Builder SAFE carregado. Use help / write / preview / apply.", true);
+    } catch (e) {
+      msg(IDS.builderMsg, "❌ Falhou montar Builder Panel: " + (e?.message || e), false);
+    }
   }
 
   function wireAdmin(root) {
@@ -356,6 +416,7 @@
     boot();
   }
 })();
+
 // iOS fallback: se overlay travar clique, forçamos toggle do checkbox do safe-mode
 (function(){
   function bindSafeCheckboxFix(){
