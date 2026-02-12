@@ -12,6 +12,10 @@
   --radius2: 14px;
   --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   --ui: -apple-system, system-ui, Segoe UI, Roboto, Helvetica, Arial;
+
+  /* ✅ token do Diagnostics */
+  --rcf-css-token: "v7";
+  --rcf_css_ok: 1;
 }
 
 *{ box-sizing:border-box; }
@@ -26,9 +30,29 @@ body{
               var(--bg);
   color:var(--text);
 
-  /* iOS: evita bugs de empilhamento/overlay */
+  /* iOS: reduz bugs de empilhamento */
   position: relative;
   isolation: isolate;
+}
+
+/* ===========================
+   iOS / CLICK HARDENING (base)
+   =========================== */
+#app, #rcfRoot, .views, #views, .container, .card, .view, header, nav, main, section{
+  pointer-events: auto;
+  position: relative;
+}
+
+button, a, .btn, .tab, input, textarea, select, label, .file-item, .app-item{
+  pointer-events: auto;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+input[type="checkbox"]{
+  pointer-events:auto;
+  -webkit-appearance: auto;
+  appearance: auto;
 }
 
 /* ===========================
@@ -37,17 +61,11 @@ body{
 .topbar{
   position: sticky;
   top:0;
-
-  /* Sobe bem o topo pra ninguém cobrir */
   z-index: 1000;
-
   background: linear-gradient(to bottom, rgba(7,11,18,.92), rgba(7,11,18,.70));
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
-
   border-bottom: 1px solid var(--line);
-
-  /* garante toque */
   pointer-events: auto;
 }
 
@@ -75,9 +93,9 @@ body{
   position: relative;
   pointer-events: auto;
 }
+
 .spacer{ flex:1; }
 
-/* Botões/abas */
 .tab, .btn, .dockbtn, .gear{
   border:1px solid var(--line);
   background: rgba(255,255,255,.03);
@@ -86,11 +104,6 @@ body{
   border-radius: 999px;
   cursor:pointer;
   user-select:none;
-  -webkit-tap-highlight-color: transparent;
-
-  /* iOS */
-  pointer-events: auto;
-  touch-action: manipulation;
 }
 
 .tab.active{
@@ -122,11 +135,7 @@ body{
   max-width: 980px;
   margin: 14px auto 110px;
   padding: 0 12px;
-
-  /* garante que a área do app receba touch */
-  position: relative;
   z-index: 1;
-  pointer-events: auto;
 }
 
 .card{
@@ -136,10 +145,7 @@ body{
   box-shadow: var(--shadow);
   padding: 16px;
   margin-bottom: 14px;
-
-  position: relative;
   z-index: 1;
-  pointer-events: auto;
 }
 
 .hero h1{ margin: 0 0 6px; font-size: 36px; }
@@ -176,7 +182,6 @@ body{
 
 h1,h2{ margin: 0 0 10px; }
 h2{ margin-top: 12px; }
-
 .hint{ color: var(--muted); font-size: 13px; }
 
 .apps{ display:flex; flex-direction:column; gap:10px; margin-top:10px; }
@@ -204,10 +209,13 @@ h2{ margin-top: 12px; }
   align-items:center;
 }
 
-/* views */
+/* ===========================
+   VIEWS (✅ essencial)
+   =========================== */
 .view{ display:none; }
 .view.active{ display:block; }
 
+/* inputs */
 .form input, textarea, .cmd input{
   width:100%;
   border:1px solid var(--line);
@@ -218,10 +226,7 @@ h2{ margin-top: 12px; }
   outline:none;
 }
 
-textarea{
-  min-height: 120px;
-  resize: vertical;
-}
+textarea{ min-height: 120px; resize: vertical; }
 
 .files{
   display:flex;
@@ -235,9 +240,6 @@ textarea{
   border: 1px solid var(--line);
   background: rgba(255,255,255,.02);
   cursor:pointer;
-
-  pointer-events: auto;
-  touch-action: manipulation;
 }
 .file-item.active{
   border-color: rgba(22,199,132,.45);
@@ -278,15 +280,34 @@ textarea{
   border-radius: 14px;
   padding: 12px;
   margin: 10px 0 0;
-
-  pointer-events: auto;
 }
 .mono.small{ font-size: 12px; }
 
+/* OUTPUT BOXES (GitHub / Maintenance / Logs) */
+#ghOut, #maintOut, #adminOut, #agentOut, #editorOut, #genOut, #diagOut, #logsOut, #logsBox, #logsViewBox {
+  display: block;
+  width: 100%;
+  min-height: 90px;
+  padding: 12px 12px;
+  margin-top: 10px;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,.10);
+  background: rgba(0,0,0,.28);
+  color: rgba(255,255,255,.92);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  line-height: 1.35;
+  font-family: var(--mono);
+  font-size: 13px;
+}
+#maintOut { min-height: 120px; }
+
 /* ===========================
-   TOOLS DRAWER
+   TOOLS DRAWER (✅ SEM conflito)
    =========================== */
-.tools{
+.tools, #toolsDrawer{
   position: fixed;
   top: 12px;
   right: 12px;
@@ -296,17 +317,24 @@ textarea{
   border: 1px solid var(--line);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
-  display:none;
-  z-index: 2000;
   overflow:hidden;
+  z-index: 99999;
+  display:none;
 
-  /* quando fechado, não pode capturar toque por acidente */
+  /* fechado não pega toque */
   pointer-events: none;
 }
-.tools.open{
+
+.tools.open, #toolsDrawer.open{
   display:block;
   pointer-events: auto;
 }
+
+.tools.open *, #toolsDrawer.open *{
+  pointer-events: auto;
+  touch-action: manipulation;
+}
+
 .tools-head{
   padding: 12px;
   display:flex;
@@ -332,135 +360,28 @@ textarea{
   background: rgba(0,0,0,.35);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
-
-  /* sobe acima de tudo */
   z-index: 1500;
-
   pointer-events: auto;
 }
 .dock.hidden{ display:none; }
 
 /* ===========================
-   iOS FIX: toque não clica
+   MODAL DA ENGRENAGEM (se existir)
    =========================== */
-
-/* ✅ REMOVIDO: regra global que quebrava cliques:
-   *::before, *::after { pointer-events:none !important; }
-   Em vez disso, restringimos só para overlays conhecidos.
-*/
-
-/* overlays clássicos não podem capturar touch */
-.bg,
-.background,
-.backdrop,
-.overlay,
-.vignette,
-#bg,
-#background,
-#overlay,
-#backdrop,
-.tools,
-.tools *::before,
-.tools *::after,
-.dock *::before,
-.dock *::after,
-.topbar *::before,
-.topbar *::after {
-  pointer-events: none;
-}
-
-/* IMPORTANTÍSSIMO:
-   Drawer aberto precisa clicar — então reativa no estado open */
-.tools.open,
-.tools.open *{
-  pointer-events: auto;
-}
-
-/* botões e links: sempre clicáveis no iOS */
-button,
-a,
-.tab,
-.fileBtn,
-.dockbtn,
-.btn {
-  pointer-events: auto !important;
-  touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
-}
-
-/* containers principais: nunca “desliga” pointer events */
-main,
-header,
-section,
-nav,
-#app,
-#root,
-.container,
-.card {
-  pointer-events: auto;
-}
-
-/* Switch */
-.switch{ position:relative; width:44px; height:26px; display:inline-block; }
-.switch input{ display:none; }
-.slider{
-  position:absolute; inset:0;
-  border-radius:999px;
-  background: rgba(255,255,255,.18);
-  border:1px solid var(--line);
-  transition: .2s;
-  pointer-events: auto;
-}
-.slider::after{
-  content:"";
-  position:absolute;
-  width:20px;height:20px;
-  top:2px; left:2px;
-  border-radius:50%;
-  background: rgba(255,255,255,.90);
-  transition:.2s;
-}
-.switch input:checked + .slider{
-  background: rgba(22,199,132,.25);
-  border-color: rgba(22,199,132,.45);
-}
-.switch input:checked + .slider::after{ transform: translateX(18px); }
-
-/* ===== MAE: garante clique no box da mãe (se existir) ===== */
-#rcfMotherBox, #rcfMotherBox * {
-  -webkit-user-select: none;
-  user-select: none;
-  pointer-events: auto;
-}
-
-#rcfMotherBox textarea {
-  -webkit-user-select: text !important;
-  user-select: text !important;
-}
-
-#rcfMotherBox button {
-  pointer-events: auto !important;
-  touch-action: manipulation !important;
-  position: relative !important;
-  z-index: 5 !important;
-}
-/* ===== iOS click fixes ===== */
-.topbar { pointer-events: auto; z-index: 1000; position: sticky; top: 0; }
-#btnGear { pointer-events: auto !important; position: relative; z-index: 1200; }
-
-/* checkbox sempre clicável */
-input[type="checkbox"]{ pointer-events:auto !important; }
-label{ pointer-events:auto !important; cursor:pointer; }
-
-/* modal da engrenagem */
 .rcf-gear-backdrop{
   position: fixed; inset: 0;
   background: rgba(0,0,0,.45);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
-  z-index: 9999;
+  z-index: 99998;
   display:flex; align-items:flex-end; justify-content:center;
   padding: 16px;
+
+  /* fechado (se ficar no DOM invisível) não pode bloquear toque */
+  pointer-events: none;
+}
+.rcf-gear-backdrop.open{
+  pointer-events: auto;
 }
 .rcf-gear-sheet{
   width: min(560px, 100%);
@@ -469,151 +390,30 @@ label{ pointer-events:auto !important; cursor:pointer; }
   border-radius: 16px;
   box-shadow: 0 20px 60px rgba(0,0,0,.45);
   padding: 14px;
+  pointer-events: auto;
 }
 .rcf-gear-sheet h3{ margin: 0 0 10px 0; font-size: 16px; }
 .rcf-gear-grid{ display:flex; gap:10px; flex-wrap:wrap; }
 .rcf-gear-grid .btn{ flex: 1 1 160px; }
+
 /* ===========================
-   RCF FIX: Drawer/Engrenagem - botões não clicam (iOS/Android)
-   Cole NO FINAL do styles.css
+   OVERLAYS GENÉRICOS (não bloquear toque)
    =========================== */
-
-.tools,
-#toolsDrawer {
-  position: fixed;
-  z-index: 99999 !important;
-}
-
-/* FECHADO: não captura toque */
-.tools { pointer-events: none; }
-.tools.open { pointer-events: auto !important; }
-
-/* garante que tudo dentro aceita toque */
-.tools.open,
-.tools.open * {
-  pointer-events: auto !important;
-  touch-action: manipulation;
-}
-
-/* às vezes o iOS "mata" checkbox visualmente sem label clicável */
-.tools.open input[type="checkbox"],
-.tools.open label {
-  pointer-events: auto !important;
-  cursor: pointer;
-}
-
-/* Se existir backdrop/overlay invisível, não pode capturar toque */
-.overlay,
-.backdrop,
-#overlay,
-#backdrop {
+.overlay, .backdrop, .modal, .sheet, .scrim, #overlay, #backdrop {
   pointer-events: none !important;
 }
-/* === RCF FIX: iOS/Chrome click hardening === */
-#app, .views, .view, .card, .tabs, .topbar {
-  pointer-events: auto !important;
-  position: relative;
-}
 
-button, a, .btn, .tab, input, textarea, select, label {
+/* ===========================
+   MÃE BOX (se existir)
+   =========================== */
+#rcfMotherBox, #rcfMotherBox * { pointer-events: auto; }
+#rcfMotherBox textarea{
+  -webkit-user-select: text !important;
+  user-select: text !important;
+}
+#rcfMotherBox button{
   pointer-events: auto !important;
   touch-action: manipulation !important;
-  -webkit-tap-highlight-color: transparent;
+  position: relative !important;
+  z-index: 5 !important;
 }
-
-input[type="checkbox"]{
-  -webkit-appearance: auto !important;
-  appearance: auto !important;
-  width: 22px;
-  height: 22px;
-}
-
-/* overlays comuns: nunca podem bloquear toque quando não estão abertos */
-.tools { pointer-events: none !important; }
-.tools.open { pointer-events: auto !important; }
-/* HARD FIX: se algum container tiver classe de estilo tipo glass, nunca pode matar clique */
-.glass, .glass * ,
-.blur,  .blur  * {
-  pointer-events: auto !important;
-}
-/* === RCF HOTFIX: overlay invisível bloqueando o miolo === */
-#rcfWriteModal,
-.rcf-gear-backdrop,
-.tools,
-#toolsDrawer {
-  pointer-events: none;
-}
-#rcfWriteModal[style*="display: flex"],
-#rcfWriteModal.open,
-.rcf-gear-backdrop.open,
-.tools.open,
-#toolsDrawer.open {
-  pointer-events: auto !important;
-}
-
-/* se por acaso algum overlay genérico ficar por cima */
-.overlay,
-.backdrop,
-.modal,
-.sheet,
-.scrim,
-#overlay,
-#backdrop {
-  pointer-events: none !important;
-}
-/* ===========================
-   RCF HARD FIX (iOS): cliques nunca podem morrer
-   Cola NO FINAL do styles.css
-   =========================== */
-
-html, body, #app {
-  pointer-events: auto !important;
-}
-
-.view, .card, .container, .row, .tabs, .topbar, section, main, nav {
-  pointer-events: auto !important;
-}
-
-/* tudo clicável */
-button, a, .btn, .tab, input, textarea, select, label {
-  pointer-events: auto !important;
-  touch-action: manipulation !important;
-  -webkit-tap-highlight-color: transparent;
-}
-
-/* overlays genéricos nunca podem bloquear */
-.overlay, .backdrop, #overlay, #backdrop {
-  pointer-events: none !important;
-}
-
-/* drawer: fechado não pega toque / aberto pega */
-.tools { pointer-events: none !important; }
-.tools.open, .tools.open * { pointer-events: auto !important; }
-
-/* Se existir algum “layer invisível” no fundo */
-.bg, .background, .glass, .blur, .vignette {
-  pointer-events: none !important;
-}
-/* OUTPUT BOXES (GitHub / Maintenance / Logs) */
-#ghOut, #maintOut, #adminOut, #agentOut, #editorOut, #genOut, #diagOut, #logsOut, #logsBox, #logsViewBox {
-  display: block;
-  width: 100%;
-  min-height: 90px;          /* <- faz virar “caixa” */
-  padding: 12px 12px;
-  margin-top: 10px;
-  border-radius: 14px;
-  border: 1px solid rgba(255,255,255,.10);
-  background: rgba(0,0,0,.28);
-  color: rgba(255,255,255,.92);
-  white-space: pre-wrap;      /* <- quebra linha */
-  word-break: break-word;     /* <- não estoura layout */
-  overflow: auto;             /* <- scroll quando crescer */
-  -webkit-overflow-scrolling: touch;
-  line-height: 1.35;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-  font-size: 13px;
-}
-
-/* opcional: deixa Maintenance um pouco maior */
-#maintOut { min-height: 120px; }
-:root{ --rcf_css_ok:1; --rcf-css-token:"v7"; }
