@@ -2,201 +2,28 @@
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <meta name="theme-color" content="#0b1220" />
-
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>RControl Factory</title>
-  <meta name="description" content="Factory interna • PWA • Offline-first" />
-
-  <!-- PWA -->
-  <link rel="manifest" href="/app/manifest.json" />
-  <link rel="apple-touch-icon" href="/app/icon-192.png" />
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-
-  <!-- Styles -->
-  <link rel="stylesheet" href="/app/styles.css?v=1" />
-
-  <style>
-    /* Boot fallback (se CSS falhar) */
-    body{margin:0;background:#0b1220;color:#fff;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,Arial;}
-    #boot {
-      position: fixed; inset: 0;
-      display:flex; align-items:flex-start; justify-content:center;
-      padding: 18px;
-      background: radial-gradient(900px 420px at 20% 0%, rgba(0,255,180,.12), transparent 60%),
-                  radial-gradient(800px 480px at 80% 0%, rgba(0,120,255,.12), transparent 60%),
-                  #0b1220;
-      z-index: 99999;
-    }
-    #bootCard{
-      width:min(980px,100%);
-      border:1px solid rgba(255,255,255,.12);
-      border-radius:16px;
-      background: rgba(0,0,0,.25);
-      box-shadow: 0 18px 60px rgba(0,0,0,.45);
-      padding: 14px 14px 10px 14px;
-    }
-    #bootTitle{font-weight:900; letter-spacing:.2px}
-    #bootSub{opacity:.85; margin-top:4px}
-    #bootLog{
-      margin-top:10px;
-      white-space:pre-wrap;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-      font-size: 12.5px;
-      line-height: 1.4;
-      padding: 10px;
-      border-radius: 12px;
-      border: 1px solid rgba(255,255,255,.10);
-      background: rgba(0,0,0,.22);
-      max-height: 50vh;
-      overflow:auto;
-    }
-    #bootBtns{display:flex; gap:10px; margin-top:10px; flex-wrap:wrap}
-    .bbtn{
-      border:1px solid rgba(255,255,255,.16);
-      background: rgba(255,255,255,.08);
-      color: rgba(255,255,255,.92);
-      padding:10px 12px;
-      border-radius: 999px;
-      font-weight: 700;
-      cursor:pointer;
-    }
-  </style>
+  <meta name="theme-color" content="#0b1020" />
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="stylesheet" href="/styles.css" />
 </head>
-
 <body>
-  <!-- BOOT overlay: some quando app carregar -->
-  <div id="boot">
-    <div id="bootCard">
-      <div id="bootTitle">RControl Factory</div>
-      <div id="bootSub">Boot: carregando…</div>
-      <div id="bootLog">Boot: iniciando…</div>
-      <div id="bootBtns">
-        <button class="bbtn" id="btnReload" type="button">Recarregar</button>
-        <button class="bbtn" id="btnNukeSW" type="button">Limpar SW/Cache</button>
-        <button class="bbtn" id="btnGoRoot" type="button">Ir para /</button>
-      </div>
-    </div>
+  <noscript>Ative o JavaScript para usar o app.</noscript>
+
+  <div id="app">
+    <div style="padding:14px;font-family:system-ui">Carregando…</div>
   </div>
 
-  <!-- APP ROOT (o app.js gerencia as views) -->
-  <div id="appRoot"></div>
-
   <script>
-    (function(){
-      const boot = document.getElementById("boot");
-      const logEl = document.getElementById("bootLog");
-      const subEl = document.querySelector("#bootSub");
-
-      function log(line){
-        try {
-          logEl.textContent += "\n" + String(line);
-          logEl.scrollTop = logEl.scrollHeight;
-        } catch {}
-      }
-
-      // botões utilitários
-      document.getElementById("btnReload").onclick = () => location.reload();
-      document.getElementById("btnGoRoot").onclick = () => location.href = "/";
-
-      document.getElementById("btnNukeSW").onclick = async () => {
-        log("Limpando SW e caches…");
-        try {
-          if ("serviceWorker" in navigator) {
-            const regs = await navigator.serviceWorker.getRegistrations();
-            for (const r of regs) await r.unregister();
-          }
-          if (window.caches) {
-            const keys = await caches.keys();
-            for (const k of keys) await caches.delete(k);
-          }
-          log("OK ✅ limpo. Recarregando…");
-          setTimeout(() => location.reload(), 400);
-        } catch(e) {
-          log("ERRO limpando: " + (e?.message || e));
-        }
-      };
-
-      // log de erros na tela (pra nunca ficar “tela branca” sem explicação)
-      window.addEventListener("error", (ev) => {
-        log("JS ERROR: " + (ev?.message || ev));
-      });
-      window.addEventListener("unhandledrejection", (ev) => {
-        log("PROMISE REJECT: " + (ev?.reason?.message || ev?.reason || ev));
-      });
-
-      // 1) registrar SW DA RAIZ (único)
-      async function setupSW(){
-        if (!("serviceWorker" in navigator)) {
-          log("SW: não suportado.");
-          return;
-        }
-        try {
-          log("SW: registrando /sw.js (scope=/) …");
-          await navigator.serviceWorker.register("/sw.js", { scope: "/" });
-          log("SW: OK ✅");
-        } catch (e) {
-          log("SW: ERRO ❌ " + (e?.message || e));
-        }
-      }
-
-      // 2) carregar scripts essenciais
-      function loadScript(src){
-        return new Promise((resolve, reject) => {
-          const s = document.createElement("script");
-          s.src = src;
-          s.defer = true;
-          s.onload = resolve;
-          s.onerror = () => reject(new Error("Falhou: " + src));
-          document.head.appendChild(s);
-        });
-      }
-
-      async function bootApp(){
-        subEl.textContent = "Boot: scripts vão carregar…";
-
-        // ordem: touchfix -> router -> admin (se você quiser) -> app.js
-        // (se algum não existir, ele mostra e continua)
-        const optional = [
-          "/app/js/ui.touchfix.js",
-          "/app/js/router.js",
-          "/app/js/admin.js",
-        ];
-
-        for (const src of optional) {
-          try {
-            log("Script: " + src);
-            await loadScript(src);
-            log("OK ✅ " + src);
-          } catch (e) {
-            log("Aviso: " + (e?.message || e) + " (seguindo)");
-          }
-        }
-
-        // app.js é obrigatório
-        try {
-          const main = "/app/app.js";
-          log("MAIN: " + main);
-          await loadScript(main);
-          log("OK ✅ main carregou");
-
-          // se o app carregou, some com o boot
-          subEl.textContent = "Boot: OK ✅";
-          setTimeout(() => { boot.style.display = "none"; }, 250);
-        } catch (e) {
-          subEl.textContent = "Boot: ERRO ❌";
-          log("FATAL: " + (e?.message || e));
-          // boot fica visível pra você ler o erro
-        }
-      }
-
-      (async () => {
-        log("Boot: carregando…");
-        await setupSW();
-        await bootApp();
-      })();
+    // registra SW na raiz (agora o site inteiro é a pasta /app)
+    (function () {
+      if (!("serviceWorker" in navigator)) return;
+      navigator.serviceWorker.register("/sw.js", { scope: "/" })
+        .catch(() => {});
     })();
   </script>
+
+  <script src="/app.js"></script>
 </body>
 </html>
