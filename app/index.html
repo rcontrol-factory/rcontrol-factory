@@ -4,14 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <title>RControl Factory</title>
-
   <meta name="theme-color" content="#0b1020" />
   <link rel="manifest" href="/manifest.json" />
   <link rel="stylesheet" href="/styles.css" />
-
-  <!-- iOS/PWA -->
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 </head>
 <body>
   <noscript>Ative o JavaScript para usar o app.</noscript>
@@ -20,32 +15,84 @@
     <div style="padding:14px;font-family:system-ui">Carregando…</div>
   </div>
 
-  <!-- (1) Core modules que habilitam os botões -->
-  <script src="/js/core/github_sync.js"></script>
-  <script src="/js/core/vfs_overrides.js"></script>
-  <script src="/js/core/mother_selfupdate.js"></script>
-
-  <!-- (2) Engine/builder (se estiver usando) -->
-  <script src="/js/engine/patchQueue.js"></script>
-  <script src="/js/engine/organizerEngine.js"></script>
-  <script src="/js/engine/applyPipeline.js"></script>
-  <script src="/js/builder/builderSafe.js"></script>
-
-  <!-- (3) App principal -->
-  <script src="/app.js"></script>
-
-  <!-- (4) SW: registra só se existir sw.js e evita travar -->
   <script>
     (function () {
-      if (!("serviceWorker" in navigator)) return;
+      // LOG interno (aparece na sua aba Logs)
+      function rcfLog(msg) {
+        try {
+          if (window.RCF_LOGGER && typeof window.RCF_LOGGER.push === "function") {
+            window.RCF_LOGGER.push("boot", msg);
+          } else {
+            console.log("[BOOT]", msg);
+          }
+        } catch {}
+      }
 
-      // tenta registrar /sw.js na raiz
-      navigator.serviceWorker.getRegistration("/")
-        .then((reg) => {
-          if (reg) return reg; // já existe
-          return navigator.serviceWorker.register("/sw.js", { scope: "/" });
-        })
-        .catch(() => {});
+      // carrega um script tentando mais de 1 path (fallback)
+      function loadAny(paths) {
+        return new Promise((resolve, reject) => {
+          let i = 0;
+          function tryNext() {
+            if (i >= paths.length) return reject(new Error("all paths failed"));
+            const src = paths[i++];
+            const s = document.createElement("script");
+            s.src = src;
+            s.async = false; // mantém ordem
+            s.onload = () => resolve(src);
+            s.onerror = () => tryNext();
+            document.head.appendChild(s);
+          }
+          tryNext();
+        });
+      }
+
+      async function boot() {
+        rcfLog("index boot: starting module loader...");
+
+        // LISTA de módulos essenciais pra sua tela “Mãe” funcionar
+        const modules = [
+          { name: "github_sync", paths: ["/js/core/github_sync.js", "/app/js/core/github_sync.js"] },
+          { name: "vfs_overrides", paths: ["/js/core/vfs_overrides.js", "/app/js/core/vfs_overrides.js"] },
+          { name: "mother_selfupdate", paths: ["/js/core/mother_selfupdate.js", "/app/js/core/mother_selfupdate.js"] },
+
+          // (opcional) admin UI (se seu app.js não renderiza tudo sozinho)
+          { name: "admin_ui", paths: ["/js/admin.js", "/app/js/admin.js"] },
+
+          // (opcional) builder/engine
+          { name: "patchQueue", paths: ["/js/engine/patchQueue.js", "/app/js/engine/patchQueue.js"] },
+          { name: "organizerEngine", paths: ["/js/engine/organizerEngine.js", "/app/js/engine/organizerEngine.js"] },
+          { name: "applyPipeline", paths: ["/js/engine/applyPipeline.js", "/app/js/engine/applyPipeline.js"] },
+          { name: "builderSafe", paths: ["/js/builder/builderSafe.js", "/app/js/builder/builderSafe.js"] },
+        ];
+
+        for (const m of modules) {
+          try {
+            const okPath = await loadAny(m.paths);
+            rcfLog("module loaded ✅ " + m.name + " ← " + okPath);
+          } catch {
+            rcfLog("module missing ❌ " + m.name + " (tentou: " + m.paths.join(" | ") + ")");
+          }
+        }
+
+        // Só depois sobe o app principal
+        try {
+          await loadAny(["/app.js"]);
+          rcfLog("app.js loaded ✅ /app.js");
+        } catch {
+          rcfLog("app.js missing ❌ /app.js");
+        }
+
+        // SW: mantém safe (não trava)
+        try {
+          if ("serviceWorker" in navigator) {
+            navigator.serviceWorker.register("/sw.js", { scope: "/" })
+              .then(() => rcfLog("sw register: ok"))
+              .catch(() => rcfLog("sw register: fail/ignored"));
+          }
+        } catch {}
+      }
+
+      boot();
     })();
   </script>
 </body>
