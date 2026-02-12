@@ -1,32 +1,38 @@
-/* RCF — sw.js (SAFE MINIMAL)
-   - evita quebrar o app
-   - cacheia assets estáticos com estratégia simples
-   - navegação: network-first (pra não prender build velho)
+/* RCF — sw.js (SAFE MINIMAL / iOS friendly)
+   - não trava instalação se cache falhar
+   - navegação: network-first (não prende build velho)
+   - assets: cache-first com fallback network
 */
 
 "use strict";
 
-const SW_VERSION = "rcf-sw-v1";
+const SW_VERSION = "rcf-sw-v2"; // <-- MUDE a cada deploy importante
+
 const CORE_ASSETS = [
-  "/",              // shell
   "/index.html",
   "/styles.css",
   "/app.js",
+  "/manifest.json",
+  "/privacy.html",
+  "/terms.html",
+  "/recovery.html",
 ];
 
+// -------- install
 self.addEventListener("install", (event) => {
   event.waitUntil((async () => {
     try {
       const cache = await caches.open(SW_VERSION);
       await cache.addAll(CORE_ASSETS);
     } catch (e) {
-      // Se falhar, não trava instalação
+      // não trava instalação
     } finally {
       self.skipWaiting();
     }
   })());
 });
 
+// -------- activate
 self.addEventListener("activate", (event) => {
   event.waitUntil((async () => {
     try {
@@ -38,36 +44,37 @@ self.addEventListener("activate", (event) => {
 });
 
 function isNavigation(req) {
-  return req.mode === "navigate" || (req.destination === "document");
+  return req.mode === "navigate" || req.destination === "document";
 }
 
+// -------- fetch
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   const url = new URL(req.url);
 
-  // Só controla mesmo origin
+  // só mesmo origin
   if (url.origin !== self.location.origin) return;
 
-  // Navegação: NETWORK FIRST (pra não prender build velho)
+  // NAV: network-first
   if (isNavigation(req)) {
     event.respondWith((async () => {
       try {
         const fresh = await fetch(req);
-        // atualiza index no cache
+        // (opcional) atualiza o index no cache para fallback offline
         const cache = await caches.open(SW_VERSION);
-        cache.put(req, fresh.clone()).catch(() => {});
+        cache.put("/index.html", fresh.clone()).catch(() => {});
         return fresh;
       } catch {
-        const cached = await caches.match(req);
-        return cached || caches.match("/index.html") || new Response("Offline", { status: 503 });
+        const cachedNav = await caches.match(req, { ignoreSearch: true });
+        return cachedNav || (await caches.match("/index.html")) || new Response("Offline", { status: 503 });
       }
     })());
     return;
   }
 
-  // Assets: CACHE FIRST com fallback pra network
+  // ASSETS: cache-first -> network
   event.respondWith((async () => {
-    const cached = await caches.match(req);
+    const cached = await caches.match(req, { ignoreSearch: true });
     if (cached) return cached;
 
     try {
