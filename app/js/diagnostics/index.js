@@ -1,26 +1,14 @@
 (() => {
   "use strict";
 
-  const safeStr = (x) => {
-    try {
-      if (typeof x === "string") return x;
-      return JSON.stringify(x);
-    } catch {
-      return String(x);
-    }
-  };
-
-  function log(level, msg, extra) {
-    try {
-      window.RCF_LOGGER?.push?.(level, msg + (extra ? " " + safeStr(extra) : ""));
-    } catch {}
+  function log(level, msg) {
+    try { window.RCF_LOGGER?.push?.(level, msg); } catch {}
   }
 
   function installAll() {
-    try { window.RCF_ERROR_GUARD?.install?.(); } catch (e) { log("warn", "installAll: error_guard falhou", e); }
-    try { window.RCF_CLICK_GUARD?.install?.(); } catch (e) { log("warn", "installAll: click_guard falhou", e); }
+    try { window.RCF_ERROR_GUARD?.install?.(); } catch {}
+    try { window.RCF_CLICK_GUARD?.install?.(); } catch {}
     log("ok", "Diagnostics: installAll ✅");
-    return true;
   }
 
   function scanAll() {
@@ -32,54 +20,35 @@
     return window.RCF_MICROTESTS?.runAll?.() || [];
   }
 
-  function runStateDiagnostic() {
+  function runStateDiagnostic(state) {
     try {
-      const st = window.RCF?.state;
-      if (!st) return { ok: false, error: "window.RCF.state não existe" };
-
-      if (!window.RCF_RUN_DIAGNOSTIC) {
-        return { ok: false, error: "RCF_RUN_DIAGNOSTIC ausente (carregue /js/diagnostics/run_diagnostic.js)" };
-      }
-
-      const result = window.RCF_RUN_DIAGNOSTIC(st);
-      return { ok: true, result };
+      const fn = window.RCF_RUN_DIAGNOSTIC?.runDiagnostic;
+      if (!fn) return { ok: false, error: "RCF_RUN_DIAGNOSTIC.runDiagnostic não carregado" };
+      return { ok: true, result: fn(state) };
     } catch (e) {
       return { ok: false, error: String(e?.message || e) };
     }
   }
 
-  async function dumpErrors(limit = 120) {
+  async function listStoredErrors(limit = 200) {
     try {
-      if (!window.RCF_IDB?.listErrors) return { ok: false, error: "RCF_IDB.listErrors ausente (carregue idb.js)" };
-      const list = await window.RCF_IDB.listErrors(limit);
-      return { ok: true, list };
+      const rows = await window.RCF_IDB?.listErrors?.(limit);
+      return rows || [];
     } catch (e) {
-      return { ok: false, error: String(e?.message || e) };
+      log("warn", "Diagnostics: listStoredErrors falhou " + (e?.message || e));
+      return [];
     }
   }
 
-  async function clearErrors() {
+  async function clearStoredErrors() {
     try {
-      if (!window.RCF_IDB?.clearErrors) return { ok: false, error: "RCF_IDB.clearErrors ausente (carregue idb.js)" };
-      await window.RCF_IDB.clearErrors();
-      return { ok: true };
+      await window.RCF_IDB?.clearErrors?.();
+      log("ok", "Diagnostics: clearStoredErrors ✅");
+      return true;
     } catch (e) {
-      return { ok: false, error: String(e?.message || e) };
+      log("warn", "Diagnostics: clearStoredErrors falhou " + (e?.message || e));
+      return false;
     }
-  }
-
-  function status() {
-    const flags = {
-      RCF_LOGGER: !!window.RCF_LOGGER,
-      RCF_IDB: !!window.RCF_IDB,
-      RCF_ERROR_GUARD: !!window.RCF_ERROR_GUARD,
-      RCF_CLICK_GUARD: !!window.RCF_CLICK_GUARD,
-      RCF_OVERLAY_SCANNER: !!window.RCF_OVERLAY_SCANNER,
-      RCF_MICROTESTS: !!window.RCF_MICROTESTS,
-      RCF_RUN_DIAGNOSTIC: !!window.RCF_RUN_DIAGNOSTIC,
-      RCF_STATE: !!window.RCF?.state
-    };
-    return flags;
   }
 
   window.RCF_DIAGNOSTICS = window.RCF_DIAGNOSTICS || {
@@ -87,9 +56,8 @@
     scanAll,
     runMicroTests,
     runStateDiagnostic,
-    dumpErrors,
-    clearErrors,
-    status
+    listStoredErrors,
+    clearStoredErrors
   };
 
   log("ok", "diagnostics/index.js loaded ✅");
