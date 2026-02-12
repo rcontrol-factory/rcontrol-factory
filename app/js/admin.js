@@ -390,3 +390,80 @@
     boot();
   }
 })();
+// ===== iOS HARD FIX: força ações dos botões "Mãe" mesmo com ClickGuard/overlay =====
+(function () {
+  function safeLog(msg) {
+    try { window.RCF_LOGGER?.push?.("admin", msg); } catch {}
+    try { console.log("[ADMIN-FIX]", msg); } catch {}
+  }
+
+  async function runActionByText(txt) {
+    const t = (txt || "").trim().toLowerCase();
+
+    // tenta achar API da mãe em qualquer nome
+    const MAE = window.RCF_MOTHER || window.RCF_MAE;
+    if (!MAE) { safeLog("RCF_MOTHER/RCF_MAE ausente"); return; }
+
+    if (t.includes("carregar")) {
+      safeLog("tap: Carregar Mãe");
+      return (MAE.loadMother?.() || MAE.carregarMae?.() || MAE.updateFromGitHub?.());
+    }
+
+    if (t.includes("rodar") || t.includes("check")) {
+      safeLog("tap: Rodar Check");
+      const s = (MAE.runCheck?.() || MAE.rodarCheck?.() || MAE.status?.());
+      try { alert("CHECK: " + JSON.stringify(s, null, 2)); } catch {}
+      return s;
+    }
+
+    if (t.includes("update") && t.includes("github")) {
+      safeLog("tap: Update From GitHub");
+      return (MAE.updateFromGitHub?.() || MAE.loadMother?.());
+    }
+
+    if (t.includes("clear") || t.includes("overrides")) {
+      safeLog("tap: Clear Overrides");
+      return (MAE.clearOverrides?.() || MAE.clear?.());
+    }
+  }
+
+  function handler(ev) {
+    const el = ev.target?.closest?.("button");
+    if (!el) return;
+
+    // Só age dentro do Admin/Maintenance (pra não quebrar o resto)
+    const adminRoot = el.closest("#rcf-view-admin, #view-admin, [data-view='admin'], .admin");
+    if (!adminRoot) return;
+
+    const text = el.textContent || "";
+
+    // só os 4 botões da mãe
+    const isMotherBtn =
+      text.toLowerCase().includes("carregar") ||
+      text.toLowerCase().includes("rodar") ||
+      (text.toLowerCase().includes("update") && text.toLowerCase().includes("github")) ||
+      text.toLowerCase().includes("overrides") ||
+      text.toLowerCase().includes("clear");
+
+    if (!isMotherBtn) return;
+
+    // mata propagação (se ClickGuard estiver brigando)
+    try { ev.preventDefault(); ev.stopPropagation(); ev.stopImmediatePropagation(); } catch {}
+
+    runActionByText(text);
+  }
+
+  // captura no topo (antes de outros listeners)
+  document.addEventListener("touchend", handler, true);
+  document.addEventListener("click", handler, true);
+
+  // iOS: garante que a área é clicável
+  const css = document.createElement("style");
+  css.textContent = `
+    #rcf-view-admin button, #view-admin button { pointer-events:auto !important; touch-action:manipulation !important; }
+    #rcf-view-admin, #view-admin { pointer-events:auto !important; }
+  `;
+  document.head.appendChild(css);
+
+  safeLog("iOS HARD FIX instalado");
+})();
