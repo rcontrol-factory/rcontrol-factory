@@ -1,23 +1,17 @@
-/* RControl Factory — app.js (STABILITY CORE + RESTORE UI BASE + ANTI-WHITE-SCREEN)
+/* RControl Factory — app.js (STABILITY CORE + RESTORE UI BASE) — UPDATED (V7)
    - UI completa (tabs + views) dentro de #app
    - Agent/Editor/Apps/Logs
    - Settings: PIN + Logs
    - Admin: GitHub + Maintenance (Mãe)
-   - STABILITY CORE: ErrorGuard + BootLock + BootScreen + Emergency/Recovery UI
-   - Safe script loader ONCE (no double-load)
-   - Auto-boot Diagnostics (core/diagnostics.js) no init (idempotente)
-   - SW SAFE helpers: Clear SW Cache + Unregister SW (sempre acessível)
+   - STABILITY CORE: ErrorGuard + SafeInit + FallbackScreen
+   - Auto-load core modules when needed (vfs_overrides, github_sync)
+   - Auto-boot Diagnostics (core/diagnostics.js) no init
+   - V7: BOOT LOCK + SW Tools + Diagnostics V7 runner
    - Cloudflare Pages build output = app (site na raiz /)
 */
 
 (() => {
   "use strict";
-
-  // =========================================================
-  // BOOT LOCK (anti double-init)
-  // =========================================================
-  if (window.__RCF_BOOTED__) return;
-  window.__RCF_BOOTED__ = true;
 
   // -----------------------------
   // Utils
@@ -64,38 +58,6 @@
       const el = $("#statusText");
       if (el) el.textContent = String(txt || "");
     } catch {}
-  }
-
-  // =========================================================
-  // BOOT SCREEN (mínimo imediato)
-  // =========================================================
-  function renderBootScreen(label = "Carregando…") {
-    try {
-      const root = $("#app");
-      if (!root) return;
-      // Não sobrescreve UI completa se já existe
-      if ($("#rcfRoot")) return;
-
-      root.innerHTML = `
-        <div id="rcfBoot" style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:18px;background:#070b12;color:#fff;font-family:system-ui">
-          <div style="max-width:760px;width:100%;border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:16px;background:rgba(255,255,255,.04)">
-            <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
-              <div style="width:10px;height:10px;border-radius:999px;background:#2dd4bf;box-shadow:0 0 0 6px rgba(45,212,191,.12)"></div>
-              <div style="font-weight:900">RControl Factory</div>
-              <div style="opacity:.8">•</div>
-              <div style="opacity:.9">${escapeHtml(label)}</div>
-            </div>
-            <div style="opacity:.75;font-size:13px">
-              Se travar: use <b>Clear SW Cache</b> / <b>Unregister SW</b> no Tools (⚙️) quando abrir.
-            </div>
-          </div>
-        </div>
-      `;
-    } catch {}
-  }
-
-  function removeBootScreen() {
-    try { $("#rcfBoot")?.remove(); } catch {}
   }
 
   // -----------------------------
@@ -200,31 +162,20 @@
               <pre style="white-space:pre-wrap;word-break:break-word;padding:12px;border-radius:10px;background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.12);max-height:45vh;overflow:auto">${escapeHtml(String(details || ""))}</pre>
               <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
                 <button id="rcfReloadBtn" style="padding:10px 14px;border-radius:10px;border:0;background:#2dd4bf;color:#022; font-weight:800">Recarregar</button>
-                <button id="rcfClearSWBtn" style="padding:10px 14px;border-radius:10px;border:0;background:#f59e0b;color:#111;font-weight:800">Clear SW Cache</button>
-                <button id="rcfUnregSWBtn" style="padding:10px 14px;border-radius:10px;border:0;background:#a78bfa;color:#111;font-weight:800">Unregister SW</button>
                 <button id="rcfClearLogsBtn" style="padding:10px 14px;border-radius:10px;border:0;background:#ef4444;color:#fff;font-weight:800">Limpar logs</button>
               </div>
             </div>
           </div>
         `;
 
-        $("#rcfReloadBtn")?.addEventListener("click", () => location.reload(), { passive: true });
+        const r = $("#rcfReloadBtn");
+        r && r.addEventListener("click", () => location.reload(), { passive: true });
 
-        $("#rcfClearLogsBtn")?.addEventListener("click", () => {
+        const c = $("#rcfClearLogsBtn");
+        c && c.addEventListener("click", () => {
           try { Logger.clear(); } catch {}
           try { localStorage.removeItem("rcf:logs"); } catch {}
           alert("Logs limpos.");
-        });
-
-        $("#rcfClearSWBtn")?.addEventListener("click", async () => {
-          try { await SW.forceClearCaches(); } catch {}
-          location.reload();
-        });
-
-        $("#rcfUnregSWBtn")?.addEventListener("click", async () => {
-          try { await SW.unregisterAll(); } catch {}
-          try { await SW.forceClearCaches(); } catch {}
-          location.reload();
         });
       } catch {}
     }
@@ -294,44 +245,25 @@
     el.addEventListener("click", handler, { passive: true });
   }
 
-  // =========================================================
-  // SCRIPT LOADER ONCE (anti double-load)
-  // =========================================================
-  const ScriptOnce = (() => {
-    const key = "__RCF_SCRIPT_ONCE__";
-    const m = window[key] || (window[key] = { loaded: Object.create(null) });
-
-    function has(src) {
-      return !!m.loaded[src] || $$("script").some(s => (s.getAttribute("src") || "") === src);
-    }
-
-    function mark(src) {
-      m.loaded[src] = true;
-    }
-
-    function load(src) {
-      return new Promise((resolve, reject) => {
-        try {
-          if (has(src)) return resolve({ ok: true, cached: true });
-
-          const s = document.createElement("script");
-          s.src = src;
-          s.defer = true;
-          s.onload = () => { mark(src); resolve({ ok: true, cached: false }); };
-          s.onerror = () => reject(new Error("Falhou carregar: " + src));
-          document.head.appendChild(s);
-        } catch (e) {
-          reject(e);
-        }
-      });
-    }
-
-    return { load, has };
-  })();
-
-  // (compat) nome antigo
+  // -----------------------------
+  // Dynamic script loader
+  // -----------------------------
   function loadScriptOnce(src) {
-    return ScriptOnce.load(src);
+    return new Promise((resolve, reject) => {
+      try {
+        const exists = $$("script").some(s => (s.getAttribute("src") || "") === src);
+        if (exists) return resolve({ ok: true, cached: true });
+
+        const s = document.createElement("script");
+        s.src = src;
+        s.defer = true;
+        s.onload = () => resolve({ ok: true, cached: false });
+        s.onerror = () => reject(new Error("Falhou carregar: " + src));
+        document.head.appendChild(s);
+      } catch (e) {
+        reject(e);
+      }
+    });
   }
 
   // -----------------------------
@@ -363,76 +295,6 @@
     Storage.set("apps", State.apps);
     Storage.set("active", State.active);
     Storage.set("pending", State.pending);
-  }
-
-  // =========================================================
-  // CSSLoadedCheck (tolerante)
-  // - Se existir --rcf_css_ok no :root, valida.
-  // - Se não existir, não bloqueia (apenas loga).
-  // =========================================================
-  async function cssLoadedCheck(timeoutMs = 1500) {
-    const start = Date.now();
-    while (Date.now() - start < timeoutMs) {
-      try {
-        const v = getComputedStyle(document.documentElement).getPropertyValue("--rcf_css_ok").trim();
-        if (v === "1") return { ok: true, mode: "var" };
-      } catch {}
-      await new Promise(r => setTimeout(r, 60));
-    }
-
-    // fallback: se já tem #rcfRoot e algum stylesheet carregado, considera ok
-    try {
-      const anySheet = (document.styleSheets && document.styleSheets.length > 0);
-      if (anySheet) return { ok: true, mode: "sheets" };
-    } catch {}
-
-    return { ok: false, mode: "timeout" };
-  }
-
-  function showRecoveryUI(reason = "CSS_NOT_APPLIED") {
-    try {
-      const root = $("#app");
-      if (!root) return;
-
-      root.innerHTML = `
-        <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:18px;background:#070b12;color:#fff;font-family:system-ui">
-          <div style="max-width:820px;width:100%;border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:16px;background:rgba(255,255,255,.04)">
-            <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
-              <div style="font-size:20px">🧯</div>
-              <div style="font-weight:900;font-size:18px">Recovery Mode</div>
-            </div>
-            <div style="opacity:.9;margin-bottom:10px">
-              Detectei risco de UI “pelada” ou boot instável. Motivo: <b>${escapeHtml(reason)}</b>
-            </div>
-            <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
-              <button id="rcfRecReload" style="padding:10px 14px;border-radius:10px;border:0;background:#2dd4bf;color:#022;font-weight:900">Recarregar</button>
-              <button id="rcfRecClear" style="padding:10px 14px;border-radius:10px;border:0;background:#f59e0b;color:#111;font-weight:900">Clear SW Cache</button>
-              <button id="rcfRecUnreg" style="padding:10px 14px;border-radius:10px;border:0;background:#a78bfa;color:#111;font-weight:900">Unregister SW</button>
-              <button id="rcfRecLogs" style="padding:10px 14px;border-radius:10px;border:0;background:#60a5fa;color:#071019;font-weight:900">Copiar logs</button>
-            </div>
-            <pre style="margin-top:12px;white-space:pre-wrap;word-break:break-word;padding:12px;border-radius:10px;background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.12);max-height:45vh;overflow:auto">${escapeHtml(Logger.getAll().slice(-120).join("\n"))}</pre>
-          </div>
-        </div>
-      `;
-
-      $("#rcfRecReload")?.addEventListener("click", () => location.reload(), { passive: true });
-
-      $("#rcfRecClear")?.addEventListener("click", async () => {
-        try { await SW.forceClearCaches(); } catch {}
-        location.reload();
-      });
-
-      $("#rcfRecUnreg")?.addEventListener("click", async () => {
-        try { await SW.unregisterAll(); } catch {}
-        try { await SW.forceClearCaches(); } catch {}
-        location.reload();
-      });
-
-      $("#rcfRecLogs")?.addEventListener("click", async () => {
-        try { await navigator.clipboard.writeText(Logger.getAll().join("\n")); } catch {}
-        alert("Logs copiados.");
-      });
-    } catch {}
   }
 
   // -----------------------------
@@ -582,7 +444,7 @@
           <section class="view card" id="view-diagnostics">
             <h1>Diagnostics</h1>
             <div class="row">
-              <button class="btn ok" id="btnDiagRun" type="button">Rodar diagnóstico local</button>
+              <button class="btn ok" id="btnDiagRun" type="button">Rodar V7 Stability Check</button>
               <button class="btn ghost" id="btnDiagInstall" type="button">Instalar Guards</button>
               <button class="btn ghost" id="btnDiagScan" type="button">Scan overlays</button>
               <button class="btn ghost" id="btnDiagTests" type="button">Run micro-tests</button>
@@ -682,7 +544,6 @@
 
   // -----------------------------
   // Views
-
   // -----------------------------
   function refreshLogsViews() {
     Logger._mirrorUI(Logger.getAll());
@@ -821,7 +682,6 @@
     saveAll();
 
     const text = $("#activeAppText");
-    if (text) textContentSafe(text, `Sem app ativo ✅`);
     if (text) textContentSafe(text, `App ativo: ${app.name} (${app.slug}) ✅`);
 
     renderAppsList();
@@ -978,98 +838,82 @@
     clear() { Storage.del(this.key); }
   };
 
-  // =========================================================
-  // SERVICE WORKER SAFE (helpers sempre acessíveis)
-  // =========================================================
-  const SW = (() => {
-    async function exists(url) {
-      try {
-        const r = await fetch(url, { method: "HEAD", cache: "no-store" });
-        return !!r && (r.ok || r.status === 304);
-      } catch {
-        return false;
-      }
-    }
-
-    async function ensureRegistered() {
-      try {
-        if (!("serviceWorker" in navigator)) return false;
-
-        // evita ficar tentando registrar quando o arquivo nem existe
-        const okFile = await exists("/sw.js");
-        if (!okFile) {
-          Logger.write("sw register skip: /sw.js not found");
-          return false;
-        }
-
-        const reg = await navigator.serviceWorker.getRegistration("/");
-        if (reg) return true;
-
-        await navigator.serviceWorker.register("/sw.js", { scope: "/" });
-        return true;
-      } catch (e) {
-        Logger.write("sw register fail:", e?.message || e);
-        return false;
-      }
-    }
-
-    async function unregisterAll() {
-      try {
-        if (!("serviceWorker" in navigator)) return false;
-        const regs = await navigator.serviceWorker.getRegistrations();
-        let n = 0;
-        for (const r of regs) {
-          const ok = await r.unregister();
-          if (ok) n++;
-        }
-        Logger.write("sw unregister:", n, "ok");
-        return true;
-      } catch (e) {
-        Logger.write("sw unregister fail:", e?.message || e);
-        return false;
-      }
-    }
-
-    async function forceClearCaches() {
-      try {
-        if (!("caches" in window)) return false;
-        const keys = await caches.keys();
-        await Promise.allSettled(keys.map(k => caches.delete(k)));
-        Logger.write("cache clear:", keys.length, "caches");
-        return true;
-      } catch (e) {
-        Logger.write("cache clear fail:", e?.message || e);
-        return false;
-      }
-    }
-
-    return { ensureRegistered, unregisterAll, forceClearCaches };
-  })();
-
   // -----------------------------
-  // Core modules auto-load (mantido, mas ONCE)
+  // Core modules auto-load
   // -----------------------------
   async function ensureCoreModules() {
     const tasks = [];
-    if (!window.RCF_VFS_OVERRIDES && !ScriptOnce.has("/js/core/vfs_overrides.js")) tasks.push(loadScriptOnce("/js/core/vfs_overrides.js").catch(() => null));
-    if (!window.RCF_GH_SYNC && !ScriptOnce.has("/js/core/github_sync.js")) tasks.push(loadScriptOnce("/js/core/github_sync.js").catch(() => null));
+    if (!window.RCF_VFS_OVERRIDES) tasks.push(loadScriptOnce("/js/core/vfs_overrides.js").catch(() => null));
+    if (!window.RCF_GH_SYNC) tasks.push(loadScriptOnce("/js/core/github_sync.js").catch(() => null));
     await Promise.allSettled(tasks);
   }
 
   // -----------------------------
-  // Diagnostics boot (AUTO / ONCE)
+  // Diagnostics boot (AUTO)
   // -----------------------------
   async function bootDiagnosticsCore() {
     try {
-      // se já existe, não recarrega
-      if (window.RCF_DIAGNOSTICS || ScriptOnce.has("/js/core/diagnostics.js")) {
-        Logger.write("diagnostics core boot: cached ✅");
-        return;
-      }
       await loadScriptOnce("/js/core/diagnostics.js");
       Logger.write("diagnostics core boot: ok ✅");
     } catch (e) {
       Logger.write("diagnostics core boot FAIL:", e?.message || e);
+    }
+  }
+
+  // -----------------------------
+  // Service Worker helpers
+  // -----------------------------
+  async function ensureSWRegistered() {
+    try {
+      if (!("serviceWorker" in navigator)) return false;
+
+      // tenta obter registro
+      const reg = await navigator.serviceWorker.getRegistration("/");
+      if (reg) return true;
+
+      // tenta registrar
+      await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+      return true;
+    } catch (e) {
+      Logger.write("sw register fail:", e?.message || e);
+      return false;
+    }
+  }
+
+  async function unregisterSW() {
+    try {
+      if (!("serviceWorker" in navigator)) return { ok: false, msg: "serviceWorker não suportado" };
+
+      const regs = await navigator.serviceWorker.getRegistrations();
+      if (!regs || !regs.length) return { ok: true, count: 0 };
+
+      let okCount = 0;
+      for (const r of regs) {
+        try {
+          const ok = await r.unregister();
+          if (ok) okCount++;
+        } catch {}
+      }
+      return { ok: true, count: okCount };
+    } catch (e) {
+      return { ok: false, msg: e?.message || String(e) };
+    }
+  }
+
+  async function clearAllCaches() {
+    try {
+      if (!("caches" in window)) return { ok: false, msg: "Cache API não suportada" };
+      const keys = await caches.keys();
+      let n = 0;
+      for (const k of keys) {
+        try {
+          const ok = await caches.delete(k);
+          if (ok) n++;
+        } catch {}
+      }
+      return { ok: true, count: n };
+    } catch (e) {
+      return { ok: false, msg: e?.message || String(e) };
     }
   }
 
@@ -1140,7 +984,7 @@
     bindTap($("#btnAgentRun"), () => Agent.route($("#agentCmd")?.value || ""));
     bindTap($("#btnAgentClear"), () => uiMsg("#agentOut", Agent.help()));
 
-    // Logs
+    // Logs helpers
     const doLogsRefresh = () => {
       refreshLogsViews();
       safeSetStatus("Logs ✅");
@@ -1171,25 +1015,47 @@
     bindTap($("#btnDrawerLogsClear"), doLogsClear);
     bindTap($("#btnDrawerLogsCopy"), doLogsCopy);
 
-    // SW SAFE
-    bindTap($("#btnClearSWCache"), async () => {
-      await SW.forceClearCaches();
-      safeSetStatus("Cache limpo ✅");
-      setTimeout(() => safeSetStatus("OK ✅"), 800);
-    });
-
+    // SW tools (drawer)
     bindTap($("#btnUnregisterSW"), async () => {
-      await SW.unregisterAll();
-      await SW.forceClearCaches();
-      safeSetStatus("SW removido ✅");
-      setTimeout(() => safeSetStatus("OK ✅"), 800);
+      safeSetStatus("SW…");
+      const r = await unregisterSW();
+      if (r.ok) {
+        Logger.write("sw unregister:", r.count, "ok");
+        safeSetStatus(`SW unreg: ${r.count} ✅`);
+      } else {
+        Logger.write("sw unregister FAIL:", r.msg);
+        safeSetStatus("SW unreg ❌");
+      }
+      setTimeout(() => safeSetStatus("OK ✅"), 900);
+      refreshLogsViews();
     });
 
-    // Diagnostics actions
-    bindTap($("#btnDiagRun"), () => {
-      uiMsg("#diagOut", "Diagnóstico local OK. (Guards já sobem no boot)");
-      safeSetStatus("Diag ✅");
-      setTimeout(() => safeSetStatus("OK ✅"), 700);
+    bindTap($("#btnClearSWCache"), async () => {
+      safeSetStatus("Cache…");
+      const r = await clearAllCaches();
+      if (r.ok) {
+        Logger.write("cache clear:", r.count, "caches");
+        safeSetStatus(`Cache: ${r.count} ✅`);
+      } else {
+        Logger.write("cache clear FAIL:", r.msg);
+        safeSetStatus("Cache ❌");
+      }
+      setTimeout(() => safeSetStatus("OK ✅"), 900);
+      refreshLogsViews();
+    });
+
+    // Diagnostics actions (V7)
+    bindTap($("#btnDiagRun"), async () => {
+      try {
+        safeSetStatus("V7…");
+        const r = await window.RCF_DIAGNOSTICS?.runStabilityCheck?.();
+        uiMsg("#diagOut", r?.text || "Sem relatório.");
+        safeSetStatus(window.RCF_STABLE ? "STABLE ✅" : "UNSTABLE ❌");
+        setTimeout(() => safeSetStatus("OK ✅"), 900);
+      } catch (e) {
+        uiMsg("#diagOut", "❌ " + (e?.message || e));
+        safeSetStatus("ERRO ❌");
+      }
     });
 
     bindTap($("#btnDiagInstall"), () => {
@@ -1254,10 +1120,18 @@
       uiMsg("#ghOut", "✅ Config salva (local).");
     });
 
-    bindTap($("#btnGhRefresh"), async () => {
+    bindTap($("#btnGhRefresh"), () => uiMsg("#ghOut", window.RCF_GH_SYNC ? "GitHub: módulo carregado ✅" : "GitHub Sync ausente ❌"));
+
+    // NOTE: Pull/Push/Mãe ainda stub aqui (sem executar ações perigosas no core)
+    bindTap($("#btnGhPull"), () => uiMsg("#ghOut", "Pull: (stub)"));
+    bindTap($("#btnGhPush"), () => uiMsg("#ghOut", "Push: (stub)"));
+    bindTap($("#btnMaeLoad"), async () => {
+      uiMsg("#maintOut", "Carregar Mãe: (stub)");
       await ensureCoreModules();
-      uiMsg("#ghOut", window.RCF_GH_SYNC ? "GitHub: módulo carregado ✅" : "GitHub Sync ausente ❌");
     });
+    bindTap($("#btnMaeCheck"), () => uiMsg("#maintOut", "Check: (stub)"));
+    bindTap($("#btnMaeUpdate"), () => uiMsg("#maintOut", "Update: (stub)"));
+    bindTap($("#btnMaeClear"), () => uiMsg("#maintOut", "Clear overrides: (stub)"));
   }
 
   // -----------------------------
@@ -1284,37 +1158,31 @@
 
   async function safeInit() {
     try {
-      // 1) boot minimal ASAP
-      renderBootScreen("Carregando…");
-
-      // 2) crash shield
-      Stability.install();
-
-      // 3) render UI
-      renderShell();
-
-      // 4) CSS check (tolerante)
-      const css = await cssLoadedCheck(1500);
-      if (!css.ok) {
-        Logger.write("critical:", "CSS_NOT_APPLIED");
-        showRecoveryUI("CSS_NOT_APPLIED");
+      // -----------------------------
+      // V7 BOOT LOCK (impede init duplicado / bug iOS / reload parcial)
+      // -----------------------------
+      if (window.__RCF_BOOTED__) {
+        try { window.RCF_LOGGER?.push?.("warn", "BOOT: safeInit chamado 2x (bloqueado)"); } catch {}
         return;
       }
+      window.__RCF_BOOTED__ = Date.now();
 
-      // 5) bind/hydrate
+      Stability.install();
+      renderShell();
       bindUI();
       hydrateGhInputs();
       hydrateUIFromState();
 
-      // 6) diagnostics core (ONCE)
+      // ✅ sobe Diagnostics automaticamente no boot
       await bootDiagnosticsCore();
 
-      // 7) SW (safe, não quebra se não existir)
-      await SW.ensureRegistered();
-
-      removeBootScreen();
+      // SW cedo pro offline-first (não pode travar o app se falhar)
+      await ensureSWRegistered();
 
       Logger.write("RCF app.js init ok — mode:", State.cfg.mode);
+
+      // opcional: marca stable/unstable depois do boot (sem forçar)
+      // (o botão "Rodar V7 Stability Check" faz o check completo)
       safeSetStatus("OK ✅");
     } catch (e) {
       const msg = (e?.message || e);
@@ -1329,10 +1197,8 @@
     safeInit();
   }
 
-  // Exports
   window.RCF = window.RCF || {};
   window.RCF.state = State;
   window.RCF.log = (...a) => Logger.write(...a);
-  window.RCF.sw = SW;
 
 })();
