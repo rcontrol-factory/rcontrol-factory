@@ -616,3 +616,4 @@ button, a, .btn, .tab, input, textarea, select, label {
 
 /* opcional: deixa Maintenance um pouco maior */
 #maintOut { min-height: 120px; }
+:root { --rcf_css_ok: 1; }
