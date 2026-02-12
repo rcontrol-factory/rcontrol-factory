@@ -1,61 +1,38 @@
 (() => {
   "use strict";
 
-  function safeNum(n, fb = 0) {
-    const x = Number(n);
-    return Number.isFinite(x) ? x : fb;
-  }
-
   function runDiagnostic(state) {
     const issues = [];
+    const s = state || {};
 
-    // compatível com seu State atual:
-    // State.active.appSlug
-    const activeSlug = state?.active?.appSlug || null;
+    // Compat: você já usa State.active.appSlug no app.js
+    const activeSlug = s.activeSlug || s.active?.appSlug || null;
 
     if (!activeSlug) {
-      issues.push({
-        level: "warn",
-        code: "NO_ACTIVE_APP",
-        msg: "Sem app ativo."
-      });
+      issues.push({ level: "warn", code: "NO_ACTIVE_APP", msg: "Sem app ativo." });
     }
 
-    // Esses campos ui.* podem não existir hoje — então fica como heurística
-    if (state?.ui?.dockEnabled) {
-      issues.push({
-        level: "info",
-        code: "DOCK_ON",
-        msg: "Dock está ON."
-      });
+    // Se você tiver flags de UI em algum módulo no futuro, já fica pronto:
+    if (s.ui?.dockEnabled) {
+      issues.push({ level: "info", code: "DOCK_ON", msg: "Dock está ON." });
     }
 
-    if (state?.ui?.overlayEnabled) {
-      issues.push({
-        level: "warn",
-        code: "OVERLAY_POINTER",
-        msg: "Overlay pode estar roubando clique (pointer-events)."
-      });
+    if (s.ui?.overlayEnabled) {
+      issues.push({ level: "warn", code: "OVERLAY_POINTER", msg: "Overlay pode estar roubando clique (pointer-events)." });
     }
 
-    const appsCount = Array.isArray(state?.apps)
-      ? state.apps.length
-      : Object.keys(state?.apps || {}).length;
+    // Apps: no seu app.js é array (State.apps = [])
+    const appsCount = Array.isArray(s.apps) ? s.apps.length : Object.keys(s.apps || {}).length;
 
     return {
-      mode: state?.cfg?.mode || state?.mode || "safe",
-      apps: safeNum(appsCount, 0),
+      mode: s.mode || s.cfg?.mode || "safe",
+      apps: appsCount,
       active: activeSlug || "-",
       ua: navigator.userAgent,
-      dock: state?.ui?.dockEnabled ? "on" : "off",
+      dock: s.ui?.dockEnabled ? "on" : "off",
       issues
     };
   }
 
-  // expõe em global (SEM export)
-  window.RCF_RUN_DIAGNOSTIC = window.RCF_RUN_DIAGNOSTIC || runDiagnostic;
-
-  try {
-    window.RCF_LOGGER?.push?.("ok", "diagnostics/run_diagnostic.js loaded ✅");
-  } catch {}
+  window.RCF_RUN_DIAGNOSTIC = window.RCF_RUN_DIAGNOSTIC || { runDiagnostic };
 })();
