@@ -1,3 +1,103 @@
+/* RControl Factory — app.js
+   PATCH 1 — BOOT SEQUENCER + CRASH SHIELD + ANTI WHITE SCREEN
+   Mantém toda sua estrutura original
+*/
+
+(() => {
+  "use strict";
+
+  // =====================================================
+  // BOOT LOCK (ANTI DUPLICIDADE SAFARI)
+  // =====================================================
+
+  if (window.__RCF_BOOTED__) {
+    console.warn("RCF boot já executado — ignorando segunda execução.");
+    return;
+  }
+  window.__RCF_BOOTED__ = true;
+
+  // =====================================================
+  // BOOT SCREEN IMEDIATO (ANTI WHITE SCREEN)
+  // =====================================================
+
+  const bootRoot = document.getElementById("app");
+  if (bootRoot) {
+    bootRoot.innerHTML = `
+      <div id="rcfBootScreen"
+           style="min-height:100vh;display:flex;align-items:center;justify-content:center;
+                  background:#070b12;color:#fff;font-family:system-ui">
+        <div style="text-align:center">
+          <div style="font-size:22px;font-weight:800;margin-bottom:8px">
+            RControl Factory
+          </div>
+          <div style="opacity:.7">
+            Inicializando ambiente seguro...
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  // =====================================================
+  // CRASH SHIELD GLOBAL (ANTES DE QUALQUER COISA)
+  // =====================================================
+
+  window.addEventListener("error", (e) => {
+    renderEmergencyUI("window.error", e?.message || "Erro desconhecido");
+  });
+
+  window.addEventListener("unhandledrejection", (e) => {
+    renderEmergencyUI("unhandledrejection", e?.reason?.message || e?.reason);
+  });
+
+  function renderEmergencyUI(type, message) {
+    const root = document.getElementById("app");
+    if (!root) return;
+
+    root.innerHTML = `
+      <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;
+                  background:#0b0f18;color:#fff;font-family:system-ui;padding:18px">
+        <div style="max-width:720px;width:100%;
+                    border:1px solid rgba(255,255,255,.12);
+                    border-radius:14px;padding:16px">
+          <div style="font-weight:900;font-size:18px;margin-bottom:8px">
+            ⚠️ Falha Crítica Capturada
+          </div>
+          <div style="opacity:.8;margin-bottom:12px">
+            Tipo: ${type}
+          </div>
+          <pre style="white-space:pre-wrap;background:rgba(0,0,0,.4);
+                      padding:10px;border-radius:10px">
+${message}
+          </pre>
+          <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
+            <button onclick="location.reload()"
+              style="padding:10px 14px;border-radius:10px;border:0;background:#2dd4bf;font-weight:800">
+              Recarregar
+            </button>
+            <button onclick="navigator.serviceWorker?.getRegistrations()
+              .then(rs=>rs.forEach(r=>r.unregister()))
+              .then(()=>caches.keys()
+              .then(keys=>Promise.all(keys.map(k=>caches.delete(k)))))
+              .then(()=>location.reload())"
+              style="padding:10px 14px;border-radius:10px;border:0;background:#ef4444;color:#fff;font-weight:800">
+              Limpar SW Cache
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  // =====================================================
+  // AGORA COMEÇA SEU CÓDIGO ORIGINAL
+  // =====================================================
+
+  // (a partir daqui permanece exatamente sua arquitetura)
+
+  // -----------------------------
+  // Utils
+  // -----------------------------
 /* RControl Factory — app.js (STABILITY CORE + RESTORE UI BASE)
    - UI completa (tabs + views) dentro de #app
    - Agent/Editor/Apps/Logs
