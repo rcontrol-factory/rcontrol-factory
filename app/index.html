@@ -2,55 +2,30 @@
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>RControl Factory</title>
   <meta name="theme-color" content="#0b1020" />
-  <link rel="manifest" href="./manifest.json" />
-  <link rel="stylesheet" href="./styles.css" />
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
   <noscript>Ative o JavaScript para usar o app.</noscript>
 
   <div id="app">
-    <div id="bootStatus" style="padding:14px;font-family:system-ui;color:#fff;opacity:.85">
-      Carregando…
-    </div>
+    <div style="padding:14px;font-family:system-ui">Carregando…</div>
   </div>
 
   <script>
-    // SW (raiz do site publicado = pasta /app do repo)
+    // registra SW na raiz
     (function () {
       if (!("serviceWorker" in navigator)) return;
-      navigator.serviceWorker.register("./sw.js", { scope: "./" }).catch(() => {});
-    })();
-
-    // Se não bootar em 3.5s, mostra aviso (app.js não carregou ou crashou)
-    (function () {
-      const el = document.getElementById("bootStatus");
-      const t = setTimeout(() => {
-        try {
-          // se teu app seta algum lock, ele entra aqui
-          const booted = !!(window.__RCF_BOOTED__ || window.RCF || window.RCF_APP);
-          if (!booted) {
-            el.innerHTML =
-              "⚠️ Travou no boot. Provável <b>app.js</b> não carregou ou deu erro.<br><br>" +
-              "➡️ Abra <b>Logs</b> (se conseguir) ou use <b>recovery.html</b>.<br>" +
-              "<a href='./recovery.html' style='color:#7dd3fc'>Abrir Recovery</a>";
-          }
-        } catch {}
-      }, 3500);
-
-      // se algum código bootar e remover/substituir o #app, ok.
-      window.addEventListener("load", () => clearTimeout(t));
+      navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch(() => {});
     })();
   </script>
 
-  <!-- Carrega app.js com detector de erro -->
-  <script src="./app.js" defer onerror="
-    (function(){
-      var el=document.getElementById('bootStatus');
-      if(el){ el.innerHTML='❌ Falhou carregar <b>app.js</b>. Verifique caminho/arquivo e cache.<br><a href=./recovery.html style=color:#7dd3fc>Recovery</a>'; }
-    })();
-  "></script>
+  <script src="/app.js"></script>
+
+  <!-- ✅ UI do Builder SAFE (sem mexer no app.js) -->
+  <script src="/js/builder/builderPanel.js"></script>
 </body>
 </html>
