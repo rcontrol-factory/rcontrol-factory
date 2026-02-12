@@ -594,3 +594,25 @@ button, a, .btn, .tab, input, textarea, select, label {
 .bg, .background, .glass, .blur, .vignette {
   pointer-events: none !important;
 }
+/* OUTPUT BOXES (GitHub / Maintenance / Logs) */
+#ghOut, #maintOut, #adminOut, #agentOut, #editorOut, #genOut, #diagOut, #logsOut, #logsBox, #logsViewBox {
+  display: block;
+  width: 100%;
+  min-height: 90px;          /* <- faz virar “caixa” */
+  padding: 12px 12px;
+  margin-top: 10px;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,.10);
+  background: rgba(0,0,0,.28);
+  color: rgba(255,255,255,.92);
+  white-space: pre-wrap;      /* <- quebra linha */
+  word-break: break-word;     /* <- não estoura layout */
+  overflow: auto;             /* <- scroll quando crescer */
+  -webkit-overflow-scrolling: touch;
+  line-height: 1.35;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 13px;
+}
+
+/* opcional: deixa Maintenance um pouco maior */
+#maintOut { min-height: 120px; }
