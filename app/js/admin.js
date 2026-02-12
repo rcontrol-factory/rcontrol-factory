@@ -1,10 +1,10 @@
-/* RControl Factory — Admin UI (STABLE FIXED VERSION) */
+/* RControl Factory — Admin UI (ROUTER-CONTROLLED VERSION) */
+/* NÃO auto-boota. Só renderiza quando app.js chamar RCF_ADMIN.render() */
 
 (function () {
   const W = window;
 
   W.RCF = W.RCF || {};
-  const RCF = W.RCF;
 
   const $ = (sel, root = document) => root.querySelector(sel);
 
@@ -20,6 +20,7 @@
 
   function ensureRoot() {
     let root = $("#rcf-view-admin") || $("#view-admin");
+
     if (!root) {
       const app = $("#app") || document.body;
       root = document.createElement("div");
@@ -58,24 +59,30 @@
   }
 
   function hasGHModule() {
-    return !!(W.RCF_GH_SYNC &&
+    return !!(
+      W.RCF_GH_SYNC &&
       typeof W.RCF_GH_SYNC.pullFile === "function" &&
-      typeof W.RCF_GH_SYNC.pushFile === "function");
+      typeof W.RCF_GH_SYNC.pushFile === "function"
+    );
   }
 
   function hasMotherModule() {
-    return !!(W.RCF_MOTHER &&
-      typeof W.RCF_MOTHER.updateFromGitHub === "function");
+    return !!(
+      W.RCF_MOTHER &&
+      typeof W.RCF_MOTHER.updateFromGitHub === "function"
+    );
   }
 
   function msg(id, text, ok = true) {
     const el = document.getElementById(id);
     if (!el) return;
     el.textContent = text;
-    el.style.borderColor = ok ? "rgba(34,197,94,.35)" : "rgba(239,68,68,.35)";
+    el.style.borderColor = ok
+      ? "rgba(34,197,94,.35)"
+      : "rgba(239,68,68,.35)";
   }
 
-  function renderAdmin() {
+  function render() {
     const root = ensureRoot();
     const gh = getGHConfig();
 
@@ -113,11 +120,10 @@
       </div>
     `;
 
-    wireEvents(root);
-    iosFix(root);
+    bindEvents(root);
   }
 
-  function wireEvents(root) {
+  function bindEvents(root) {
     const ghOwner = document.getElementById(IDS.ghOwner);
     const ghRepo = document.getElementById(IDS.ghRepo);
     const ghBranch = document.getElementById(IDS.ghBranch);
@@ -126,11 +132,11 @@
 
     function readCfg() {
       return {
-        owner: ghOwner.value.trim(),
-        repo: ghRepo.value.trim(),
-        branch: ghBranch.value.trim() || "main",
-        path: ghPath.value.trim() || "app/import/mother_bundle.json",
-        token: ghToken.value.trim(),
+        owner: ghOwner?.value.trim(),
+        repo: ghRepo?.value.trim(),
+        branch: ghBranch?.value.trim() || "main",
+        path: ghPath?.value.trim() || "app/import/mother_bundle.json",
+        token: ghToken?.value.trim(),
       };
     }
 
@@ -140,9 +146,10 @@
     });
 
     $("#btn_gh_pull", root)?.addEventListener("click", async () => {
-      if (!hasGHModule()) return msg(IDS.ghMsg, "GitHub Sync ausente ❌", false);
+      if (!hasGHModule())
+        return msg(IDS.ghMsg, "GitHub Sync ausente ❌", false);
       try {
-        const content = await W.RCF_GH_SYNC.pullFile(readCfg());
+        await W.RCF_GH_SYNC.pullFile(readCfg());
         msg(IDS.ghMsg, "Pull OK ✅", true);
       } catch (e) {
         msg(IDS.ghMsg, "Pull falhou ❌ " + e.message, false);
@@ -150,7 +157,8 @@
     });
 
     $("#btn_gh_push", root)?.addEventListener("click", async () => {
-      if (!hasGHModule()) return msg(IDS.ghMsg, "GitHub Sync ausente ❌", false);
+      if (!hasGHModule())
+        return msg(IDS.ghMsg, "GitHub Sync ausente ❌", false);
       try {
         await W.RCF_GH_SYNC.pushFile(readCfg(), "{}");
         msg(IDS.ghMsg, "Push OK ✅", true);
@@ -160,7 +168,8 @@
     });
 
     $("#btn_mother_update", root)?.addEventListener("click", async () => {
-      if (!hasMotherModule()) return msg(IDS.motherMsg, "Mãe ausente ❌", false);
+      if (!hasMotherModule())
+        return msg(IDS.motherMsg, "Mãe ausente ❌", false);
       try {
         await W.RCF_MOTHER.updateFromGitHub();
         msg(IDS.motherMsg, "Update OK ✅", true);
@@ -170,7 +179,8 @@
     });
 
     $("#btn_mother_clear", root)?.addEventListener("click", async () => {
-      if (!hasMotherModule()) return msg(IDS.motherMsg, "Mãe ausente ❌", false);
+      if (!hasMotherModule())
+        return msg(IDS.motherMsg, "Mãe ausente ❌", false);
       try {
         await W.RCF_MOTHER.clearOverrides();
         msg(IDS.motherMsg, "Overrides limpos ✅", true);
@@ -185,25 +195,7 @@
     });
   }
 
-  function iosFix(root) {
-    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-    if (!isIOS) return;
-
-    const buttons = root.querySelectorAll("button");
-    buttons.forEach(btn => {
-      btn.style.pointerEvents = "auto";
-      btn.style.touchAction = "manipulation";
-    });
-  }
-
-  function boot() {
-    renderAdmin();
-  }
-
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", boot);
-  } else {
-    boot();
-  }
+  // 🔥 NÃO AUTO BOOTA MAIS
+  W.RCF_ADMIN = { render };
 
 })();
