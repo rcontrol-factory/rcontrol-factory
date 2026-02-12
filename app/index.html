@@ -2,11 +2,16 @@
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <title>RControl Factory</title>
+
   <meta name="theme-color" content="#0b1020" />
   <link rel="manifest" href="/manifest.json" />
   <link rel="stylesheet" href="/styles.css" />
+
+  <!-- iOS/PWA -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 </head>
 <body>
   <noscript>Ative o JavaScript para usar o app.</noscript>
@@ -15,17 +20,33 @@
     <div style="padding:14px;font-family:system-ui">Carregando…</div>
   </div>
 
-  <script>
-    // registra SW na raiz
-    (function () {
-      if (!("serviceWorker" in navigator)) return;
-      navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch(() => {});
-    })();
-  </script>
+  <!-- (1) Core modules que habilitam os botões -->
+  <script src="/js/core/github_sync.js"></script>
+  <script src="/js/core/vfs_overrides.js"></script>
+  <script src="/js/core/mother_selfupdate.js"></script>
 
+  <!-- (2) Engine/builder (se estiver usando) -->
+  <script src="/js/engine/patchQueue.js"></script>
+  <script src="/js/engine/organizerEngine.js"></script>
+  <script src="/js/engine/applyPipeline.js"></script>
+  <script src="/js/builder/builderSafe.js"></script>
+
+  <!-- (3) App principal -->
   <script src="/app.js"></script>
 
-  <!-- ✅ UI do Builder SAFE (sem mexer no app.js) -->
-  <script src="/js/builder/builderPanel.js"></script>
+  <!-- (4) SW: registra só se existir sw.js e evita travar -->
+  <script>
+    (function () {
+      if (!("serviceWorker" in navigator)) return;
+
+      // tenta registrar /sw.js na raiz
+      navigator.serviceWorker.getRegistration("/")
+        .then((reg) => {
+          if (reg) return reg; // já existe
+          return navigator.serviceWorker.register("/sw.js", { scope: "/" });
+        })
+        .catch(() => {});
+    })();
+  </script>
 </body>
 </html>
