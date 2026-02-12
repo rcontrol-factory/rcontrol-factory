@@ -1,10 +1,11 @@
 /* app/js/core/mother_selfupdate.js
-   Self-Update (Mãe): puxa bundle do GitHub e aplica via SW overrides
+   Self-Update (Mãe): puxa bundle do GitHub e aplica via VFS overrides
 
-   Requer:
-     - window.RCF_GH_SYNC.pull() -> retorna string JSON do bundle
-     - window.RCF_VFS_OVERRIDES.put(path, content, contentType)
-     - window.RCF_VFS_OVERRIDES.clear()
+   Compatível com:
+   - window.RCF_GH_SYNC.pull()                  -> string JSON bundle
+   - window.RCF_GH_SYNC.pullFile(cfg)           -> string JSON bundle (cfg em localStorage RCF_GH_CFG)
+   - window.RCF_VFS_OVERRIDES.put(path, content, contentType)
+   - window.RCF_VFS_OVERRIDES.clear()
 */
 
 (() => {
@@ -47,12 +48,10 @@
     // se vier "/app/..." (repo path) -> remover "/app"
     // (porque no deploy o "app/" vira raiz "/")
     if (p.startsWith("/app/")) p = p.slice(4); // remove "/app"
-    // se ficar vazio, vira "/"
     if (p === "") p = "/";
 
     // normaliza barras duplas
     p = p.replace(/\/{2,}/g, "/");
-
     return p;
   }
 
@@ -66,14 +65,43 @@
     return false;
   }
 
-  async function applyBundle(bundleText) {
+  function readGHConfig() {
+    try {
+      return JSON.parse(localStorage.getItem("RCF_GH_CFG") || "null") || {
+        owner: "",
+        repo: "",
+        branch: "main",
+        path: "app/import/mother_bundle.json",
+        token: "",
+      };
+    } catch {
+      return { owner: "", repo: "", branch: "main", path: "app/import/mother_bundle.json", token: "" };
+    }
+  }
+
+  async function pullBundleText() {
+    // 1) Prefer pull() (modo antigo)
+    if (window.RCF_GH_SYNC?.pull) {
+      return await window.RCF_GH_SYNC.pull();
+    }
+
+    // 2) Compat: pullFile(cfg) (modo novo/admin.js)
+    if (window.RCF_GH_SYNC?.pullFile) {
+      const cfg = readGHConfig();
+      if (!cfg?.owner || !cfg?.repo || !cfg?.token) {
+        throw new Error("GitHub config incompleta (owner/repo/token). Preencha em Admin > GitHub Sync e salve.");
+      }
+      return await window.RCF_GH_SYNC.pullFile(cfg);
+    }
+
+    throw new Error("GitHub Sync ausente: precisa RCF_GH_SYNC.pull() ou RCF_GH_SYNC.pullFile(cfg).");
+  }
+
+  async function applyBundleText(bundleText) {
     let bundle;
     try { bundle = JSON.parse(bundleText); }
     catch (e) { throw new Error("Bundle JSON inválido: " + (e?.message || e)); }
 
-    // aceita:
-    // { files: { "/app/app.js": {content, contentType}, ... } }
-    // OU { "/app/app.js": "...", ... }
     const files = bundle?.files || bundle;
     if (!files || typeof files !== "object") throw new Error("Bundle sem 'files'.");
 
@@ -110,10 +138,7 @@
   }
 
   async function tryUpdateSW() {
-    try {
-      await navigator.serviceWorker?.ready;
-    } catch {}
-
+    try { await navigator.serviceWorker?.ready; } catch {}
     try {
       const reg = await navigator.serviceWorker?.getRegistration?.("/");
       await reg?.update?.();
@@ -123,30 +148,35 @@
     }
   }
 
+  function reloadSoon(ms = 250) {
+    try { setTimeout(() => location.reload(), ms); } catch {}
+  }
+
   const api = {
-    // opcional: pra seu app.js fazer "Rodar Check"
     status() {
       return {
         ok: true,
-        hasGh: !!window.RCF_GH_SYNC?.pull,
+        hasGhPull: !!window.RCF_GH_SYNC?.pull,
+        hasGhPullFile: !!window.RCF_GH_SYNC?.pullFile,
         hasOverrides: !!window.RCF_VFS_OVERRIDES?.put,
+        hasClear: !!window.RCF_VFS_OVERRIDES?.clear,
         ua: navigator.userAgent,
       };
     },
 
+    // === nomes “novos” ===
     async updateFromGitHub() {
-      if (!window.RCF_GH_SYNC?.pull) throw new Error("GitHub Sync ausente: RCF_GH_SYNC.pull()");
       log("info", "Mãe: puxando bundle do GitHub...");
-      const bundleText = await window.RCF_GH_SYNC.pull();
+      const bundleText = await pullBundleText();
 
       log("info", "Mãe: aplicando overrides...");
-      const n = await applyBundle(bundleText);
+      const n = await applyBundleText(bundleText);
 
       log("ok", `Mãe: ${n} arquivo(s) aplicado(s). Atualizando SW...`);
       const swOk = await tryUpdateSW();
 
       log("ok", `Mãe: SW update ${swOk ? "OK" : "falhou/ignorado"} — recarregando...`);
-      setTimeout(() => location.reload(), 250);
+      reloadSoon(250);
       return n;
     },
 
@@ -157,14 +187,89 @@
       await clear();
       await tryUpdateSW();
       log("ok", "Mãe: overrides limpos. Recarregando...");
-      setTimeout(() => location.reload(), 200);
+      reloadSoon(200);
       return true;
-    }
+    },
+
+    // === aliases “antigos” (pra UI velha não morrer) ===
+    async carregarMae() { return api.updateFromGitHub(); },
+    async loadMother() { return api.updateFromGitHub(); },
+    async rodarCheck() { return api.status(); },
+    async runCheck() { return api.status(); },
+    async clear() { return api.clearOverrides(); },
   };
 
-  // expõe nos 2 nomes pra não quebrar nada
+  // expõe nos nomes comuns
   window.RCF_MOTHER = api;
   window.RCF_MAE = api;
 
-  log("ok", "mother_selfupdate.js loaded");
+  // --- iOS / UI antiga: prende eventos nos botões da seção "MAINTENANCE" mesmo que a UI seja antiga ---
+  function bindMaintenanceButtons() {
+    // procura um container que tenha o texto "MAINTENANCE" ou "Self-Update"
+    const allCards = Array.from(document.querySelectorAll(".card, section, div"));
+    const maint = allCards.find(el => {
+      const t = (el.textContent || "").toUpperCase();
+      return t.includes("MAINTENANCE") && t.includes("SELF");
+    });
+
+    if (!maint) return false;
+
+    const buttons = Array.from(maint.querySelectorAll("button"));
+    if (!buttons.length) return false;
+
+    function hook(btn, fn) {
+      if (!btn) return;
+
+      // iOS: usar touchend + click e garantir que vai executar
+      const run = async (ev) => {
+        try {
+          ev?.preventDefault?.();
+          ev?.stopPropagation?.();
+        } catch {}
+
+        try {
+          btn.disabled = true;
+          const res = await fn();
+          log("ok", "UI: ação OK");
+          return res;
+        } catch (e) {
+          log("error", "UI: ação falhou: " + (e?.message || e));
+          alert("Falhou: " + (e?.message || e));
+        } finally {
+          btn.disabled = false;
+        }
+      };
+
+      btn.style.pointerEvents = "auto";
+      btn.addEventListener("touchend", run, { passive: false });
+      btn.addEventListener("click", run, { passive: false });
+    }
+
+    // mapeia por texto do botão (robusto)
+    for (const b of buttons) {
+      const t = (b.textContent || "").trim().toLowerCase();
+
+      if (t.includes("carregar")) hook(b, () => api.loadMother());
+      else if (t.includes("rodar") || t.includes("check")) hook(b, () => api.runCheck());
+      else if (t.includes("update") && t.includes("github")) hook(b, () => api.updateFromGitHub());
+      else if (t.includes("clear") || t.includes("overrides")) hook(b, () => api.clearOverrides());
+    }
+
+    return true;
+  }
+
+  function bootBinders() {
+    // tenta agora e tenta de novo depois (porque UI pode renderizar depois)
+    let ok = bindMaintenanceButtons();
+    if (!ok) setTimeout(bindMaintenanceButtons, 600);
+    if (!ok) setTimeout(bindMaintenanceButtons, 1400);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", bootBinders);
+  } else {
+    bootBinders();
+  }
+
+  log("ok", "mother_selfupdate.js loaded (compat + iOS binder)");
 })();
