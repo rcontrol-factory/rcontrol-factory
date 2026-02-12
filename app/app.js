@@ -1,9 +1,9 @@
 /* RControl Factory — app.js (RESTORE UI BASE)
-   - Recria a UI completa (tabs + views) dentro de #app
-   - Mantém teu Agent/Editor/Apps/Logs
-   - Corrige “só aparece Admin / sumiu tudo”
-   - Settings: Segurança (PIN) + Logs (com botões funcionando)
-   - Maintenance: carrega mother_selfupdate.js (compatível com CF Pages build output = app)
+   - UI completa (tabs + views) dentro de #app
+   - Agent/Editor/Apps/Logs
+   - Settings: PIN + Logs
+   - Admin: GitHub + Maintenance (Mãe)
+   - Cloudflare Pages build output = app (site na raiz /)
 */
 
 (() => {
@@ -40,6 +40,11 @@
     return escapeHtml(s).replace(/'/g, "&#39;");
   }
 
+  function uiMsg(sel, text) {
+    const el = $(sel);
+    if (el) el.textContent = String(text ?? "");
+  }
+
   // -----------------------------
   // Storage
   // -----------------------------
@@ -67,7 +72,7 @@
   // -----------------------------
   const Logger = {
     bufKey: "logs",
-    max: 400,
+    max: 500,
 
     _mirrorUI(logs) {
       const txt = (logs || []).join("\n");
@@ -122,12 +127,16 @@
     if (!el) return;
 
     let last = 0;
+
     const handler = (ev) => {
       const t = Date.now();
       if (ev.type === "click" && (t - last) < 250) return;
       last = t;
 
-      if (ev.type === "touchend") ev.preventDefault();
+      // iOS: evita “clica 1x e morre”
+      try {
+        if (ev.cancelable) ev.preventDefault();
+      } catch {}
 
       try { fn(ev); }
       catch (e) { Logger.write("tap err:", e?.message || e); }
@@ -137,7 +146,8 @@
     el.style.touchAction = "manipulation";
     el.style.webkitTapHighlightColor = "transparent";
 
-    el.addEventListener("pointerup", handler, { passive: true });
+    // pointerup às vezes perde no iOS com passive:true -> deixa false
+    el.addEventListener("pointerup", handler, { passive: false });
     el.addEventListener("touchend", handler, { passive: false });
     el.addEventListener("click", handler, { passive: true });
   }
@@ -406,7 +416,7 @@
               <div class="row">
                 <button class="btn ghost" id="btnGhPull" type="button">⬇️ Pull (baixar do GitHub)</button>
                 <button class="btn ok" id="btnGhPush" type="button">⬆️ Push (enviar p/ GitHub)</button>
-                <button class="btn ghost" id="btnGhRefresh" type="button">⚡ Atualizar agora</button>
+                <button class="btn ghost" id="btnGhRefresh" type="button">⚡ Atualizar status</button>
               </div>
 
               <pre class="mono" id="ghOut">GitHub: pronto.</pre>
@@ -414,10 +424,14 @@
 
             <div class="card" id="admin-maint">
               <h2>MAINTENANCE • Self-Update (Mãe)</h2>
-              <p class="hint">Carrega mother_selfupdate.js (Cloudflare Build output = app → caminho real começa em /js/...)</p>
+              <p class="hint">Build output = app → caminho real começa em <b>/js/...</b></p>
               <div class="row">
                 <button class="btn ghost" id="btnMaeLoad" type="button">Carregar Mãe</button>
-                <button class="btn ok" id="btnMaeRun" type="button">Rodar Check</button>
+                <button class="btn ok" id="btnMaeCheck" type="button">Rodar Check</button>
+              </div>
+              <div class="row">
+                <button class="btn ok" id="btnMaeUpdate" type="button">⬇️ Update From GitHub</button>
+                <button class="btn danger" id="btnMaeClear" type="button">🧹 Clear Overrides</button>
               </div>
               <pre class="mono" id="maintOut">Pronto.</pre>
             </div>
@@ -425,7 +439,7 @@
 
         </main>
 
-        <!-- Tools Drawer (IDs SEM CONFLITO) -->
+        <!-- Tools Drawer -->
         <div class="tools" id="toolsDrawer">
           <div class="tools-head">
             <div style="font-weight:800">Ferramentas</div>
@@ -466,7 +480,9 @@
     $$(".view").forEach(v => v.classList.remove("active"));
     $$("[data-view]").forEach(b => b.classList.remove("active"));
 
-    const view = $(`#view-${CSS.escape(name)}`);
+    // evita crash se CSS.escape não existir
+    const id = "view-" + String(name).replace(/[^a-z0-9_-]/gi, "");
+    const view = document.getElementById(id);
     if (view) view.classList.add("active");
 
     $$(`[data-view="${name}"]`).forEach(b => b.classList.add("active"));
@@ -626,11 +642,6 @@
     return { ok: true, msg: `✅ App criado: ${nameClean} (${slug})` };
   }
 
-  function uiMsg(sel, text) {
-    const el = $(sel);
-    if (el) el.textContent = String(text ?? "");
-  }
-
   function saveFile() {
     const app = getActiveApp();
     if (!app) return uiMsg("#editorOut", "⚠️ Sem app ativo.");
@@ -751,7 +762,9 @@
         active: State.active.appSlug || "-",
         file: State.active.file || "-",
         view: State.active.view || "-",
-        ua: navigator.userAgent
+        ua: navigator.userAgent,
+        sw_controller: !!navigator.serviceWorker?.controller,
+        sw_supported: "serviceWorker" in navigator,
       };
       return "RCF DIAGNÓSTICO\n" + JSON.stringify(info, null, 2);
     }
@@ -770,15 +783,17 @@
   // -----------------------------
   // MAE (Maintenance / Self-update)
   // -----------------------------
+  function getMaeAPI() {
+    return window.RCF_MAE || window.RCF_MOTHER || window.MOTHER_SELFUPDATE || null;
+  }
+
   async function maeLoad() {
     uiMsg("#maintOut", "Carregando mãe...");
 
-    // Cloudflare Pages com Build output = app:
-    // repo: app/js/core/mother_selfupdate.js
-    // url:  /js/core/mother_selfupdate.js
+    // Cloudflare Pages build output = app -> URL real: /js/core/...
     const candidates = [
-      "/js/core/mother_selfupdate.js",      // ✅ correto no seu setup atual
-      "/app/js/core/mother_selfupdate.js"   // fallback se um dia mudar build output
+      "/js/core/mother_selfupdate.js",
+      "/app/js/core/mother_selfupdate.js",
     ];
 
     let lastErr = null;
@@ -786,14 +801,13 @@
     for (const src of candidates) {
       try {
         await loadScriptOnce(src);
-        const ok = !!(window.RCF_MAE || window.RCF_MOTHER || window.MOTHER_SELFUPDATE);
-        if (ok) {
+        const api = getMaeAPI();
+        if (api) {
           uiMsg("#maintOut", `✅ Mãe carregada. (${src})`);
           Logger.write("mae load ok:", src);
           refreshAdminStatus();
           return;
         }
-        // script carregou mas não expôs API
         uiMsg("#maintOut", `⚠️ Script carregou (${src}), mas não expôs API global.`);
         Logger.write("mae load:", "no api", src);
         refreshAdminStatus();
@@ -805,26 +819,64 @@
     }
 
     uiMsg("#maintOut", "❌ " + (lastErr?.message || lastErr || "Falhou carregar mãe."));
+    refreshAdminStatus();
   }
 
   function maeCheck() {
-    const api = window.RCF_MAE || window.RCF_MOTHER || window.MOTHER_SELFUPDATE;
+    const api = getMaeAPI();
     if (!api) {
       uiMsg("#maintOut", "❌ Mãe não está disponível. Clique em 'Carregar Mãe' primeiro.");
+      refreshAdminStatus();
       return;
     }
+
     try {
-      if (typeof api.status === "function") {
-        uiMsg("#maintOut", "MAE STATUS:\n" + safeJsonStringify(api.status()));
-      } else {
-        uiMsg("#maintOut", "✅ Mãe presente. API keys:\n" + Object.keys(api).join(", "));
-      }
+      uiMsg("#maintOut", "✅ Mãe presente.\nKeys:\n" + Object.keys(api).join(", "));
       Logger.write("mae check ok");
-      refreshAdminStatus();
     } catch (e) {
       uiMsg("#maintOut", "❌ Erro no check: " + (e?.message || e));
       Logger.write("mae check err:", e?.message || e);
     }
+
+    refreshAdminStatus();
+  }
+
+  async function maeUpdateFromGitHub() {
+    const api = getMaeAPI();
+    if (!api?.updateFromGitHub) {
+      uiMsg("#maintOut", "❌ Mãe não pronta. Carregue a Mãe primeiro.");
+      refreshAdminStatus();
+      return;
+    }
+    uiMsg("#maintOut", "Executando updateFromGitHub()...");
+    try {
+      const n = await api.updateFromGitHub();
+      uiMsg("#maintOut", `✅ Update OK. ${n} arquivo(s) aplicado(s). (Recarregando...)`);
+      Logger.write("mae update ok:", n);
+    } catch (e) {
+      uiMsg("#maintOut", "❌ Update falhou: " + (e?.message || e));
+      Logger.write("mae update err:", e?.message || e);
+    }
+    refreshAdminStatus();
+  }
+
+  async function maeClearOverrides() {
+    const api = getMaeAPI();
+    if (!api?.clearOverrides) {
+      uiMsg("#maintOut", "❌ Mãe não pronta. Carregue a Mãe primeiro.");
+      refreshAdminStatus();
+      return;
+    }
+    uiMsg("#maintOut", "Limpando overrides...");
+    try {
+      await api.clearOverrides();
+      uiMsg("#maintOut", "✅ Overrides limpos. (Recarregando...)");
+      Logger.write("mae clear ok");
+    } catch (e) {
+      uiMsg("#maintOut", "❌ Clear falhou: " + (e?.message || e));
+      Logger.write("mae clear err:", e?.message || e);
+    }
+    refreshAdminStatus();
   }
 
   // -----------------------------
@@ -840,17 +892,32 @@
     if ($("#ghToken")) $("#ghToken").value = cfg.token || "";
   }
 
-  function refreshAdminStatus() {
+  async function getSWReg() {
+    try {
+      if (!("serviceWorker" in navigator)) return null;
+      return await navigator.serviceWorker.getRegistration("/");
+    } catch {
+      return null;
+    }
+  }
+
+  async function refreshAdminStatus() {
     const out = $("#adminOut");
     if (!out) return;
 
     const ghOk = !!window.RCF_GH_SYNC;
-    const maeOk = !!(window.RCF_MAE || window.RCF_MOTHER || window.MOTHER_SELFUPDATE);
+    const vfsOk = !!window.RCF_VFS_OVERRIDES;
+    const maeOk = !!getMaeAPI();
+    const swCtl = !!navigator.serviceWorker?.controller;
+    const reg = await getSWReg();
+    const swState = reg?.active ? "active" : (reg ? "registered" : "none");
 
     out.textContent =
 `Pronto.
-MAE: ${maeOk ? "carregada ✅" : "ausente ❌ (Carregar Mãe)"}
-GitHub Sync: ${ghOk ? "carregado ✅" : "ausente ❌ (github_sync.js)"}
+SW: ${swCtl ? "controlando ✅" : "NÃO controlando ❌"} (reg: ${swState})
+VFS Overrides: ${vfsOk ? "OK ✅" : "ausente ❌ (vfs_overrides.js)"}
+GitHub Sync: ${ghOk ? "OK ✅" : "ausente ❌ (github_sync.js)"}
+Mãe: ${maeOk ? "OK ✅" : "ausente ❌ (mother_selfupdate.js)"}
 `;
   }
 
@@ -887,6 +954,7 @@ GitHub Sync: ${ghOk ? "carregado ✅" : "ausente ❌ (github_sync.js)"}
       uiMsg("#newAppOut", r.msg);
       if (r.ok) { setView("editor"); setStatusPill("OK ✅"); }
       else setStatusPill("ERRO ❌");
+      refreshAdminStatus();
     });
 
     bindTap($("#btnSaveFile"), () => saveFile());
@@ -906,6 +974,7 @@ GitHub Sync: ${ghOk ? "carregado ✅" : "ausente ❌ (github_sync.js)"}
     bindTap($("#btnAgentRun"), () => Agent.route($("#agentCmd")?.value || ""));
     bindTap($("#btnAgentClear"), () => { uiMsg("#agentOut", Agent.help()); });
 
+    // Logs actions
     const doLogsRefresh = () => {
       refreshLogsViews();
       setStatusPill("Logs ✅");
@@ -936,19 +1005,23 @@ GitHub Sync: ${ghOk ? "carregado ✅" : "ausente ❌ (github_sync.js)"}
     bindTap($("#btnDrawerLogsClear"), doLogsClear);
     bindTap($("#btnDrawerLogsCopy"), doLogsCopy);
 
+    // Diagnostics
     bindTap($("#btnDiagRun"), () => {
       uiMsg("#diagOut", Admin.diagnostics());
       setStatusPill("Diag ✅");
       setTimeout(() => setStatusPill("OK ✅"), 700);
+      refreshAdminStatus();
     });
     bindTap($("#btnDiagClear"), () => {
       uiMsg("#diagOut", "Pronto.");
       setStatusPill("OK ✅");
     });
 
+    // Shortcuts
     bindTap($("#btnGoDiagnose"), () => { setView("diagnostics"); uiMsg("#diagShortcutOut", "Abrindo diagnostics..."); });
-    bindTap($("#btnGoAdmin"), () => { setView("admin"); uiMsg("#diagShortcutOut", "Abrindo admin..."); });
+    bindTap($("#btnGoAdmin"), () => { setView("admin"); uiMsg("#diagShortcutOut", "Abrindo admin..."); refreshAdminStatus(); });
 
+    // PIN
     bindTap($("#btnPinSave"), () => {
       const raw = String($("#pinInput")?.value || "").trim();
       if (!/^\d{4,8}$/.test(raw)) return uiMsg("#pinOut", "⚠️ PIN inválido. Use 4 a 8 dígitos.");
@@ -963,6 +1036,7 @@ GitHub Sync: ${ghOk ? "carregado ✅" : "ausente ❌ (github_sync.js)"}
       Logger.write("pin removed");
     });
 
+    // Admin
     bindTap($("#btnAdminDiag"), () => { uiMsg("#adminOut", Admin.diagnostics()); });
     bindTap($("#btnAdminZero"), () => {
       Logger.clear();
@@ -973,6 +1047,7 @@ GitHub Sync: ${ghOk ? "carregado ✅" : "ausente ❌ (github_sync.js)"}
       refreshAdminStatus();
     });
 
+    // GitHub config
     bindTap($("#btnGhSave"), () => {
       const cfg = {
         owner: ($("#ghOwner")?.value || "").trim(),
@@ -984,6 +1059,7 @@ GitHub Sync: ${ghOk ? "carregado ✅" : "ausente ❌ (github_sync.js)"}
       Storage.set("ghcfg", cfg);
       uiMsg("#ghOut", "✅ Config salva (local).");
       Logger.write("gh cfg saved");
+      refreshAdminStatus();
     });
 
     bindTap($("#btnGhPull"), () => {
@@ -1001,9 +1077,13 @@ GitHub Sync: ${ghOk ? "carregado ✅" : "ausente ❌ (github_sync.js)"}
       uiMsg("#ghOut", window.RCF_GH_SYNC ? "GitHub: módulo carregado ✅" : "GitHub Sync ausente ❌");
     });
 
+    // MAE actions
     bindTap($("#btnMaeLoad"), maeLoad);
-    bindTap($("#btnMaeRun"), maeCheck);
+    bindTap($("#btnMaeCheck"), maeCheck);
+    bindTap($("#btnMaeUpdate"), maeUpdateFromGitHub);
+    bindTap($("#btnMaeClear"), maeClearOverrides);
 
+    // Status debug
     bindTap($("#statusPill"), () => Logger.write("touch:", "TOP=" + (document.activeElement?.tagName || "-")));
   }
 
@@ -1020,7 +1100,7 @@ GitHub Sync: ${ghOk ? "carregado ✅" : "ausente ❌ (github_sync.js)"}
       if (State.active.file) openFile(State.active.file);
     } else {
       const text = $("#activeAppText");
-      if (text) text.textContent = "Sem app ativo ✅";
+      if (text) textContentSafe(text, "Sem app ativo ✅");
     }
 
     setView(State.active.view || "dashboard");
@@ -1029,18 +1109,22 @@ GitHub Sync: ${ghOk ? "carregado ✅" : "ausente ❌ (github_sync.js)"}
     if (pin) uiMsg("#pinOut", "PIN definido ✅");
   }
 
-  function init() {
+  function textContentSafe(el, txt) {
+    try { el.textContent = txt; } catch {}
+  }
+
+  async function init() {
     renderShell();
     bindUI();
     hydrateGhInputs();
     hydrateUIFromState();
-    refreshAdminStatus();
+    await refreshAdminStatus();
 
     Logger.write("RCF app.js init ok — mode:", State.cfg.mode);
   }
 
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", init, { passive: true });
+    document.addEventListener("DOMContentLoaded", () => { init(); }, { passive: true });
   } else {
     init();
   }
