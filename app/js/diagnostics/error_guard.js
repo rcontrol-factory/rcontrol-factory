@@ -1,6 +1,9 @@
 (() => {
   "use strict";
 
+  let INSTALLED = false;
+  let LAST_TS = 0;
+
   const safeStr = (x) => {
     try { return typeof x === "string" ? x : JSON.stringify(x); }
     catch { return String(x); }
@@ -15,24 +18,17 @@
   }
 
   async function persist(type, payload) {
-    const doc = {
-      id: uid(),
-      ts: Date.now(),
-      type,
-      payload
-    };
+    const doc = { id: uid(), ts: Date.now(), type, payload };
     try { await window.RCF_IDB?.putError?.(doc); } catch {}
     return doc;
   }
 
-  function showErrorScreen(title, details) {
+  function showErrorScreen(title, detailsObj) {
     try {
-      // Nunca deixa tela branca sem explicação
+      if (document.getElementById("rcfErrorScreen")) return;
+
       const root = document.getElementById("app") || document.body;
       if (!root) return;
-
-      // Não sobrepõe se já existe
-      if (document.getElementById("rcfErrorScreen")) return;
 
       const box = document.createElement("div");
       box.id = "rcfErrorScreen";
@@ -41,33 +37,70 @@
         background:rgba(0,0,0,0.88); color:#fff;
         padding:18px; overflow:auto; font-family:system-ui;
       `;
-      box.innerHTML = `
-        <div style="max-width:920px;margin:0 auto">
-          <div style="font-size:20px;font-weight:800;margin-bottom:8px">⚠️ ${title}</div>
-          <div style="opacity:.9;margin-bottom:10px">
-            A Factory capturou um erro e evitou tela branca. Copie os detalhes e mande pro suporte interno.
-          </div>
-          <pre style="white-space:pre-wrap;background:rgba(255,255,255,0.06);padding:12px;border-radius:12px;line-height:1.35">${details}</pre>
-          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
-            <button id="rcfErrCopy" style="padding:10px 12px;border-radius:12px;border:none;font-weight:700">Copiar</button>
-            <button id="rcfErrReload" style="padding:10px 12px;border-radius:12px;border:none;font-weight:700">Recarregar</button>
-            <button id="rcfErrClose" style="padding:10px 12px;border-radius:12px;border:none;font-weight:700">Fechar</button>
-          </div>
-        </div>
-      `;
+
+      const wrap = document.createElement("div");
+      wrap.style.cssText = "max-width:920px;margin:0 auto";
+
+      const h = document.createElement("div");
+      h.style.cssText = "font-size:20px;font-weight:800;margin-bottom:8px";
+      h.textContent = `⚠️ ${title || "Erro"}`;
+
+      const p = document.createElement("div");
+      p.style.cssText = "opacity:.9;margin-bottom:10px";
+      p.textContent = "A Factory capturou um erro e evitou tela branca. Copie os detalhes e mande pro suporte interno.";
+
+      const pre = document.createElement("pre");
+      pre.style.cssText = "white-space:pre-wrap;background:rgba(255,255,255,0.06);padding:12px;border-radius:12px;line-height:1.35";
+      const detailsText = safeStr(detailsObj);
+      pre.textContent = detailsText;
+
+      const row = document.createElement("div");
+      row.style.cssText = "display:flex;gap:10px;flex-wrap:wrap;margin-top:12px";
+
+      const btnCopy = document.createElement("button");
+      btnCopy.id = "rcfErrCopy";
+      btnCopy.style.cssText = "padding:10px 12px;border-radius:12px;border:none;font-weight:700";
+      btnCopy.textContent = "Copiar";
+
+      const btnReload = document.createElement("button");
+      btnReload.id = "rcfErrReload";
+      btnReload.style.cssText = "padding:10px 12px;border-radius:12px;border:none;font-weight:700";
+      btnReload.textContent = "Recarregar";
+
+      const btnClose = document.createElement("button");
+      btnClose.id = "rcfErrClose";
+      btnClose.style.cssText = "padding:10px 12px;border-radius:12px;border:none;font-weight:700";
+      btnClose.textContent = "Fechar";
+
+      row.appendChild(btnCopy);
+      row.appendChild(btnReload);
+      row.appendChild(btnClose);
+
+      wrap.appendChild(h);
+      wrap.appendChild(p);
+      wrap.appendChild(pre);
+      wrap.appendChild(row);
+
+      box.appendChild(wrap);
       (document.body || root).appendChild(box);
 
-      const txt = `TITLE: ${title}\n\n${details}`;
+      const txt = `TITLE: ${title}\n\n${detailsText}`;
 
-      box.querySelector("#rcfErrCopy")?.addEventListener("click", async () => {
+      btnCopy.addEventListener("click", async () => {
         try { await navigator.clipboard.writeText(txt); } catch {}
-      });
-      box.querySelector("#rcfErrReload")?.addEventListener("click", () => location.reload());
-      box.querySelector("#rcfErrClose")?.addEventListener("click", () => box.remove());
+      }, { passive: true });
+
+      btnReload.addEventListener("click", () => location.reload(), { passive: true });
+      btnClose.addEventListener("click", () => box.remove(), { passive: true });
     } catch {}
   }
 
   async function handle(kind, errObj) {
+    // throttle anti-flood
+    const ts = Date.now();
+    if (ts - LAST_TS < 500) return;
+    LAST_TS = ts;
+
     const payload = {
       kind,
       message: errObj?.message || safeStr(errObj),
@@ -80,32 +113,32 @@
     log("err", `GlobalErrorGuard: ${payload.message}`);
     await persist(kind, payload);
 
-    // UI controlada
-    showErrorScreen("Erro capturado", safeStr(payload));
+    showErrorScreen("Erro capturado", payload);
   }
 
   function install() {
-    // window.onerror
+    if (INSTALLED) {
+      log("warn", "GlobalErrorGuard já estava instalado (skip).");
+      return;
+    }
+    INSTALLED = true;
+
     window.addEventListener("error", (ev) => {
       const e = ev?.error || new Error(ev?.message || "window.error");
-      handle("window.error", e);
+      void handle("window.error", e);
     });
 
-    // unhandled promise
     window.addEventListener("unhandledrejection", (ev) => {
       const e = ev?.reason instanceof Error ? ev.reason : new Error(safeStr(ev?.reason));
-      handle("unhandledrejection", e);
+      void handle("unhandledrejection", e);
     });
 
-    // console.error hook (sem quebrar o console)
     const orig = console.error;
     console.error = function (...args) {
-      try {
-        orig.apply(console, args);
-      } catch {}
+      try { orig.apply(console, args); } catch {}
       try {
         const e = args.find(a => a instanceof Error) || new Error(args.map(safeStr).join(" "));
-        handle("console.error", e);
+        void handle("console.error", e);
       } catch {}
     };
 
