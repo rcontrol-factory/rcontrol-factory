@@ -1,12 +1,12 @@
-/* RControl Factory — app.js (STABILITY CORE + RESTORE UI BASE)
+/* RControl Factory — app.js (STABILITY CORE + RESTORE UI BASE + ANTI-WHITE-SCREEN)
    - UI completa (tabs + views) dentro de #app
    - Agent/Editor/Apps/Logs
    - Settings: PIN + Logs
    - Admin: GitHub + Maintenance (Mãe)
-   - STABILITY CORE: ErrorGuard + SafeInit + FallbackScreen
-   - Anti-White-Screen: BootLock + BootScreen + CSS check + Recovery UI
-   - SW Safe: clear caches + unregister + hard reload
-   - Auto-boot Diagnostics (core/diagnostics.js) no init
+   - STABILITY CORE: ErrorGuard + BootLock + BootScreen + Emergency/Recovery UI
+   - Safe script loader ONCE (no double-load)
+   - Auto-boot Diagnostics (core/diagnostics.js) no init (idempotente)
+   - SW SAFE helpers: Clear SW Cache + Unregister SW (sempre acessível)
    - Cloudflare Pages build output = app (site na raiz /)
 */
 
@@ -14,194 +14,10 @@
   "use strict";
 
   // =========================================================
-  // PATCH: BOOT LOCK (anti double boot)
+  // BOOT LOCK (anti double-init)
   // =========================================================
-  if (window.__RCF_BOOTED__) {
-    try { console.warn("[RCF] boot prevented: already booted"); } catch {}
-    return;
-  }
+  if (window.__RCF_BOOTED__) return;
   window.__RCF_BOOTED__ = true;
-
-  // =========================================================
-  // PATCH: BOOT / RECOVERY UI (anti white screen + css pelado)
-  // =========================================================
-  const BOOT = (() => {
-    const BOOT_ID = "rcfBootScreen";
-    const REC_ID = "rcfRecoveryScreen";
-
-    function safeHtml(s) {
-      try { return String(s).replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c])); }
-      catch { return String(s); }
-    }
-
-    function renderBoot(msg) {
-      try {
-        if (document.getElementById(BOOT_ID)) return;
-        const el = document.createElement("div");
-        el.id = BOOT_ID;
-        el.style.cssText = `
-          position:fixed; inset:0; z-index:2147483000;
-          background:#070b12; color:#fff; font-family:system-ui;
-          display:flex; align-items:center; justify-content:center;
-          padding:18px;
-        `;
-        el.innerHTML = `
-          <div style="max-width:820px;width:100%;border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:16px;background:rgba(255,255,255,.04)">
-            <div style="font-weight:900;font-size:18px;margin-bottom:6px">RControl Factory</div>
-            <div style="opacity:.9;margin-bottom:10px">Inicializando… (anti tela branca)</div>
-            <div style="white-space:pre-wrap;opacity:.85;font-size:13px;line-height:1.35">${safeHtml(msg || "Boot…")}</div>
-            <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap">
-              <button id="rcfBootReload" style="padding:10px 12px;border-radius:12px;border:none;font-weight:800">Recarregar</button>
-              <button id="rcfBootEmergency" style="padding:10px 12px;border-radius:12px;border:none;font-weight:800">Emergency</button>
-            </div>
-          </div>
-        `;
-        (document.body || document.documentElement).appendChild(el);
-
-        el.querySelector("#rcfBootReload")?.addEventListener("click", () => location.reload());
-        el.querySelector("#rcfBootEmergency")?.addEventListener("click", () => {
-          showRecovery("Emergency UI (manual)", { hint: "Apenas UI de emergência (sem depender de módulos)." });
-        });
-      } catch {}
-    }
-
-    function removeBoot() {
-      try { document.getElementById(BOOT_ID)?.remove(); } catch {}
-    }
-
-    async function clearSWCache() {
-      try {
-        if (!("caches" in window)) return { ok: false, msg: "Cache API não disponível" };
-        const keys = await caches.keys();
-        await Promise.all(keys.map(k => caches.delete(k)));
-        return { ok: true, msg: `Caches limpos: ${keys.length}` };
-      } catch (e) {
-        return { ok: false, msg: String(e?.message || e) };
-      }
-    }
-
-    async function unregisterSW() {
-      try {
-        if (!("serviceWorker" in navigator)) return { ok: false, msg: "SW não disponível" };
-        const regs = await navigator.serviceWorker.getRegistrations();
-        await Promise.all(regs.map(r => r.unregister()));
-        return { ok: true, msg: `SW unregister: ${regs.length}` };
-      } catch (e) {
-        return { ok: false, msg: String(e?.message || e) };
-      }
-    }
-
-    function hardReload() {
-      try {
-        const url = new URL(location.href);
-        url.searchParams.set("_rcf", String(Date.now()));
-        location.replace(url.toString());
-      } catch {
-        location.reload();
-      }
-    }
-
-    function exportLogs(getTextFn) {
-      try {
-        const txt = (typeof getTextFn === "function" ? getTextFn() : "") || "";
-        const blob = new Blob([txt], { type: "text/plain;charset=utf-8" });
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(blob);
-        a.download = `rcf-logs-${Date.now()}.txt`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-      } catch {}
-    }
-
-    function showRecovery(reason, extra) {
-      try {
-        if (document.getElementById(REC_ID)) return;
-
-        const el = document.createElement("div");
-        el.id = REC_ID;
-        el.style.cssText = `
-          position:fixed; inset:0; z-index:2147483647;
-          background:rgba(0,0,0,0.9); color:#fff; font-family:system-ui;
-          padding:18px; overflow:auto;
-        `;
-
-        const details = safeHtml(JSON.stringify({
-          reason: reason || "RECOVERY",
-          href: location.href,
-          ua: navigator.userAgent,
-          time: new Date().toISOString(),
-          extra: extra || {}
-        }, null, 2));
-
-        el.innerHTML = `
-          <div style="max-width:920px;margin:0 auto">
-            <div style="font-size:20px;font-weight:900;margin-bottom:6px">⚠️ RECOVERY MODE</div>
-            <div style="opacity:.9;margin-bottom:10px">A Factory detectou risco de “tela branca” ou UI sem CSS e entrou em modo de recuperação.</div>
-            <pre style="white-space:pre-wrap;background:rgba(255,255,255,0.06);padding:12px;border-radius:12px;line-height:1.35">${details}</pre>
-
-            <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
-              <button id="rcfRecReload" style="padding:10px 12px;border-radius:12px;border:none;font-weight:800">Recarregar</button>
-              <button id="rcfRecHard" style="padding:10px 12px;border-radius:12px;border:none;font-weight:800">Hard reload</button>
-              <button id="rcfRecClear" style="padding:10px 12px;border-radius:12px;border:none;font-weight:800">Clear SW Cache</button>
-              <button id="rcfRecUnreg" style="padding:10px 12px;border-radius:12px;border:none;font-weight:800">Unregister SW</button>
-              <button id="rcfRecClose" style="padding:10px 12px;border-radius:12px;border:none;font-weight:800">Fechar</button>
-            </div>
-
-            <div style="opacity:.85;margin-top:12px;font-size:13px">
-              Dica: se o SW cache estiver quebrado, use “Clear SW Cache” e depois “Hard reload”.
-            </div>
-          </div>
-        `;
-
-        (document.body || document.documentElement).appendChild(el);
-
-        el.querySelector("#rcfRecReload")?.addEventListener("click", () => location.reload());
-        el.querySelector("#rcfRecHard")?.addEventListener("click", () => hardReload());
-        el.querySelector("#rcfRecClear")?.addEventListener("click", async () => {
-          const r = await clearSWCache();
-          alert(r.ok ? `✅ ${r.msg}` : `❌ ${r.msg}`);
-        });
-        el.querySelector("#rcfRecUnreg")?.addEventListener("click", async () => {
-          const r = await unregisterSW();
-          alert(r.ok ? `✅ ${r.msg}` : `❌ ${r.msg}`);
-        });
-        el.querySelector("#rcfRecClose")?.addEventListener("click", () => el.remove());
-      } catch {}
-    }
-
-    async function cssLoadedCheck(timeoutMs = 1500) {
-      const start = Date.now();
-      while ((Date.now() - start) < timeoutMs) {
-        try {
-          // Check 1: existe stylesheet carregado (principalmente styles.css)
-          const has = Array.from(document.styleSheets || []).some(ss => {
-            const href = (ss && ss.href) ? String(ss.href) : "";
-            return href.includes("styles.css") || href.includes("/styles");
-          });
-          // Check 2: UI existe (evita falso positivo cedo)
-          const hasRoot = !!document.getElementById("rcfRoot");
-          if (has && hasRoot) return { ok: true };
-        } catch {}
-        await new Promise(r => setTimeout(r, 50));
-      }
-      return { ok: false, code: "CSS_NOT_APPLIED" };
-    }
-
-    return {
-      renderBoot,
-      removeBoot,
-      showRecovery,
-      cssLoadedCheck,
-      clearSWCache,
-      unregisterSW,
-      hardReload,
-      exportLogs
-    };
-  })();
-
-  // Render boot ASAP (mesmo antes do DOMContentLoaded)
-  try { BOOT.renderBoot("Boot sequencer: iniciando…"); } catch {}
 
   // -----------------------------
   // Utils
@@ -248,6 +64,38 @@
       const el = $("#statusText");
       if (el) el.textContent = String(txt || "");
     } catch {}
+  }
+
+  // =========================================================
+  // BOOT SCREEN (mínimo imediato)
+  // =========================================================
+  function renderBootScreen(label = "Carregando…") {
+    try {
+      const root = $("#app");
+      if (!root) return;
+      // Não sobrescreve UI completa se já existe
+      if ($("#rcfRoot")) return;
+
+      root.innerHTML = `
+        <div id="rcfBoot" style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:18px;background:#070b12;color:#fff;font-family:system-ui">
+          <div style="max-width:760px;width:100%;border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:16px;background:rgba(255,255,255,.04)">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+              <div style="width:10px;height:10px;border-radius:999px;background:#2dd4bf;box-shadow:0 0 0 6px rgba(45,212,191,.12)"></div>
+              <div style="font-weight:900">RControl Factory</div>
+              <div style="opacity:.8">•</div>
+              <div style="opacity:.9">${escapeHtml(label)}</div>
+            </div>
+            <div style="opacity:.75;font-size:13px">
+              Se travar: use <b>Clear SW Cache</b> / <b>Unregister SW</b> no Tools (⚙️) quando abrir.
+            </div>
+          </div>
+        </div>
+      `;
+    } catch {}
+  }
+
+  function removeBootScreen() {
+    try { $("#rcfBoot")?.remove(); } catch {}
   }
 
   // -----------------------------
@@ -336,7 +184,7 @@
 
     function showErrorScreen(title, details) {
       try {
-        const root = $("#app") || document.body;
+        const root = $("#app");
         if (!root) return;
 
         root.innerHTML = `
@@ -352,8 +200,9 @@
               <pre style="white-space:pre-wrap;word-break:break-word;padding:12px;border-radius:10px;background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.12);max-height:45vh;overflow:auto">${escapeHtml(String(details || ""))}</pre>
               <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
                 <button id="rcfReloadBtn" style="padding:10px 14px;border-radius:10px;border:0;background:#2dd4bf;color:#022; font-weight:800">Recarregar</button>
+                <button id="rcfClearSWBtn" style="padding:10px 14px;border-radius:10px;border:0;background:#f59e0b;color:#111;font-weight:800">Clear SW Cache</button>
+                <button id="rcfUnregSWBtn" style="padding:10px 14px;border-radius:10px;border:0;background:#a78bfa;color:#111;font-weight:800">Unregister SW</button>
                 <button id="rcfClearLogsBtn" style="padding:10px 14px;border-radius:10px;border:0;background:#ef4444;color:#fff;font-weight:800">Limpar logs</button>
-                <button id="rcfEmergencyBtn" style="padding:10px 14px;border-radius:10px;border:0;background:#f59e0b;color:#111;font-weight:900">Emergency</button>
               </div>
             </div>
           </div>
@@ -367,10 +216,15 @@
           alert("Logs limpos.");
         });
 
-        $("#rcfEmergencyBtn")?.addEventListener("click", () => {
-          try {
-            BOOT.showRecovery("Emergency (from showErrorScreen)", { title, details });
-          } catch {}
+        $("#rcfClearSWBtn")?.addEventListener("click", async () => {
+          try { await SW.forceClearCaches(); } catch {}
+          location.reload();
+        });
+
+        $("#rcfUnregSWBtn")?.addEventListener("click", async () => {
+          try { await SW.unregisterAll(); } catch {}
+          try { await SW.forceClearCaches(); } catch {}
+          location.reload();
         });
       } catch {}
     }
@@ -440,25 +294,44 @@
     el.addEventListener("click", handler, { passive: true });
   }
 
-  // -----------------------------
-  // Dynamic script loader
-  // -----------------------------
-  function loadScriptOnce(src) {
-    return new Promise((resolve, reject) => {
-      try {
-        const exists = $$("script").some(s => (s.getAttribute("src") || "") === src);
-        if (exists) return resolve({ ok: true, cached: true });
+  // =========================================================
+  // SCRIPT LOADER ONCE (anti double-load)
+  // =========================================================
+  const ScriptOnce = (() => {
+    const key = "__RCF_SCRIPT_ONCE__";
+    const m = window[key] || (window[key] = { loaded: Object.create(null) });
 
-        const s = document.createElement("script");
-        s.src = src;
-        s.defer = true;
-        s.onload = () => resolve({ ok: true, cached: false });
-        s.onerror = () => reject(new Error("Falhou carregar: " + src));
-        document.head.appendChild(s);
-      } catch (e) {
-        reject(e);
-      }
-    });
+    function has(src) {
+      return !!m.loaded[src] || $$("script").some(s => (s.getAttribute("src") || "") === src);
+    }
+
+    function mark(src) {
+      m.loaded[src] = true;
+    }
+
+    function load(src) {
+      return new Promise((resolve, reject) => {
+        try {
+          if (has(src)) return resolve({ ok: true, cached: true });
+
+          const s = document.createElement("script");
+          s.src = src;
+          s.defer = true;
+          s.onload = () => { mark(src); resolve({ ok: true, cached: false }); };
+          s.onerror = () => reject(new Error("Falhou carregar: " + src));
+          document.head.appendChild(s);
+        } catch (e) {
+          reject(e);
+        }
+      });
+    }
+
+    return { load, has };
+  })();
+
+  // (compat) nome antigo
+  function loadScriptOnce(src) {
+    return ScriptOnce.load(src);
   }
 
   // -----------------------------
@@ -490,6 +363,76 @@
     Storage.set("apps", State.apps);
     Storage.set("active", State.active);
     Storage.set("pending", State.pending);
+  }
+
+  // =========================================================
+  // CSSLoadedCheck (tolerante)
+  // - Se existir --rcf_css_ok no :root, valida.
+  // - Se não existir, não bloqueia (apenas loga).
+  // =========================================================
+  async function cssLoadedCheck(timeoutMs = 1500) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      try {
+        const v = getComputedStyle(document.documentElement).getPropertyValue("--rcf_css_ok").trim();
+        if (v === "1") return { ok: true, mode: "var" };
+      } catch {}
+      await new Promise(r => setTimeout(r, 60));
+    }
+
+    // fallback: se já tem #rcfRoot e algum stylesheet carregado, considera ok
+    try {
+      const anySheet = (document.styleSheets && document.styleSheets.length > 0);
+      if (anySheet) return { ok: true, mode: "sheets" };
+    } catch {}
+
+    return { ok: false, mode: "timeout" };
+  }
+
+  function showRecoveryUI(reason = "CSS_NOT_APPLIED") {
+    try {
+      const root = $("#app");
+      if (!root) return;
+
+      root.innerHTML = `
+        <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:18px;background:#070b12;color:#fff;font-family:system-ui">
+          <div style="max-width:820px;width:100%;border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:16px;background:rgba(255,255,255,.04)">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+              <div style="font-size:20px">🧯</div>
+              <div style="font-weight:900;font-size:18px">Recovery Mode</div>
+            </div>
+            <div style="opacity:.9;margin-bottom:10px">
+              Detectei risco de UI “pelada” ou boot instável. Motivo: <b>${escapeHtml(reason)}</b>
+            </div>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
+              <button id="rcfRecReload" style="padding:10px 14px;border-radius:10px;border:0;background:#2dd4bf;color:#022;font-weight:900">Recarregar</button>
+              <button id="rcfRecClear" style="padding:10px 14px;border-radius:10px;border:0;background:#f59e0b;color:#111;font-weight:900">Clear SW Cache</button>
+              <button id="rcfRecUnreg" style="padding:10px 14px;border-radius:10px;border:0;background:#a78bfa;color:#111;font-weight:900">Unregister SW</button>
+              <button id="rcfRecLogs" style="padding:10px 14px;border-radius:10px;border:0;background:#60a5fa;color:#071019;font-weight:900">Copiar logs</button>
+            </div>
+            <pre style="margin-top:12px;white-space:pre-wrap;word-break:break-word;padding:12px;border-radius:10px;background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.12);max-height:45vh;overflow:auto">${escapeHtml(Logger.getAll().slice(-120).join("\n"))}</pre>
+          </div>
+        </div>
+      `;
+
+      $("#rcfRecReload")?.addEventListener("click", () => location.reload(), { passive: true });
+
+      $("#rcfRecClear")?.addEventListener("click", async () => {
+        try { await SW.forceClearCaches(); } catch {}
+        location.reload();
+      });
+
+      $("#rcfRecUnreg")?.addEventListener("click", async () => {
+        try { await SW.unregisterAll(); } catch {}
+        try { await SW.forceClearCaches(); } catch {}
+        location.reload();
+      });
+
+      $("#rcfRecLogs")?.addEventListener("click", async () => {
+        try { await navigator.clipboard.writeText(Logger.getAll().join("\n")); } catch {}
+        alert("Logs copiados.");
+      });
+    } catch {}
   }
 
   // -----------------------------
@@ -722,9 +665,13 @@
               <button class="btn ghost" id="btnDrawerLogsRefresh" type="button">Atualizar logs</button>
               <button class="btn ok" id="btnDrawerLogsCopy" type="button">Copiar logs</button>
               <button class="btn danger" id="btnDrawerLogsClear" type="button">Limpar logs</button>
-              <button class="btn ghost" id="btnDrawerSWClear" type="button">Clear SW Cache</button>
-              <button class="btn ghost" id="btnDrawerSWUnreg" type="button">Unregister SW</button>
             </div>
+
+            <div class="row" style="margin-top:10px">
+              <button class="btn ghost" id="btnClearSWCache" type="button">Clear SW Cache</button>
+              <button class="btn ghost" id="btnUnregisterSW" type="button">Unregister SW</button>
+            </div>
+
             <pre class="mono small" id="logsBox">Pronto.</pre>
           </div>
         </div>
@@ -735,6 +682,7 @@
 
   // -----------------------------
   // Views
+
   // -----------------------------
   function refreshLogsViews() {
     Logger._mirrorUI(Logger.getAll());
@@ -873,6 +821,7 @@
     saveAll();
 
     const text = $("#activeAppText");
+    if (text) textContentSafe(text, `Sem app ativo ✅`);
     if (text) textContentSafe(text, `App ativo: ${app.name} (${app.slug}) ✅`);
 
     renderAppsList();
@@ -1029,41 +978,98 @@
     clear() { Storage.del(this.key); }
   };
 
+  // =========================================================
+  // SERVICE WORKER SAFE (helpers sempre acessíveis)
+  // =========================================================
+  const SW = (() => {
+    async function exists(url) {
+      try {
+        const r = await fetch(url, { method: "HEAD", cache: "no-store" });
+        return !!r && (r.ok || r.status === 304);
+      } catch {
+        return false;
+      }
+    }
+
+    async function ensureRegistered() {
+      try {
+        if (!("serviceWorker" in navigator)) return false;
+
+        // evita ficar tentando registrar quando o arquivo nem existe
+        const okFile = await exists("/sw.js");
+        if (!okFile) {
+          Logger.write("sw register skip: /sw.js not found");
+          return false;
+        }
+
+        const reg = await navigator.serviceWorker.getRegistration("/");
+        if (reg) return true;
+
+        await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+        return true;
+      } catch (e) {
+        Logger.write("sw register fail:", e?.message || e);
+        return false;
+      }
+    }
+
+    async function unregisterAll() {
+      try {
+        if (!("serviceWorker" in navigator)) return false;
+        const regs = await navigator.serviceWorker.getRegistrations();
+        let n = 0;
+        for (const r of regs) {
+          const ok = await r.unregister();
+          if (ok) n++;
+        }
+        Logger.write("sw unregister:", n, "ok");
+        return true;
+      } catch (e) {
+        Logger.write("sw unregister fail:", e?.message || e);
+        return false;
+      }
+    }
+
+    async function forceClearCaches() {
+      try {
+        if (!("caches" in window)) return false;
+        const keys = await caches.keys();
+        await Promise.allSettled(keys.map(k => caches.delete(k)));
+        Logger.write("cache clear:", keys.length, "caches");
+        return true;
+      } catch (e) {
+        Logger.write("cache clear fail:", e?.message || e);
+        return false;
+      }
+    }
+
+    return { ensureRegistered, unregisterAll, forceClearCaches };
+  })();
+
   // -----------------------------
-  // Core modules auto-load
+  // Core modules auto-load (mantido, mas ONCE)
   // -----------------------------
   async function ensureCoreModules() {
     const tasks = [];
-    if (!window.RCF_VFS_OVERRIDES) tasks.push(loadScriptOnce("/js/core/vfs_overrides.js").catch(() => null));
-    if (!window.RCF_GH_SYNC) tasks.push(loadScriptOnce("/js/core/github_sync.js").catch(() => null));
+    if (!window.RCF_VFS_OVERRIDES && !ScriptOnce.has("/js/core/vfs_overrides.js")) tasks.push(loadScriptOnce("/js/core/vfs_overrides.js").catch(() => null));
+    if (!window.RCF_GH_SYNC && !ScriptOnce.has("/js/core/github_sync.js")) tasks.push(loadScriptOnce("/js/core/github_sync.js").catch(() => null));
     await Promise.allSettled(tasks);
   }
 
   // -----------------------------
-  // Diagnostics boot (AUTO)
+  // Diagnostics boot (AUTO / ONCE)
   // -----------------------------
   async function bootDiagnosticsCore() {
     try {
+      // se já existe, não recarrega
+      if (window.RCF_DIAGNOSTICS || ScriptOnce.has("/js/core/diagnostics.js")) {
+        Logger.write("diagnostics core boot: cached ✅");
+        return;
+      }
       await loadScriptOnce("/js/core/diagnostics.js");
       Logger.write("diagnostics core boot: ok ✅");
     } catch (e) {
       Logger.write("diagnostics core boot FAIL:", e?.message || e);
-    }
-  }
-
-  // -----------------------------
-  // Service Worker helpers
-  // -----------------------------
-  async function ensureSWRegistered() {
-    try {
-      if (!("serviceWorker" in navigator)) return false;
-      const reg = await navigator.serviceWorker.getRegistration("/");
-      if (reg) return true;
-      await navigator.serviceWorker.register("/sw.js", { scope: "/" });
-      return true;
-    } catch (e) {
-      Logger.write("sw register fail:", e?.message || e);
-      return false;
     }
   }
 
@@ -1165,14 +1171,18 @@
     bindTap($("#btnDrawerLogsClear"), doLogsClear);
     bindTap($("#btnDrawerLogsCopy"), doLogsCopy);
 
-    // SW controls in drawer (sempre útil contra cache quebrado)
-    bindTap($("#btnDrawerSWClear"), async () => {
-      const r = await BOOT.clearSWCache();
-      uiMsg("#logsBox", (r.ok ? "✅ " : "❌ ") + r.msg + "\n\n" + Logger.getAll().join("\n"));
+    // SW SAFE
+    bindTap($("#btnClearSWCache"), async () => {
+      await SW.forceClearCaches();
+      safeSetStatus("Cache limpo ✅");
+      setTimeout(() => safeSetStatus("OK ✅"), 800);
     });
-    bindTap($("#btnDrawerSWUnreg"), async () => {
-      const r = await BOOT.unregisterSW();
-      uiMsg("#logsBox", (r.ok ? "✅ " : "❌ ") + r.msg + "\n\n" + Logger.getAll().join("\n"));
+
+    bindTap($("#btnUnregisterSW"), async () => {
+      await SW.unregisterAll();
+      await SW.forceClearCaches();
+      safeSetStatus("SW removido ✅");
+      setTimeout(() => safeSetStatus("OK ✅"), 800);
     });
 
     // Diagnostics actions
@@ -1244,7 +1254,10 @@
       uiMsg("#ghOut", "✅ Config salva (local).");
     });
 
-    bindTap($("#btnGhRefresh"), () => uiMsg("#ghOut", window.RCF_GH_SYNC ? "GitHub: módulo carregado ✅" : "GitHub Sync ausente ❌"));
+    bindTap($("#btnGhRefresh"), async () => {
+      await ensureCoreModules();
+      uiMsg("#ghOut", window.RCF_GH_SYNC ? "GitHub: módulo carregado ✅" : "GitHub Sync ausente ❌");
+    });
   }
 
   // -----------------------------
@@ -1271,45 +1284,41 @@
 
   async function safeInit() {
     try {
-      // 1) Crash shield primeiro
+      // 1) boot minimal ASAP
+      renderBootScreen("Carregando…");
+
+      // 2) crash shield
       Stability.install();
 
-      // 2) UI shell
+      // 3) render UI
       renderShell();
 
-      // 3) CSS check (anti UI pelado)
-      const css = await BOOT.cssLoadedCheck(1500);
+      // 4) CSS check (tolerante)
+      const css = await cssLoadedCheck(1500);
       if (!css.ok) {
-        Logger.write("CRITICAL:", css.code || "CSS_NOT_APPLIED");
-        BOOT.showRecovery("CSS not applied / UI pelada", { code: css.code });
-        // mantém boot/recovery, não segue
+        Logger.write("critical:", "CSS_NOT_APPLIED");
+        showRecoveryUI("CSS_NOT_APPLIED");
         return;
       }
 
-      // 4) Bind + hydrate
+      // 5) bind/hydrate
       bindUI();
       hydrateGhInputs();
       hydrateUIFromState();
 
-      // 5) Diagnostics loader (uma única porta)
+      // 6) diagnostics core (ONCE)
       await bootDiagnosticsCore();
 
-      // 6) SW cedo pro offline-first
-      await ensureSWRegistered();
+      // 7) SW (safe, não quebra se não existir)
+      await SW.ensureRegistered();
+
+      removeBootScreen();
 
       Logger.write("RCF app.js init ok — mode:", State.cfg.mode);
       safeSetStatus("OK ✅");
-
-      // 7) remove bootscreen com segurança
-      BOOT.removeBoot();
     } catch (e) {
       const msg = (e?.message || e);
       Logger.write("FATAL init:", msg);
-
-      // Emergency UI sempre disponível
-      try { BOOT.showRecovery("safeInit crash", { msg, stack: e?.stack || "" }); } catch {}
-
-      // fallback screen
       Stability.showErrorScreen("Falha ao iniciar (safeInit)", String(msg));
     }
   }
@@ -1320,8 +1329,10 @@
     safeInit();
   }
 
+  // Exports
   window.RCF = window.RCF || {};
   window.RCF.state = State;
   window.RCF.log = (...a) => Logger.write(...a);
+  window.RCF.sw = SW;
 
 })();
