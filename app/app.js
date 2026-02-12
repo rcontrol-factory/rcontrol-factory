@@ -3,7 +3,7 @@
    - Mantém teu Agent/Editor/Apps/Logs
    - Corrige “só aparece Admin / sumiu tudo”
    - Settings: Segurança (PIN) + Logs (com botões funcionando)
-   - Maintenance: tenta carregar mother_selfupdate.js e mostra status real
+   - Maintenance: carrega mother_selfupdate.js (compatível com CF Pages build output = app)
 */
 
 (() => {
@@ -143,7 +143,7 @@
   }
 
   // -----------------------------
-  // Dynamic script loader (para MAE / GH etc.)
+  // Dynamic script loader
   // -----------------------------
   function loadScriptOnce(src) {
     return new Promise((resolve, reject) => {
@@ -313,7 +313,7 @@
 
           <section class="view card" id="view-settings">
             <h1>Settings</h1>
-            <p class="hint">Central de configurações (sem engrenagem).</p>
+            <p class="hint">Central de configurações.</p>
 
             <div class="status-box" id="settingsMount">
               <div class="badge">✅ Settings carregado.</div>
@@ -414,7 +414,7 @@
 
             <div class="card" id="admin-maint">
               <h2>MAINTENANCE • Self-Update (Mãe)</h2>
-              <p class="hint">Carrega /app/js/core/mother_selfupdate.js e mostra status.</p>
+              <p class="hint">Carrega mother_selfupdate.js (Cloudflare Build output = app → caminho real começa em /js/...)</p>
               <div class="row">
                 <button class="btn ghost" id="btnMaeLoad" type="button">Carregar Mãe</button>
                 <button class="btn ok" id="btnMaeRun" type="button">Rodar Check</button>
@@ -648,7 +648,7 @@
   }
 
   // -----------------------------
-  // Agent (estável)
+  // Agent
   // -----------------------------
   const Agent = {
     help() {
@@ -769,21 +769,42 @@
 
   // -----------------------------
   // MAE (Maintenance / Self-update)
-  // Espera que mother_selfupdate.js defina window.RCF_MAE (ou window.RCF_MOTHER)
   // -----------------------------
   async function maeLoad() {
     uiMsg("#maintOut", "Carregando mãe...");
-    try {
-      await loadScriptOnce("/app/js/core/mother_selfupdate.js");
-      const ok = !!(window.RCF_MAE || window.RCF_MOTHER || window.MOTHER_SELFUPDATE);
-      uiMsg("#maintOut", ok
-        ? "✅ Mãe carregada. (mother_selfupdate.js ok)"
-        : "⚠️ Script carregou, mas não expôs API global. Verifique mother_selfupdate.js");
-      Logger.write("mae load:", ok ? "ok" : "no api");
-    } catch (e) {
-      uiMsg("#maintOut", "❌ " + (e?.message || e));
-      Logger.write("mae load err:", e?.message || e);
+
+    // Cloudflare Pages com Build output = app:
+    // repo: app/js/core/mother_selfupdate.js
+    // url:  /js/core/mother_selfupdate.js
+    const candidates = [
+      "/js/core/mother_selfupdate.js",      // ✅ correto no seu setup atual
+      "/app/js/core/mother_selfupdate.js"   // fallback se um dia mudar build output
+    ];
+
+    let lastErr = null;
+
+    for (const src of candidates) {
+      try {
+        await loadScriptOnce(src);
+        const ok = !!(window.RCF_MAE || window.RCF_MOTHER || window.MOTHER_SELFUPDATE);
+        if (ok) {
+          uiMsg("#maintOut", `✅ Mãe carregada. (${src})`);
+          Logger.write("mae load ok:", src);
+          refreshAdminStatus();
+          return;
+        }
+        // script carregou mas não expôs API
+        uiMsg("#maintOut", `⚠️ Script carregou (${src}), mas não expôs API global.`);
+        Logger.write("mae load:", "no api", src);
+        refreshAdminStatus();
+        return;
+      } catch (e) {
+        lastErr = e;
+        Logger.write("mae load fail:", src, e?.message || e);
+      }
     }
+
+    uiMsg("#maintOut", "❌ " + (lastErr?.message || lastErr || "Falhou carregar mãe."));
   }
 
   function maeCheck() {
@@ -792,14 +813,14 @@
       uiMsg("#maintOut", "❌ Mãe não está disponível. Clique em 'Carregar Mãe' primeiro.");
       return;
     }
-    // Se tiver um método conhecido, tenta.
     try {
       if (typeof api.status === "function") {
         uiMsg("#maintOut", "MAE STATUS:\n" + safeJsonStringify(api.status()));
       } else {
-        uiMsg("#maintOut", "✅ Mãe presente. (Sem método status). API keys:\n" + Object.keys(api).join(", "));
+        uiMsg("#maintOut", "✅ Mãe presente. API keys:\n" + Object.keys(api).join(", "));
       }
       Logger.write("mae check ok");
+      refreshAdminStatus();
     } catch (e) {
       uiMsg("#maintOut", "❌ Erro no check: " + (e?.message || e));
       Logger.write("mae check err:", e?.message || e);
@@ -816,7 +837,6 @@
     if ($("#ghRepo")) $("#ghRepo").value = cfg.repo || "";
     if ($("#ghBranch")) $("#ghBranch").value = cfg.branch || "main";
     if ($("#ghPath")) $("#ghPath").value = cfg.path || "app/import/mother_bundle.json";
-    // token não autopreenche se você não quiser — mas você pediu praticidade:
     if ($("#ghToken")) $("#ghToken").value = cfg.token || "";
   }
 
@@ -829,7 +849,7 @@
 
     out.textContent =
 `Pronto.
-MAE: ${maeOk ? "carregada ✅" : "ausente ❌ (carregar mother_selfupdate.js)"}
+MAE: ${maeOk ? "carregada ✅" : "ausente ❌ (Carregar Mãe)"}
 GitHub Sync: ${ghOk ? "carregado ✅" : "ausente ❌ (github_sync.js)"}
 `;
   }
@@ -838,14 +858,11 @@ GitHub Sync: ${ghOk ? "carregado ✅" : "ausente ❌ (github_sync.js)"}
   // Bind UI
   // -----------------------------
   function bindUI() {
-    // Tabs
     $$("[data-view]").forEach(btn => bindTap(btn, () => setView(btn.getAttribute("data-view"))));
 
-    // Tools drawer
     bindTap($("#btnOpenTools"), () => openTools(true));
     bindTap($("#btnCloseTools"), () => openTools(false));
 
-    // Dashboard shortcuts
     bindTap($("#btnCreateNewApp"), () => setView("newapp"));
     bindTap($("#btnOpenEditor"), () => setView("editor"));
     bindTap($("#btnExportBackup"), () => {
@@ -856,7 +873,6 @@ GitHub Sync: ${ghOk ? "carregado ✅" : "ausente ❌ (github_sync.js)"}
       Logger.write("backup copied");
     });
 
-    // New App
     bindTap($("#btnAutoSlug"), () => {
       const n = ($("#newAppName")?.value || "");
       const s = slugify(n);
@@ -873,7 +889,6 @@ GitHub Sync: ${ghOk ? "carregado ✅" : "ausente ❌ (github_sync.js)"}
       else setStatusPill("ERRO ❌");
     });
 
-    // Editor
     bindTap($("#btnSaveFile"), () => saveFile());
     bindTap($("#btnResetFile"), () => {
       const app = getActiveApp();
@@ -885,15 +900,12 @@ GitHub Sync: ${ghOk ? "carregado ✅" : "ausente ❌ (github_sync.js)"}
       uiMsg("#editorOut", "⚠️ Arquivo resetado (limpo).");
     });
 
-    // Generator
     bindTap($("#btnGenZip"), () => uiMsg("#genOut", "ZIP (stub)."));
     bindTap($("#btnGenPreview"), () => uiMsg("#genOut", "Preview (stub)."));
 
-    // Agent
     bindTap($("#btnAgentRun"), () => Agent.route($("#agentCmd")?.value || ""));
     bindTap($("#btnAgentClear"), () => { uiMsg("#agentOut", Agent.help()); });
 
-    // Logs actions
     const doLogsRefresh = () => {
       refreshLogsViews();
       setStatusPill("Logs ✅");
@@ -912,22 +924,18 @@ GitHub Sync: ${ghOk ? "carregado ✅" : "ausente ❌ (github_sync.js)"}
       setTimeout(() => setStatusPill("OK ✅"), 800);
     };
 
-    // Settings logs (IDs únicos aqui)
     bindTap($("#btnLogsRefresh"), doLogsRefresh);
     bindTap($("#btnLogsClear"), doLogsClear);
     bindTap($("#btnLogsCopy"), doLogsCopy);
 
-    // Logs view
     bindTap($("#btnLogsRefresh2"), doLogsRefresh);
     bindTap($("#btnClearLogs"), doLogsClear);
     bindTap($("#btnCopyLogs"), doLogsCopy);
 
-    // Drawer logs (IDs RENOMEADOS)
     bindTap($("#btnDrawerLogsRefresh"), doLogsRefresh);
     bindTap($("#btnDrawerLogsClear"), doLogsClear);
     bindTap($("#btnDrawerLogsCopy"), doLogsCopy);
 
-    // Diagnostics view
     bindTap($("#btnDiagRun"), () => {
       uiMsg("#diagOut", Admin.diagnostics());
       setStatusPill("Diag ✅");
@@ -938,11 +946,9 @@ GitHub Sync: ${ghOk ? "carregado ✅" : "ausente ❌ (github_sync.js)"}
       setStatusPill("OK ✅");
     });
 
-    // Settings shortcuts
     bindTap($("#btnGoDiagnose"), () => { setView("diagnostics"); uiMsg("#diagShortcutOut", "Abrindo diagnostics..."); });
     bindTap($("#btnGoAdmin"), () => { setView("admin"); uiMsg("#diagShortcutOut", "Abrindo admin..."); });
 
-    // PIN
     bindTap($("#btnPinSave"), () => {
       const raw = String($("#pinInput")?.value || "").trim();
       if (!/^\d{4,8}$/.test(raw)) return uiMsg("#pinOut", "⚠️ PIN inválido. Use 4 a 8 dígitos.");
@@ -957,7 +963,6 @@ GitHub Sync: ${ghOk ? "carregado ✅" : "ausente ❌ (github_sync.js)"}
       Logger.write("pin removed");
     });
 
-    // Admin
     bindTap($("#btnAdminDiag"), () => { uiMsg("#adminOut", Admin.diagnostics()); });
     bindTap($("#btnAdminZero"), () => {
       Logger.clear();
@@ -965,9 +970,9 @@ GitHub Sync: ${ghOk ? "carregado ✅" : "ausente ❌ (github_sync.js)"}
       setTimeout(() => setStatusPill("OK ✅"), 800);
       uiMsg("#adminOut", "✅ Zerado (safe). Logs limpos.");
       Logger.write("admin zero safe");
+      refreshAdminStatus();
     });
 
-    // GH
     bindTap($("#btnGhSave"), () => {
       const cfg = {
         owner: ($("#ghOwner")?.value || "").trim(),
@@ -996,11 +1001,9 @@ GitHub Sync: ${ghOk ? "carregado ✅" : "ausente ❌ (github_sync.js)"}
       uiMsg("#ghOut", window.RCF_GH_SYNC ? "GitHub: módulo carregado ✅" : "GitHub Sync ausente ❌");
     });
 
-    // MAE buttons
     bindTap($("#btnMaeLoad"), maeLoad);
     bindTap($("#btnMaeRun"), maeCheck);
 
-    // Status pill debug
     bindTap($("#statusPill"), () => Logger.write("touch:", "TOP=" + (document.activeElement?.tagName || "-")));
   }
 
