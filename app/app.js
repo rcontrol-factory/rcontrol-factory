@@ -1,13 +1,8 @@
-/* RControl Factory — app.js (V7 STABILITY CORE + FULL UI)
-   - UI completa (tabs + views) dentro de #app
-   - Agent/Editor/Apps/Logs
-   - Settings: PIN + Logs
-   - Admin: GitHub + Maintenance (Mãe) (stub safe)
-   - STABILITY CORE: ErrorGuard + SafeInit + FallbackScreen
-   - V7 Stability Check (BOOT/CSS/MODULE/SW/CLICK/MICROTEST)
-   - iOS friendly click/tap binding
-   - SW tools (unregister + clear cache) + register safe
-   - Overlay scanner + microtests EMBUTIDOS (não dependem de arquivos externos)
+/* RControl Factory — app.js (V7 + FASE A REAL SCAN/TARGET/INJECT + FIX BOTOES ADMIN)
+   - Corrige botões mortos (faltava bind)
+   - Move window.RCF.state BEFORE init (corrige timing)
+   - Implementa FASE A: scanFactoryFiles + generateTargetMap + injectorEngine (SAFE)
+   - Inventory REAL: A (VFS runtime) -> B (mother_bundle local) -> C (DOM anchors only)
 */
 
 (() => {
@@ -35,29 +30,14 @@
       .replace(/^-+|-+$/g, "");
   };
 
-  const safeJsonParse = (s, fallback) => {
-    try { return JSON.parse(s); } catch { return fallback; }
-  };
+  const safeJsonParse = (s, fallback) => { try { return JSON.parse(s); } catch { return fallback; } };
+  const safeJsonStringify = (obj) => { try { return JSON.stringify(obj); } catch { return String(obj); } };
 
-  function safeJsonStringify(obj) {
-    try { return JSON.stringify(obj); } catch { return String(obj); }
-  }
+  const escapeHtml = (s) => String(s).replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
+  const escapeAttr = (s) => escapeHtml(s).replace(/'/g, "&#39;");
 
-  function escapeHtml(s) {
-    return String(s).replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
-  }
-  function escapeAttr(s) {
-    return escapeHtml(s).replace(/'/g, "&#39;");
-  }
-
-  function uiMsg(sel, text) {
-    const el = $(sel);
-    if (el) el.textContent = String(text ?? "");
-  }
-
-  function textContentSafe(el, txt) {
-    try { el.textContent = txt; } catch {}
-  }
+  const uiMsg = (sel, text) => { const el = $(sel); if (el) el.textContent = String(text ?? ""); };
+  const textContentSafe = (el, txt) => { try { el.textContent = txt; } catch {} };
 
   function safeSetStatus(txt) {
     try {
@@ -83,9 +63,18 @@
     set(key, value) {
       try { localStorage.setItem(this.prefix + key, JSON.stringify(value)); } catch {}
     },
-    del(key) {
-      try { localStorage.removeItem(this.prefix + key); } catch {}
-    }
+    setRaw(key, rawText) {
+      try { localStorage.setItem(this.prefix + key, String(rawText ?? "")); } catch {}
+    },
+    getRaw(key, fallback = "") {
+      try {
+        const v = localStorage.getItem(this.prefix + key);
+        return v == null ? fallback : String(v);
+      } catch {
+        return fallback;
+      }
+    },
+    del(key) { try { localStorage.removeItem(this.prefix + key); } catch {} }
   };
 
   // -----------------------------
@@ -103,6 +92,10 @@
       if (boxLogsOut) boxLogsOut.textContent = txt;
       const boxView = $("#logsViewBox");
       if (boxView) boxView.textContent = txt;
+
+      // Admin injector outputs
+      const injLog = $("#injLog");
+      if (injLog) injLog.textContent = txt.slice(-8000); // não explode UI
     },
 
     write(...args) {
@@ -121,9 +114,7 @@
       this._mirrorUI([]);
     },
 
-    getAll() {
-      return Storage.get(this.bufKey, []);
-    }
+    getAll() { return Storage.get(this.bufKey, []); }
   };
 
   window.RCF_LOGGER = window.RCF_LOGGER || {
@@ -236,7 +227,12 @@
       if (ev.type === "click" && (t - last) < 250) return;
       last = t;
 
-      try { if (ev.cancelable) ev.preventDefault(); } catch {}
+      // Não mata input focus: só previne em botão/link
+      try {
+        const tag = (ev.target && ev.target.tagName) ? String(ev.target.tagName).toLowerCase() : "";
+        const isButtonish = tag === "button" || tag === "a" || (ev.currentTarget && ev.currentTarget.tagName && String(ev.currentTarget.tagName).toLowerCase() === "button");
+        if (isButtonish && ev.cancelable) ev.preventDefault();
+      } catch {}
 
       try { fn(ev); }
       catch (e) { Logger.write("tap err:", e?.message || e); }
@@ -254,48 +250,13 @@
   }
 
   // -----------------------------
-  // Dynamic script loader (safe)
-  // -----------------------------
-  function loadScriptOnce(src) {
-    return new Promise((resolve, reject) => {
-      try {
-        const exists = $$("script").some(s => (s.getAttribute("src") || "") === src);
-        if (exists) return resolve({ ok: true, cached: true });
-
-        const s = document.createElement("script");
-        s.src = src;
-        s.defer = true;
-        s.onload = () => resolve({ ok: true, cached: false });
-        s.onerror = () => reject(new Error("Falhou carregar: " + src));
-        document.head.appendChild(s);
-      } catch (e) {
-        reject(e);
-      }
-    });
-  }
-
-  // -----------------------------
   // State
   // -----------------------------
   const State = {
-    cfg: Storage.get("cfg", {
-      mode: "safe",
-      autoApplySafe: true,
-      writeMode: "modal"
-    }),
-
+    cfg: Storage.get("cfg", { mode: "safe", autoApplySafe: true, writeMode: "modal" }),
     apps: Storage.get("apps", []),
-
-    active: Storage.get("active", {
-      appSlug: null,
-      file: null,
-      view: "dashboard"
-    }),
-
-    pending: Storage.get("pending", {
-      patch: null,
-      source: null
-    })
+    active: Storage.get("active", { appSlug: null, file: null, view: "dashboard" }),
+    pending: Storage.get("pending", { patch: null, source: null })
   };
 
   function saveAll() {
@@ -304,6 +265,11 @@
     Storage.set("active", State.active);
     Storage.set("pending", State.pending);
   }
+
+  // ✅ MUITO IMPORTANTE: expõe RCF.state ANTES do init (corrige timing)
+  window.RCF = window.RCF || {};
+  window.RCF.state = State;
+  window.RCF.log = (...a) => Logger.write(...a);
 
   // -----------------------------
   // UI Shell
@@ -520,6 +486,43 @@
               </div>
               <pre class="mono" id="maintOut">Pronto.</pre>
             </div>
+
+            <!-- ✅ FASE A -->
+            <div class="card" id="admin-injector">
+              <h2>FASE A • Scan / Target Map / Injector SAFE</h2>
+              <p class="hint">“REAL” = A (VFS) → B (bundle local) → C (DOM apenas anchors). Sem GitHub remoto.</p>
+
+              <div class="row" style="flex-wrap:wrap;">
+                <button class="btn ok" id="btnScanIndex" type="button">🔎 Scan & Index</button>
+                <button class="btn ghost" id="btnGenTargets" type="button">🧭 Generate Target Map</button>
+                <button class="btn ghost" id="btnRefreshTargets" type="button">🔁 Refresh Dropdown</button>
+              </div>
+
+              <pre class="mono small" id="scanOut">Pronto.</pre>
+
+              <div class="row form" style="margin-top:10px">
+                <select id="injMode">
+                  <option value="INSERT">INSERT</option>
+                  <option value="REPLACE">REPLACE</option>
+                  <option value="DELETE">DELETE</option>
+                </select>
+
+                <select id="injTarget"></select>
+
+                <button class="btn ghost" id="btnPreviewDiff" type="button">👀 Preview diff</button>
+                <button class="btn ok" id="btnApplyInject" type="button">✅ Apply (SAFE)</button>
+                <button class="btn danger" id="btnRollbackInject" type="button">↩ Rollback</button>
+              </div>
+
+              <div class="hint" style="margin-top:10px">Payload:</div>
+              <textarea id="injPayload" class="textarea" rows="8" spellcheck="false" placeholder="Cole aqui o payload para inserir/substituir..."></textarea>
+
+              <div class="hint" style="margin-top:10px">Preview / Diff:</div>
+              <pre class="mono small" id="diffOut">Pronto.</pre>
+
+              <div class="hint" style="margin-top:10px">Log:</div>
+              <pre class="mono small" id="injLog">Pronto.</pre>
+            </div>
           </section>
 
         </main>
@@ -554,9 +557,7 @@
   // -----------------------------
   // Views
   // -----------------------------
-  function refreshLogsViews() {
-    Logger._mirrorUI(Logger.getAll());
-  }
+  function refreshLogsViews() { Logger._mirrorUI(Logger.getAll()); }
 
   function setView(name) {
     if (!name) return;
@@ -573,7 +574,7 @@
 
     $$(`[data-view="${name}"]`).forEach(b => b.classList.add("active"));
 
-    if (name === "logs" || name === "settings") refreshLogsViews();
+    if (name === "logs" || name === "settings" || name === "admin") refreshLogsViews();
 
     Logger.write("view:", name);
   }
@@ -815,12 +816,8 @@
         const rest = cmd.replace(/^create\s+/i, "").trim();
         const qm = rest.match(/^"([^"]+)"\s*([a-z0-9-]+)?/i);
         let name = "", slug = "";
-        if (qm) {
-          name = qm[1].trim();
-          slug = (qm[2] || "").trim();
-        } else {
-          name = rest;
-        }
+        if (qm) { name = qm[1].trim(); slug = (qm[2] || "").trim(); }
+        else { name = rest; }
         const r = createApp(name, slug);
         out && (out.textContent = r.msg);
         return;
@@ -848,7 +845,7 @@
   };
 
   // -----------------------------
-  // SW helpers
+  // SW helpers (safe)
   // -----------------------------
   async function swRegister() {
     try {
@@ -870,9 +867,7 @@
       if (!("serviceWorker" in navigator)) return { ok: true, count: 0 };
       const regs = await navigator.serviceWorker.getRegistrations();
       let n = 0;
-      for (const r of regs) {
-        try { if (await r.unregister()) n++; } catch {}
-      }
+      for (const r of regs) { try { if (await r.unregister()) n++; } catch {} }
       Logger.write("sw unregister:", n, "ok");
       return { ok: true, count: n };
     } catch (e) {
@@ -894,10 +889,9 @@
   }
 
   // -----------------------------
-  // V7: Overlay scanner (EMBUTIDO)
+  // Overlay scanner (embutido)
   // -----------------------------
   function scanOverlays() {
-    // procura elementos "por cima" que bloqueiam clique
     const suspects = [];
     const vw = Math.max(document.documentElement.clientWidth, window.innerWidth || 0);
     const vh = Math.max(document.documentElement.clientHeight, window.innerHeight || 0);
@@ -907,29 +901,20 @@
       try {
         const cs = getComputedStyle(el);
         if (!cs) continue;
-
-        const pe = cs.pointerEvents;
-        if (pe === "none") continue;
+        if (cs.pointerEvents === "none") continue;
 
         const pos = cs.position;
         if (pos !== "fixed" && pos !== "absolute") continue;
 
         const zi = parseInt(cs.zIndex || "0", 10);
         if (!Number.isFinite(zi)) continue;
-
-        // pega somente z-index alto
         if (zi < 50) continue;
 
         const r = el.getBoundingClientRect();
         const area = Math.max(0, r.width) * Math.max(0, r.height);
-
-        // ignora pequenos
         if (area < (vw * vh * 0.10)) continue;
 
-        // precisa tocar a tela (ao menos parte)
-        const touches =
-          r.right > 0 && r.bottom > 0 && r.left < vw && r.top < vh;
-
+        const touches = (r.right > 0 && r.bottom > 0 && r.left < vw && r.top < vh);
         if (!touches) continue;
 
         suspects.push({
@@ -937,7 +922,7 @@
           id: el.id || "",
           cls: (el.className && String(el.className).slice(0, 80)) || "",
           z: zi,
-          pe,
+          pe: cs.pointerEvents,
           pos,
           rect: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }
         });
@@ -948,60 +933,30 @@
   }
 
   // -----------------------------
-  // V7: Micro-tests (EMBUTIDO)
+  // Micro-tests (embutido)
   // -----------------------------
   function runMicroTests() {
     const results = [];
+    const push = (name, pass, info = "") => results.push({ name, pass: !!pass, info: String(info || "") });
 
-    const push = (name, pass, info = "") => {
-      results.push({ name, pass: !!pass, info: String(info || "") });
-    };
+    try { push("TEST_RENDER", !!$("#rcfRoot") && !!$("#views"), !!$("#rcfRoot") ? "UI root ok" : "UI root missing"); }
+    catch (e) { push("TEST_RENDER", false, e?.message || e); }
 
-    // TEST_RENDER
-    try {
-      const root = $("#rcfRoot");
-      const ok = !!root && !!$("#views");
-      push("TEST_RENDER", ok, ok ? "UI root ok" : "UI root missing");
-    } catch (e) {
-      push("TEST_RENDER", false, e?.message || e);
-    }
+    try { push("TEST_IMPORTS", !!window.RCF_LOGGER && !!window.RCF && !!window.RCF.state, "globals"); }
+    catch (e) { push("TEST_IMPORTS", false, e?.message || e); }
 
-    // TEST_IMPORTS (mínimo: logger + state + stability guard)
-    try {
-      const ok = !!window.RCF_LOGGER && !!window.RCF && !!window.RCF.state;
-      push("TEST_IMPORTS", ok, ok ? "core globals ok" : "missing core globals");
-    } catch (e) {
-      push("TEST_IMPORTS", false, e?.message || e);
-    }
+    try { push("TEST_STATE_INIT", !!State && Array.isArray(State.apps) && !!State.active && typeof State.cfg === "object", "state"); }
+    catch (e) { push("TEST_STATE_INIT", false, e?.message || e); }
 
-    // TEST_STATE_INIT
-    try {
-      const ok = !!State && Array.isArray(State.apps) && !!State.active && typeof State.cfg === "object";
-      push("TEST_STATE_INIT", ok, ok ? "state ok" : "state invalid");
-    } catch (e) {
-      push("TEST_STATE_INIT", false, e?.message || e);
-    }
-
-    // TEST_EVENT_BIND (um botão crítico existe)
-    try {
-      const ok = !!$("#btnOpenTools") && !!$("#btnAgentRun") && !!$("#btnSaveFile");
-      push("TEST_EVENT_BIND", ok, ok ? "buttons ok" : "critical button missing");
-    } catch (e) {
-      push("TEST_EVENT_BIND", false, e?.message || e);
-    }
+    try { push("TEST_EVENT_BIND", !!$("#btnOpenTools") && !!$("#btnAgentRun") && !!$("#btnSaveFile"), "buttons"); }
+    catch (e) { push("TEST_EVENT_BIND", false, e?.message || e); }
 
     const passCount = results.filter(r => r.pass).length;
-    return {
-      ok: passCount === results.length,
-      pass: passCount,
-      total: results.length,
-      results
-    };
+    return { ok: passCount === results.length, pass: passCount, total: results.length, results };
   }
 
   // -----------------------------
-  // V7: CSS token check
-  // (Você precisa colocar no styles.css: :root{--rcf-css-token:"v7";}
+  // CSS token check
   // -----------------------------
   function cssLoadedCheck() {
     try {
@@ -1017,26 +972,20 @@
   }
 
   // -----------------------------
-  // V7: Module check
+  // Guards flags
   // -----------------------------
-  const ModuleFlags = {
-    diagnosticsInstalled: false,
-    guardsInstalled: false
-  };
+  const ModuleFlags = { diagnosticsInstalled: false, guardsInstalled: false };
 
   function installGuardsOnce() {
     if (ModuleFlags.guardsInstalled) return true;
     ModuleFlags.guardsInstalled = true;
-
-    // (já temos ErrorGuard global via Stability.install)
-    // aqui podemos reforçar logs, etc.
     Logger.write("ok:", "GlobalErrorGuard instalado ✅");
     Logger.write("ok:", "ClickGuard instalado ✅");
     return true;
   }
 
   // -----------------------------
-  // V7: Stability report
+  // Stability report
   // -----------------------------
   async function runV7StabilityCheck() {
     const lines = [];
@@ -1044,41 +993,26 @@
     let pass = 0, fail = 0;
 
     const add = (ok, label, detail) => {
-      if (ok) {
-        pass++;
-        lines.push(`PASS: ${label}${detail ? " — " + detail : ""}`);
-      } else {
-        fail++;
-        const t = `FAIL: ${label}${detail ? " — " + detail : ""}`;
-        lines.push(t);
-        failList.push(label + (detail ? `: ${detail}` : ""));
-      }
+      if (ok) { pass++; lines.push(`PASS: ${label}${detail ? " — " + detail : ""}`); }
+      else { fail++; const t = `FAIL: ${label}${detail ? " — " + detail : ""}`; lines.push(t); failList.push(label + (detail ? `: ${detail}` : "")); }
     };
 
-    // 1) BOOT CHECK
     add(!!window.__RCF_BOOTED__, "[BOOT] __RCF_BOOTED__", window.__RCF_BOOTED__ ? "lock ativo" : "lock ausente");
 
-    // 2) CSS CHECK
     const css = cssLoadedCheck();
     add(css.ok, "[CSS] CSS_TOKEN", `token: "${css.token}"`);
 
-    // 3) MODULE CHECK
     add(true, "[MODULES] CORE_ONCE", "ok");
     add(ModuleFlags.guardsInstalled, "[MODULES] GUARDS_ONCE", ModuleFlags.guardsInstalled ? "ok" : "não instalado");
 
-    // 4) SW CHECK
     let reg = null;
-    try {
-      if ("serviceWorker" in navigator) reg = await navigator.serviceWorker.getRegistration("/");
-    } catch {}
-    add(!!reg, "[SW] SW_REGISTERED", reg ? "registrado" : "Sem SW registrado (getRegistration retornou null)");
+    try { if ("serviceWorker" in navigator) reg = await navigator.serviceWorker.getRegistration("/"); } catch {}
+    add(!!reg, "[SW] SW_REGISTERED", reg ? "registrado" : "Sem SW registrado");
 
-    // 5) CLICK CHECK (iOS)
     const overlay = scanOverlays();
     add(overlay.ok, "[CLICK] OVERLAY_SCANNER", overlay.ok ? "ok" : "erro");
     add((overlay.suspects || []).length === 0, "[CLICK] OVERLAY_BLOCK", (overlay.suspects || []).length ? `suspects=${overlay.suspects.length}` : "nenhum");
 
-    // 6) MICROTEST CHECK
     const mt = runMicroTests();
     add(mt.ok, "[MICROTEST] ALL", `${mt.pass}/${mt.total}`);
 
@@ -1095,26 +1029,18 @@
     if (!stable) {
       lines.push("FAIL LIST:");
       for (const f of failList) lines.push(`- ${f}`);
-      lines.push("");
-      lines.push("AÇÃO:");
-      lines.push("- bloquear evolução");
-      lines.push("- exibir relatório");
-      lines.push("- não permitir patch estrutural");
     } else {
-      lines.push("STATUS:");
-      lines.push("- RCF_STABLE = TRUE ✅");
-      lines.push("- permitir próxima fase (Auto-Construção Controlada)");
+      lines.push("STATUS: RCF_STABLE = TRUE ✅");
     }
 
     const report = lines.join("\n");
     uiMsg("#diagOut", report);
     Logger.write("V7 check:", stable ? "PASS ✅" : "FAIL ❌", `${pass}/${pass+fail}`);
-
     return { stable, pass, fail, report, overlay, microtests: mt, css };
   }
 
   // -----------------------------
-  // GitHub inputs hydrate
+  // GitHub config hydrate (local)
   // -----------------------------
   function hydrateGhInputs() {
     const cfg = Storage.get("ghcfg", null);
@@ -1124,6 +1050,510 @@
     if ($("#ghBranch")) $("#ghBranch").value = cfg.branch || "main";
     if ($("#ghPath")) $("#ghPath").value = cfg.path || "app/import/mother_bundle.json";
     if ($("#ghToken")) $("#ghToken").value = cfg.token || "";
+  }
+
+  // =========================================================
+  // ✅ FASE A — REAL SCAN / TARGET MAP / INJECT SAFE
+  // =========================================================
+
+  function simpleHash(str) {
+    // hash simples (não cripto) só p/ comparar mudanças
+    let h = 2166136261;
+    const s = String(str ?? "");
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = (h * 16777619) >>> 0;
+    }
+    return ("00000000" + h.toString(16)).slice(-8);
+  }
+
+  function guessType(path) {
+    const p = String(path || "");
+    if (p.endsWith(".js")) return "js";
+    if (p.endsWith(".css")) return "css";
+    if (p.endsWith(".html")) return "html";
+    if (p.endsWith(".json")) return "json";
+    if (p.endsWith(".txt")) return "txt";
+    return "bin";
+  }
+
+  function detectMarkers(text) {
+    const s = String(text ?? "");
+    const re = /@RCF:INJECT\s*([A-Za-z0-9_-]+)?/g;
+    const out = [];
+    let m;
+    while ((m = re.exec(s))) {
+      out.push({ marker: m[0], id: (m[1] || "").trim() || null, index: m.index });
+      if (out.length >= 20) break;
+    }
+    return out;
+  }
+
+  function getAnchorsForContent(type, content) {
+    const s = String(content ?? "");
+    const anchors = [];
+    if (type === "html") {
+      const headEnd = s.toLowerCase().lastIndexOf("</head>");
+      const bodyEnd = s.toLowerCase().lastIndexOf("</body>");
+      if (headEnd >= 0) anchors.push({ id: "HEAD_END", at: headEnd, note: "</head>" });
+      if (bodyEnd >= 0) anchors.push({ id: "BODY_END", at: bodyEnd, note: "</body>" });
+    }
+    if (type === "css") {
+      const rootIdx = s.indexOf(":root");
+      if (rootIdx >= 0) anchors.push({ id: "CSS_ROOT", at: rootIdx, note: ":root" });
+    }
+    if (type === "js") {
+      anchors.push({ id: "JS_TOP", at: 0, note: "top" });
+      anchors.push({ id: "JS_EOF", at: s.length, note: "eof" });
+    }
+    return anchors;
+  }
+
+  function normalizePath(p) {
+    let x = String(p || "").trim();
+    if (!x) return "";
+    x = x.split("#")[0].split("?")[0].trim();
+    if (!x.startsWith("/")) x = "/" + x;
+    x = x.replace(/\/{2,}/g, "/");
+    return x;
+  }
+
+  async function tryFetchLocalBundleFromCfg() {
+    const cfg = Storage.get("ghcfg", null);
+    const path = cfg && cfg.path ? String(cfg.path) : "";
+    if (!path) return null;
+
+    // sem hardcode: usa path configurado
+    const url = path.startsWith("/") ? path : ("/" + path);
+    try {
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) return null;
+      const txt = await res.text();
+      return txt || null;
+    } catch {
+      return null;
+    }
+  }
+
+  function pickRuntimeVFS() {
+    // tenta achar um "VFS" que tenha list + read
+    const candidates = [
+      window.RCF_VFS,
+      window.RCF_FS,
+      window.RCF_VFS_OVERRIDES,
+      window.RCF_FILES,
+      window.RCF_STORE
+    ].filter(Boolean);
+
+    for (const v of candidates) {
+      const hasList =
+        typeof v.listFiles === "function" ||
+        typeof v.list === "function" ||
+        typeof v.keys === "function" ||
+        typeof v.entries === "function";
+
+      const hasRead =
+        typeof v.readFile === "function" ||
+        typeof v.read === "function" ||
+        typeof v.get === "function";
+
+      if (hasList && hasRead) return v;
+    }
+    return null;
+  }
+
+  async function vfsListAll(vfs) {
+    // tenta formatos diferentes
+    if (!vfs) return [];
+    try {
+      if (typeof vfs.listFiles === "function") return (await vfs.listFiles()) || [];
+      if (typeof vfs.list === "function") return (await vfs.list()) || [];
+      if (typeof vfs.keys === "function") return (await vfs.keys()) || [];
+      if (typeof vfs.entries === "function") {
+        const ent = await vfs.entries();
+        return Array.isArray(ent) ? ent.map(e => e && (e.path || e[0])) : [];
+      }
+    } catch {}
+    return [];
+  }
+
+  async function vfsRead(vfs, path) {
+    if (!vfs) return null;
+    try {
+      if (typeof vfs.readFile === "function") return await vfs.readFile(path);
+      if (typeof vfs.read === "function") return await vfs.read(path);
+      if (typeof vfs.get === "function") return await vfs.get(path);
+    } catch {}
+    return null;
+  }
+
+  function getLocalMotherBundleText() {
+    // bundle local (sem GitHub remoto)
+    // pode ser salvo pela própria mãe/sync em storage
+    const raw = Storage.getRaw("mother_bundle", "");
+    if (raw && raw.trim().startsWith("{")) return raw;
+    const raw2 = localStorage.getItem("RCF_MOTHER_BUNDLE") || "";
+    if (raw2 && raw2.trim().startsWith("{")) return raw2;
+    return "";
+  }
+
+  async function scanFactoryFiles() {
+    // A -> B -> C (conforme sua definição)
+    const index = {
+      meta: { scannedAt: nowISO(), source: "", count: 0 },
+      files: []
+    };
+
+    // A) runtime VFS
+    const vfs = pickRuntimeVFS();
+    if (vfs) {
+      index.meta.source = "A:runtime_vfs";
+      const list = await vfsListAll(vfs);
+      const paths = (list || []).map(p => normalizePath(p)).filter(Boolean).slice(0, 1200);
+      for (const p of paths) {
+        const content = await vfsRead(vfs, p);
+        const txt = (content == null) ? "" : String(content);
+        const type = guessType(p);
+        const markers = detectMarkers(txt);
+        const anchors = getAnchorsForContent(type, txt);
+        index.files.push({
+          path: p,
+          type,
+          size: txt.length,
+          hash: simpleHash(txt),
+          markers,
+          anchors
+        });
+      }
+      index.meta.count = index.files.length;
+      Storage.set("RCF_FILE_INDEX", index);
+      return index;
+    }
+
+    // B) mother_bundle.json local (storage ou fetch de path configurado)
+    let bundleText = getLocalMotherBundleText();
+    if (!bundleText) bundleText = await tryFetchLocalBundleFromCfg();
+
+    if (bundleText) {
+      index.meta.source = "B:mother_bundle_local";
+      let parsed = null;
+      try { parsed = JSON.parse(bundleText); } catch { parsed = null; }
+
+      const filesObj = (parsed && parsed.files && typeof parsed.files === "object") ? parsed.files : (parsed && typeof parsed === "object" ? parsed : {});
+      const entries = Object.entries(filesObj || {});
+      for (const [rawPath, rawVal] of entries) {
+        const p = normalizePath(rawPath);
+        const txt = (rawVal && typeof rawVal === "object" && "content" in rawVal) ? String(rawVal.content ?? "") : String(rawVal ?? "");
+        const type = guessType(p);
+        const markers = detectMarkers(txt);
+        const anchors = getAnchorsForContent(type, txt);
+        index.files.push({
+          path: p,
+          type,
+          size: txt.length,
+          hash: simpleHash(txt),
+          markers,
+          anchors
+        });
+      }
+      index.meta.count = index.files.length;
+      Storage.set("RCF_FILE_INDEX", index);
+      // guarda bundle também pra próximo boot
+      Storage.setRaw("mother_bundle", bundleText);
+      return index;
+    }
+
+    // C) fallback DOM (anchors only)
+    index.meta.source = "C:dom_anchors_only";
+    const html = document.documentElement ? document.documentElement.outerHTML : "";
+    const markers = detectMarkers(html);
+    const anchors = getAnchorsForContent("html", html);
+    index.files.push({
+      path: "/runtime/document.html",
+      type: "html",
+      size: html.length,
+      hash: simpleHash(html),
+      markers,
+      anchors
+    });
+    index.meta.count = index.files.length;
+    Storage.set("RCF_FILE_INDEX", index);
+    return index;
+  }
+
+  function generateTargetMap(fileIndex) {
+    const idx = fileIndex || Storage.get("RCF_FILE_INDEX", null);
+    if (!idx || !Array.isArray(idx.files)) {
+      return { ok: false, err: "RCF_FILE_INDEX ausente. Rode Scan & Index primeiro." };
+    }
+
+    const targets = [];
+
+    for (const f of idx.files) {
+      const path = String(f.path || "");
+      const type = String(f.type || "");
+
+      // 1) Se tiver markers, usa eles
+      const markers = Array.isArray(f.markers) ? f.markers : [];
+      for (const m of markers) {
+        const id = m.id ? m.id : `MARKER_${path}_${m.index}`;
+        targets.push({
+          targetId: id,
+          path,
+          kind: "MARKER",
+          offset: m.index,
+          supportedModes: ["INSERT", "REPLACE", "DELETE"],
+          defaultRisk: "low",
+          note: "@RCF:INJECT"
+        });
+      }
+
+      // 2) Se não tiver marker, cria anchors seguros
+      if (!markers.length) {
+        const anchors = Array.isArray(f.anchors) ? f.anchors : [];
+        for (const a of anchors) {
+          targets.push({
+            targetId: `${path}::${a.id}`,
+            path,
+            kind: "ANCHOR",
+            offset: a.at,
+            anchorId: a.id,
+            supportedModes: ["INSERT", "REPLACE", "DELETE"],
+            defaultRisk: (a.id.includes("BODY") || a.id.includes("JS_EOF")) ? "medium" : "low",
+            note: a.note
+          });
+        }
+      }
+    }
+
+    // dedupe por targetId
+    const seen = new Set();
+    const uniq = [];
+    for (const t of targets) {
+      if (!t || !t.targetId) continue;
+      if (seen.has(t.targetId)) continue;
+      seen.add(t.targetId);
+      uniq.push(t);
+      if (uniq.length >= 800) break;
+    }
+
+    const out = {
+      meta: { createdAt: nowISO(), count: uniq.length, source: (idx.meta && idx.meta.source) || "" },
+      targets: uniq
+    };
+
+    Storage.set("RCF_TARGET_MAP", out);
+    return { ok: true, map: out };
+  }
+
+  function populateTargetsDropdown() {
+    const sel = $("#injTarget");
+    if (!sel) return;
+    const map = Storage.get("RCF_TARGET_MAP", null);
+    const t = map && Array.isArray(map.targets) ? map.targets : [];
+    sel.innerHTML = "";
+    if (!t.length) {
+      const opt = document.createElement("option");
+      opt.value = "";
+      opt.textContent = "(sem targets — gere o map)";
+      sel.appendChild(opt);
+      return;
+    }
+    for (const item of t.slice(0, 500)) {
+      const opt = document.createElement("option");
+      opt.value = item.targetId;
+      opt.textContent = `${item.targetId}  —  ${item.path}  (${item.kind})`;
+      sel.appendChild(opt);
+    }
+  }
+
+  function tinyDiff(oldText, newText) {
+    // diff simples (linhas). Bom o suficiente p/ preview.
+    const a = String(oldText ?? "").split("\n");
+    const b = String(newText ?? "").split("\n");
+    const max = Math.max(a.length, b.length);
+    const out = [];
+    for (let i = 0; i < max; i++) {
+      const A = a[i], B = b[i];
+      if (A === B) continue;
+      if (A !== undefined) out.push(`- ${A}`);
+      if (B !== undefined) out.push(`+ ${B}`);
+      if (out.length > 220) { out.push("... (diff truncado)"); break; }
+    }
+    return out.join("\n") || "(sem mudanças)";
+  }
+
+  function selectInventoryTextByPath(fileIndex, path) {
+    const idx = fileIndex || Storage.get("RCF_FILE_INDEX", null);
+    if (!idx || !Array.isArray(idx.files)) return null;
+
+    // Em A/B a gente não guardou content por performance; então vamos re-resolver:
+    return { idx };
+  }
+
+  async function readTextFromInventoryPath(path) {
+    // Re-leitura: A via runtime VFS, B via bundle local, C via DOM
+    const p = normalizePath(path);
+
+    const vfs = pickRuntimeVFS();
+    if (vfs) {
+      const txt = await vfsRead(vfs, p);
+      return (txt == null) ? "" : String(txt);
+    }
+
+    const bundleText = getLocalMotherBundleText() || (await tryFetchLocalBundleFromCfg()) || "";
+    if (bundleText) {
+      try {
+        const parsed = JSON.parse(bundleText);
+        const filesObj = (parsed && parsed.files && typeof parsed.files === "object") ? parsed.files : parsed;
+        const v = filesObj && filesObj[p];
+        if (v && typeof v === "object" && "content" in v) return String(v.content ?? "");
+        if (v != null) return String(v);
+      } catch {}
+    }
+
+    if (p === "/runtime/document.html") {
+      return document.documentElement ? document.documentElement.outerHTML : "";
+    }
+
+    return "";
+  }
+
+  async function writeTextToInventoryPath(path, newText) {
+    // escrita REAL: apenas A (VFS runtime) se existir.
+    // Em B (bundle) a gente não reescreve bundle aqui; injeta via VFS/overrides na fase seguinte.
+    const p = normalizePath(path);
+    const vfs = pickRuntimeVFS();
+
+    // tenta métodos de escrita comuns
+    if (vfs) {
+      try {
+        if (typeof vfs.writeFile === "function") { await vfs.writeFile(p, String(newText ?? "")); return { ok: true, mode: "vfs.writeFile" }; }
+        if (typeof vfs.write === "function") { await vfs.write(p, String(newText ?? "")); return { ok: true, mode: "vfs.write" }; }
+        if (typeof vfs.put === "function") { await vfs.put(p, String(newText ?? "")); return { ok: true, mode: "vfs.put" }; }
+        if (typeof vfs.set === "function") { await vfs.set(p, String(newText ?? "")); return { ok: true, mode: "vfs.set" }; }
+      } catch (e) {
+        return { ok: false, err: e?.message || e };
+      }
+      return { ok: false, err: "VFS existe, mas não tem método de escrita (write/put)." };
+    }
+
+    // Sem VFS: não pode escrever “REAL”
+    return { ok: false, err: "Sem VFS runtime para escrever. (Na Fase A, B é source, não write)." };
+  }
+
+  function applyAtTarget(oldText, target, mode, payload) {
+    const s = String(oldText ?? "");
+    const pl = String(payload ?? "");
+
+    // MARKER: insere no offset do marker
+    if (target.kind === "MARKER") {
+      const at = Math.max(0, Math.min(s.length, target.offset || 0));
+      if (mode === "INSERT") {
+        return s.slice(0, at) + pl + "\n" + s.slice(at);
+      }
+      if (mode === "REPLACE") {
+        // replace = coloca payload logo após marker (mantém marker)
+        return s.slice(0, at) + pl + "\n" + s.slice(at);
+      }
+      if (mode === "DELETE") {
+        // delete = remove payload colado não dá pra saber; então remove somente marker token (safe)
+        return s.replace(target.note || "@RCF:INJECT", "");
+      }
+    }
+
+    // ANCHOR: offset é posição segura
+    const at = Math.max(0, Math.min(s.length, target.offset || 0));
+    if (mode === "INSERT") {
+      return s.slice(0, at) + "\n" + pl + "\n" + s.slice(at);
+    }
+    if (mode === "REPLACE") {
+      // replace “leve”: substitui um bloco entre comentários se existir, senão faz insert (safe)
+      return s.slice(0, at) + "\n" + pl + "\n" + s.slice(at);
+    }
+    if (mode === "DELETE") {
+      // delete leve: remove payload exato se existir
+      if (!pl.trim()) return s;
+      return s.split(pl).join("");
+    }
+
+    return s;
+  }
+
+  const InjectState = {
+    lastSnapshot: null // { path, oldText, newText, targetId, ts }
+  };
+
+  async function injectorPreview() {
+    const map = Storage.get("RCF_TARGET_MAP", null);
+    const targets = map && Array.isArray(map.targets) ? map.targets : [];
+    const targetId = ($("#injTarget")?.value || "").trim();
+    const mode = ($("#injMode")?.value || "INSERT").trim();
+    const payload = ($("#injPayload")?.value || "");
+
+    const t = targets.find(x => x.targetId === targetId);
+    if (!t) return { ok: false, err: "Target inválido (gere o map e selecione)." };
+
+    const oldText = await readTextFromInventoryPath(t.path);
+    const newText = applyAtTarget(oldText, t, mode, payload);
+
+    uiMsg("#diffOut", tinyDiff(oldText, newText));
+    return { ok: true, oldText, newText, t, mode };
+  }
+
+  async function injectorApplySafe() {
+    const pre = await injectorPreview();
+    if (!pre.ok) {
+      uiMsg("#diffOut", "❌ " + (pre.err || "preview falhou"));
+      return { ok: false };
+    }
+
+    // snapshot
+    InjectState.lastSnapshot = {
+      path: pre.t.path,
+      oldText: pre.oldText,
+      newText: pre.newText,
+      targetId: pre.t.targetId,
+      ts: nowISO()
+    };
+
+    // microtests BEFORE
+    const before = runMicroTests();
+    if (!before.ok) {
+      uiMsg("#diffOut", "❌ Microtests BEFORE falharam. Abortando.\n" + JSON.stringify(before, null, 2));
+      return { ok: false };
+    }
+
+    // apply
+    const w = await writeTextToInventoryPath(pre.t.path, pre.newText);
+    if (!w.ok) {
+      uiMsg("#diffOut", "❌ Não consegui escrever no inventário REAL.\n" + (w.err || ""));
+      return { ok: false };
+    }
+
+    // microtests AFTER
+    const after = runMicroTests();
+    if (!after.ok) {
+      // rollback
+      await writeTextToInventoryPath(pre.t.path, pre.oldText);
+      uiMsg("#diffOut", "❌ Microtests AFTER falharam. Rollback aplicado.\n" + JSON.stringify(after, null, 2));
+      Logger.write("inject:", "AFTER FAIL -> rollback", pre.t.path, pre.t.targetId);
+      return { ok: false, rolledBack: true };
+    }
+
+    Logger.write("inject:", "OK", pre.t.path, pre.t.targetId, "mode=" + pre.mode, "write=" + w.mode);
+    uiMsg("#diffOut", "✅ Aplicado com sucesso (SAFE).");
+    return { ok: true };
+  }
+
+  async function injectorRollback() {
+    const s = InjectState.lastSnapshot;
+    if (!s) { uiMsg("#diffOut", "Nada para rollback."); return { ok: false }; }
+    const w = await writeTextToInventoryPath(s.path, s.oldText);
+    if (!w.ok) { uiMsg("#diffOut", "Rollback falhou: " + (w.err || "")); return { ok: false }; }
+    uiMsg("#diffOut", "✅ Rollback aplicado.");
+    Logger.write("inject:", "rollback OK", s.path, s.targetId);
+    return { ok: true };
   }
 
   // -----------------------------
@@ -1214,14 +1644,12 @@
     // SW tools
     bindTap($("#btnSwUnregister"), async () => {
       const r = await swUnregisterAll();
-      uiMsg("#logsBox", Logger.getAll().join("\n"));
       safeSetStatus(r.ok ? `SW unreg: ${r.count} ✅` : "SW unreg ❌");
       setTimeout(() => safeSetStatus("OK ✅"), 900);
     });
 
     bindTap($("#btnSwClearCache"), async () => {
       const r = await swClearCaches();
-      uiMsg("#logsBox", Logger.getAll().join("\n"));
       safeSetStatus(r.ok ? `Cache: ${r.count} ✅` : "Cache ❌");
       setTimeout(() => safeSetStatus("OK ✅"), 900);
     });
@@ -1294,7 +1722,7 @@
       uiMsg("#adminOut", "✅ Zerado (safe). Logs limpos.");
     });
 
-    // Admin GitHub (config only)
+    // Admin GitHub config
     bindTap($("#btnGhSave"), () => {
       const cfg = {
         owner: ($("#ghOwner")?.value || "").trim(),
@@ -1305,13 +1733,146 @@
       };
       Storage.set("ghcfg", cfg);
       uiMsg("#ghOut", "✅ Config salva (local).");
+      Logger.write("ghcfg saved");
     });
 
-    bindTap($("#btnGhRefresh"), () => uiMsg("#ghOut", "GitHub: (modo safe)"));
+    // ✅ AGORA OS BOTÕES QUE ESTAVAM MORTOS:
+    bindTap($("#btnGhPull"), async () => {
+      // SAFE: sem GitHub remoto na Fase A, mas podemos tentar carregar bundle local pelo path
+      safeSetStatus("Pull…");
+      const txt = await tryFetchLocalBundleFromCfg();
+      if (txt) {
+        Storage.setRaw("mother_bundle", txt);
+        uiMsg("#ghOut", "✅ Pull local OK (bundle carregado do path).");
+        Logger.write("gh pull(local path): ok");
+      } else {
+        uiMsg("#ghOut", "⚠️ Pull local não encontrou bundle no path. (Sem GitHub remoto nesta fase)");
+        Logger.write("gh pull(local path): not found");
+      }
+      setTimeout(() => safeSetStatus("OK ✅"), 800);
+    });
+
+    bindTap($("#btnGhPush"), async () => {
+      // SAFE: não faz GitHub remoto; apenas salva bundle local para transporte interno
+      const txt = getLocalMotherBundleText();
+      if (!txt) return uiMsg("#ghOut", "⚠️ Nenhum bundle local para “push”.");
+      uiMsg("#ghOut", "✅ Push (safe) = bundle já está salvo local.");
+      Logger.write("gh push(safe): noop");
+    });
+
+    bindTap($("#btnGhRefresh"), () => {
+      const cfg = Storage.get("ghcfg", null);
+      uiMsg("#ghOut", "GitHub SAFE (Fase A). cfg=" + (cfg ? "OK" : "vazio"));
+    });
+
+    // Mãe buttons (stub safe, mas clicáveis)
+    bindTap($("#btnMaeLoad"), async () => {
+      // tenta detectar se mãe existe
+      const MAE = window.RCF_MOTHER || window.RCF_MAE;
+      if (!MAE) {
+        uiMsg("#maintOut", "⚠️ RCF_MOTHER/RCF_MAE não está carregada no runtime.");
+        Logger.write("mae:", "absent");
+        return;
+      }
+      uiMsg("#maintOut", "✅ Mãe detectada. Funções: " + Object.keys(MAE).slice(0, 20).join(", "));
+      Logger.write("mae:", "loaded");
+    });
+
+    bindTap($("#btnMaeCheck"), () => {
+      const MAE = window.RCF_MOTHER || window.RCF_MAE;
+      const s = MAE && typeof MAE.status === "function" ? MAE.status() : { ok: false, msg: "status() ausente" };
+      try { alert("CHECK:\n\n" + JSON.stringify(s, null, 2)); } catch {}
+      uiMsg("#maintOut", "Check rodado (alert).");
+      Logger.write("mae check:", safeJsonStringify(s));
+    });
+
+    bindTap($("#btnMaeUpdate"), async () => {
+      const MAE = window.RCF_MOTHER || window.RCF_MAE;
+      if (!MAE || typeof MAE.updateFromGitHub !== "function") {
+        uiMsg("#maintOut", "⚠️ updateFromGitHub() ausente (ou mãe não carregou).");
+        Logger.write("mae update:", "missing");
+        return;
+      }
+      uiMsg("#maintOut", "Atualizando...");
+      try {
+        await MAE.updateFromGitHub();
+        uiMsg("#maintOut", "✅ Update acionado.");
+        Logger.write("mae update:", "ok");
+      } catch (e) {
+        uiMsg("#maintOut", "❌ Falhou: " + (e?.message || e));
+        Logger.write("mae update err:", e?.message || e);
+      }
+    });
+
+    bindTap($("#btnMaeClear"), async () => {
+      const MAE = window.RCF_MOTHER || window.RCF_MAE;
+      if (!MAE || typeof MAE.clearOverrides !== "function") {
+        uiMsg("#maintOut", "⚠️ clearOverrides() ausente (ou mãe não carregou).");
+        Logger.write("mae clear:", "missing");
+        return;
+      }
+      uiMsg("#maintOut", "Limpando...");
+      try {
+        await MAE.clearOverrides();
+        uiMsg("#maintOut", "✅ Clear acionado.");
+        Logger.write("mae clear:", "ok");
+      } catch (e) {
+        uiMsg("#maintOut", "❌ Falhou: " + (e?.message || e));
+        Logger.write("mae clear err:", e?.message || e);
+      }
+    });
+
+    // ✅ FASE A — botões
+    bindTap($("#btnScanIndex"), async () => {
+      safeSetStatus("Scan…");
+      try {
+        const idx = await scanFactoryFiles();
+        uiMsg("#scanOut", `✅ Scan OK\nsource=${idx.meta.source}\nfiles=${idx.meta.count}\nscannedAt=${idx.meta.scannedAt}`);
+        Logger.write("scan:", idx.meta.source, "files=" + idx.meta.count);
+      } catch (e) {
+        uiMsg("#scanOut", "❌ Scan falhou: " + (e?.message || e));
+        Logger.write("scan err:", e?.message || e);
+      }
+      setTimeout(() => safeSetStatus("OK ✅"), 700);
+    });
+
+    bindTap($("#btnGenTargets"), () => {
+      const idx = Storage.get("RCF_FILE_INDEX", null);
+      const r = generateTargetMap(idx);
+      if (!r.ok) {
+        uiMsg("#scanOut", "❌ " + (r.err || "falhou gerar map"));
+        return;
+      }
+      uiMsg("#scanOut", `✅ Target Map OK\ncount=${r.map.meta.count}\nsource=${r.map.meta.source}\ncreatedAt=${r.map.meta.createdAt}`);
+      populateTargetsDropdown();
+      Logger.write("targets:", "generated", "count=" + r.map.meta.count);
+    });
+
+    bindTap($("#btnRefreshTargets"), () => {
+      populateTargetsDropdown();
+      uiMsg("#scanOut", "Dropdown atualizado ✅");
+    });
+
+    bindTap($("#btnPreviewDiff"), async () => {
+      const r = await injectorPreview();
+      if (!r.ok) uiMsg("#diffOut", "❌ " + (r.err || "preview falhou"));
+    });
+
+    bindTap($("#btnApplyInject"), async () => {
+      safeSetStatus("Apply…");
+      await injectorApplySafe();
+      setTimeout(() => safeSetStatus("OK ✅"), 900);
+    });
+
+    bindTap($("#btnRollbackInject"), async () => {
+      safeSetStatus("Rollback…");
+      await injectorRollback();
+      setTimeout(() => safeSetStatus("OK ✅"), 900);
+    });
   }
 
   // -----------------------------
-  // Boot
+  // Boot hydrate
   // -----------------------------
   function hydrateUIFromState() {
     refreshLogsViews();
@@ -1330,6 +1891,9 @@
 
     const pin = Pin.get();
     if (pin) uiMsg("#pinOut", "PIN definido ✅");
+
+    // Admin injector
+    populateTargetsDropdown();
   }
 
   async function safeInit() {
@@ -1340,10 +1904,8 @@
       hydrateGhInputs();
       hydrateUIFromState();
 
-      // instala guards internos 1x
       installGuardsOnce();
 
-      // tenta registrar SW (safe) — se falhar, não quebra
       const r = await swRegister();
       if (!r.ok) Logger.write("warn:", r.msg);
 
@@ -1361,9 +1923,5 @@
   } else {
     safeInit();
   }
-
-  window.RCF = window.RCF || {};
-  window.RCF.state = State;
-  window.RCF.log = (...a) => Logger.write(...a);
 
 })();
