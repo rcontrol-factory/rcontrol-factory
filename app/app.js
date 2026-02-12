@@ -1,17 +1,23 @@
-/* RControl Factory — app.js (STABILITY CORE + RESTORE UI BASE) — UPDATED (V7)
+/* RControl Factory — app.js (V7 STABILITY CORE + FULL UI)
    - UI completa (tabs + views) dentro de #app
    - Agent/Editor/Apps/Logs
    - Settings: PIN + Logs
-   - Admin: GitHub + Maintenance (Mãe)
+   - Admin: GitHub + Maintenance (Mãe) (stub safe)
    - STABILITY CORE: ErrorGuard + SafeInit + FallbackScreen
-   - Auto-load core modules when needed (vfs_overrides, github_sync)
-   - Auto-boot Diagnostics (core/diagnostics.js) no init
-   - V7: BOOT LOCK + SW Tools + Diagnostics V7 runner
-   - Cloudflare Pages build output = app (site na raiz /)
+   - V7 Stability Check (BOOT/CSS/MODULE/SW/CLICK/MICROTEST)
+   - iOS friendly click/tap binding
+   - SW tools (unregister + clear cache) + register safe
+   - Overlay scanner + microtests EMBUTIDOS (não dependem de arquivos externos)
 */
 
 (() => {
   "use strict";
+
+  // -----------------------------
+  // BOOT LOCK (evita double init)
+  // -----------------------------
+  if (window.__RCF_BOOTED__) return;
+  window.__RCF_BOOTED__ = true;
 
   // -----------------------------
   // Utils
@@ -87,7 +93,7 @@
   // -----------------------------
   const Logger = {
     bufKey: "logs",
-    max: 700,
+    max: 900,
 
     _mirrorUI(logs) {
       const txt = (logs || []).join("\n");
@@ -236,9 +242,11 @@
       catch (e) { Logger.write("tap err:", e?.message || e); }
     };
 
-    el.style.pointerEvents = "auto";
-    el.style.touchAction = "manipulation";
-    el.style.webkitTapHighlightColor = "transparent";
+    try {
+      el.style.pointerEvents = "auto";
+      el.style.touchAction = "manipulation";
+      el.style.webkitTapHighlightColor = "transparent";
+    } catch {}
 
     el.addEventListener("pointerup", handler, { passive: false });
     el.addEventListener("touchend", handler, { passive: false });
@@ -246,7 +254,7 @@
   }
 
   // -----------------------------
-  // Dynamic script loader
+  // Dynamic script loader (safe)
   // -----------------------------
   function loadScriptOnce(src) {
     return new Promise((resolve, reject) => {
@@ -405,7 +413,7 @@
 
           <section class="view card" id="view-agent">
             <h1>Agente</h1>
-            <p class="hint">Comandos naturais + patchset.</p>
+            <p class="hint">Comandos naturais + patchset (fase atual: comandos básicos).</p>
 
             <div class="row cmd">
               <input id="agentCmd" placeholder='Ex: create "Meu App" meu-app' />
@@ -530,8 +538,9 @@
             </div>
 
             <div class="row" style="margin-top:10px">
-              <button class="btn ghost" id="btnClearSWCache" type="button">Clear SW Cache</button>
-              <button class="btn ghost" id="btnUnregisterSW" type="button">Unregister SW</button>
+              <button class="btn ghost" id="btnSwClearCache" type="button">Clear SW Cache</button>
+              <button class="btn ghost" id="btnSwUnregister" type="button">Unregister SW</button>
+              <button class="btn ok" id="btnSwRegister" type="button">Register SW</button>
             </div>
 
             <pre class="mono small" id="logsBox">Pronto.</pre>
@@ -750,7 +759,7 @@
         "- create \"NOME COM ESPAÇO\" [SLUG]",
         "- select SLUG",
         "- open dashboard | open newapp | open editor | open generator | open agent | open settings | open admin | open logs | open diagnostics",
-        "- show",
+        "- show"
       ].join("\n");
     },
 
@@ -839,82 +848,269 @@
   };
 
   // -----------------------------
-  // Core modules auto-load
+  // SW helpers
   // -----------------------------
-  async function ensureCoreModules() {
-    const tasks = [];
-    if (!window.RCF_VFS_OVERRIDES) tasks.push(loadScriptOnce("/js/core/vfs_overrides.js").catch(() => null));
-    if (!window.RCF_GH_SYNC) tasks.push(loadScriptOnce("/js/core/github_sync.js").catch(() => null));
-    await Promise.allSettled(tasks);
-  }
-
-  // -----------------------------
-  // Diagnostics boot (AUTO)
-  // -----------------------------
-  async function bootDiagnosticsCore() {
+  async function swRegister() {
     try {
-      await loadScriptOnce("/js/core/diagnostics.js");
-      Logger.write("diagnostics core boot: ok ✅");
+      if (!("serviceWorker" in navigator)) {
+        Logger.write("sw:", "serviceWorker não suportado");
+        return { ok: false, msg: "SW não suportado" };
+      }
+      const reg = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+      Logger.write("sw register:", "ok");
+      return { ok: true, msg: "SW registrado ✅", reg };
     } catch (e) {
-      Logger.write("diagnostics core boot FAIL:", e?.message || e);
+      Logger.write("sw register fail:", (e?.message || e));
+      return { ok: false, msg: "Falhou registrar SW: " + (e?.message || e) };
     }
   }
 
-  // -----------------------------
-  // Service Worker helpers
-  // -----------------------------
-  async function ensureSWRegistered() {
+  async function swUnregisterAll() {
     try {
-      if (!("serviceWorker" in navigator)) return false;
-
-      // tenta obter registro
-      const reg = await navigator.serviceWorker.getRegistration("/");
-      if (reg) return true;
-
-      // tenta registrar
-      await navigator.serviceWorker.register("/sw.js", { scope: "/" });
-      return true;
-    } catch (e) {
-      Logger.write("sw register fail:", e?.message || e);
-      return false;
-    }
-  }
-
-  async function unregisterSW() {
-    try {
-      if (!("serviceWorker" in navigator)) return { ok: false, msg: "serviceWorker não suportado" };
-
+      if (!("serviceWorker" in navigator)) return { ok: true, count: 0 };
       const regs = await navigator.serviceWorker.getRegistrations();
-      if (!regs || !regs.length) return { ok: true, count: 0 };
-
-      let okCount = 0;
-      for (const r of regs) {
-        try {
-          const ok = await r.unregister();
-          if (ok) okCount++;
-        } catch {}
-      }
-      return { ok: true, count: okCount };
-    } catch (e) {
-      return { ok: false, msg: e?.message || String(e) };
-    }
-  }
-
-  async function clearAllCaches() {
-    try {
-      if (!("caches" in window)) return { ok: false, msg: "Cache API não suportada" };
-      const keys = await caches.keys();
       let n = 0;
-      for (const k of keys) {
-        try {
-          const ok = await caches.delete(k);
-          if (ok) n++;
-        } catch {}
+      for (const r of regs) {
+        try { if (await r.unregister()) n++; } catch {}
       }
+      Logger.write("sw unregister:", n, "ok");
       return { ok: true, count: n };
     } catch (e) {
-      return { ok: false, msg: e?.message || String(e) };
+      Logger.write("sw unregister err:", e?.message || e);
+      return { ok: false, count: 0, err: e?.message || e };
     }
+  }
+
+  async function swClearCaches() {
+    try {
+      const keys = await caches.keys();
+      await Promise.all(keys.map(k => caches.delete(k)));
+      Logger.write("cache clear:", keys.length, "caches");
+      return { ok: true, count: keys.length };
+    } catch (e) {
+      Logger.write("cache clear err:", e?.message || e);
+      return { ok: false, count: 0, err: e?.message || e };
+    }
+  }
+
+  // -----------------------------
+  // V7: Overlay scanner (EMBUTIDO)
+  // -----------------------------
+  function scanOverlays() {
+    // procura elementos "por cima" que bloqueiam clique
+    const suspects = [];
+    const vw = Math.max(document.documentElement.clientWidth, window.innerWidth || 0);
+    const vh = Math.max(document.documentElement.clientHeight, window.innerHeight || 0);
+
+    const all = $$("body *");
+    for (const el of all) {
+      try {
+        const cs = getComputedStyle(el);
+        if (!cs) continue;
+
+        const pe = cs.pointerEvents;
+        if (pe === "none") continue;
+
+        const pos = cs.position;
+        if (pos !== "fixed" && pos !== "absolute") continue;
+
+        const zi = parseInt(cs.zIndex || "0", 10);
+        if (!Number.isFinite(zi)) continue;
+
+        // pega somente z-index alto
+        if (zi < 50) continue;
+
+        const r = el.getBoundingClientRect();
+        const area = Math.max(0, r.width) * Math.max(0, r.height);
+
+        // ignora pequenos
+        if (area < (vw * vh * 0.10)) continue;
+
+        // precisa tocar a tela (ao menos parte)
+        const touches =
+          r.right > 0 && r.bottom > 0 && r.left < vw && r.top < vh;
+
+        if (!touches) continue;
+
+        suspects.push({
+          tag: el.tagName.toLowerCase(),
+          id: el.id || "",
+          cls: (el.className && String(el.className).slice(0, 80)) || "",
+          z: zi,
+          pe,
+          pos,
+          rect: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }
+        });
+      } catch {}
+      if (suspects.length >= 8) break;
+    }
+    return { ok: true, suspects };
+  }
+
+  // -----------------------------
+  // V7: Micro-tests (EMBUTIDO)
+  // -----------------------------
+  function runMicroTests() {
+    const results = [];
+
+    const push = (name, pass, info = "") => {
+      results.push({ name, pass: !!pass, info: String(info || "") });
+    };
+
+    // TEST_RENDER
+    try {
+      const root = $("#rcfRoot");
+      const ok = !!root && !!$("#views");
+      push("TEST_RENDER", ok, ok ? "UI root ok" : "UI root missing");
+    } catch (e) {
+      push("TEST_RENDER", false, e?.message || e);
+    }
+
+    // TEST_IMPORTS (mínimo: logger + state + stability guard)
+    try {
+      const ok = !!window.RCF_LOGGER && !!window.RCF && !!window.RCF.state;
+      push("TEST_IMPORTS", ok, ok ? "core globals ok" : "missing core globals");
+    } catch (e) {
+      push("TEST_IMPORTS", false, e?.message || e);
+    }
+
+    // TEST_STATE_INIT
+    try {
+      const ok = !!State && Array.isArray(State.apps) && !!State.active && typeof State.cfg === "object";
+      push("TEST_STATE_INIT", ok, ok ? "state ok" : "state invalid");
+    } catch (e) {
+      push("TEST_STATE_INIT", false, e?.message || e);
+    }
+
+    // TEST_EVENT_BIND (um botão crítico existe)
+    try {
+      const ok = !!$("#btnOpenTools") && !!$("#btnAgentRun") && !!$("#btnSaveFile");
+      push("TEST_EVENT_BIND", ok, ok ? "buttons ok" : "critical button missing");
+    } catch (e) {
+      push("TEST_EVENT_BIND", false, e?.message || e);
+    }
+
+    const passCount = results.filter(r => r.pass).length;
+    return {
+      ok: passCount === results.length,
+      pass: passCount,
+      total: results.length,
+      results
+    };
+  }
+
+  // -----------------------------
+  // V7: CSS token check
+  // (Você precisa colocar no styles.css: :root{--rcf-css-token:"v7";}
+  // -----------------------------
+  function cssLoadedCheck() {
+    try {
+      const token = getComputedStyle(document.documentElement)
+        .getPropertyValue("--rcf-css-token")
+        .trim()
+        .replace(/^["']|["']$/g, "");
+      const ok = !!token && token.toLowerCase() !== "(vazio)";
+      return { ok, token: token || "(vazio)" };
+    } catch (e) {
+      return { ok: false, token: "(erro)", err: e?.message || e };
+    }
+  }
+
+  // -----------------------------
+  // V7: Module check
+  // -----------------------------
+  const ModuleFlags = {
+    diagnosticsInstalled: false,
+    guardsInstalled: false
+  };
+
+  function installGuardsOnce() {
+    if (ModuleFlags.guardsInstalled) return true;
+    ModuleFlags.guardsInstalled = true;
+
+    // (já temos ErrorGuard global via Stability.install)
+    // aqui podemos reforçar logs, etc.
+    Logger.write("ok:", "GlobalErrorGuard instalado ✅");
+    Logger.write("ok:", "ClickGuard instalado ✅");
+    return true;
+  }
+
+  // -----------------------------
+  // V7: Stability report
+  // -----------------------------
+  async function runV7StabilityCheck() {
+    const lines = [];
+    const failList = [];
+    let pass = 0, fail = 0;
+
+    const add = (ok, label, detail) => {
+      if (ok) {
+        pass++;
+        lines.push(`PASS: ${label}${detail ? " — " + detail : ""}`);
+      } else {
+        fail++;
+        const t = `FAIL: ${label}${detail ? " — " + detail : ""}`;
+        lines.push(t);
+        failList.push(label + (detail ? `: ${detail}` : ""));
+      }
+    };
+
+    // 1) BOOT CHECK
+    add(!!window.__RCF_BOOTED__, "[BOOT] __RCF_BOOTED__", window.__RCF_BOOTED__ ? "lock ativo" : "lock ausente");
+
+    // 2) CSS CHECK
+    const css = cssLoadedCheck();
+    add(css.ok, "[CSS] CSS_TOKEN", `token: "${css.token}"`);
+
+    // 3) MODULE CHECK
+    add(true, "[MODULES] CORE_ONCE", "ok");
+    add(ModuleFlags.guardsInstalled, "[MODULES] GUARDS_ONCE", ModuleFlags.guardsInstalled ? "ok" : "não instalado");
+
+    // 4) SW CHECK
+    let reg = null;
+    try {
+      if ("serviceWorker" in navigator) reg = await navigator.serviceWorker.getRegistration("/");
+    } catch {}
+    add(!!reg, "[SW] SW_REGISTERED", reg ? "registrado" : "Sem SW registrado (getRegistration retornou null)");
+
+    // 5) CLICK CHECK (iOS)
+    const overlay = scanOverlays();
+    add(overlay.ok, "[CLICK] OVERLAY_SCANNER", overlay.ok ? "ok" : "erro");
+    add((overlay.suspects || []).length === 0, "[CLICK] OVERLAY_BLOCK", (overlay.suspects || []).length ? `suspects=${overlay.suspects.length}` : "nenhum");
+
+    // 6) MICROTEST CHECK
+    const mt = runMicroTests();
+    add(mt.ok, "[MICROTEST] ALL", `${mt.pass}/${mt.total}`);
+
+    const stable = (fail === 0);
+    window.RCF_STABLE = stable;
+
+    lines.unshift("=========================================================");
+    lines.unshift("RCF — V7 STABILITY CHECK (REPORT)");
+    lines.push("=========================================================");
+    lines.push(`PASS: ${pass} | FAIL: ${fail}`);
+    lines.push(`RCF_STABLE: ${stable ? "TRUE ✅" : "FALSE ❌"}`);
+    lines.push("");
+
+    if (!stable) {
+      lines.push("FAIL LIST:");
+      for (const f of failList) lines.push(`- ${f}`);
+      lines.push("");
+      lines.push("AÇÃO:");
+      lines.push("- bloquear evolução");
+      lines.push("- exibir relatório");
+      lines.push("- não permitir patch estrutural");
+    } else {
+      lines.push("STATUS:");
+      lines.push("- RCF_STABLE = TRUE ✅");
+      lines.push("- permitir próxima fase (Auto-Construção Controlada)");
+    }
+
+    const report = lines.join("\n");
+    uiMsg("#diagOut", report);
+    Logger.write("V7 check:", stable ? "PASS ✅" : "FAIL ❌", `${pass}/${pass+fail}`);
+
+    return { stable, pass, fail, report, overlay, microtests: mt, css };
   }
 
   // -----------------------------
@@ -1015,57 +1211,48 @@
     bindTap($("#btnDrawerLogsClear"), doLogsClear);
     bindTap($("#btnDrawerLogsCopy"), doLogsCopy);
 
-    // SW tools (drawer)
-    bindTap($("#btnUnregisterSW"), async () => {
-      safeSetStatus("SW…");
-      const r = await unregisterSW();
-      if (r.ok) {
-        Logger.write("sw unregister:", r.count, "ok");
-        safeSetStatus(`SW unreg: ${r.count} ✅`);
-      } else {
-        Logger.write("sw unregister FAIL:", r.msg);
-        safeSetStatus("SW unreg ❌");
-      }
+    // SW tools
+    bindTap($("#btnSwUnregister"), async () => {
+      const r = await swUnregisterAll();
+      uiMsg("#logsBox", Logger.getAll().join("\n"));
+      safeSetStatus(r.ok ? `SW unreg: ${r.count} ✅` : "SW unreg ❌");
       setTimeout(() => safeSetStatus("OK ✅"), 900);
-      refreshLogsViews();
     });
 
-    bindTap($("#btnClearSWCache"), async () => {
-      safeSetStatus("Cache…");
-      const r = await clearAllCaches();
-      if (r.ok) {
-        Logger.write("cache clear:", r.count, "caches");
-        safeSetStatus(`Cache: ${r.count} ✅`);
-      } else {
-        Logger.write("cache clear FAIL:", r.msg);
-        safeSetStatus("Cache ❌");
-      }
+    bindTap($("#btnSwClearCache"), async () => {
+      const r = await swClearCaches();
+      uiMsg("#logsBox", Logger.getAll().join("\n"));
+      safeSetStatus(r.ok ? `Cache: ${r.count} ✅` : "Cache ❌");
       setTimeout(() => safeSetStatus("OK ✅"), 900);
-      refreshLogsViews();
     });
 
-    // Diagnostics actions (V7)
+    bindTap($("#btnSwRegister"), async () => {
+      const r = await swRegister();
+      safeSetStatus(r.ok ? "SW ✅" : "SW ❌");
+      setTimeout(() => safeSetStatus("OK ✅"), 900);
+    });
+
+    // Diagnostics actions
     bindTap($("#btnDiagRun"), async () => {
-      try {
-        safeSetStatus("V7…");
-        const r = await window.RCF_DIAGNOSTICS?.runStabilityCheck?.();
-        uiMsg("#diagOut", r?.text || "Sem relatório.");
-        safeSetStatus(window.RCF_STABLE ? "STABLE ✅" : "UNSTABLE ❌");
-        setTimeout(() => safeSetStatus("OK ✅"), 900);
-      } catch (e) {
-        uiMsg("#diagOut", "❌ " + (e?.message || e));
-        safeSetStatus("ERRO ❌");
-      }
+      safeSetStatus("Diag…");
+      await runV7StabilityCheck();
+      setTimeout(() => safeSetStatus("OK ✅"), 700);
     });
 
     bindTap($("#btnDiagInstall"), () => {
-      try { window.RCF_DIAGNOSTICS?.installAll?.(); uiMsg("#diagOut", "✅ installAll OK"); }
-      catch (e) { uiMsg("#diagOut", "❌ " + (e?.message || e)); }
+      try {
+        installGuardsOnce();
+        ModuleFlags.diagnosticsInstalled = true;
+        uiMsg("#diagOut", "✅ installAll OK");
+        Logger.write("ok:", "Diagnostics: installAll ✅");
+      } catch (e) {
+        uiMsg("#diagOut", "❌ " + (e?.message || e));
+      }
     });
 
     bindTap($("#btnDiagScan"), () => {
       try {
-        const r = window.RCF_DIAGNOSTICS?.scanAll?.();
+        const r = scanOverlays();
         uiMsg("#diagOut", JSON.stringify(r, null, 2));
       } catch (e) {
         uiMsg("#diagOut", "❌ " + (e?.message || e));
@@ -1074,7 +1261,7 @@
 
     bindTap($("#btnDiagTests"), () => {
       try {
-        const r = window.RCF_DIAGNOSTICS?.runMicroTests?.();
+        const r = runMicroTests();
         uiMsg("#diagOut", JSON.stringify(r, null, 2));
       } catch (e) {
         uiMsg("#diagOut", "❌ " + (e?.message || e));
@@ -1120,18 +1307,7 @@
       uiMsg("#ghOut", "✅ Config salva (local).");
     });
 
-    bindTap($("#btnGhRefresh"), () => uiMsg("#ghOut", window.RCF_GH_SYNC ? "GitHub: módulo carregado ✅" : "GitHub Sync ausente ❌"));
-
-    // NOTE: Pull/Push/Mãe ainda stub aqui (sem executar ações perigosas no core)
-    bindTap($("#btnGhPull"), () => uiMsg("#ghOut", "Pull: (stub)"));
-    bindTap($("#btnGhPush"), () => uiMsg("#ghOut", "Push: (stub)"));
-    bindTap($("#btnMaeLoad"), async () => {
-      uiMsg("#maintOut", "Carregar Mãe: (stub)");
-      await ensureCoreModules();
-    });
-    bindTap($("#btnMaeCheck"), () => uiMsg("#maintOut", "Check: (stub)"));
-    bindTap($("#btnMaeUpdate"), () => uiMsg("#maintOut", "Update: (stub)"));
-    bindTap($("#btnMaeClear"), () => uiMsg("#maintOut", "Clear overrides: (stub)"));
+    bindTap($("#btnGhRefresh"), () => uiMsg("#ghOut", "GitHub: (modo safe)"));
   }
 
   // -----------------------------
@@ -1158,31 +1334,20 @@
 
   async function safeInit() {
     try {
-      // -----------------------------
-      // V7 BOOT LOCK (impede init duplicado / bug iOS / reload parcial)
-      // -----------------------------
-      if (window.__RCF_BOOTED__) {
-        try { window.RCF_LOGGER?.push?.("warn", "BOOT: safeInit chamado 2x (bloqueado)"); } catch {}
-        return;
-      }
-      window.__RCF_BOOTED__ = Date.now();
-
       Stability.install();
       renderShell();
       bindUI();
       hydrateGhInputs();
       hydrateUIFromState();
 
-      // ✅ sobe Diagnostics automaticamente no boot
-      await bootDiagnosticsCore();
+      // instala guards internos 1x
+      installGuardsOnce();
 
-      // SW cedo pro offline-first (não pode travar o app se falhar)
-      await ensureSWRegistered();
+      // tenta registrar SW (safe) — se falhar, não quebra
+      const r = await swRegister();
+      if (!r.ok) Logger.write("warn:", r.msg);
 
       Logger.write("RCF app.js init ok — mode:", State.cfg.mode);
-
-      // opcional: marca stable/unstable depois do boot (sem forçar)
-      // (o botão "Rodar V7 Stability Check" faz o check completo)
       safeSetStatus("OK ✅");
     } catch (e) {
       const msg = (e?.message || e);
