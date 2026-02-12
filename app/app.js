@@ -3,6 +3,7 @@
    - Mantém teu Agent/Editor/Apps/Logs
    - Corrige “só aparece Admin / sumiu tudo”
    - Settings: Segurança (PIN) + Logs (com botões funcionando)
+   - Maintenance: tenta carregar mother_selfupdate.js e mostra status real
 */
 
 (() => {
@@ -54,9 +55,7 @@
       }
     },
     set(key, value) {
-      try {
-        localStorage.setItem(this.prefix + key, JSON.stringify(value));
-      } catch {}
+      try { localStorage.setItem(this.prefix + key, JSON.stringify(value)); } catch {}
     },
     del(key) {
       try { localStorage.removeItem(this.prefix + key); } catch {}
@@ -128,7 +127,6 @@
       if (ev.type === "click" && (t - last) < 250) return;
       last = t;
 
-      // iOS: evita “1 clique e morre”
       if (ev.type === "touchend") ev.preventDefault();
 
       try { fn(ev); }
@@ -142,6 +140,27 @@
     el.addEventListener("pointerup", handler, { passive: true });
     el.addEventListener("touchend", handler, { passive: false });
     el.addEventListener("click", handler, { passive: true });
+  }
+
+  // -----------------------------
+  // Dynamic script loader (para MAE / GH etc.)
+  // -----------------------------
+  function loadScriptOnce(src) {
+    return new Promise((resolve, reject) => {
+      try {
+        const exists = $$("script").some(s => (s.getAttribute("src") || "") === src);
+        if (exists) return resolve({ ok: true, cached: true });
+
+        const s = document.createElement("script");
+        s.src = src;
+        s.defer = true;
+        s.onload = () => resolve({ ok: true, cached: false });
+        s.onerror = () => reject(new Error("Falhou carregar: " + src));
+        document.head.appendChild(s);
+      } catch (e) {
+        reject(e);
+      }
+    });
   }
 
   // -----------------------------
@@ -176,13 +195,11 @@
   }
 
   // -----------------------------
-  // UI Shell (CRÍTICO: antes tava faltando)
+  // UI Shell
   // -----------------------------
   function renderShell() {
     const root = $("#app");
     if (!root) return;
-
-    // Se já existe UI, não duplica
     if ($("#rcfRoot")) return;
 
     root.innerHTML = `
@@ -214,7 +231,6 @@
 
         <main class="container views" id="views">
 
-          <!-- DASHBOARD -->
           <section class="view card hero" id="view-dashboard">
             <h1>Dashboard</h1>
             <p>Central do projeto. Selecione um app e comece a editar.</p>
@@ -230,7 +246,6 @@
             <div id="appsList" class="apps"></div>
           </section>
 
-          <!-- NEW APP -->
           <section class="view card" id="view-newapp">
             <h1>Novo App</h1>
             <p class="hint">Cria um mini-app dentro da Factory.</p>
@@ -245,7 +260,6 @@
             <pre class="mono" id="newAppOut">Pronto.</pre>
           </section>
 
-          <!-- EDITOR -->
           <section class="view card" id="view-editor">
             <h1>Editor</h1>
             <p class="hint">Escolha um arquivo e edite.</p>
@@ -274,7 +288,6 @@
             <pre class="mono" id="editorOut">Pronto.</pre>
           </section>
 
-          <!-- GENERATOR -->
           <section class="view card" id="view-generator">
             <h1>Generator</h1>
             <p class="hint">Gera ZIP do app selecionado (stub por enquanto).</p>
@@ -285,7 +298,6 @@
             <pre class="mono" id="genOut">Pronto.</pre>
           </section>
 
-          <!-- AGENT -->
           <section class="view card" id="view-agent">
             <h1>Agente</h1>
             <p class="hint">Comandos naturais + patchset.</p>
@@ -299,7 +311,6 @@
             <pre class="mono" id="agentOut">Pronto.</pre>
           </section>
 
-          <!-- SETTINGS -->
           <section class="view card" id="view-settings">
             <h1>Settings</h1>
             <p class="hint">Central de configurações (sem engrenagem).</p>
@@ -322,7 +333,7 @@
 
             <div class="card" id="settings-logs">
               <h2>Logs</h2>
-              <p class="hint">Ver, exportar e limpar logs locais (para diagnóstico rápido).</p>
+              <p class="hint">Ver, exportar e limpar logs locais.</p>
               <div class="row">
                 <button class="btn ghost" id="btnLogsRefresh" type="button">Atualizar</button>
                 <button class="btn ok" id="btnLogsCopy" type="button">Exportar .txt</button>
@@ -333,7 +344,7 @@
 
             <div class="card" id="settings-diag">
               <h2>Diag / Atalhos</h2>
-              <p class="hint">Atalhos rápidos (o Admin continua com ações críticas).</p>
+              <p class="hint">Atalhos rápidos.</p>
               <div class="row">
                 <button class="btn ghost" id="btnGoDiagnose" type="button">Diagnosticar</button>
                 <button class="btn ghost" id="btnGoAdmin" type="button">Abrir Admin</button>
@@ -343,7 +354,6 @@
             </div>
           </section>
 
-          <!-- LOGS -->
           <section class="view card" id="view-logs">
             <h1>Logs</h1>
             <div class="row">
@@ -354,7 +364,6 @@
             <pre class="mono small" id="logsViewBox">Pronto.</pre>
           </section>
 
-          <!-- DIAGNOSTICS -->
           <section class="view card" id="view-diagnostics">
             <h1>Diagnostics</h1>
             <div class="row">
@@ -364,7 +373,6 @@
             <pre class="mono" id="diagOut">Pronto.</pre>
           </section>
 
-          <!-- ADMIN -->
           <section class="view card" id="view-admin">
             <h1>Admin</h1>
             <p class="hint">Diagnóstico / manutenção / self-update.</p>
@@ -374,15 +382,11 @@
               <button class="btn danger" id="btnAdminZero" type="button">Zerar (safe)</button>
             </div>
 
-            <pre class="mono" id="adminOut">Pronto.
-MAE+THOMPSON: aguardando...
-MAE UI: aguardando...
-GitHub Sync: aguardando...
-            </pre>
+            <pre class="mono" id="adminOut">Pronto.</pre>
 
             <div class="card" id="admin-github">
               <h2>GitHub Sync (Privado) — SAFE</h2>
-              <p class="hint">Puxa/Empurra o bundle no seu repo. Atualiza em um aparelho e puxa no outro.</p>
+              <p class="hint">Puxa/Empurra o bundle no seu repo.</p>
 
               <div class="row form">
                 <input id="ghOwner" placeholder="owner (ex: rcontrol-factory)" />
@@ -405,19 +409,23 @@ GitHub Sync: aguardando...
                 <button class="btn ghost" id="btnGhRefresh" type="button">⚡ Atualizar agora</button>
               </div>
 
-              <pre class="mono" id="ghOut">GitHub: pronto. (Sync v1)</pre>
+              <pre class="mono" id="ghOut">GitHub: pronto.</pre>
             </div>
 
             <div class="card" id="admin-maint">
               <h2>MAINTENANCE • Self-Update (Mãe)</h2>
-              <p class="hint">Aqui entra o mother_selfupdate.js / overrides (se estiver usando).</p>
+              <p class="hint">Carrega /app/js/core/mother_selfupdate.js e mostra status.</p>
+              <div class="row">
+                <button class="btn ghost" id="btnMaeLoad" type="button">Carregar Mãe</button>
+                <button class="btn ok" id="btnMaeRun" type="button">Rodar Check</button>
+              </div>
               <pre class="mono" id="maintOut">Pronto.</pre>
             </div>
           </section>
 
         </main>
 
-        <!-- Tools Drawer -->
+        <!-- Tools Drawer (IDs SEM CONFLITO) -->
         <div class="tools" id="toolsDrawer">
           <div class="tools-head">
             <div style="font-weight:800">Ferramentas</div>
@@ -425,9 +433,9 @@ GitHub Sync: aguardando...
           </div>
           <div class="tools-body">
             <div class="row">
-              <button class="btn ghost" id="btnLogsRefresh" type="button">Atualizar logs</button>
-              <button class="btn ok" id="btnLogsCopy" type="button">Copiar logs</button>
-              <button class="btn danger" id="btnLogsClear" type="button">Limpar logs</button>
+              <button class="btn ghost" id="btnDrawerLogsRefresh" type="button">Atualizar logs</button>
+              <button class="btn ok" id="btnDrawerLogsCopy" type="button">Copiar logs</button>
+              <button class="btn danger" id="btnDrawerLogsClear" type="button">Limpar logs</button>
             </div>
             <pre class="mono small" id="logsBox">Pronto.</pre>
           </div>
@@ -618,6 +626,11 @@ GitHub Sync: aguardando...
     return { ok: true, msg: `✅ App criado: ${nameClean} (${slug})` };
   }
 
+  function uiMsg(sel, text) {
+    const el = $(sel);
+    if (el) el.textContent = String(text ?? "");
+  }
+
   function saveFile() {
     const app = getActiveApp();
     if (!app) return uiMsg("#editorOut", "⚠️ Sem app ativo.");
@@ -635,12 +648,12 @@ GitHub Sync: aguardando...
   }
 
   // -----------------------------
-  // Agent (simplificado e estável)
+  // Agent (estável)
   // -----------------------------
   const Agent = {
     help() {
       return [
-        "AGENT HELP (Replit-like)",
+        "AGENT HELP",
         "",
         "Comandos:",
         "- help",
@@ -745,7 +758,7 @@ GitHub Sync: aguardando...
   };
 
   // -----------------------------
-  // Settings PIN (segurança)
+  // Settings PIN
   // -----------------------------
   const Pin = {
     key: "admin_pin",
@@ -754,24 +767,70 @@ GitHub Sync: aguardando...
     clear() { Storage.del(this.key); }
   };
 
-  function uiMsg(sel, text) {
-    const el = $(sel);
-    if (el) el.textContent = String(text ?? "");
+  // -----------------------------
+  // MAE (Maintenance / Self-update)
+  // Espera que mother_selfupdate.js defina window.RCF_MAE (ou window.RCF_MOTHER)
+  // -----------------------------
+  async function maeLoad() {
+    uiMsg("#maintOut", "Carregando mãe...");
+    try {
+      await loadScriptOnce("/app/js/core/mother_selfupdate.js");
+      const ok = !!(window.RCF_MAE || window.RCF_MOTHER || window.MOTHER_SELFUPDATE);
+      uiMsg("#maintOut", ok
+        ? "✅ Mãe carregada. (mother_selfupdate.js ok)"
+        : "⚠️ Script carregou, mas não expôs API global. Verifique mother_selfupdate.js");
+      Logger.write("mae load:", ok ? "ok" : "no api");
+    } catch (e) {
+      uiMsg("#maintOut", "❌ " + (e?.message || e));
+      Logger.write("mae load err:", e?.message || e);
+    }
+  }
+
+  function maeCheck() {
+    const api = window.RCF_MAE || window.RCF_MOTHER || window.MOTHER_SELFUPDATE;
+    if (!api) {
+      uiMsg("#maintOut", "❌ Mãe não está disponível. Clique em 'Carregar Mãe' primeiro.");
+      return;
+    }
+    // Se tiver um método conhecido, tenta.
+    try {
+      if (typeof api.status === "function") {
+        uiMsg("#maintOut", "MAE STATUS:\n" + safeJsonStringify(api.status()));
+      } else {
+        uiMsg("#maintOut", "✅ Mãe presente. (Sem método status). API keys:\n" + Object.keys(api).join(", "));
+      }
+      Logger.write("mae check ok");
+    } catch (e) {
+      uiMsg("#maintOut", "❌ Erro no check: " + (e?.message || e));
+      Logger.write("mae check err:", e?.message || e);
+    }
   }
 
   // -----------------------------
-  // Github Sync status (apenas status aqui)
+  // GitHub Sync status + config hydrate
   // -----------------------------
+  function hydrateGhInputs() {
+    const cfg = Storage.get("ghcfg", null);
+    if (!cfg) return;
+    if ($("#ghOwner")) $("#ghOwner").value = cfg.owner || "";
+    if ($("#ghRepo")) $("#ghRepo").value = cfg.repo || "";
+    if ($("#ghBranch")) $("#ghBranch").value = cfg.branch || "main";
+    if ($("#ghPath")) $("#ghPath").value = cfg.path || "app/import/mother_bundle.json";
+    // token não autopreenche se você não quiser — mas você pediu praticidade:
+    if ($("#ghToken")) $("#ghToken").value = cfg.token || "";
+  }
+
   function refreshAdminStatus() {
     const out = $("#adminOut");
     if (!out) return;
 
     const ghOk = !!window.RCF_GH_SYNC;
+    const maeOk = !!(window.RCF_MAE || window.RCF_MOTHER || window.MOTHER_SELFUPDATE);
+
     out.textContent =
 `Pronto.
-MAE+THOMPSON ✅ carregado (mother_selfupdate.js / thompson.js)
-MAE UI ✅ carregada (app/js/admin.js)
-GitHub Sync: ${ghOk ? "carregado ✅" : "módulo não carregou (RCF_GH_SYNC ausente) ❌"}
+MAE: ${maeOk ? "carregada ✅" : "ausente ❌ (carregar mother_selfupdate.js)"}
+GitHub Sync: ${ghOk ? "carregado ✅" : "ausente ❌ (github_sync.js)"}
 `;
   }
 
@@ -779,7 +838,7 @@ GitHub Sync: ${ghOk ? "carregado ✅" : "módulo não carregou (RCF_GH_SYNC ause
   // Bind UI
   // -----------------------------
   function bindUI() {
-    // Tabs (views)
+    // Tabs
     $$("[data-view]").forEach(btn => bindTap(btn, () => setView(btn.getAttribute("data-view"))));
 
     // Tools drawer
@@ -811,7 +870,7 @@ GitHub Sync: ${ghOk ? "carregado ✅" : "módulo não carregou (RCF_GH_SYNC ause
       const r = createApp(name, slug);
       uiMsg("#newAppOut", r.msg);
       if (r.ok) { setView("editor"); setStatusPill("OK ✅"); }
-      else setStatusPill("Erro ✅");
+      else setStatusPill("ERRO ❌");
     });
 
     // Editor
@@ -834,9 +893,18 @@ GitHub Sync: ${ghOk ? "carregado ✅" : "módulo não carregou (RCF_GH_SYNC ause
     bindTap($("#btnAgentRun"), () => Agent.route($("#agentCmd")?.value || ""));
     bindTap($("#btnAgentClear"), () => { uiMsg("#agentOut", Agent.help()); });
 
-    // Logs (Settings + Logs view + Drawer)
-    const doLogsRefresh = () => { refreshLogsViews(); setStatusPill("Logs atualizados ✅"); setTimeout(() => setStatusPill("OK ✅"), 600); };
-    const doLogsClear = () => { Logger.clear(); doLogsRefresh(); setStatusPill("Logs limpos ✅"); setTimeout(() => setStatusPill("OK ✅"), 600); };
+    // Logs actions
+    const doLogsRefresh = () => {
+      refreshLogsViews();
+      setStatusPill("Logs ✅");
+      setTimeout(() => setStatusPill("OK ✅"), 600);
+    };
+    const doLogsClear = () => {
+      Logger.clear();
+      doLogsRefresh();
+      setStatusPill("Logs limpos ✅");
+      setTimeout(() => setStatusPill("OK ✅"), 600);
+    };
     const doLogsCopy = async () => {
       const txt = Logger.getAll().join("\n");
       try { await navigator.clipboard.writeText(txt); } catch {}
@@ -844,17 +912,31 @@ GitHub Sync: ${ghOk ? "carregado ✅" : "módulo não carregou (RCF_GH_SYNC ause
       setTimeout(() => setStatusPill("OK ✅"), 800);
     };
 
+    // Settings logs (IDs únicos aqui)
     bindTap($("#btnLogsRefresh"), doLogsRefresh);
-    bindTap($("#btnLogsRefresh2"), doLogsRefresh);
     bindTap($("#btnLogsClear"), doLogsClear);
-    bindTap($("#btnClearLogs"), doLogsClear);
-    bindTap($("#btnClearLogs2"), doLogsClear);
     bindTap($("#btnLogsCopy"), doLogsCopy);
+
+    // Logs view
+    bindTap($("#btnLogsRefresh2"), doLogsRefresh);
+    bindTap($("#btnClearLogs"), doLogsClear);
     bindTap($("#btnCopyLogs"), doLogsCopy);
 
+    // Drawer logs (IDs RENOMEADOS)
+    bindTap($("#btnDrawerLogsRefresh"), doLogsRefresh);
+    bindTap($("#btnDrawerLogsClear"), doLogsClear);
+    bindTap($("#btnDrawerLogsCopy"), doLogsCopy);
+
     // Diagnostics view
-    bindTap($("#btnDiagRun"), () => { uiMsg("#diagOut", Admin.diagnostics()); setStatusPill("Diag OK ✅"); setTimeout(() => setStatusPill("OK ✅"), 700); });
-    bindTap($("#btnDiagClear"), () => { uiMsg("#diagOut", "Pronto."); setStatusPill("OK ✅"); });
+    bindTap($("#btnDiagRun"), () => {
+      uiMsg("#diagOut", Admin.diagnostics());
+      setStatusPill("Diag ✅");
+      setTimeout(() => setStatusPill("OK ✅"), 700);
+    });
+    bindTap($("#btnDiagClear"), () => {
+      uiMsg("#diagOut", "Pronto.");
+      setStatusPill("OK ✅");
+    });
 
     // Settings shortcuts
     bindTap($("#btnGoDiagnose"), () => { setView("diagnostics"); uiMsg("#diagShortcutOut", "Abrindo diagnostics..."); });
@@ -863,10 +945,7 @@ GitHub Sync: ${ghOk ? "carregado ✅" : "módulo não carregou (RCF_GH_SYNC ause
     // PIN
     bindTap($("#btnPinSave"), () => {
       const raw = String($("#pinInput")?.value || "").trim();
-      if (!/^\d{4,8}$/.test(raw)) {
-        uiMsg("#pinOut", "⚠️ PIN inválido. Use 4 a 8 dígitos.");
-        return;
-      }
+      if (!/^\d{4,8}$/.test(raw)) return uiMsg("#pinOut", "⚠️ PIN inválido. Use 4 a 8 dígitos.");
       Pin.set(raw);
       uiMsg("#pinOut", "✅ PIN salvo.");
       Logger.write("pin saved");
@@ -881,15 +960,14 @@ GitHub Sync: ${ghOk ? "carregado ✅" : "módulo não carregou (RCF_GH_SYNC ause
     // Admin
     bindTap($("#btnAdminDiag"), () => { uiMsg("#adminOut", Admin.diagnostics()); });
     bindTap($("#btnAdminZero"), () => {
-      // SAFE: só limpa logs + status
       Logger.clear();
-      setStatusPill("Zerado (safe) ✅");
+      setStatusPill("Zerado ✅");
       setTimeout(() => setStatusPill("OK ✅"), 800);
       uiMsg("#adminOut", "✅ Zerado (safe). Logs limpos.");
       Logger.write("admin zero safe");
     });
 
-    // GH buttons (só se módulo existir)
+    // GH
     bindTap($("#btnGhSave"), () => {
       const cfg = {
         owner: ($("#ghOwner")?.value || "").trim(),
@@ -915,10 +993,14 @@ GitHub Sync: ${ghOk ? "carregado ✅" : "módulo não carregou (RCF_GH_SYNC ause
 
     bindTap($("#btnGhRefresh"), () => {
       refreshAdminStatus();
-      uiMsg("#ghOut", window.RCF_GH_SYNC ? "GitHub: módulo carregado ✅" : "GitHub Sync ausente. Corrija github_sync.js");
+      uiMsg("#ghOut", window.RCF_GH_SYNC ? "GitHub: módulo carregado ✅" : "GitHub Sync ausente ❌");
     });
 
-    // Status pill (debug)
+    // MAE buttons
+    bindTap($("#btnMaeLoad"), maeLoad);
+    bindTap($("#btnMaeRun"), maeCheck);
+
+    // Status pill debug
     bindTap($("#statusPill"), () => Logger.write("touch:", "TOP=" + (document.activeElement?.tagName || "-")));
   }
 
@@ -938,19 +1020,16 @@ GitHub Sync: ${ghOk ? "carregado ✅" : "módulo não carregou (RCF_GH_SYNC ause
       if (text) text.textContent = "Sem app ativo ✅";
     }
 
-    // Se o estado estava “admin”, ele abre admin mesmo.
-    // Se quiser sempre começar no dashboard:
-    // State.active.view = "dashboard"; saveAll();
     setView(State.active.view || "dashboard");
 
-    // PIN status
     const pin = Pin.get();
     if (pin) uiMsg("#pinOut", "PIN definido ✅");
   }
 
   function init() {
-    renderShell();       // <- isso resolve “sumiu tudo / só admin”
+    renderShell();
     bindUI();
+    hydrateGhInputs();
     hydrateUIFromState();
     refreshAdminStatus();
 
