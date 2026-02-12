@@ -1,8 +1,10 @@
-/* RControl Factory — app.js (RESTORE UI BASE)
+/* RControl Factory — app.js (STABILITY CORE + RESTORE UI BASE)
    - UI completa (tabs + views) dentro de #app
    - Agent/Editor/Apps/Logs
    - Settings: PIN + Logs
    - Admin: GitHub + Maintenance (Mãe)
+   - STABILITY CORE: ErrorGuard + SafeInit + FallbackScreen
+   - Auto-load core modules when needed (vfs_overrides, github_sync, diagnostics)
    - Cloudflare Pages build output = app (site na raiz /)
 */
 
@@ -45,6 +47,17 @@
     if (el) el.textContent = String(text ?? "");
   }
 
+  function textContentSafe(el, txt) {
+    try { el.textContent = txt; } catch {}
+  }
+
+  function safeSetStatus(txt) {
+    try {
+      const el = $("#statusText");
+      if (el) el.textContent = String(txt || "");
+    } catch {}
+  }
+
   // -----------------------------
   // Storage
   // -----------------------------
@@ -72,34 +85,26 @@
   // -----------------------------
   const Logger = {
     bufKey: "logs",
-    max: 500,
+    max: 700,
 
     _mirrorUI(logs) {
       const txt = (logs || []).join("\n");
-
       const boxDrawer = $("#logsBox");
       if (boxDrawer) boxDrawer.textContent = txt;
-
       const boxLogsOut = $("#logsOut");
       if (boxLogsOut) boxLogsOut.textContent = txt;
-
       const boxView = $("#logsViewBox");
       if (boxView) boxView.textContent = txt;
     },
 
     write(...args) {
-      const msg = args
-        .map(a => (typeof a === "string" ? a : safeJsonStringify(a)))
-        .join(" ");
-
+      const msg = args.map(a => (typeof a === "string" ? a : safeJsonStringify(a))).join(" ");
       const line = `[${new Date().toLocaleString()}] ${msg}`;
       const logs = Storage.get(this.bufKey, []);
       logs.push(line);
       while (logs.length > this.max) logs.shift();
       Storage.set(this.bufKey, logs);
-
       this._mirrorUI(logs);
-
       try { console.log("[RCF]", ...args); } catch {}
     },
 
@@ -121,11 +126,112 @@
   };
 
   // -----------------------------
+  // STABILITY CORE — Global Error Guard + Fallback UI
+  // -----------------------------
+  const Stability = (() => {
+    let installed = false;
+    let originalConsoleError = null;
+
+    function normalizeErr(e) {
+      try {
+        if (!e) return { message: "unknown", stack: "" };
+        if (typeof e === "string") return { message: e, stack: "" };
+        return { message: String(e.message || e), stack: String(e.stack || "") };
+      } catch {
+        return { message: "unknown", stack: "" };
+      }
+    }
+
+    function showErrorScreen(title, details) {
+      try {
+        const root = $("#app");
+        if (!root) return;
+
+        // não destrói UI se já existe e está ok
+        // mas se chegou aqui, normalmente é crash de init/render
+        root.innerHTML = `
+          <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:18px;background:#070b12;color:#fff;font-family:system-ui">
+            <div style="max-width:780px;width:100%;border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:16px;background:rgba(255,255,255,.04)">
+              <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+                <div style="font-size:20px">⚠️</div>
+                <div style="font-weight:900;font-size:18px">${escapeHtml(title || "Erro")}</div>
+              </div>
+              <div style="opacity:.9;margin-bottom:10px">
+                A Factory detectou um erro e abriu esta tela controlada para evitar “tela branca”.
+              </div>
+              <pre style="white-space:pre-wrap;word-break:break-word;padding:12px;border-radius:10px;background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.12);max-height:45vh;overflow:auto">${escapeHtml(String(details || ""))}</pre>
+              <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
+                <button id="rcfReloadBtn" style="padding:10px 14px;border-radius:10px;border:0;background:#2dd4bf;color:#022; font-weight:800">Recarregar</button>
+                <button id="rcfClearLogsBtn" style="padding:10px 14px;border-radius:10px;border:0;background:#ef4444;color:#fff;font-weight:800">Limpar logs</button>
+                <button id="rcfTryAdminBtn" style="padding:10px 14px;border-radius:10px;border:0;background:#334155;color:#fff;font-weight:800">Abrir Admin</button>
+              </div>
+            </div>
+          </div>
+        `;
+
+        const r = $("#rcfReloadBtn");
+        r && r.addEventListener("click", () => location.reload(), { passive: true });
+
+        const c = $("#rcfClearLogsBtn");
+        c && c.addEventListener("click", () => {
+          try { Logger.clear(); } catch {}
+          try { localStorage.removeItem("rcf:logs"); } catch {}
+          alert("Logs limpos.");
+        });
+
+        const a = $("#rcfTryAdminBtn");
+        a && a.addEventListener("click", () => {
+          try { location.hash = ""; } catch {}
+          location.reload();
+        });
+      } catch {}
+    }
+
+    function install() {
+      if (installed) return;
+      installed = true;
+
+      window.addEventListener("error", (ev) => {
+        try {
+          const msg = ev?.message || "window.error";
+          const src = ev?.filename ? ` @ ${ev.filename}:${ev.lineno || 0}:${ev.colno || 0}` : "";
+          Logger.write("ERR:", msg + src);
+          if (ev?.error) {
+            const ne = normalizeErr(ev.error);
+            Logger.write("ERR.stack:", ne.stack || "(no stack)");
+          }
+        } catch {}
+      });
+
+      window.addEventListener("unhandledrejection", (ev) => {
+        try {
+          const ne = normalizeErr(ev?.reason);
+          Logger.write("UNHANDLED:", ne.message);
+          if (ne.stack) Logger.write("UNHANDLED.stack:", ne.stack);
+        } catch {}
+      });
+
+      // intercepta console.error (sem quebrar)
+      try {
+        if (!originalConsoleError) originalConsoleError = console.error.bind(console);
+        console.error = (...args) => {
+          try { Logger.write("console.error:", ...args); } catch {}
+          try { originalConsoleError(...args); } catch {}
+        };
+      } catch {}
+
+      // marcador
+      Logger.write("stability:", "ErrorGuard installed ✅");
+    }
+
+    return { install, showErrorScreen };
+  })();
+
+  // -----------------------------
   // Touch / Tap bind (iOS safe)
   // -----------------------------
   function bindTap(el, fn) {
     if (!el) return;
-
     let last = 0;
 
     const handler = (ev) => {
@@ -134,9 +240,7 @@
       last = t;
 
       // iOS: evita “clica 1x e morre”
-      try {
-        if (ev.cancelable) ev.preventDefault();
-      } catch {}
+      try { if (ev.cancelable) ev.preventDefault(); } catch {}
 
       try { fn(ev); }
       catch (e) { Logger.write("tap err:", e?.message || e); }
@@ -146,7 +250,6 @@
     el.style.touchAction = "manipulation";
     el.style.webkitTapHighlightColor = "transparent";
 
-    // pointerup às vezes perde no iOS com passive:true -> deixa false
     el.addEventListener("pointerup", handler, { passive: false });
     el.addEventListener("touchend", handler, { passive: false });
     el.addEventListener("click", handler, { passive: true });
@@ -379,6 +482,7 @@
             <div class="row">
               <button class="btn ok" id="btnDiagRun" type="button">Rodar</button>
               <button class="btn ghost" id="btnDiagClear" type="button">Limpar</button>
+              <button class="btn ghost" id="btnDiagInstall" type="button">Instalar Guards</button>
             </div>
             <pre class="mono" id="diagOut">Pronto.</pre>
           </section>
@@ -462,11 +566,6 @@
   // -----------------------------
   // Views + Status
   // -----------------------------
-  function setStatusPill(text) {
-    const el = $("#statusText");
-    if (el) el.textContent = text;
-  }
-
   function refreshLogsViews() {
     Logger._mirrorUI(Logger.getAll());
   }
@@ -480,7 +579,6 @@
     $$(".view").forEach(v => v.classList.remove("active"));
     $$("[data-view]").forEach(b => b.classList.remove("active"));
 
-    // evita crash se CSS.escape não existir
     const id = "view-" + String(name).replace(/[^a-z0-9_-]/gi, "");
     const view = document.getElementById(id);
     if (view) view.classList.add("active");
@@ -488,6 +586,10 @@
     $$(`[data-view="${name}"]`).forEach(b => b.classList.add("active"));
 
     if (name === "logs" || name === "settings") refreshLogsViews();
+
+    // hooks
+    if (name === "admin") void onEnterAdmin();
+    if (name === "diagnostics") void onEnterDiagnostics();
 
     Logger.write("view:", name);
   }
@@ -752,7 +854,7 @@
   };
 
   // -----------------------------
-  // Admin Diagnostics
+  // Admin Diagnostics (local)
   // -----------------------------
   const Admin = {
     diagnostics() {
@@ -766,7 +868,7 @@
         sw_controller: !!navigator.serviceWorker?.controller,
         sw_supported: "serviceWorker" in navigator,
       };
-      return "RCF DIAGNÓSTICO\n" + JSON.stringify(info, null, 2);
+      return "RCF DIAGNÓSTICO (local)\n" + JSON.stringify(info, null, 2);
     }
   };
 
@@ -781,6 +883,50 @@
   };
 
   // -----------------------------
+  // Core modules auto-load
+  // -----------------------------
+  async function ensureCoreModules() {
+    // tenta carregar só se não existirem
+    const tasks = [];
+    if (!window.RCF_VFS_OVERRIDES) tasks.push(loadScriptOnce("/js/core/vfs_overrides.js").catch(() => null));
+    if (!window.RCF_GH_SYNC) tasks.push(loadScriptOnce("/js/core/github_sync.js").catch(() => null));
+    await Promise.allSettled(tasks);
+  }
+
+  // -----------------------------
+  // Diagnostics module auto-load
+  // -----------------------------
+  async function ensureDiagnostics() {
+    // sua pasta existe: /js/diagnostics/*
+    // index.js deve expor window.RCF_DIAGNOSTICS (ou algo próximo)
+    const already = !!window.RCF_DIAGNOSTICS;
+    if (already) return true;
+
+    // boot leve: só carrega o index principal (ele pode importar/encadear internamente)
+    // Se o seu index.js não encadeia, ele ainda existe e dá pra chamar installAll manualmente no diagnóstico.
+    try {
+      await loadScriptOnce("/js/diagnostics/index.js");
+      return !!window.RCF_DIAGNOSTICS;
+    } catch {
+      return false;
+    }
+  }
+
+  async function installDiagnosticsAll() {
+    const ok = await ensureDiagnostics();
+    if (!ok) {
+      uiMsg("#diagOut", "❌ Não conseguiu carregar /js/diagnostics/index.js");
+      return;
+    }
+    try {
+      window.RCF_DIAGNOSTICS?.installAll?.();
+      uiMsg("#diagOut", "✅ Diagnostics instalado (installAll).");
+    } catch (e) {
+      uiMsg("#diagOut", "❌ Falhou installAll: " + (e?.message || e));
+    }
+  }
+
+  // -----------------------------
   // MAE (Maintenance / Self-update)
   // -----------------------------
   function getMaeAPI() {
@@ -790,7 +936,6 @@
   async function maeLoad() {
     uiMsg("#maintOut", "Carregando mãe...");
 
-    // Cloudflare Pages build output = app -> URL real: /js/core/...
     const candidates = [
       "/js/core/mother_selfupdate.js",
       "/app/js/core/mother_selfupdate.js",
@@ -805,12 +950,12 @@
         if (api) {
           uiMsg("#maintOut", `✅ Mãe carregada. (${src})`);
           Logger.write("mae load ok:", src);
-          refreshAdminStatus();
+          void refreshAdminStatus();
           return;
         }
         uiMsg("#maintOut", `⚠️ Script carregou (${src}), mas não expôs API global.`);
         Logger.write("mae load:", "no api", src);
-        refreshAdminStatus();
+        void refreshAdminStatus();
         return;
       } catch (e) {
         lastErr = e;
@@ -819,14 +964,14 @@
     }
 
     uiMsg("#maintOut", "❌ " + (lastErr?.message || lastErr || "Falhou carregar mãe."));
-    refreshAdminStatus();
+    void refreshAdminStatus();
   }
 
   function maeCheck() {
     const api = getMaeAPI();
     if (!api) {
       uiMsg("#maintOut", "❌ Mãe não está disponível. Clique em 'Carregar Mãe' primeiro.");
-      refreshAdminStatus();
+      void refreshAdminStatus();
       return;
     }
 
@@ -838,14 +983,14 @@
       Logger.write("mae check err:", e?.message || e);
     }
 
-    refreshAdminStatus();
+    void refreshAdminStatus();
   }
 
   async function maeUpdateFromGitHub() {
     const api = getMaeAPI();
     if (!api?.updateFromGitHub) {
       uiMsg("#maintOut", "❌ Mãe não pronta. Carregue a Mãe primeiro.");
-      refreshAdminStatus();
+      void refreshAdminStatus();
       return;
     }
     uiMsg("#maintOut", "Executando updateFromGitHub()...");
@@ -857,14 +1002,14 @@
       uiMsg("#maintOut", "❌ Update falhou: " + (e?.message || e));
       Logger.write("mae update err:", e?.message || e);
     }
-    refreshAdminStatus();
+    void refreshAdminStatus();
   }
 
   async function maeClearOverrides() {
     const api = getMaeAPI();
     if (!api?.clearOverrides) {
       uiMsg("#maintOut", "❌ Mãe não pronta. Carregue a Mãe primeiro.");
-      refreshAdminStatus();
+      void refreshAdminStatus();
       return;
     }
     uiMsg("#maintOut", "Limpando overrides...");
@@ -876,11 +1021,11 @@
       uiMsg("#maintOut", "❌ Clear falhou: " + (e?.message || e));
       Logger.write("mae clear err:", e?.message || e);
     }
-    refreshAdminStatus();
+    void refreshAdminStatus();
   }
 
   // -----------------------------
-  // GitHub Sync status + config hydrate
+  // GitHub Sync config hydrate
   // -----------------------------
   function hydrateGhInputs() {
     const cfg = Storage.get("ghcfg", null);
@@ -892,12 +1037,31 @@
     if ($("#ghToken")) $("#ghToken").value = cfg.token || "";
   }
 
+  // -----------------------------
+  // Service Worker helpers (status)
+  // -----------------------------
   async function getSWReg() {
     try {
       if (!("serviceWorker" in navigator)) return null;
       return await navigator.serviceWorker.getRegistration("/");
     } catch {
       return null;
+    }
+  }
+
+  async function ensureSWRegistered() {
+    try {
+      if (!("serviceWorker" in navigator)) return false;
+      const reg = await navigator.serviceWorker.getRegistration("/");
+      if (reg) return true;
+
+      // tenta registrar (se já tiver no seu index.html, isso não atrapalha)
+      // Ajuste o caminho se seu SW tiver outro nome:
+      await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+      return true;
+    } catch (e) {
+      Logger.write("sw register fail:", e?.message || e);
+      return false;
     }
   }
 
@@ -915,10 +1079,40 @@
     out.textContent =
 `Pronto.
 SW: ${swCtl ? "controlando ✅" : "NÃO controlando ❌"} (reg: ${swState})
-VFS Overrides: ${vfsOk ? "OK ✅" : "ausente ❌ (vfs_overrides.js)"}
-GitHub Sync: ${ghOk ? "OK ✅" : "ausente ❌ (github_sync.js)"}
-Mãe: ${maeOk ? "OK ✅" : "ausente ❌ (mother_selfupdate.js)"}
+VFS Overrides: ${vfsOk ? "OK ✅" : "ausente ❌ (/js/core/vfs_overrides.js)"}
+GitHub Sync: ${ghOk ? "OK ✅" : "ausente ❌ (/js/core/github_sync.js)"}
+Mãe: ${maeOk ? "OK ✅" : "ausente ❌ (/js/core/mother_selfupdate.js)"}
+Diagnostics: ${window.RCF_DIAGNOSTICS ? "OK ✅" : "ausente ⚠️ (/js/diagnostics/index.js)"}
 `;
+  }
+
+  // -----------------------------
+  // Enter-view hooks
+  // -----------------------------
+  async function onEnterAdmin() {
+    try {
+      uiMsg("#ghOut", "GitHub: verificando...");
+      uiMsg("#maintOut", "Pronto.");
+      await ensureCoreModules();
+      hydrateGhInputs();
+      await refreshAdminStatus();
+      uiMsg("#ghOut", window.RCF_GH_SYNC ? "GitHub: módulo carregado ✅" : "GitHub Sync ausente ❌ (carregando...)");
+    } catch (e) {
+      Logger.write("enter admin err:", e?.message || e);
+    }
+  }
+
+  async function onEnterDiagnostics() {
+    // não força install automático; só prepara / permite o botão "Instalar Guards"
+    try {
+      const ok = await ensureDiagnostics();
+      uiMsg("#diagOut", ok
+        ? "Diagnostics: carregado ✅ (use 'Instalar Guards' para instalar)"
+        : "Diagnostics: ausente ❌ (verifique /js/diagnostics/index.js)"
+      );
+    } catch (e) {
+      uiMsg("#diagOut", "Diagnostics: erro " + (e?.message || e));
+    }
   }
 
   // -----------------------------
@@ -935,8 +1129,8 @@ Mãe: ${maeOk ? "OK ✅" : "ausente ❌ (mother_selfupdate.js)"}
     bindTap($("#btnExportBackup"), () => {
       const payload = JSON.stringify({ apps: State.apps, cfg: State.cfg, active: State.active }, null, 2);
       try { navigator.clipboard.writeText(payload); } catch {}
-      setStatusPill("Backup copiado ✅");
-      setTimeout(() => setStatusPill("OK ✅"), 800);
+      safeSetStatus("Backup copiado ✅");
+      setTimeout(() => safeSetStatus("OK ✅"), 800);
       Logger.write("backup copied");
     });
 
@@ -952,9 +1146,9 @@ Mãe: ${maeOk ? "OK ✅" : "ausente ❌ (mother_selfupdate.js)"}
       const slug = ($("#newAppSlug")?.value || "");
       const r = createApp(name, slug);
       uiMsg("#newAppOut", r.msg);
-      if (r.ok) { setView("editor"); setStatusPill("OK ✅"); }
-      else setStatusPill("ERRO ❌");
-      refreshAdminStatus();
+      if (r.ok) { setView("editor"); safeSetStatus("OK ✅"); }
+      else safeSetStatus("ERRO ❌");
+      void refreshAdminStatus();
     });
 
     bindTap($("#btnSaveFile"), () => saveFile());
@@ -977,20 +1171,20 @@ Mãe: ${maeOk ? "OK ✅" : "ausente ❌ (mother_selfupdate.js)"}
     // Logs actions
     const doLogsRefresh = () => {
       refreshLogsViews();
-      setStatusPill("Logs ✅");
-      setTimeout(() => setStatusPill("OK ✅"), 600);
+      safeSetStatus("Logs ✅");
+      setTimeout(() => safeSetStatus("OK ✅"), 600);
     };
     const doLogsClear = () => {
       Logger.clear();
       doLogsRefresh();
-      setStatusPill("Logs limpos ✅");
-      setTimeout(() => setStatusPill("OK ✅"), 600);
+      safeSetStatus("Logs limpos ✅");
+      setTimeout(() => safeSetStatus("OK ✅"), 600);
     };
     const doLogsCopy = async () => {
       const txt = Logger.getAll().join("\n");
       try { await navigator.clipboard.writeText(txt); } catch {}
-      setStatusPill("Logs copiados ✅");
-      setTimeout(() => setStatusPill("OK ✅"), 800);
+      safeSetStatus("Logs copiados ✅");
+      setTimeout(() => safeSetStatus("OK ✅"), 800);
     };
 
     bindTap($("#btnLogsRefresh"), doLogsRefresh);
@@ -1005,21 +1199,22 @@ Mãe: ${maeOk ? "OK ✅" : "ausente ❌ (mother_selfupdate.js)"}
     bindTap($("#btnDrawerLogsClear"), doLogsClear);
     bindTap($("#btnDrawerLogsCopy"), doLogsCopy);
 
-    // Diagnostics
+    // Diagnostics view
     bindTap($("#btnDiagRun"), () => {
       uiMsg("#diagOut", Admin.diagnostics());
-      setStatusPill("Diag ✅");
-      setTimeout(() => setStatusPill("OK ✅"), 700);
-      refreshAdminStatus();
+      safeSetStatus("Diag ✅");
+      setTimeout(() => safeSetStatus("OK ✅"), 700);
+      void refreshAdminStatus();
     });
     bindTap($("#btnDiagClear"), () => {
       uiMsg("#diagOut", "Pronto.");
-      setStatusPill("OK ✅");
+      safeSetStatus("OK ✅");
     });
+    bindTap($("#btnDiagInstall"), () => { void installDiagnosticsAll(); });
 
     // Shortcuts
     bindTap($("#btnGoDiagnose"), () => { setView("diagnostics"); uiMsg("#diagShortcutOut", "Abrindo diagnostics..."); });
-    bindTap($("#btnGoAdmin"), () => { setView("admin"); uiMsg("#diagShortcutOut", "Abrindo admin..."); refreshAdminStatus(); });
+    bindTap($("#btnGoAdmin"), () => { setView("admin"); uiMsg("#diagShortcutOut", "Abrindo admin..."); });
 
     // PIN
     bindTap($("#btnPinSave"), () => {
@@ -1040,11 +1235,11 @@ Mãe: ${maeOk ? "OK ✅" : "ausente ❌ (mother_selfupdate.js)"}
     bindTap($("#btnAdminDiag"), () => { uiMsg("#adminOut", Admin.diagnostics()); });
     bindTap($("#btnAdminZero"), () => {
       Logger.clear();
-      setStatusPill("Zerado ✅");
-      setTimeout(() => setStatusPill("OK ✅"), 800);
+      safeSetStatus("Zerado ✅");
+      setTimeout(() => safeSetStatus("OK ✅"), 800);
       uiMsg("#adminOut", "✅ Zerado (safe). Logs limpos.");
       Logger.write("admin zero safe");
-      refreshAdminStatus();
+      void refreshAdminStatus();
     });
 
     // GitHub config
@@ -1059,29 +1254,36 @@ Mãe: ${maeOk ? "OK ✅" : "ausente ❌ (mother_selfupdate.js)"}
       Storage.set("ghcfg", cfg);
       uiMsg("#ghOut", "✅ Config salva (local).");
       Logger.write("gh cfg saved");
-      refreshAdminStatus();
+      void refreshAdminStatus();
     });
 
     bindTap($("#btnGhPull"), () => {
-      if (!window.RCF_GH_SYNC) return uiMsg("#ghOut", "❌ GitHub Sync ausente. Corrija github_sync.js");
+      if (!window.RCF_GH_SYNC) return uiMsg("#ghOut", "❌ GitHub Sync ausente. Verifique /js/core/github_sync.js");
       window.RCF_GH_SYNC.pull().then(m => uiMsg("#ghOut", m)).catch(e => uiMsg("#ghOut", "❌ " + (e.message||e)));
     });
 
     bindTap($("#btnGhPush"), () => {
-      if (!window.RCF_GH_SYNC) return uiMsg("#ghOut", "❌ GitHub Sync ausente. Corrija github_sync.js");
-      window.RCF_GH_SYNC.push().then(m => uiMsg("#ghOut", m)).catch(e => uiMsg("#ghOut", "❌ " + (e.message||e)));
+      if (!window.RCF_GH_SYNC) return uiMsg("#ghOut", "❌ GitHub Sync ausente. Verifique /js/core/github_sync.js");
+      // push exige content -> seu módulo atual aceita push(cfg, content)
+      // aqui mantemos seu fluxo antigo (se seu push() já empurra bundle interno, ok)
+      try {
+        const txt = Storage.get("mother_bundle_last", "");
+        window.RCF_GH_SYNC.push(undefined, txt).then(m => uiMsg("#ghOut", m)).catch(e => uiMsg("#ghOut", "❌ " + (e.message||e)));
+      } catch (e) {
+        uiMsg("#ghOut", "❌ Push falhou: " + (e?.message || e));
+      }
     });
 
     bindTap($("#btnGhRefresh"), () => {
-      refreshAdminStatus();
+      void refreshAdminStatus();
       uiMsg("#ghOut", window.RCF_GH_SYNC ? "GitHub: módulo carregado ✅" : "GitHub Sync ausente ❌");
     });
 
     // MAE actions
-    bindTap($("#btnMaeLoad"), maeLoad);
+    bindTap($("#btnMaeLoad"), () => { void maeLoad(); });
     bindTap($("#btnMaeCheck"), maeCheck);
-    bindTap($("#btnMaeUpdate"), maeUpdateFromGitHub);
-    bindTap($("#btnMaeClear"), maeClearOverrides);
+    bindTap($("#btnMaeUpdate"), () => { void maeUpdateFromGitHub(); });
+    bindTap($("#btnMaeClear"), () => { void maeClearOverrides(); });
 
     // Status debug
     bindTap($("#statusPill"), () => Logger.write("touch:", "TOP=" + (document.activeElement?.tagName || "-")));
@@ -1109,24 +1311,31 @@ Mãe: ${maeOk ? "OK ✅" : "ausente ❌ (mother_selfupdate.js)"}
     if (pin) uiMsg("#pinOut", "PIN definido ✅");
   }
 
-  function textContentSafe(el, txt) {
-    try { el.textContent = txt; } catch {}
-  }
+  async function safeInit() {
+    try {
+      Stability.install();
+      renderShell();
+      bindUI();
+      hydrateGhInputs();
+      hydrateUIFromState();
 
-  async function init() {
-    renderShell();
-    bindUI();
-    hydrateGhInputs();
-    hydrateUIFromState();
-    await refreshAdminStatus();
+      // SW: tenta registrar cedo (ajuda no offline-first)
+      await ensureSWRegistered();
+      await refreshAdminStatus();
 
-    Logger.write("RCF app.js init ok — mode:", State.cfg.mode);
+      Logger.write("RCF app.js init ok — mode:", State.cfg.mode);
+      safeSetStatus("OK ✅");
+    } catch (e) {
+      const msg = (e?.message || e);
+      Logger.write("FATAL init:", msg);
+      Stability.showErrorScreen("Falha ao iniciar (safeInit)", String(msg));
+    }
   }
 
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", () => { init(); }, { passive: true });
+    document.addEventListener("DOMContentLoaded", () => { void safeInit(); }, { passive: true });
   } else {
-    init();
+    void safeInit();
   }
 
   window.RCF = window.RCF || {};
