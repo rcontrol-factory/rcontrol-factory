@@ -45,7 +45,6 @@
             try { s.createIndex("ts", "ts"); } catch {}
             try { s.createIndex("type", "type"); } catch {}
           } else {
-            // garante índices (caso alguém tenha criado store sem index)
             const s = req.transaction.objectStore(STORE);
             try { if (!s.indexNames.contains("ts")) s.createIndex("ts", "ts"); } catch {}
             try { if (!s.indexNames.contains("type")) s.createIndex("type", "type"); } catch {}
@@ -57,8 +56,6 @@
 
       req.onsuccess = () => {
         _db = req.result;
-
-        // se outra aba atualizar versão, fecha aqui pra não travar
         try {
           _db.onversionchange = () => {
             try { _db.close(); } catch {}
@@ -67,7 +64,6 @@
             log("warn", "IDB versionchange: conexão fechada (reopen on demand).");
           };
         } catch {}
-
         resolve(_db);
       };
 
@@ -91,134 +87,104 @@
     return new Promise((resolve, reject) => {
       let tx;
       try {
-        tx = db.transaction(STORE, mode);
+        tx = db.transaction([STORE], mode);
       } catch (e) {
-        log("err", "IDB transaction fail: " + (e?.message || e));
+        log("err", "IDB transaction falhou: " + (e?.message || e));
         return reject(e);
       }
 
-      let store;
-      try {
-        store = tx.objectStore(STORE);
-      } catch (e) {
-        log("err", "IDB objectStore fail: " + (e?.message || e));
-        return reject(e);
-      }
+      const store = tx.objectStore(STORE);
 
-      const done = (v) => {
-        try { resolve(v); } catch {}
-      };
-      const fail = (e) => {
-        try { reject(e); } catch {}
-      };
+      let done = false;
+      const ok = (v) => { if (!done) { done = true; resolve(v); } };
+      const bad = (e) => { if (!done) { done = true; reject(e); } };
 
       try {
         const r = fn(store, tx);
-        // Se retornar uma Promise, aguarda; se não, resolve no oncomplete
-        if (r && typeof r.then === "function") {
-          r.then(done).catch(fail);
-        } else {
-          tx.oncomplete = () => done(r);
-          tx.onerror = () => fail(tx.error || new Error("tx error"));
-          tx.onabort = () => fail(tx.error || new Error("tx abort"));
-        }
+        // Se fn retornar promise, encadeia; se não, resolve no complete
+        Promise.resolve(r).catch(bad);
       } catch (e) {
-        fail(e);
+        bad(e);
       }
+
+      tx.oncomplete = () => ok(true);
+      tx.onerror = () => bad(tx.error || new Error("tx error"));
+      tx.onabort = () => bad(tx.error || new Error("tx abort"));
     });
   }
 
   function makeId() {
-    // id estável e curto, sem depender de crypto
-    return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    return `${Date.now()}_${Math.random().toString(16).slice(2)}`;
   }
 
-  function normalizeEntry(entry) {
-    const ts = Number(entry?.ts || Date.now());
-    const type = String(entry?.type || "error");
-    const message = String(entry?.message || "");
-    const stack = String(entry?.stack || "");
-    const meta = entry?.meta != null ? entry.meta : null;
-
-    return {
-      id: String(entry?.id || makeId()),
-      ts,
-      type,
-      message,
-      stack,
-      meta
+  async function putError(entry) {
+    const e = entry || {};
+    const row = {
+      id: e.id || makeId(),
+      ts: typeof e.ts === "number" ? e.ts : Date.now(),
+      type: String(e.type || "error"),
+      msg: String(e.msg || ""),
+      stack: String(e.stack || ""),
+      meta: e.meta ?? null
     };
-  }
 
-  async function put(entry) {
-    const obj = normalizeEntry(entry);
     await withStore("readwrite", (store) => {
-      return new Promise((resolve, reject) => {
-        let req;
-        try { req = store.put(obj); } catch (e) { return reject(e); }
-        req.onsuccess = () => resolve(obj.id);
-        req.onerror = () => reject(req.error || new Error("put error"));
-      });
+      store.put(row);
     });
-    return obj.id;
+
+    return row.id;
   }
 
-  async function list(limit = 200) {
-    const max = Math.max(1, Math.min(2000, Number(limit || 200)));
-    return withStore("readonly", (store) => {
-      return new Promise((resolve, reject) => {
-        const out = [];
-        let req;
+  async function listErrors(limit = 50) {
+    const out = [];
+    const n = Math.max(1, Math.min(500, Number(limit) || 50));
 
-        // Prefer index("ts") descending if possible
-        try {
-          const idx = store.index("ts");
-          req = idx.openCursor(null, "prev");
-        } catch {
-          try { req = store.openCursor(null, "prev"); } catch (e) { return reject(e); }
-        }
+    await withStore("readonly", (store) => {
+      let idx;
+      try { idx = store.index("ts"); } catch { idx = null; }
 
+      // Melhor: usa index ts e varre de trás pra frente
+      if (idx && typeof idx.openCursor === "function") {
+        const req = idx.openCursor(null, "prev");
         req.onsuccess = () => {
           const cur = req.result;
-          if (!cur) return resolve(out);
+          if (!cur) return;
           out.push(cur.value);
-          if (out.length >= max) return resolve(out);
-          try { cur.continue(); } catch (e) { reject(e); }
+          if (out.length >= n) return;
+          cur.continue();
         };
-
-        req.onerror = () => reject(req.error || new Error("cursor error"));
-      });
+        req.onerror = () => {};
+      } else {
+        // fallback: varre store
+        const req = store.openCursor();
+        req.onsuccess = () => {
+          const cur = req.result;
+          if (!cur) return;
+          out.push(cur.value);
+          cur.continue();
+        };
+        req.onerror = () => {};
+      }
     });
+
+    // garante ordenação desc
+    out.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+    return out.slice(0, n);
   }
 
   async function clearAll() {
-    return withStore("readwrite", (store) => {
-      return new Promise((resolve, reject) => {
-        let req;
-        try { req = store.clear(); } catch (e) { return reject(e); }
-        req.onsuccess = () => resolve(true);
-        req.onerror = () => reject(req.error || new Error("clear error"));
-      });
+    await withStore("readwrite", (store) => {
+      store.clear();
     });
+    return true;
   }
 
-  async function exportText(limit = 300) {
-    const rows = await list(limit);
-    return rows.map(r => {
-      const d = new Date(r.ts || Date.now()).toISOString();
-      const msg = (r.message || "").replace(/\s+/g, " ").trim();
-      return `[${d}] ${r.type}: ${msg}${r.stack ? "\n" + r.stack : ""}`;
-    }).join("\n\n");
-  }
+  // Expor API mínima
+  window.RCF_IDB = window.RCF_IDB || {};
+  window.RCF_IDB.openDB = openDB;
+  window.RCF_IDB.putError = putError;
+  window.RCF_IDB.listErrors = listErrors;
+  window.RCF_IDB.clearAll = clearAll;
 
-  // API pública usada pelo diagnostics
-  window.RCF_DIAG_IDB = window.RCF_DIAG_IDB || {
-    openDB,
-    put,
-    list,
-    clearAll,
-    exportText
-  };
-
-  log("ok", "diagnostics/idb.js loaded ✅");
+  log("ok", "diagnostics/idb.js ready ✅");
 })();
