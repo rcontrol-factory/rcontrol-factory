@@ -5,10 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <title>RControl Factory</title>
   <meta name="theme-color" content="#0b1020" />
-
-  <!-- importante: base relativo pra funcionar em /app/ -->
   <base href="./" />
-
   <link rel="manifest" href="./manifest.json" />
   <link rel="stylesheet" href="./styles.css" />
 </head>
@@ -31,22 +28,32 @@
         } catch {}
       }
 
+      // ✅ ROOT dinâmico (não quebra se abrir por / ou /app/)
+      function detectRoot() {
+        var p = (location.pathname || "");
+        // se estiver em /app/... => root = /app
+        if (p === "/app" || p.indexOf("/app/") === 0) return "/app";
+        // senão, tenta root vazio (caso você tenha deploy em /)
+        return "";
+      }
+
       function loadScript(src) {
-        return new Promise((resolve, reject) => {
-          const s = document.createElement("script");
+        return new Promise(function (resolve, reject) {
+          var s = document.createElement("script");
           s.src = src;
           s.async = false;
-          s.onload = () => resolve(src);
-          s.onerror = () => reject(new Error("fail " + src));
+          s.onload = function () { resolve(src); };
+          s.onerror = function () { reject(new Error("fail " + src)); };
           document.head.appendChild(s);
         });
       }
 
       async function loadAny(paths, name) {
-        let lastErr = null;
-        for (const src of paths) {
+        var lastErr = null;
+        for (var i = 0; i < paths.length; i++) {
+          var src = paths[i];
           try {
-            const okSrc = await loadScript(src);
+            var okSrc = await loadScript(src);
             rcfLog("boot", "module loaded ✅ " + name + " ← " + okSrc);
             return okSrc;
           } catch (e) {
@@ -59,47 +66,37 @@
 
       async function boot() {
         rcfLog("boot", "index boot: starting module loader...");
+        var ROOT = detectRoot();
+        rcfLog("boot", "detected ROOT=" + (ROOT || "(vazio)"));
 
-        // ✅ usar paths ABSOLUTOS dentro de /app para não depender de rota/base do iOS
-        const ROOT = "/app";
-
-        const modules = [
-          { name: "github_sync",      paths: [ROOT + "/js/core/github_sync.js"] },
-          { name: "vfs_overrides",    paths: [ROOT + "/js/core/vfs_overrides.js"] },
-          { name: "mother_selfupdate",paths: [ROOT + "/js/core/mother_selfupdate.js"] },
-          { name: "injector",         paths: [ROOT + "/js/core/injector.js"] },
-          { name: "settings_cleanup", paths: [ROOT + "/js/core/settings_cleanup.js"] },
-          { name: "admin_ui_github",  paths: [ROOT + "/js/admin.github.js"] },
-
-          // opcionais (se existirem)
-          { name: "patchQueue",       paths: [ROOT + "/js/engine/patchQueue.js"] },
-          { name: "organizerEngine",  paths: [ROOT + "/js/engine/organizerEngine.js"] },
-          { name: "applyPipeline",    paths: [ROOT + "/js/engine/applyPipeline.js"] },
-          { name: "builderSafe",      paths: [ROOT + "/js/builder/builderSafe.js"] },
+        var modules = [
+          { name: "github_sync",       paths: [ROOT + "/js/core/github_sync.js", "./js/core/github_sync.js"] },
+          { name: "vfs_overrides",     paths: [ROOT + "/js/core/vfs_overrides.js", "./js/core/vfs_overrides.js"] },
+          { name: "mother_selfupdate", paths: [ROOT + "/js/core/mother_selfupdate.js", "./js/core/mother_selfupdate.js"] },
+          { name: "injector",          paths: [ROOT + "/js/core/injector.js", "./js/core/injector.js"] },
+          { name: "settings_cleanup",  paths: [ROOT + "/js/core/settings_cleanup.js", "./js/core/settings_cleanup.js"] },
+          { name: "admin_ui_github",   paths: [ROOT + "/js/admin.github.js", "./js/admin.github.js"] },
         ];
 
-        for (const m of modules) {
-          try {
-            await loadAny(m.paths, m.name);
-          } catch (e) {
-            // ⚠️ deixa explícito no log qual módulo falhou
-            rcfLog("warn", "module missing ❌ " + m.name + " :: " + (e && e.message ? e.message : e));
-          }
+        for (var j = 0; j < modules.length; j++) {
+          var m = modules[j];
+          try { await loadAny(m.paths, m.name); }
+          catch (e) { rcfLog("warn", "module missing ❌ " + m.name + " :: " + (e && e.message ? e.message : e)); }
         }
 
-        // app principal
         try {
-          await loadAny([ROOT + "/app.js"], "app.js");
+          await loadAny([ROOT + "/app.js", "./app.js"], "app.js");
         } catch (e) {
-          rcfLog("err", "app.js missing ❌ " + (e && e.message ? e.message : e));
+          rcfLog("err", "app.js missing/crash ❌ " + (e && e.message ? e.message : e));
         }
 
-        // SW (scope /app/)
         try {
           if ("serviceWorker" in navigator) {
-            navigator.serviceWorker.register(ROOT + "/sw.js", { scope: ROOT + "/" })
-              .then(() => rcfLog("boot", "sw register: ok"))
-              .catch(() => rcfLog("warn", "sw register: fail/ignored"));
+            var swUrl = (ROOT ? ROOT + "/sw.js" : "./sw.js");
+            var scope = (ROOT ? ROOT + "/" : "./");
+            navigator.serviceWorker.register(swUrl, { scope: scope })
+              .then(function () { rcfLog("boot", "sw register: ok"); })
+              .catch(function () { rcfLog("warn", "sw register: fail/ignored"); });
           }
         } catch {}
       }
