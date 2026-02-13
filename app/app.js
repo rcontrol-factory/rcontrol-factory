@@ -1,13 +1,17 @@
-/* RControl Factory — app.js (V7 + FASE A REAL SCAN/TARGET/INJECT + FIX BOTOES ADMIN)
-   - Corrige botões mortos (faltava bind)
-   - Move window.RCF.state BEFORE init (corrige timing)
-   - Implementa FASE A: scanFactoryFiles + generateTargetMap + injectorEngine (SAFE)
+/* RControl Factory — app.js (V7.1 + FASE A REAL SCAN/TARGET/INJECT + PADRÃO: admin.github.js separado)
+   - ✅ PADRÃO: GitHub Admin UI fica em /app/js/admin.github.js (remove duplicidade do card GitHub no app.js)
+   - ✅ FIX: window.RCF.state BEFORE init (timing)
+   - ✅ FASE A: scanFactoryFiles + generateTargetMap + injectorEngine (SAFE)
    - Inventory REAL: A (VFS runtime) -> B (mother_bundle local) -> C (DOM anchors only)
    - ✅ FIX: SW stability vira AUTO-FIX + WARN (não derruba RCF_STABLE por timing)
    - ✅ FIX: Injector funciona sem VFS runtime via Overrides VFS (localStorage)
-   - ✅ FIX CRÍTICO iOS: bindTap NÃO dispara 2x (removido pointerup+touchend+click juntos)
+   - ✅ FIX CRÍTICO iOS: bindTap NÃO dispara 2x
    - ✅ FIX: trava reentrada do Update From GitHub (evita TIMEOUT em put(/index.html))
    - ✅ FIX CP1/CP2/CP3: scan em cascata real (A->B->C), target map garante >=2, dropdown atualiza + auto-select
+   - ✅ PATCH: Scan A não “mente” quando só existem overrides
+   - ✅ PATCH: fallback de targets usa /index.html primeiro (bundle real)
+   - ✅ PATCH: SW register usa ./sw.js + scope ./ (Pages/subpath safe)
+   - ✅ PATCH: fetch do bundle resolve com baseURI (subpath safe)
 */
 
 (() => {
@@ -254,7 +258,6 @@
     if (window.PointerEvent) {
       el.addEventListener("pointerup", handler, { passive: false });
     } else {
-      // fallback antigo
       el.addEventListener("touchend", handler, { passive: false });
       el.addEventListener("click", handler, { passive: false });
     }
@@ -516,33 +519,7 @@
 
             <pre class="mono" id="adminOut">Pronto.</pre>
 
-            <div class="card" id="admin-github">
-              <h2>GitHub Sync (Privado) — SAFE</h2>
-
-              <div class="row form">
-                <input id="ghOwner" placeholder="owner" />
-                <input id="ghRepo" placeholder="repo" />
-              </div>
-
-              <div class="row form">
-                <input id="ghBranch" placeholder="branch" value="main" />
-                <input id="ghPath" placeholder="path" value="app/import/mother_bundle.json" />
-              </div>
-
-              <div class="row form">
-                <input id="ghToken" placeholder="TOKEN (PAT)" />
-                <button class="btn ghost" id="btnGhSave" type="button">Salvar config</button>
-              </div>
-
-              <div class="row">
-                <button class="btn ghost" id="btnGhPull" type="button">⬇️ Pull</button>
-                <button class="btn ok" id="btnGhPush" type="button">⬆️ Push</button>
-                <button class="btn ghost" id="btnGhRefresh" type="button">⚡ Status</button>
-              </div>
-
-              <pre class="mono" id="ghOut">GitHub: pronto.</pre>
-            </div>
-
+            <!-- ✅ PADRÃO: Painel GitHub vem do /app/js/admin.github.js -->
             <div class="card" id="admin-maint">
               <h2>MAINTENANCE • Self-Update (Mãe)</h2>
               <div class="row">
@@ -920,7 +897,8 @@
         Logger.write("sw:", "serviceWorker não suportado");
         return { ok: false, msg: "SW não suportado" };
       }
-      const reg = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+      // ✅ PATCH: relativo + scope relativo (Pages/subpath safe)
+      const reg = await navigator.serviceWorker.register("./sw.js", { scope: "./" });
       Logger.write("sw register:", "ok");
       return { ok: true, msg: "SW registrado ✅", reg };
     } catch (e) {
@@ -966,7 +944,7 @@
 
     const tryGet = async () => {
       try {
-        const a = await navigator.serviceWorker.getRegistration("/");
+        const a = await navigator.serviceWorker.getRegistration("./");
         if (a) return a;
         const b = await navigator.serviceWorker.getRegistration();
         return b || null;
@@ -1166,19 +1144,6 @@
     return { stable, pass, fail, report, overlay, microtests: mt, css, sw: swr };
   }
 
-  // -----------------------------
-  // GitHub config hydrate (local)
-  // -----------------------------
-  function hydrateGhInputs() {
-    const cfg = Storage.get("ghcfg", null);
-    if (!cfg) return;
-    if ($("#ghOwner")) $("#ghOwner").value = cfg.owner || "";
-    if ($("#ghRepo")) $("#ghRepo").value = cfg.repo || "";
-    if ($("#ghBranch")) $("#ghBranch").value = cfg.branch || "main";
-    if ($("#ghPath")) $("#ghPath").value = cfg.path || "app/import/mother_bundle.json";
-    if ($("#ghToken")) $("#ghToken").value = cfg.token || "";
-  }
-
   // =========================================================
   // ✅ FASE A — REAL SCAN / TARGET MAP / INJECT SAFE
   // =========================================================
@@ -1248,7 +1213,9 @@
     const path = cfg && cfg.path ? String(cfg.path) : "";
     if (!path) return null;
 
-    const url = path.startsWith("/") ? path : ("/" + path);
+    // ✅ PATCH: resolve com baseURI (subpath safe)
+    const url = new URL(path, document.baseURI).toString();
+
     try {
       const res = await fetch(url, { cache: "no-store" });
       if (!res.ok) return null;
@@ -1294,6 +1261,7 @@
   // =========================================================
   // ✅ CP1 — Scan em cascata REAL (A -> B -> C)
   //   Regra: A com files=0 => FALHA => cai pro B, depois C.
+  //   PATCH: A não “mente” quando só existem overrides.
   // =========================================================
   async function scanFactoryFiles() {
     const index = {
@@ -1322,10 +1290,12 @@
     // A) runtime vfs
     const vfs = (window.RCF_VFS || window.RCF_FS || window.RCF_VFS_OVERRIDES || window.RCF_FILES || window.RCF_STORE) || null;
     if (vfs) {
+      // ✅ PATCH: mede quantos foram adicionados PELO runtime VFS (sem contar overrides)
+      const baseLen = index.files.length;
+
       const list = await vfsListAll(vfs);
       const paths = (list || []).map(p => normalizePath(p)).filter(Boolean).slice(0, 1200);
 
-      // tenta ler mesmo assim
       for (const p of paths) {
         const content = await vfsRead(vfs, p);
         const txt = (content == null) ? "" : String(content);
@@ -1342,10 +1312,9 @@
         });
       }
 
-      const runtimeCount = index.files.filter(f => String(f.path || "").startsWith("/") && !String(f.path || "").startsWith("/runtime/")).length;
+      const addedByRuntimeVfs = index.files.length - baseLen;
 
-      // ✅ regra CP1: se A e files==0 -> falha e cai pro B/C
-      if (runtimeCount > 0) {
+      if (addedByRuntimeVfs > 0) {
         index.meta.source = "A:runtime_vfs";
         index.meta.count = index.files.length;
         Storage.set("RCF_FILE_INDEX", index);
@@ -1353,7 +1322,6 @@
         return index;
       }
 
-      // fallback obrigatório
       Logger.write("scan:", "A:runtime_vfs files=0 => FALHA", "scan fallback -> mother_bundle");
     }
 
@@ -1412,7 +1380,6 @@
       anchors
     });
 
-    // ✅ garante pelo menos 2 anchors no C (HEAD_END/BODY_END se existirem)
     index.meta.count = index.files.length;
     Storage.set("RCF_FILE_INDEX", index);
     Logger.write("scan:", index.meta.source, "files=" + index.meta.count);
@@ -1421,7 +1388,7 @@
 
   // =========================================================
   // ✅ CP2 — Target map garante >=2
-  //   Se count=0 => força fallback HEAD_END + BODY_END em /app/index.html
+  //   PATCH: fallback prioriza /index.html (bundle real)
   // =========================================================
   function generateTargetMap(fileIndex) {
     const idx = fileIndex || Storage.get("RCF_FILE_INDEX", null);
@@ -1448,7 +1415,6 @@
         });
       }
 
-      // anchors se não tiver markers
       if (!markers.length) {
         const anchors = Array.isArray(f.anchors) ? f.anchors : [];
         for (const a of anchors) {
@@ -1466,7 +1432,6 @@
       }
     }
 
-    // uniq
     const seen = new Set();
     const uniq = [];
     for (const t of targets) {
@@ -1477,29 +1442,32 @@
       if (uniq.length >= 800) break;
     }
 
-    // ✅ CP2 fallback: se não gerou targets suficientes, injeta 2 defaults
+    // ✅ PATCH fallback: tenta /index.html primeiro
     if (uniq.length < 2) {
-      // tenta sempre os alvos clássicos do app principal
-      uniq.push({
-        targetId: "/app/index.html::HEAD_END",
-        path: "/app/index.html",
-        kind: "ANCHOR",
-        offset: 0,
-        anchorId: "HEAD_END",
-        supportedModes: ["INSERT", "REPLACE", "DELETE"],
-        defaultRisk: "low",
-        note: "FORCED_FALLBACK_HEAD_END"
-      });
-      uniq.push({
-        targetId: "/app/index.html::BODY_END",
-        path: "/app/index.html",
-        kind: "ANCHOR",
-        offset: 0,
-        anchorId: "BODY_END",
-        supportedModes: ["INSERT", "REPLACE", "DELETE"],
-        defaultRisk: "medium",
-        note: "FORCED_FALLBACK_BODY_END"
-      });
+      const fallbackPaths = ["/index.html", "/app/index.html"];
+      for (const fp of fallbackPaths) {
+        uniq.push({
+          targetId: `${fp}::HEAD_END`,
+          path: fp,
+          kind: "ANCHOR",
+          offset: 0,
+          anchorId: "HEAD_END",
+          supportedModes: ["INSERT","REPLACE","DELETE"],
+          defaultRisk: "low",
+          note: "FORCED_FALLBACK_HEAD_END"
+        });
+        uniq.push({
+          targetId: `${fp}::BODY_END`,
+          path: fp,
+          kind: "ANCHOR",
+          offset: 0,
+          anchorId: "BODY_END",
+          supportedModes: ["INSERT","REPLACE","DELETE"],
+          defaultRisk: "medium",
+          note: "FORCED_FALLBACK_BODY_END"
+        });
+        if (uniq.length >= 2) break;
+      }
     }
 
     const out = {
@@ -1510,12 +1478,11 @@
     Storage.set("RCF_TARGET_MAP", out);
     Logger.write("targets:", "count=" + out.meta.count, "source=" + out.meta.source);
 
-    // ✅ CP3: dropdown atualiza + auto-seleciona
     try { populateTargetsDropdown(true); } catch {}
     return { ok: true, map: out };
   }
 
-  // ✅ CP3 helper: preenche dropdown e auto-select (primeiro item válido)
+  // ✅ CP3 helper: preenche dropdown e auto-select
   function populateTargetsDropdown(autoSelect = false) {
     const sel = $("#injTarget");
     if (!sel) return;
@@ -1541,7 +1508,6 @@
     }
 
     if (autoSelect) {
-      // escolhe o primeiro option não vazio
       const first = Array.from(sel.options).find(o => (o.value || "").trim());
       if (first) sel.value = first.value;
     }
@@ -1589,8 +1555,8 @@
       return document.documentElement ? document.documentElement.outerHTML : "";
     }
 
-    // fallback: tenta fetch direto (quando alvo for /app/index.html)
-    if (p === "/app/index.html" || p === "/app/styles.css" || p === "/app/app.js") {
+    // fallback: tenta fetch direto
+    if (p === "/app/index.html" || p === "/app/styles.css" || p === "/app/app.js" || p === "/index.html" || p === "/styles.css" || p === "/app.js") {
       try {
         const res = await fetch(p, { cache: "no-store" });
         if (res.ok) return await res.text();
@@ -1627,7 +1593,6 @@
     const s = String(oldText ?? "");
     const pl = String(payload ?? "");
 
-    // ✅ resolve offsets de fallback (HEAD_END/BODY_END) quando offset=0 for placeholder
     const resolveOffset = () => {
       if (!target || target.kind !== "ANCHOR") return Math.max(0, Math.min(s.length, target.offset || 0));
       if ((target.offset || 0) > 0) return Math.max(0, Math.min(s.length, target.offset || 0));
@@ -1691,7 +1656,6 @@
       return { ok: false };
     }
 
-    // ✅ CP3: não pode acusar “target inválido”
     if (!pre.t || !pre.t.targetId) {
       uiMsg("#diffOut", "❌ target inválido");
       Logger.write("apply:", "FAIL target inválido");
@@ -1908,46 +1872,6 @@
       uiMsg("#adminOut", "✅ Zerado (safe). Logs limpos.");
     });
 
-    // Admin GitHub config
-    bindTap($("#btnGhSave"), () => {
-      const cfg = {
-        owner: ($("#ghOwner")?.value || "").trim(),
-        repo: ($("#ghRepo")?.value || "").trim(),
-        branch: ($("#ghBranch")?.value || "main").trim(),
-        path: ($("#ghPath")?.value || "app/import/mother_bundle.json").trim(),
-        token: ($("#ghToken")?.value || "").trim()
-      };
-      Storage.set("ghcfg", cfg);
-      uiMsg("#ghOut", "✅ Config salva (local).");
-      Logger.write("ghcfg saved");
-    });
-
-    bindTap($("#btnGhPull"), async () => {
-      safeSetStatus("Pull…");
-      const txt = await tryFetchLocalBundleFromCfg();
-      if (txt) {
-        Storage.setRaw("mother_bundle", txt);
-        uiMsg("#ghOut", "✅ Pull local OK (bundle carregado do path).");
-        Logger.write("gh pull(local path): ok");
-      } else {
-        uiMsg("#ghOut", "⚠️ Pull local não encontrou bundle no path. (Sem GitHub remoto nesta fase)");
-        Logger.write("gh pull(local path): not found");
-      }
-      setTimeout(() => safeSetStatus("OK ✅"), 800);
-    });
-
-    bindTap($("#btnGhPush"), async () => {
-      const txt = getLocalMotherBundleText();
-      if (!txt) return uiMsg("#ghOut", "⚠️ Nenhum bundle local para “push”.");
-      uiMsg("#ghOut", "✅ Push (safe) = bundle já está salvo local.");
-      Logger.write("gh push(safe): noop");
-    });
-
-    bindTap($("#btnGhRefresh"), () => {
-      const cfg = Storage.get("ghcfg", null);
-      uiMsg("#ghOut", "GitHub SAFE (Fase A). cfg=" + (cfg ? "OK" : "vazio"));
-    });
-
     // Mãe buttons
     bindTap($("#btnMaeLoad"), async () => {
       const MAE = window.RCF_MOTHER || window.RCF_MAE;
@@ -1968,7 +1892,7 @@
       Logger.write("mae check:", safeJsonStringify(s));
     });
 
-    // ✅ FIX: trava reentrada + timeout maior
+    // ✅ FIX: trava reentrada + timeout
     let maeUpdateLock = false;
     bindTap($("#btnMaeUpdate"), async () => {
       const MAE = window.RCF_MOTHER || window.RCF_MAE;
@@ -2025,7 +1949,6 @@
       try {
         const idx = await scanFactoryFiles();
         uiMsg("#scanOut", `✅ Scan OK\nsource=${idx.meta.source}\nfiles=${idx.meta.count}\nscannedAt=${idx.meta.scannedAt}`);
-        // log CP1 obrigatório
         Logger.write("CP1 scan:", `source=${idx.meta.source}`, `files=${idx.meta.count}`);
       } catch (e) {
         uiMsg("#scanOut", "❌ Scan falhou: " + (e?.message || e));
@@ -2042,16 +1965,13 @@
         return;
       }
       uiMsg("#scanOut", `✅ Target Map OK\ncount=${r.map.meta.count}\nsource=${r.map.meta.source}\ncreatedAt=${r.map.meta.createdAt}`);
-      // log CP2 obrigatório
       Logger.write("CP2 targets:", "count=" + r.map.meta.count);
 
-      // CP3: dropdown + auto select
       try {
         populateTargetsDropdown(true);
         Logger.write("CP3 ui:", "dropdown updated", "auto-selected=" + String($("#injTarget")?.value || ""));
       } catch {}
 
-      // safety: se não selecionou, seleciona o 1º
       const sel = $("#injTarget");
       if (sel && !String(sel.value || "").trim()) {
         const first = Array.from(sel.options).find(o => (o.value || "").trim());
@@ -2073,7 +1993,6 @@
     bindTap($("#btnApplyInject"), async () => {
       safeSetStatus("Apply…");
       const ok = await injectorApplySafe();
-      // log CP3 obrigatório (apply)
       Logger.write("CP3 apply:", ok && ok.ok ? "OK" : "FAIL", "target=" + String($("#injTarget")?.value || ""));
       setTimeout(() => safeSetStatus("OK ✅"), 900);
     });
@@ -2114,7 +2033,6 @@
       Stability.install();
       renderShell();
       bindUI();
-      hydrateGhInputs();
       hydrateUIFromState();
 
       installGuardsOnce();
