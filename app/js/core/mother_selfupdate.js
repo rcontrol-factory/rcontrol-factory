@@ -1,8 +1,7 @@
-/* app/js/core/mother_selfupdate.js — v3.1
-   - iOS timeout+retry
-   - root fix (/app)
-   - bundle em memória
-   - PERSISTÊNCIA REAL EM IndexedDB (mother_bundle_local)
+/* app/js/core/mother_selfupdate.js — v3.2
+   - Mantém iOS timeout+retry + root /app + bundle mem
+   - ADICIONA: persistência real bundle_local (IDB) + meta no localStorage
+   - ADICIONA: validação forte do bundleText (nunca sobrescreve bundle bom com texto "Arquivo")
 */
 
 (() => {
@@ -58,7 +57,6 @@
     }
 
     const ROOT = getMotherRoot();
-
     if (p.startsWith(ROOT + "/")) return p;
     if (p.startsWith("/js/")) return ROOT + p;
 
@@ -99,9 +97,10 @@
   }
 
   async function putWithRetry(putFn, path, content, contentType) {
-    const base = isIOS() ? 15000 : 5000;
-    const timeouts = [base, base + 2000, base + 4000];
-    const backs = [300, 800, 1500];
+    // iOS às vezes precisa mais tempo (index.html é o mais pesado)
+    const base = isIOS() ? 20000 : 6000; // ↑ leve aumento (sem gambiarra)
+    const timeouts = [base, base + 5000, base + 10000];
+    const backs = [400, 900, 1800];
 
     for (let i = 0; i < 3; i++) {
       try {
@@ -120,44 +119,63 @@
     throw new Error(`Falhou: put after retries: ${path}`);
   }
 
+  function assertLooksLikeJson(text) {
+    const t = String(text || "").trim();
+    if (!t) return false;
+    // JSON de bundle sempre começa com "{"
+    if (t[0] !== "{") return false;
+    // evita HTML
+    if (t.startsWith("<!DOCTYPE") || t.startsWith("<html")) return false;
+    return true;
+  }
+
+  async function persistBundleLocal(meta, files) {
+    // memória (source B.1)
+    try {
+      window.__MAE_BUNDLE_MEM__ = { meta: meta || null, files };
+    } catch {}
+
+    // meta pequena no localStorage (compat)
+    try {
+      window.RCF_STORAGE?.set?.("mother_bundle_meta", meta || null);
+    } catch {}
+
+    // persistência real no IDB
+    try {
+      if (typeof window.RCF_STORAGE?.put === "function") {
+        const ok = await window.RCF_STORAGE.put("mother_bundle_local", { meta: meta || null, files });
+        log(ok ? "ok" : "warn", `Mãe: bundle_local persist ${ok ? "OK" : "FALHOU"} (files=${Object.keys(files).length})`);
+        return ok;
+      } else {
+        log("warn", "Mãe: RCF_STORAGE.put não existe — não persistiu bundle_local");
+      }
+    } catch (e) {
+      log("error", "Mãe: erro ao persistir bundle_local -> " + (e?.message || e));
+    }
+    return false;
+  }
+
   async function applyBundle(bundleText) {
+    if (!assertLooksLikeJson(bundleText)) {
+      const head = String(bundleText || "").slice(0, 80).replace(/\s+/g, " ");
+      throw new Error(`Bundle não-JSON recebido (head="${head}")`);
+    }
+
     let bundle;
     try { bundle = JSON.parse(bundleText); }
     catch (e) { throw new Error("Bundle JSON inválido: " + (e?.message || e)); }
 
     const files = bundle?.files || bundle;
     if (!files || typeof files !== "object") throw new Error("Bundle sem 'files'.");
+    const entries = Object.entries(files);
+    if (entries.length === 0) throw new Error("Bundle 'files' vazio.");
 
-    // ===== GUARDA EM MEMÓRIA =====
-    try {
-      window.__MAE_BUNDLE_MEM__ = { meta: bundle?.meta || null, files };
-    } catch {}
-
-    // ===== PERSISTÊNCIA REAL (SCAN B) =====
-    try {
-      const dbPut =
-        window.RCF_STORAGE?.put ||
-        window.RCF_DB?.put ||
-        window.RCF_IDB?.put;
-
-      if (typeof dbPut === "function") {
-        await dbPut("mother_bundle_local", {
-          meta: bundle?.meta || null,
-          files
-        });
-
-        log("ok", `Mãe: bundle persistido em IndexedDB (${Object.keys(files).length} files)`);
-      } else {
-        log("warn", "Mãe: API de storage não encontrada — bundle não persistido");
-      }
-    } catch (e) {
-      log("error", "Mãe: erro ao persistir bundle_local -> " + (e?.message || e));
-    }
+    // ✅ PERSISTE ANTES DE APLICAR OVERRIDES
+    await persistBundleLocal(bundle?.meta || null, files);
 
     const put = window.RCF_VFS_OVERRIDES?.put;
     if (typeof put !== "function") throw new Error("RCF_VFS_OVERRIDES.put não existe.");
 
-    const entries = Object.entries(files);
     log("info", `Mãe: bundle tem ${entries.length} item(ns). root=${getMotherRoot()}`);
 
     let count = 0;
@@ -177,6 +195,7 @@
 
       log("info", `Mãe: aplicando -> ${normPath}`);
       await putWithRetry(put, normPath, content, contentType);
+
       count++;
     }
 
@@ -190,6 +209,7 @@
         motherRoot: getMotherRoot(),
         hasGh: !!window.RCF_GH_SYNC?.pull,
         hasOverrides: typeof window.RCF_VFS_OVERRIDES?.put === "function",
+        hasStoragePut: typeof window.RCF_STORAGE?.put === "function",
         swSupported: !!navigator.serviceWorker,
         swControlled: !!navigator.serviceWorker?.controller,
         ua: navigator.userAgent,
@@ -199,6 +219,7 @@
     async updateFromGitHub() {
       if (!window.RCF_GH_SYNC?.pull) throw new Error("GitHub Sync ausente: RCF_GH_SYNC.pull()");
       log("info", "Mãe: puxando bundle do GitHub...");
+
       const bundleText = await window.RCF_GH_SYNC.pull();
 
       log("info", "Mãe: aplicando overrides...");
@@ -226,5 +247,5 @@
   window.RCF_MOTHER = api;
   window.RCF_MAE = api;
 
-  log("ok", "mother_selfupdate.js loaded (v3.1)");
+  log("ok", "mother_selfupdate.js loaded (v3.2)");
 })();
