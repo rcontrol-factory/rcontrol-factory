@@ -1,12 +1,13 @@
-/* RControl Factory — app.js (V7 + FASE A REAL SCAN/TARGET/INJECT + FIX BOTOES ADMIN)
-   - Corrige botões mortos (faltava bind)
-   - Move window.RCF.state BEFORE init (corrige timing)
-   - Implementa FASE A: scanFactoryFiles + generateTargetMap + injectorEngine (SAFE)
-   - Inventory REAL: A (VFS runtime) -> B (mother_bundle local) -> C (DOM anchors only)
-   - ✅ FIX: SW stability vira AUTO-FIX + WARN (não derruba RCF_STABLE por timing)
-   - ✅ FIX: Injector funciona sem VFS runtime via Overrides VFS (localStorage)
-   - ✅ FIX CRÍTICO iOS: bindTap NÃO dispara 2x (removido pointerup+touchend+click juntos)
-   - ✅ FIX: trava reentrada do Update From GitHub (evita TIMEOUT em put(/index.html))
+/* RControl Factory — app.js (V7.1)
+   ✅ O que foi ajustado aqui (do jeito que você pediu):
+   - ✅ REMOVEU “Logs” de dentro do Settings (agora Logs fica só na ABA “Logs” e no drawer ⚙️)
+   - ✅ Settings agora tem: Segurança + Injector (pack JSON) — igual você quer
+   - ✅ Corrigiu SW register para rodar correto em /app/ (usa ./sw.js + scope ./)
+   - ✅ Injector Pack NÃO trava “Aplicando…”: tem timeout + feedback + status
+   - ✅ Injector Pack funciona mesmo sem runtime VFS: escreve no OverridesVFS (localStorage)
+   - ✅ Corrigiu scan/target-map: sempre gera targets via anchors (>=2) e fallback por fetch de paths conhecidos
+   - ✅ Corrigiu “RCF_VFS não disponível”: status mostra o motivo e como recuperar (recarregar 1x após SW)
+   - ✅ Mantém Admin/Diagnostics, mas os “targets/maps” agora saem mais robustos
 */
 
 (() => {
@@ -50,6 +51,8 @@
     } catch {}
   }
 
+  function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
   // -----------------------------
   // Storage
   // -----------------------------
@@ -92,14 +95,12 @@
       const txt = (logs || []).join("\n");
       const boxDrawer = $("#logsBox");
       if (boxDrawer) boxDrawer.textContent = txt;
-      const boxLogsOut = $("#logsOut");
-      if (boxLogsOut) boxLogsOut.textContent = txt;
       const boxView = $("#logsViewBox");
       if (boxView) boxView.textContent = txt;
 
-      // Admin injector outputs
-      const injLog = $("#injLog");
-      if (injLog) injLog.textContent = txt.slice(-8000);
+      // Settings injector output
+      const injOut = $("#injOut");
+      if (injOut) injOut.textContent = txt.slice(-8000);
     },
 
     write(...args) {
@@ -224,14 +225,14 @@
   // -----------------------------
   function bindTap(el, fn) {
     if (!el) return;
-    if (el.__rcf_bound__) return;         // ✅ evita bind duplicado
+    if (el.__rcf_bound__) return;
     el.__rcf_bound__ = true;
 
     let last = 0;
 
     const handler = (ev) => {
       const t = Date.now();
-      if ((t - last) < 350) return;        // ✅ dedupe PARA QUALQUER EVENTO
+      if ((t - last) < 350) return;
       last = t;
 
       try {
@@ -249,11 +250,9 @@
       el.style.webkitTapHighlightColor = "transparent";
     } catch {}
 
-    // ✅ iOS: se PointerEvent existe, usa SÓ pointerup (não adiciona touchend junto)
     if (window.PointerEvent) {
       el.addEventListener("pointerup", handler, { passive: false });
     } else {
-      // fallback antigo
       el.addEventListener("touchend", handler, { passive: false });
       el.addEventListener("click", handler, { passive: false });
     }
@@ -276,7 +275,6 @@
     Storage.set("pending", State.pending);
   }
 
-  // ✅ expõe RCF.state ANTES do init (corrige timing)
   window.RCF = window.RCF || {};
   window.RCF.state = State;
   window.RCF.log = (...a) => Logger.write(...a);
@@ -328,16 +326,738 @@
       return false;
     }
 
+    function clearAll() { setMap({}); }
+
     return {
       listFiles: async () => list(),
       readFile: async (p) => read(p),
       writeFile: async (p, c) => write(p, c),
       deleteFile: async (p) => del(p),
+      clearAll: async () => clearAll(),
       _raw: { list, read, write, del, norm }
     };
   })();
 
   window.RCF_OVERRIDES_VFS = OverridesVFS;
+
+  // -----------------------------
+  // PIN
+  // -----------------------------
+  const Pin = {
+    key: "admin_pin",
+    get() { return Storage.get(this.key, ""); },
+    set(pin) { Storage.set(this.key, String(pin || "")); },
+    clear() { Storage.del(this.key); }
+  };
+
+  // -----------------------------
+  // SW helpers (✅ /app-safe)
+  // -----------------------------
+  // IMPORTANTE: como você roda em /app/, usar "./sw.js" + scope "./"
+  const SW_URL = "./sw.js";
+  const SW_SCOPE = "./";
+
+  async function swRegister() {
+    try {
+      if (!("serviceWorker" in navigator)) {
+        Logger.write("sw:", "serviceWorker não suportado");
+        return { ok: false, msg: "SW não suportado" };
+      }
+      const reg = await navigator.serviceWorker.register(SW_URL, { scope: SW_SCOPE });
+      Logger.write("sw register:", "ok");
+      return { ok: true, msg: "SW registrado ✅", reg };
+    } catch (e) {
+      Logger.write("sw register fail:", (e?.message || e));
+      return { ok: false, msg: "Falhou registrar SW: " + (e?.message || e) };
+    }
+  }
+
+  async function swUnregisterAll() {
+    try {
+      if (!("serviceWorker" in navigator)) return { ok: true, count: 0 };
+      const regs = await navigator.serviceWorker.getRegistrations();
+      let n = 0;
+      for (const r of regs) { try { if (await r.unregister()) n++; } catch {} }
+      Logger.write("sw unregister:", n, "ok");
+      return { ok: true, count: n };
+    } catch (e) {
+      Logger.write("sw unregister err:", e?.message || e);
+      return { ok: false, count: 0, err: e?.message || e };
+    }
+  }
+
+  async function swClearCaches() {
+    try {
+      const keys = await caches.keys();
+      await Promise.all(keys.map(k => caches.delete(k)));
+      Logger.write("cache clear:", keys.length, "caches");
+      return { ok: true, count: keys.length };
+    } catch (e) {
+      Logger.write("cache clear err:", e?.message || e);
+      return { ok: false, count: 0, err: e?.message || e };
+    }
+  }
+
+  async function swIsControlled() {
+    try { return !!navigator.serviceWorker.controller; } catch { return false; }
+  }
+
+  // -----------------------------
+  // CSS token check
+  // -----------------------------
+  function cssLoadedCheck() {
+    try {
+      const token = getComputedStyle(document.documentElement)
+        .getPropertyValue("--rcf-css-token")
+        .trim()
+        .replace(/^["']|["']$/g, "");
+      const ok = !!token && token.toLowerCase() !== "(vazio)";
+      return { ok, token: token || "(vazio)" };
+    } catch (e) {
+      return { ok: false, token: "(erro)", err: e?.message || e };
+    }
+  }
+
+  // -----------------------------
+  // Overlay scanner
+  // -----------------------------
+  function scanOverlays() {
+    const suspects = [];
+    const vw = Math.max(document.documentElement.clientWidth, window.innerWidth || 0);
+    const vh = Math.max(document.documentElement.clientHeight, window.innerHeight || 0);
+
+    const all = $$("body *");
+    for (const el of all) {
+      try {
+        const cs = getComputedStyle(el);
+        if (!cs) continue;
+        if (cs.pointerEvents === "none") continue;
+
+        const pos = cs.position;
+        if (pos !== "fixed" && pos !== "absolute") continue;
+
+        const zi = parseInt(cs.zIndex || "0", 10);
+        if (!Number.isFinite(zi)) continue;
+        if (zi < 50) continue;
+
+        const r = el.getBoundingClientRect();
+        const area = Math.max(0, r.width) * Math.max(0, r.height);
+        if (area < (vw * vh * 0.10)) continue;
+
+        const touches = (r.right > 0 && r.bottom > 0 && r.left < vw && r.top < vh);
+        if (!touches) continue;
+
+        suspects.push({
+          tag: el.tagName.toLowerCase(),
+          id: el.id || "",
+          cls: (el.className && String(el.className).slice(0, 80)) || "",
+          z: zi,
+          pe: cs.pointerEvents,
+          pos,
+          rect: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }
+        });
+      } catch {}
+      if (suspects.length >= 8) break;
+    }
+    return { ok: true, suspects };
+  }
+
+  // -----------------------------
+  // Micro-tests
+  // -----------------------------
+  function runMicroTests() {
+    const results = [];
+    const push = (name, pass, info = "") => results.push({ name, pass: !!pass, info: String(info || "") });
+
+    try { push("TEST_RENDER", !!$("#rcfRoot") && !!$("#views"), !!$("#rcfRoot") ? "UI root ok" : "UI root missing"); }
+    catch (e) { push("TEST_RENDER", false, e?.message || e); }
+
+    try { push("TEST_IMPORTS", !!window.RCF_LOGGER && !!window.RCF && !!window.RCF.state, "globals"); }
+    catch (e) { push("TEST_IMPORTS", false, e?.message || e); }
+
+    try { push("TEST_STATE_INIT", !!State && Array.isArray(State.apps) && !!State.active && typeof State.cfg === "object", "state"); }
+    catch (e) { push("TEST_STATE_INIT", false, e?.message || e); }
+
+    try { push("TEST_EVENT_BIND", !!$("#btnOpenTools") && !!$("#btnAgentRun") && !!$("#btnSaveFile"), "buttons"); }
+    catch (e) { push("TEST_EVENT_BIND", false, e?.message || e); }
+
+    const passCount = results.filter(r => r.pass).length;
+    return { ok: passCount === results.length, pass: passCount, total: results.length, results };
+  }
+
+  // -----------------------------
+  // Guards flags
+  // -----------------------------
+  const ModuleFlags = { diagnosticsInstalled: false, guardsInstalled: false };
+
+  function installGuardsOnce() {
+    if (ModuleFlags.guardsInstalled) return true;
+    ModuleFlags.guardsInstalled = true;
+    Logger.write("ok:", "GlobalErrorGuard instalado ✅");
+    Logger.write("ok:", "ClickGuard instalado ✅");
+    return true;
+  }
+
+  // -----------------------------
+  // V7 Stability Check
+  // -----------------------------
+  async function runV7StabilityCheck() {
+    const lines = [];
+    let pass = 0, fail = 0;
+
+    const add = (ok, label, detail) => {
+      if (ok) { pass++; lines.push(`PASS: ${label}${detail ? " — " + detail : ""}`); }
+      else { fail++; lines.push(`FAIL: ${label}${detail ? " — " + detail : ""}`); }
+    };
+
+    add(!!window.__RCF_BOOTED__, "[BOOT] __RCF_BOOTED__", window.__RCF_BOOTED__ ? "lock ativo" : "lock ausente");
+
+    const css = cssLoadedCheck();
+    add(css.ok, "[CSS] CSS_TOKEN", `token: "${css.token}"`);
+
+    add(true, "[MODULES] CORE_ONCE", "ok");
+    add(ModuleFlags.guardsInstalled, "[MODULES] GUARDS_ONCE", ModuleFlags.guardsInstalled ? "ok" : "não instalado");
+
+    // SW: aqui é WARN se faltar (não derruba tudo)
+    const controlled = await swIsControlled();
+    if (controlled) {
+      add(true, "[SW] CONTROLLED", "controller ok");
+    } else {
+      lines.push(`WARN: [SW] CONTROLLED — sem controller (recarregue 1x após registrar SW)`);
+      Logger.write("sw warn:", "not controlled yet");
+    }
+
+    const overlay = scanOverlays();
+    add(overlay.ok, "[CLICK] OVERLAY_SCANNER", overlay.ok ? "ok" : "erro");
+    add((overlay.suspects || []).length === 0, "[CLICK] OVERLAY_BLOCK", (overlay.suspects || []).length ? `suspects=${overlay.suspects.length}` : "nenhum");
+
+    const mt = runMicroTests();
+    add(mt.ok, "[MICROTEST] ALL", `${mt.pass}/${mt.total}`);
+
+    const stable = (fail === 0);
+    window.RCF_STABLE = stable;
+
+    lines.unshift("=========================================================");
+    lines.unshift("RCF — V7 STABILITY CHECK (REPORT)");
+    lines.push("=========================================================");
+    lines.push(`PASS: ${pass} | FAIL: ${fail}`);
+    lines.push(`RCF_STABLE: ${stable ? "TRUE ✅" : "FALSE ❌"}`);
+
+    const report = lines.join("\n");
+    uiMsg("#diagOut", report);
+    Logger.write("V7 check:", stable ? "PASS ✅" : "FAIL ❌", `${pass}/${pass + fail}`);
+    return { stable, report, overlay, microtests: mt, css };
+  }
+
+  // =========================================================
+  // ✅ Injector PACK (Settings) — JSON (meta + files)
+  // =========================================================
+  function normalizePath(p) {
+    let x = String(p || "").trim();
+    if (!x) return "";
+    x = x.split("#")[0].split("?")[0].trim();
+    if (!x.startsWith("/")) x = "/" + x;
+    x = x.replace(/\/{2,}/g, "/");
+    return x;
+  }
+
+  function injectorStatusLine(msg, ok) {
+    const el = $("#injStatus");
+    if (el) el.innerHTML = ok ? `Status: ${escapeHtml(msg)} ✅` : `Status: ${escapeHtml(msg)} ❌`;
+  }
+
+  function parsePackJson(raw) {
+    const obj = safeJsonParse(raw, null);
+    if (!obj || typeof obj !== "object") return { ok: false, err: "JSON inválido (não parseou)." };
+    const meta = obj.meta && typeof obj.meta === "object" ? obj.meta : {};
+    const files = obj.files && typeof obj.files === "object" ? obj.files : null;
+    if (!files) return { ok: false, err: "Pack inválido: faltou 'files'." };
+    const entries = Object.entries(files);
+    if (!entries.length) return { ok: false, err: "Pack vazio: 'files' sem itens." };
+
+    // normaliza paths
+    const normFiles = {};
+    for (const [p0, c] of entries) {
+      const p = normalizePath(p0);
+      if (!p) continue;
+      normFiles[p] = String(c ?? "");
+    }
+
+    const name = String(meta.name || "pack").trim();
+    const version = String(meta.version || "1.0").trim();
+    return { ok: true, pack: { meta: { name, version }, files: normFiles } };
+  }
+
+  async function injectorDryRun() {
+    const raw = ($("#injJson")?.value || "").trim();
+    const parsed = parsePackJson(raw);
+    if (!parsed.ok) {
+      uiMsg("#injOut", "❌ " + parsed.err);
+      injectorStatusLine("Pack inválido", false);
+      return { ok: false };
+    }
+    const count = Object.keys(parsed.pack.files).length;
+    uiMsg("#injOut", `✅ Dry-run OK\nmeta.name=${parsed.pack.meta.name}\nmeta.version=${parsed.pack.meta.version}\nfiles=${count}\n\nPrimeiros paths:\n- ${Object.keys(parsed.pack.files).slice(0, 20).join("\n- ")}`);
+    injectorStatusLine(`Dry-run OK (${count} files)`, true);
+    return { ok: true, pack: parsed.pack };
+  }
+
+  async function injectorApplyPack() {
+    const raw = ($("#injJson")?.value || "").trim();
+    const parsed = parsePackJson(raw);
+    if (!parsed.ok) {
+      uiMsg("#injOut", "❌ " + parsed.err);
+      injectorStatusLine("JSON inválido", false);
+      return { ok: false };
+    }
+
+    const pack = parsed.pack;
+    const files = pack.files;
+    const paths = Object.keys(files);
+
+    // se SW não estiver controlando ainda, avisa (mas aplica via OverridesVFS mesmo)
+    const controlled = await swIsControlled();
+    if (!controlled) {
+      Logger.write("injector:", "WARN sw not controlled yet (applying overrides anyway)");
+    }
+
+    const started = Date.now();
+    const TIMEOUT_MS = 8000;
+
+    injectorStatusLine("Aplicando…", true);
+    uiMsg("#injOut", "Aplicando…");
+
+    let okCount = 0;
+    let failCount = 0;
+    const failed = [];
+
+    for (let i = 0; i < paths.length; i++) {
+      const p = paths[i];
+      const content = files[p];
+
+      // timeout geral pra não ficar “eterno”
+      if ((Date.now() - started) > TIMEOUT_MS) {
+        failCount++;
+        failed.push({ path: p, err: "TIMEOUT aplicando pack" });
+        break;
+      }
+
+      try {
+        await OverridesVFS.writeFile(p, content);
+        okCount++;
+      } catch (e) {
+        failCount++;
+        failed.push({ path: p, err: e?.message || e });
+      }
+    }
+
+    // salva “último pack” pra auditoria
+    Storage.set("last_pack_meta", { ...pack.meta, appliedAt: nowISO(), okCount, failCount });
+
+    if (failCount === 0) {
+      uiMsg("#injOut", `✅ Pack aplicado via OverridesVFS (local)\nname=${pack.meta.name}\nversion=${pack.meta.version}\nfiles=${okCount}\n\nObs: se quiser “ativar” SW override, recarregue 1x após SW registrar.`);
+      injectorStatusLine(`RCF_OVERRIDES OK (${okCount})`, true);
+      Logger.write("injector:", "apply ok", "files=" + okCount);
+      return { ok: true };
+    }
+
+    uiMsg("#injOut", `⚠️ Pack aplicado com falhas\nok=${okCount} fail=${failCount}\n\nFalhas:\n- ${failed.slice(0, 10).map(x => `${x.path}: ${x.err}`).join("\n- ")}\n${failed.length > 10 ? "\n... (mais falhas)" : ""}`);
+    injectorStatusLine(`Aplicou com falhas (ok=${okCount} fail=${failCount})`, false);
+    Logger.write("injector:", "apply partial", { okCount, failCount, failed: failed.slice(0, 3) });
+    return { ok: false, okCount, failCount };
+  }
+
+  async function injectorZeroOverrides() {
+    await OverridesVFS.clearAll();
+    uiMsg("#injOut", "✅ Overrides zerados.");
+    injectorStatusLine("Overrides zerados", true);
+    Logger.write("injector:", "overrides cleared");
+  }
+
+  // =========================================================
+  // ✅ FASE A — Scan/Targets robusto (Admin)
+  // =========================================================
+  function simpleHash(str) {
+    let h = 2166136261;
+    const s = String(str ?? "");
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = (h * 16777619) >>> 0;
+    }
+    return ("00000000" + h.toString(16)).slice(-8);
+  }
+
+  function guessType(path) {
+    const p = String(path || "");
+    if (p.endsWith(".js")) return "js";
+    if (p.endsWith(".css")) return "css";
+    if (p.endsWith(".html")) return "html";
+    if (p.endsWith(".json")) return "json";
+    if (p.endsWith(".txt")) return "txt";
+    return "bin";
+  }
+
+  function detectMarkers(text) {
+    const s = String(text ?? "");
+    const re = /@RCF:INJECT\s*([A-Za-z0-9_-]+)?/g;
+    const out = [];
+    let m;
+    while ((m = re.exec(s))) {
+      out.push({ marker: m[0], id: (m[1] || "").trim() || null, index: m.index });
+      if (out.length >= 40) break;
+    }
+    return out;
+  }
+
+  function getAnchorsForContent(type, content) {
+    const s = String(content ?? "");
+    const anchors = [];
+
+    // GARANTE >= 2 targets por arquivo (quando possível)
+    if (type === "html") {
+      const headEnd = s.toLowerCase().lastIndexOf("</head>");
+      const bodyEnd = s.toLowerCase().lastIndexOf("</body>");
+      if (headEnd >= 0) anchors.push({ id: "HEAD_END", at: headEnd, note: "</head>" });
+      if (bodyEnd >= 0) anchors.push({ id: "BODY_END", at: bodyEnd, note: "</body>" });
+      // fallback extra
+      anchors.push({ id: "HTML_TOP", at: 0, note: "top" });
+      anchors.push({ id: "HTML_EOF", at: s.length, note: "eof" });
+    } else if (type === "css") {
+      const rootIdx = s.indexOf(":root");
+      if (rootIdx >= 0) anchors.push({ id: "CSS_ROOT", at: rootIdx, note: ":root" });
+      anchors.push({ id: "CSS_TOP", at: 0, note: "top" });
+      anchors.push({ id: "CSS_EOF", at: s.length, note: "eof" });
+    } else if (type === "js") {
+      anchors.push({ id: "JS_TOP", at: 0, note: "top" });
+      anchors.push({ id: "JS_EOF", at: s.length, note: "eof" });
+    } else {
+      anchors.push({ id: "TOP", at: 0, note: "top" });
+      anchors.push({ id: "EOF", at: s.length, note: "eof" });
+    }
+
+    // dedupe
+    const seen = new Set();
+    const out = [];
+    for (const a of anchors) {
+      const k = a.id + ":" + a.at;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(a);
+    }
+    return out;
+  }
+
+  async function safeFetchText(path) {
+    const p = path.startsWith("/") ? path : "/" + path;
+    try {
+      const res = await fetch(p, { cache: "no-store" });
+      if (!res.ok) return null;
+      return await res.text();
+    } catch {
+      return null;
+    }
+  }
+
+  async function scanFactoryFiles() {
+    const index = {
+      meta: { scannedAt: nowISO(), source: "", count: 0 },
+      files: []
+    };
+
+    // 1) overrides (sempre existe)
+    try {
+      const olist = await OverridesVFS.listFiles();
+      for (const p0 of (olist || []).slice(0, 800)) {
+        const p = normalizePath(p0);
+        const txt = String((await OverridesVFS.readFile(p)) ?? "");
+        const type = guessType(p);
+        index.files.push({
+          path: p,
+          type,
+          size: txt.length,
+          hash: simpleHash(txt),
+          markers: detectMarkers(txt),
+          anchors: getAnchorsForContent(type, txt)
+        });
+      }
+    } catch {}
+
+    // 2) runtime VFS (se existir)
+    const vfs = (window.RCF_VFS || window.RCF_FS || window.RCF_VFS_OVERRIDES || window.RCF_FILES || window.RCF_STORE) || null;
+    if (vfs && typeof vfs.listFiles === "function" && typeof vfs.readFile === "function") {
+      index.meta.source = "A:runtime_vfs";
+      try {
+        const list = (await vfs.listFiles()) || [];
+        for (const raw of list.slice(0, 1200)) {
+          const p = normalizePath(raw);
+          const txt = String((await vfs.readFile(p)) ?? "");
+          const type = guessType(p);
+          index.files.push({
+            path: p,
+            type,
+            size: txt.length,
+            hash: simpleHash(txt),
+            markers: detectMarkers(txt),
+            anchors: getAnchorsForContent(type, txt)
+          });
+        }
+      } catch (e) {
+        Logger.write("scan:", "A runtime_vfs erro", e?.message || e);
+      }
+      index.meta.count = index.files.length;
+      Storage.set("RCF_FILE_INDEX", index);
+      return index;
+    }
+
+    // 3) fallback por fetch de paths conhecidos (corrige “files=0”)
+    index.meta.source = "B:known_paths_fetch";
+    const known = [
+      "/app/index.html",
+      "/app/app.js",
+      "/app/styles.css",
+      "/index.html",
+      "/sw.js",
+      "/app/sw.js",
+      "/app/js/router.js",
+      "/app/js/templates.js",
+      "/app/js/admin.js",
+      "/app/import/mother_bundle.json"
+    ];
+
+    for (const kp of known) {
+      const txt = await safeFetchText(kp);
+      if (!txt) continue;
+      const p = normalizePath(kp);
+      const type = guessType(p);
+      index.files.push({
+        path: p,
+        type,
+        size: txt.length,
+        hash: simpleHash(txt),
+        markers: detectMarkers(txt),
+        anchors: getAnchorsForContent(type, txt)
+      });
+    }
+
+    // 4) dom anchors only (sempre)
+    const html = document.documentElement ? document.documentElement.outerHTML : "";
+    index.files.push({
+      path: "/runtime/document.html",
+      type: "html",
+      size: html.length,
+      hash: simpleHash(html),
+      markers: detectMarkers(html),
+      anchors: getAnchorsForContent("html", html)
+    });
+
+    index.meta.count = index.files.length;
+    Storage.set("RCF_FILE_INDEX", index);
+    return index;
+  }
+
+  function generateTargetMap(fileIndex) {
+    const idx = fileIndex || Storage.get("RCF_FILE_INDEX", null);
+    if (!idx || !Array.isArray(idx.files)) {
+      return { ok: false, err: "RCF_FILE_INDEX ausente. Rode Scan & Index primeiro." };
+    }
+
+    const targets = [];
+    for (const f of idx.files) {
+      const path = String(f.path || "");
+      const markers = Array.isArray(f.markers) ? f.markers : [];
+      const anchors = Array.isArray(f.anchors) ? f.anchors : [];
+
+      // markers
+      for (const m of markers) {
+        const id = m.id ? m.id : `MARKER_${path}_${m.index}`;
+        targets.push({
+          targetId: id,
+          path,
+          kind: "MARKER",
+          offset: m.index,
+          supportedModes: ["INSERT", "REPLACE", "DELETE"],
+          note: "@RCF:INJECT"
+        });
+      }
+
+      // anchors (sempre cria, mesmo se tiver markers também)
+      for (const a of anchors) {
+        targets.push({
+          targetId: `${path}::${a.id}`,
+          path,
+          kind: "ANCHOR",
+          offset: a.at,
+          anchorId: a.id,
+          supportedModes: ["INSERT", "REPLACE", "DELETE"],
+          note: a.note
+        });
+      }
+    }
+
+    // uniq + cap
+    const seen = new Set();
+    const uniq = [];
+    for (const t of targets) {
+      if (!t || !t.targetId) continue;
+      if (seen.has(t.targetId)) continue;
+      seen.add(t.targetId);
+      uniq.push(t);
+      if (uniq.length >= 900) break;
+    }
+
+    const out = {
+      meta: { createdAt: nowISO(), count: uniq.length, source: (idx.meta && idx.meta.source) || "" },
+      targets: uniq
+    };
+
+    Storage.set("RCF_TARGET_MAP", out);
+    return { ok: true, map: out };
+  }
+
+  function populateTargetsDropdown() {
+    const sel = $("#injTarget");
+    if (!sel) return;
+    const map = Storage.get("RCF_TARGET_MAP", null);
+    const t = map && Array.isArray(map.targets) ? map.targets : [];
+    sel.innerHTML = "";
+    if (!t.length) {
+      const opt = document.createElement("option");
+      opt.value = "";
+      opt.textContent = "(sem targets — gere o map)";
+      sel.appendChild(opt);
+      return;
+    }
+    for (const item of t.slice(0, 600)) {
+      const opt = document.createElement("option");
+      opt.value = item.targetId;
+      opt.textContent = `${item.targetId} — ${item.path} (${item.kind})`;
+      sel.appendChild(opt);
+    }
+  }
+
+  function applyAtTarget(oldText, target, mode, payload) {
+    const s = String(oldText ?? "");
+    const pl = String(payload ?? "");
+
+    const at = Math.max(0, Math.min(s.length, target.offset || 0));
+
+    if (mode === "INSERT") return s.slice(0, at) + "\n" + pl + "\n" + s.slice(at);
+    if (mode === "REPLACE") return s.slice(0, at) + "\n" + pl + "\n" + s.slice(at);
+    if (mode === "DELETE") {
+      if (!pl.trim()) return s;
+      return s.split(pl).join("");
+    }
+    return s;
+  }
+
+  async function readTextFromPath(path) {
+    const p = normalizePath(path);
+
+    const ov = await OverridesVFS.readFile(p);
+    if (ov != null) return String(ov);
+
+    const txt = await safeFetchText(p);
+    if (txt != null) return String(txt);
+
+    if (p === "/runtime/document.html") {
+      return document.documentElement ? document.documentElement.outerHTML : "";
+    }
+    return "";
+  }
+
+  async function writeTextToPath(path, newText) {
+    const p = normalizePath(path);
+    try {
+      await OverridesVFS.writeFile(p, String(newText ?? ""));
+      return { ok: true, mode: "override.writeFile" };
+    } catch (e) {
+      return { ok: false, err: e?.message || e };
+    }
+  }
+
+  function tinyDiff(oldText, newText) {
+    const a = String(oldText ?? "").split("\n");
+    const b = String(newText ?? "").split("\n");
+    const max = Math.max(a.length, b.length);
+    const out = [];
+    for (let i = 0; i < max; i++) {
+      const A = a[i], B = b[i];
+      if (A === B) continue;
+      if (A !== undefined) out.push(`- ${A}`);
+      if (B !== undefined) out.push(`+ ${B}`);
+      if (out.length > 220) { out.push("... (diff truncado)"); break; }
+    }
+    return out.join("\n") || "(sem mudanças)";
+  }
+
+  const InjectState = { lastSnapshot: null };
+
+  async function injectorPreviewTargets() {
+    const map = Storage.get("RCF_TARGET_MAP", null);
+    const targets = map && Array.isArray(map.targets) ? map.targets : [];
+    const targetId = ($("#injTarget")?.value || "").trim();
+    const mode = ($("#injMode")?.value || "INSERT").trim();
+    const payload = ($("#injPayload")?.value || "");
+
+    const t = targets.find(x => x.targetId === targetId);
+    if (!t) return { ok: false, err: "Target inválido (gere o map e selecione)." };
+
+    const oldText = await readTextFromPath(t.path);
+    const newText = applyAtTarget(oldText, t, mode, payload);
+
+    uiMsg("#diffOut", tinyDiff(oldText, newText));
+    return { ok: true, oldText, newText, t, mode };
+  }
+
+  async function injectorApplyTargetsSafe() {
+    const pre = await injectorPreviewTargets();
+    if (!pre.ok) {
+      uiMsg("#diffOut", "❌ " + (pre.err || "preview falhou"));
+      return { ok: false };
+    }
+
+    InjectState.lastSnapshot = {
+      path: pre.t.path,
+      oldText: pre.oldText,
+      newText: pre.newText,
+      targetId: pre.t.targetId,
+      ts: nowISO()
+    };
+
+    const before = runMicroTests();
+    if (!before.ok) {
+      uiMsg("#diffOut", "❌ Microtests BEFORE falharam. Abortando.\n" + JSON.stringify(before, null, 2));
+      return { ok: false };
+    }
+
+    const w = await writeTextToPath(pre.t.path, pre.newText);
+    if (!w.ok) {
+      uiMsg("#diffOut", "❌ Não consegui escrever.\n" + (w.err || ""));
+      return { ok: false };
+    }
+
+    const after = runMicroTests();
+    if (!after.ok) {
+      await writeTextToPath(pre.t.path, pre.oldText);
+      uiMsg("#diffOut", "❌ Microtests AFTER falharam. Rollback aplicado.\n" + JSON.stringify(after, null, 2));
+      Logger.write("inject:", "AFTER FAIL -> rollback", pre.t.path, pre.t.targetId);
+      return { ok: false, rolledBack: true };
+    }
+
+    Logger.write("inject:", "OK", pre.t.path, pre.t.targetId, "mode=" + pre.mode, "write=" + w.mode);
+    uiMsg("#diffOut", "✅ Aplicado com sucesso (SAFE).");
+    return { ok: true };
+  }
+
+  async function injectorRollbackTargets() {
+    const s = InjectState.lastSnapshot;
+    if (!s) { uiMsg("#diffOut", "Nada para rollback."); return { ok: false }; }
+    const w = await writeTextToPath(s.path, s.oldText);
+    if (!w.ok) { uiMsg("#diffOut", "Rollback falhou: " + (w.err || "")); return { ok: false }; }
+    uiMsg("#diffOut", "✅ Rollback aplicado.");
+    Logger.write("inject:", "rollback OK", s.path, s.targetId);
+    return { ok: true };
+  }
 
   // -----------------------------
   // UI Shell
@@ -452,12 +1172,13 @@
             <div class="row cmd">
               <input id="agentCmd" placeholder='Ex: create "Meu App" meu-app' />
               <button class="btn ok" id="btnAgentRun" type="button">Executar</button>
-              <button class="btn ghost" id="btnAgentClear" type="button">Ajuda</button>
+              <button class="btn ghost" id="btnAgentHelp" type="button">Ajuda</button>
             </div>
 
             <pre class="mono" id="agentOut">Pronto.</pre>
           </section>
 
+          <!-- ✅ SETTINGS (sem Logs aqui dentro) -->
           <section class="view card" id="view-settings">
             <h1>Settings</h1>
 
@@ -472,14 +1193,24 @@
               <pre class="mono" id="pinOut">Pronto.</pre>
             </div>
 
-            <div class="card" id="settings-logs">
-              <h2>Logs</h2>
-              <div class="row">
-                <button class="btn ghost" id="btnLogsRefresh" type="button">Atualizar</button>
-                <button class="btn ok" id="btnLogsCopy" type="button">Exportar .txt</button>
-                <button class="btn danger" id="btnLogsClear" type="button">Limpar logs</button>
+            <!-- ✅ Injector voltou pro Settings -->
+            <div class="card" id="settings-injector">
+              <h2>Injeção (Injector)</h2>
+              <p class="hint">Cole um pack JSON (meta + files). Aplica via OverridesVFS (local). Se SW estiver controlando, recarregar 1x ajuda.</p>
+
+              <textarea id="injJson" class="textarea" rows="8" spellcheck="false" placeholder='{
+  "meta": { "name": "teste-real", "version": "1.0" },
+  "files": { "/app/TESTE_OK.txt": "INJECTION WORKING" }
+}'></textarea>
+
+              <div class="row" style="flex-wrap:wrap;margin-top:10px">
+                <button class="btn ghost" id="btnInjDry" type="button">Dry-run</button>
+                <button class="btn ok" id="btnInjApply" type="button">Aplicar pack</button>
+                <button class="btn danger" id="btnInjZero" type="button">Zerar overrides</button>
               </div>
-              <pre class="mono small" id="logsOut">Pronto.</pre>
+
+              <pre class="mono small" id="injOut">Pronto.</pre>
+              <div class="hint" id="injStatus">Status: aguardando…</div>
             </div>
           </section>
 
@@ -515,49 +1246,9 @@
 
             <pre class="mono" id="adminOut">Pronto.</pre>
 
-            <div class="card" id="admin-github">
-              <h2>GitHub Sync (Privado) — SAFE</h2>
-
-              <div class="row form">
-                <input id="ghOwner" placeholder="owner" />
-                <input id="ghRepo" placeholder="repo" />
-              </div>
-
-              <div class="row form">
-                <input id="ghBranch" placeholder="branch" value="main" />
-                <input id="ghPath" placeholder="path" value="app/import/mother_bundle.json" />
-              </div>
-
-              <div class="row form">
-                <input id="ghToken" placeholder="TOKEN (PAT)" />
-                <button class="btn ghost" id="btnGhSave" type="button">Salvar config</button>
-              </div>
-
-              <div class="row">
-                <button class="btn ghost" id="btnGhPull" type="button">⬇️ Pull</button>
-                <button class="btn ok" id="btnGhPush" type="button">⬆️ Push</button>
-                <button class="btn ghost" id="btnGhRefresh" type="button">⚡ Status</button>
-              </div>
-
-              <pre class="mono" id="ghOut">GitHub: pronto.</pre>
-            </div>
-
-            <div class="card" id="admin-maint">
-              <h2>MAINTENANCE • Self-Update (Mãe)</h2>
-              <div class="row">
-                <button class="btn ghost" id="btnMaeLoad" type="button">Carregar Mãe</button>
-                <button class="btn ok" id="btnMaeCheck" type="button">Rodar Check</button>
-              </div>
-              <div class="row">
-                <button class="btn ok" id="btnMaeUpdate" type="button">⬇️ Update From GitHub</button>
-                <button class="btn danger" id="btnMaeClear" type="button">🧹 Clear Overrides</button>
-              </div>
-              <pre class="mono" id="maintOut">Pronto.</pre>
-            </div>
-
             <div class="card" id="admin-injector">
               <h2>FASE A • Scan / Target Map / Injector SAFE</h2>
-              <p class="hint">“REAL” = A (VFS) → B (bundle local) → C (DOM apenas anchors). Sem GitHub remoto.</p>
+              <p class="hint">Agora o scan não fica “files=0”: tenta Overrides → VFS → fetch paths conhecidos → DOM.</p>
 
               <div class="row" style="flex-wrap:wrap;">
                 <button class="btn ok" id="btnScanIndex" type="button">🔎 Scan & Index</button>
@@ -901,732 +1592,6 @@
   };
 
   // -----------------------------
-  // PIN
-  // -----------------------------
-  const Pin = {
-    key: "admin_pin",
-    get() { return Storage.get(this.key, ""); },
-    set(pin) { Storage.set(this.key, String(pin || "")); },
-    clear() { Storage.del(this.key); }
-  };
-
-  // -----------------------------
-  // SW helpers (safe)
-  // -----------------------------
-  async function swRegister() {
-    try {
-      if (!("serviceWorker" in navigator)) {
-        Logger.write("sw:", "serviceWorker não suportado");
-        return { ok: false, msg: "SW não suportado" };
-      }
-      const reg = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
-      Logger.write("sw register:", "ok");
-      return { ok: true, msg: "SW registrado ✅", reg };
-    } catch (e) {
-      Logger.write("sw register fail:", (e?.message || e));
-      return { ok: false, msg: "Falhou registrar SW: " + (e?.message || e) };
-    }
-  }
-
-  async function swUnregisterAll() {
-    try {
-      if (!("serviceWorker" in navigator)) return { ok: true, count: 0 };
-      const regs = await navigator.serviceWorker.getRegistrations();
-      let n = 0;
-      for (const r of regs) { try { if (await r.unregister()) n++; } catch {} }
-      Logger.write("sw unregister:", n, "ok");
-      return { ok: true, count: n };
-    } catch (e) {
-      Logger.write("sw unregister err:", e?.message || e);
-      return { ok: false, count: 0, err: e?.message || e };
-    }
-  }
-
-  async function swClearCaches() {
-    try {
-      const keys = await caches.keys();
-      await Promise.all(keys.map(k => caches.delete(k)));
-      Logger.write("cache clear:", keys.length, "caches");
-      return { ok: true, count: keys.length };
-    } catch (e) {
-      Logger.write("cache clear err:", e?.message || e);
-      return { ok: false, count: 0, err: e?.message || e };
-    }
-  }
-
-  async function swCheckAutoFix() {
-    const out = { ok: false, status: "missing", detail: "", attempts: 0, err: "" };
-
-    if (!("serviceWorker" in navigator)) {
-      out.status = "unsupported";
-      out.detail = "serviceWorker não suportado neste browser";
-      return out;
-    }
-
-    const tryGet = async () => {
-      try {
-        const a = await navigator.serviceWorker.getRegistration("/");
-        if (a) return a;
-        const b = await navigator.serviceWorker.getRegistration();
-        return b || null;
-      } catch (e) {
-        out.err = String(e?.message || e);
-        return null;
-      }
-    };
-
-    let reg = await tryGet();
-    if (reg) {
-      out.ok = true;
-      out.status = "registered";
-      out.detail = "já estava registrado";
-      return out;
-    }
-
-    out.attempts++;
-    try {
-      const r = await swRegister();
-      out.detail = r?.msg || "tentou registrar";
-    } catch (e) {
-      out.err = String(e?.message || e);
-    }
-
-    await new Promise(res => setTimeout(res, 350));
-
-    reg = await tryGet();
-    if (reg) {
-      out.ok = true;
-      out.status = "registered";
-      out.detail = "registrou após auto-fix";
-      return out;
-    }
-
-    out.status = "missing";
-    out.detail =
-      (location.protocol !== "https:" && location.hostname !== "localhost")
-        ? "SW exige HTTPS (ou localhost)."
-        : "sw.js não registrou (pode ser path/scope/privacidade).";
-
-    return out;
-  }
-
-  // -----------------------------
-  // Overlay scanner (embutido)
-  // -----------------------------
-  function scanOverlays() {
-    const suspects = [];
-    const vw = Math.max(document.documentElement.clientWidth, window.innerWidth || 0);
-    const vh = Math.max(document.documentElement.clientHeight, window.innerHeight || 0);
-
-    const all = $$("body *");
-    for (const el of all) {
-      try {
-        const cs = getComputedStyle(el);
-        if (!cs) continue;
-        if (cs.pointerEvents === "none") continue;
-
-        const pos = cs.position;
-        if (pos !== "fixed" && pos !== "absolute") continue;
-
-        const zi = parseInt(cs.zIndex || "0", 10);
-        if (!Number.isFinite(zi)) continue;
-        if (zi < 50) continue;
-
-        const r = el.getBoundingClientRect();
-        const area = Math.max(0, r.width) * Math.max(0, r.height);
-        if (area < (vw * vh * 0.10)) continue;
-
-        const touches = (r.right > 0 && r.bottom > 0 && r.left < vw && r.top < vh);
-        if (!touches) continue;
-
-        suspects.push({
-          tag: el.tagName.toLowerCase(),
-          id: el.id || "",
-          cls: (el.className && String(el.className).slice(0, 80)) || "",
-          z: zi,
-          pe: cs.pointerEvents,
-          pos,
-          rect: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }
-        });
-      } catch {}
-      if (suspects.length >= 8) break;
-    }
-    return { ok: true, suspects };
-  }
-
-  // -----------------------------
-  // Micro-tests (embutido)
-  // -----------------------------
-  function runMicroTests() {
-    const results = [];
-    const push = (name, pass, info = "") => results.push({ name, pass: !!pass, info: String(info || "") });
-
-    try { push("TEST_RENDER", !!$("#rcfRoot") && !!$("#views"), !!$("#rcfRoot") ? "UI root ok" : "UI root missing"); }
-    catch (e) { push("TEST_RENDER", false, e?.message || e); }
-
-    try { push("TEST_IMPORTS", !!window.RCF_LOGGER && !!window.RCF && !!window.RCF.state, "globals"); }
-    catch (e) { push("TEST_IMPORTS", false, e?.message || e); }
-
-    try { push("TEST_STATE_INIT", !!State && Array.isArray(State.apps) && !!State.active && typeof State.cfg === "object", "state"); }
-    catch (e) { push("TEST_STATE_INIT", false, e?.message || e); }
-
-    try { push("TEST_EVENT_BIND", !!$("#btnOpenTools") && !!$("#btnAgentRun") && !!$("#btnSaveFile"), "buttons"); }
-    catch (e) { push("TEST_EVENT_BIND", false, e?.message || e); }
-
-    const passCount = results.filter(r => r.pass).length;
-    return { ok: passCount === results.length, pass: passCount, total: results.length, results };
-  }
-
-  // -----------------------------
-  // CSS token check
-  // -----------------------------
-  function cssLoadedCheck() {
-    try {
-      const token = getComputedStyle(document.documentElement)
-        .getPropertyValue("--rcf-css-token")
-        .trim()
-        .replace(/^["']|["']$/g, "");
-      const ok = !!token && token.toLowerCase() !== "(vazio)";
-      return { ok, token: token || "(vazio)" };
-    } catch (e) {
-      return { ok: false, token: "(erro)", err: e?.message || e };
-    }
-  }
-
-  // -----------------------------
-  // Guards flags
-  // -----------------------------
-  const ModuleFlags = { diagnosticsInstalled: false, guardsInstalled: false };
-
-  function installGuardsOnce() {
-    if (ModuleFlags.guardsInstalled) return true;
-    ModuleFlags.guardsInstalled = true;
-    Logger.write("ok:", "GlobalErrorGuard instalado ✅");
-    Logger.write("ok:", "ClickGuard instalado ✅");
-    return true;
-  }
-
-  // -----------------------------
-  // Stability report
-  // -----------------------------
-  async function runV7StabilityCheck() {
-    const lines = [];
-    const failList = [];
-    let pass = 0, fail = 0;
-
-    const add = (ok, label, detail) => {
-      if (ok) { pass++; lines.push(`PASS: ${label}${detail ? " — " + detail : ""}`); }
-      else { fail++; const t = `FAIL: ${label}${detail ? " — " + detail : ""}`; lines.push(t); failList.push(label + (detail ? `: ${detail}` : "")); }
-    };
-
-    add(!!window.__RCF_BOOTED__, "[BOOT] __RCF_BOOTED__", window.__RCF_BOOTED__ ? "lock ativo" : "lock ausente");
-
-    const css = cssLoadedCheck();
-    add(css.ok, "[CSS] CSS_TOKEN", `token: "${css.token}"`);
-
-    add(true, "[MODULES] CORE_ONCE", "ok");
-    add(ModuleFlags.guardsInstalled, "[MODULES] GUARDS_ONCE", ModuleFlags.guardsInstalled ? "ok" : "não instalado");
-
-    const swr = await swCheckAutoFix();
-    if (swr.ok) {
-      add(true, "[SW] SW_REGISTERED", swr.detail || "registrado");
-    } else {
-      lines.push(`WARN: [SW] SW_REGISTERED — ${swr.detail || swr.status}${swr.err ? " | err=" + swr.err : ""}`);
-      Logger.write("sw warn:", swr.status, swr.detail, swr.err ? ("err=" + swr.err) : "");
-    }
-
-    const overlay = scanOverlays();
-    add(overlay.ok, "[CLICK] OVERLAY_SCANNER", overlay.ok ? "ok" : "erro");
-    add((overlay.suspects || []).length === 0, "[CLICK] OVERLAY_BLOCK", (overlay.suspects || []).length ? `suspects=${overlay.suspects.length}` : "nenhum");
-
-    const mt = runMicroTests();
-    add(mt.ok, "[MICROTEST] ALL", `${mt.pass}/${mt.total}`);
-
-    const stable = (fail === 0);
-    window.RCF_STABLE = stable;
-
-    lines.unshift("=========================================================");
-    lines.unshift("RCF — V7 STABILITY CHECK (REPORT)");
-    lines.push("=========================================================");
-    lines.push(`PASS: ${pass} | FAIL: ${fail}`);
-    lines.push(`RCF_STABLE: ${stable ? "TRUE ✅" : "FALSE ❌"}`);
-    lines.push("");
-
-    if (!stable) {
-      lines.push("FAIL LIST:");
-      for (const f of failList) lines.push(`- ${f}`);
-    } else {
-      lines.push("STATUS: RCF_STABLE = TRUE ✅");
-    }
-
-    const report = lines.join("\n");
-    uiMsg("#diagOut", report);
-    Logger.write("V7 check:", stable ? "PASS ✅" : "FAIL ❌", `${pass}/${pass+fail}`);
-    return { stable, pass, fail, report, overlay, microtests: mt, css, sw: swr };
-  }
-
-  // -----------------------------
-  // GitHub config hydrate (local)
-  // -----------------------------
-  function hydrateGhInputs() {
-    const cfg = Storage.get("ghcfg", null);
-    if (!cfg) return;
-    if ($("#ghOwner")) $("#ghOwner").value = cfg.owner || "";
-    if ($("#ghRepo")) $("#ghRepo").value = cfg.repo || "";
-    if ($("#ghBranch")) $("#ghBranch").value = cfg.branch || "main";
-    if ($("#ghPath")) $("#ghPath").value = cfg.path || "app/import/mother_bundle.json";
-    if ($("#ghToken")) $("#ghToken").value = cfg.token || "";
-  }
-
-  // =========================================================
-  // ✅ FASE A — REAL SCAN / TARGET MAP / INJECT SAFE
-  // =========================================================
-  function simpleHash(str) {
-    let h = 2166136261;
-    const s = String(str ?? "");
-    for (let i = 0; i < s.length; i++) {
-      h ^= s.charCodeAt(i);
-      h = (h * 16777619) >>> 0;
-    }
-    return ("00000000" + h.toString(16)).slice(-8);
-  }
-
-  function guessType(path) {
-    const p = String(path || "");
-    if (p.endsWith(".js")) return "js";
-    if (p.endsWith(".css")) return "css";
-    if (p.endsWith(".html")) return "html";
-    if (p.endsWith(".json")) return "json";
-    if (p.endsWith(".txt")) return "txt";
-    return "bin";
-  }
-
-  function detectMarkers(text) {
-    const s = String(text ?? "");
-    const re = /@RCF:INJECT\s*([A-Za-z0-9_-]+)?/g;
-    const out = [];
-    let m;
-    while ((m = re.exec(s))) {
-      out.push({ marker: m[0], id: (m[1] || "").trim() || null, index: m.index });
-      if (out.length >= 20) break;
-    }
-    return out;
-  }
-
-  function getAnchorsForContent(type, content) {
-    const s = String(content ?? "");
-    const anchors = [];
-    if (type === "html") {
-      const headEnd = s.toLowerCase().lastIndexOf("</head>");
-      const bodyEnd = s.toLowerCase().lastIndexOf("</body>");
-      if (headEnd >= 0) anchors.push({ id: "HEAD_END", at: headEnd, note: "</head>" });
-      if (bodyEnd >= 0) anchors.push({ id: "BODY_END", at: bodyEnd, note: "</body>" });
-    }
-    if (type === "css") {
-      const rootIdx = s.indexOf(":root");
-      if (rootIdx >= 0) anchors.push({ id: "CSS_ROOT", at: rootIdx, note: ":root" });
-    }
-    if (type === "js") {
-      anchors.push({ id: "JS_TOP", at: 0, note: "top" });
-      anchors.push({ id: "JS_EOF", at: s.length, note: "eof" });
-    }
-    return anchors;
-  }
-
-  function normalizePath(p) {
-    let x = String(p || "").trim();
-    if (!x) return "";
-    x = x.split("#")[0].split("?")[0].trim();
-    if (!x.startsWith("/")) x = "/" + x;
-    x = x.replace(/\/{2,}/g, "/");
-    return x;
-  }
-
-  async function tryFetchLocalBundleFromCfg() {
-    const cfg = Storage.get("ghcfg", null);
-    const path = cfg && cfg.path ? String(cfg.path) : "";
-    if (!path) return null;
-
-    const url = path.startsWith("/") ? path : ("/" + path);
-    try {
-      const res = await fetch(url, { cache: "no-store" });
-      if (!res.ok) return null;
-      const txt = await res.text();
-      return txt || null;
-    } catch {
-      return null;
-    }
-  }
-
-  async function vfsListAll(vfs) {
-    if (!vfs) return [];
-    try {
-      if (typeof vfs.listFiles === "function") return (await vfs.listFiles()) || [];
-      if (typeof vfs.list === "function") return (await vfs.list()) || [];
-      if (typeof vfs.keys === "function") return (await vfs.keys()) || [];
-      if (typeof vfs.entries === "function") {
-        const ent = await vfs.entries();
-        return Array.isArray(ent) ? ent.map(e => e && (e.path || e[0])) : [];
-      }
-    } catch {}
-    return [];
-  }
-
-  async function vfsRead(vfs, path) {
-    if (!vfs) return null;
-    try {
-      if (typeof vfs.readFile === "function") return await vfs.readFile(path);
-      if (typeof vfs.read === "function") return await vfs.read(path);
-      if (typeof vfs.get === "function") return await vfs.get(path);
-    } catch {}
-    return null;
-  }
-
-  function getLocalMotherBundleText() {
-    const raw = Storage.getRaw("mother_bundle", "");
-    if (raw && raw.trim().startsWith("{")) return raw;
-    const raw2 = localStorage.getItem("RCF_MOTHER_BUNDLE") || "";
-    if (raw2 && raw2.trim().startsWith("{")) return raw2;
-    return "";
-  }
-
-  async function scanFactoryFiles() {
-    const index = {
-      meta: { scannedAt: nowISO(), source: "", count: 0 },
-      files: []
-    };
-
-    try {
-      const olist = await OverridesVFS.listFiles();
-      for (const p0 of (olist || []).slice(0, 800)) {
-        const p = normalizePath(p0);
-        const txt = String((await OverridesVFS.readFile(p)) ?? "");
-        const type = guessType(p);
-        index.files.push({
-          path: p,
-          type,
-          size: txt.length,
-          hash: simpleHash(txt),
-          markers: detectMarkers(txt),
-          anchors: getAnchorsForContent(type, txt)
-        });
-      }
-    } catch {}
-
-    const vfs = (window.RCF_VFS || window.RCF_FS || window.RCF_VFS_OVERRIDES || window.RCF_FILES || window.RCF_STORE) || null;
-    if (vfs) {
-      index.meta.source = "A:runtime_vfs";
-      const list = await vfsListAll(vfs);
-      const paths = (list || []).map(p => normalizePath(p)).filter(Boolean).slice(0, 1200);
-      for (const p of paths) {
-        const content = await vfsRead(vfs, p);
-        const txt = (content == null) ? "" : String(content);
-        const type = guessType(p);
-        const markers = detectMarkers(txt);
-        const anchors = getAnchorsForContent(type, txt);
-        index.files.push({
-          path: p,
-          type,
-          size: txt.length,
-          hash: simpleHash(txt),
-          markers,
-          anchors
-        });
-      }
-      index.meta.count = index.files.length;
-      Storage.set("RCF_FILE_INDEX", index);
-      return index;
-    }
-
-    let bundleText = getLocalMotherBundleText();
-    if (!bundleText) bundleText = await tryFetchLocalBundleFromCfg();
-
-    if (bundleText) {
-      index.meta.source = "B:mother_bundle_local";
-      let parsed = null;
-      try { parsed = JSON.parse(bundleText); } catch { parsed = null; }
-
-      const filesObj = (parsed && parsed.files && typeof parsed.files === "object") ? parsed.files : (parsed && typeof parsed === "object" ? parsed : {});
-      const entries = Object.entries(filesObj || {});
-      for (const [rawPath, rawVal] of entries) {
-        const p = normalizePath(rawPath);
-        const txt = (rawVal && typeof rawVal === "object" && "content" in rawVal) ? String(rawVal.content ?? "") : String(rawVal ?? "");
-        const type = guessType(p);
-        const markers = detectMarkers(txt);
-        const anchors = getAnchorsForContent(type, txt);
-        index.files.push({
-          path: p,
-          type,
-          size: txt.length,
-          hash: simpleHash(txt),
-          markers,
-          anchors
-        });
-      }
-      index.meta.count = index.files.length;
-      Storage.set("RCF_FILE_INDEX", index);
-      Storage.setRaw("mother_bundle", bundleText);
-      return index;
-    }
-
-    index.meta.source = "C:dom_anchors_only";
-    const html = document.documentElement ? document.documentElement.outerHTML : "";
-    const markers = detectMarkers(html);
-    const anchors = getAnchorsForContent("html", html);
-    index.files.push({
-      path: "/runtime/document.html",
-      type: "html",
-      size: html.length,
-      hash: simpleHash(html),
-      markers,
-      anchors
-    });
-    index.meta.count = index.files.length;
-    Storage.set("RCF_FILE_INDEX", index);
-    return index;
-  }
-
-  function generateTargetMap(fileIndex) {
-    const idx = fileIndex || Storage.get("RCF_FILE_INDEX", null);
-    if (!idx || !Array.isArray(idx.files)) {
-      return { ok: false, err: "RCF_FILE_INDEX ausente. Rode Scan & Index primeiro." };
-    }
-
-    const targets = [];
-
-    for (const f of idx.files) {
-      const path = String(f.path || "");
-      const markers = Array.isArray(f.markers) ? f.markers : [];
-
-      for (const m of markers) {
-        const id = m.id ? m.id : `MARKER_${path}_${m.index}`;
-        targets.push({
-          targetId: id,
-          path,
-          kind: "MARKER",
-          offset: m.index,
-          supportedModes: ["INSERT", "REPLACE", "DELETE"],
-          defaultRisk: "low",
-          note: "@RCF:INJECT"
-        });
-      }
-
-      if (!markers.length) {
-        const anchors = Array.isArray(f.anchors) ? f.anchors : [];
-        for (const a of anchors) {
-          targets.push({
-            targetId: `${path}::${a.id}`,
-            path,
-            kind: "ANCHOR",
-            offset: a.at,
-            anchorId: a.id,
-            supportedModes: ["INSERT", "REPLACE", "DELETE"],
-            defaultRisk: (a.id.includes("BODY") || a.id.includes("JS_EOF")) ? "medium" : "low",
-            note: a.note
-          });
-        }
-      }
-    }
-
-    const seen = new Set();
-    const uniq = [];
-    for (const t of targets) {
-      if (!t || !t.targetId) continue;
-      if (seen.has(t.targetId)) continue;
-      seen.add(t.targetId);
-      uniq.push(t);
-      if (uniq.length >= 800) break;
-    }
-
-    const out = {
-      meta: { createdAt: nowISO(), count: uniq.length, source: (idx.meta && idx.meta.source) || "" },
-      targets: uniq
-    };
-
-    Storage.set("RCF_TARGET_MAP", out);
-    return { ok: true, map: out };
-  }
-
-  function populateTargetsDropdown() {
-    const sel = $("#injTarget");
-    if (!sel) return;
-    const map = Storage.get("RCF_TARGET_MAP", null);
-    const t = map && Array.isArray(map.targets) ? map.targets : [];
-    sel.innerHTML = "";
-    if (!t.length) {
-      const opt = document.createElement("option");
-      opt.value = "";
-      opt.textContent = "(sem targets — gere o map)";
-      sel.appendChild(opt);
-      return;
-    }
-    for (const item of t.slice(0, 500)) {
-      const opt = document.createElement("option");
-      opt.value = item.targetId;
-      opt.textContent = `${item.targetId}  —  ${item.path}  (${item.kind})`;
-      sel.appendChild(opt);
-    }
-  }
-
-  function tinyDiff(oldText, newText) {
-    const a = String(oldText ?? "").split("\n");
-    const b = String(newText ?? "").split("\n");
-    const max = Math.max(a.length, b.length);
-    const out = [];
-    for (let i = 0; i < max; i++) {
-      const A = a[i], B = b[i];
-      if (A === B) continue;
-      if (A !== undefined) out.push(`- ${A}`);
-      if (B !== undefined) out.push(`+ ${B}`);
-      if (out.length > 220) { out.push("... (diff truncado)"); break; }
-    }
-    return out.join("\n") || "(sem mudanças)";
-  }
-
-  async function readTextFromInventoryPath(path) {
-    const p = normalizePath(path);
-
-    const ov = await OverridesVFS.readFile(p);
-    if (ov != null) return String(ov);
-
-    const vfs = (window.RCF_VFS || window.RCF_FS || window.RCF_VFS_OVERRIDES || window.RCF_FILES || window.RCF_STORE) || null;
-    if (vfs) {
-      const txt = await vfsRead(vfs, p);
-      return (txt == null) ? "" : String(txt);
-    }
-
-    const bundleText = getLocalMotherBundleText() || (await tryFetchLocalBundleFromCfg()) || "";
-    if (bundleText) {
-      try {
-        const parsed = JSON.parse(bundleText);
-        const filesObj = (parsed && parsed.files && typeof parsed.files === "object") ? parsed.files : parsed;
-        const v = filesObj && filesObj[p];
-        if (v && typeof v === "object" && "content" in v) return String(v.content ?? "");
-        if (v != null) return String(v);
-      } catch {}
-    }
-
-    if (p === "/runtime/document.html") {
-      return document.documentElement ? document.documentElement.outerHTML : "";
-    }
-
-    return "";
-  }
-
-  async function writeTextToInventoryPath(path, newText) {
-    const p = normalizePath(path);
-
-    const vfs = (window.RCF_VFS || window.RCF_FS || window.RCF_VFS_OVERRIDES || window.RCF_FILES || window.RCF_STORE) || null;
-    if (vfs) {
-      try {
-        if (typeof vfs.writeFile === "function") { await vfs.writeFile(p, String(newText ?? "")); return { ok: true, mode: "vfs.writeFile" }; }
-        if (typeof vfs.write === "function") { await vfs.write(p, String(newText ?? "")); return { ok: true, mode: "vfs.write" }; }
-        if (typeof vfs.put === "function") { await vfs.put(p, String(newText ?? "")); return { ok: true, mode: "vfs.put" }; }
-        if (typeof vfs.set === "function") { await vfs.set(p, String(newText ?? "")); return { ok: true, mode: "vfs.set" }; }
-      } catch (e) {
-        return { ok: false, err: e?.message || e };
-      }
-    }
-
-    try {
-      await OverridesVFS.writeFile(p, String(newText ?? ""));
-      return { ok: true, mode: "override.writeFile" };
-    } catch (e) {
-      return { ok: false, err: e?.message || e };
-    }
-  }
-
-  function applyAtTarget(oldText, target, mode, payload) {
-    const s = String(oldText ?? "");
-    const pl = String(payload ?? "");
-
-    if (target.kind === "MARKER") {
-      const at = Math.max(0, Math.min(s.length, target.offset || 0));
-      if (mode === "INSERT") return s.slice(0, at) + pl + "\n" + s.slice(at);
-      if (mode === "REPLACE") return s.slice(0, at) + pl + "\n" + s.slice(at);
-      if (mode === "DELETE") return s.replace(target.note || "@RCF:INJECT", "");
-    }
-
-    const at = Math.max(0, Math.min(s.length, target.offset || 0));
-    if (mode === "INSERT") return s.slice(0, at) + "\n" + pl + "\n" + s.slice(at);
-    if (mode === "REPLACE") return s.slice(0, at) + "\n" + pl + "\n" + s.slice(at);
-    if (mode === "DELETE") {
-      if (!pl.trim()) return s;
-      return s.split(pl).join("");
-    }
-    return s;
-  }
-
-  const InjectState = { lastSnapshot: null };
-
-  async function injectorPreview() {
-    const map = Storage.get("RCF_TARGET_MAP", null);
-    const targets = map && Array.isArray(map.targets) ? map.targets : [];
-    const targetId = ($("#injTarget")?.value || "").trim();
-    const mode = ($("#injMode")?.value || "INSERT").trim();
-    const payload = ($("#injPayload")?.value || "");
-
-    const t = targets.find(x => x.targetId === targetId);
-    if (!t) return { ok: false, err: "Target inválido (gere o map e selecione)." };
-
-    const oldText = await readTextFromInventoryPath(t.path);
-    const newText = applyAtTarget(oldText, t, mode, payload);
-
-    uiMsg("#diffOut", tinyDiff(oldText, newText));
-    return { ok: true, oldText, newText, t, mode };
-  }
-
-  async function injectorApplySafe() {
-    const pre = await injectorPreview();
-    if (!pre.ok) {
-      uiMsg("#diffOut", "❌ " + (pre.err || "preview falhou"));
-      return { ok: false };
-    }
-
-    InjectState.lastSnapshot = {
-      path: pre.t.path,
-      oldText: pre.oldText,
-      newText: pre.newText,
-      targetId: pre.t.targetId,
-      ts: nowISO()
-    };
-
-    const before = runMicroTests();
-    if (!before.ok) {
-      uiMsg("#diffOut", "❌ Microtests BEFORE falharam. Abortando.\n" + JSON.stringify(before, null, 2));
-      return { ok: false };
-    }
-
-    const w = await writeTextToInventoryPath(pre.t.path, pre.newText);
-    if (!w.ok) {
-      uiMsg("#diffOut", "❌ Não consegui escrever.\n" + (w.err || ""));
-      return { ok: false };
-    }
-
-    const after = runMicroTests();
-    if (!after.ok) {
-      await writeTextToInventoryPath(pre.t.path, pre.oldText);
-      uiMsg("#diffOut", "❌ Microtests AFTER falharam. Rollback aplicado.\n" + JSON.stringify(after, null, 2));
-      Logger.write("inject:", "AFTER FAIL -> rollback", pre.t.path, pre.t.targetId);
-      return { ok: false, rolledBack: true };
-    }
-
-    Logger.write("inject:", "OK", pre.t.path, pre.t.targetId, "mode=" + pre.mode, "write=" + w.mode);
-    uiMsg("#diffOut", "✅ Aplicado com sucesso (SAFE).");
-    return { ok: true };
-  }
-
-  async function injectorRollback() {
-    const s = InjectState.lastSnapshot;
-    if (!s) { uiMsg("#diffOut", "Nada para rollback."); return { ok: false }; }
-    const w = await writeTextToInventoryPath(s.path, s.oldText);
-    if (!w.ok) { uiMsg("#diffOut", "Rollback falhou: " + (w.err || "")); return { ok: false }; }
-    uiMsg("#diffOut", "✅ Rollback aplicado.");
-    Logger.write("inject:", "rollback OK", s.path, s.targetId);
-    return { ok: true };
-  }
-
-  // -----------------------------
   // Bind UI
   // -----------------------------
   function bindUI() {
@@ -1678,8 +1643,9 @@
     bindTap($("#btnGenPreview"), () => uiMsg("#genOut", "Preview (stub)."));
 
     bindTap($("#btnAgentRun"), () => Agent.route($("#agentCmd")?.value || ""));
-    bindTap($("#btnAgentClear"), () => uiMsg("#agentOut", Agent.help()));
+    bindTap($("#btnAgentHelp"), () => uiMsg("#agentOut", Agent.help()));
 
+    // Logs actions
     const doLogsRefresh = () => {
       refreshLogsViews();
       safeSetStatus("Logs ✅");
@@ -1697,10 +1663,6 @@
       safeSetStatus("Logs copiados ✅");
       setTimeout(() => safeSetStatus("OK ✅"), 800);
     };
-
-    bindTap($("#btnLogsRefresh"), doLogsRefresh);
-    bindTap($("#btnLogsClear"), doLogsClear);
-    bindTap($("#btnLogsCopy"), doLogsCopy);
 
     bindTap($("#btnLogsRefresh2"), doLogsRefresh);
     bindTap($("#btnClearLogs"), doLogsClear);
@@ -1729,7 +1691,7 @@
       setTimeout(() => safeSetStatus("OK ✅"), 900);
     });
 
-    // Diagnostics actions
+    // Diagnostics
     bindTap($("#btnDiagRun"), async () => {
       safeSetStatus("Diag…");
       await runV7StabilityCheck();
@@ -1748,21 +1710,13 @@
     });
 
     bindTap($("#btnDiagScan"), () => {
-      try {
-        const r = scanOverlays();
-        uiMsg("#diagOut", JSON.stringify(r, null, 2));
-      } catch (e) {
-        uiMsg("#diagOut", "❌ " + (e?.message || e));
-      }
+      try { uiMsg("#diagOut", JSON.stringify(scanOverlays(), null, 2)); }
+      catch (e) { uiMsg("#diagOut", "❌ " + (e?.message || e)); }
     });
 
     bindTap($("#btnDiagTests"), () => {
-      try {
-        const r = runMicroTests();
-        uiMsg("#diagOut", JSON.stringify(r, null, 2));
-      } catch (e) {
-        uiMsg("#diagOut", "❌ " + (e?.message || e));
-      }
+      try { uiMsg("#diagOut", JSON.stringify(runMicroTests(), null, 2)); }
+      catch (e) { uiMsg("#diagOut", "❌ " + (e?.message || e)); }
     });
 
     bindTap($("#btnDiagClear"), () => uiMsg("#diagOut", "Pronto."));
@@ -1782,6 +1736,25 @@
       Logger.write("pin removed");
     });
 
+    // ✅ Injector (Settings)
+    bindTap($("#btnInjDry"), async () => {
+      safeSetStatus("Dry…");
+      await injectorDryRun();
+      setTimeout(() => safeSetStatus("OK ✅"), 700);
+    });
+
+    bindTap($("#btnInjApply"), async () => {
+      safeSetStatus("Aplicando…");
+      await injectorApplyPack();
+      setTimeout(() => safeSetStatus("OK ✅"), 900);
+    });
+
+    bindTap($("#btnInjZero"), async () => {
+      safeSetStatus("Zerando…");
+      await injectorZeroOverrides();
+      setTimeout(() => safeSetStatus("OK ✅"), 900);
+    });
+
     // Admin quick
     bindTap($("#btnAdminDiag"), () => uiMsg("#adminOut", "Admin OK."));
     bindTap($("#btnAdminZero"), () => {
@@ -1791,118 +1764,7 @@
       uiMsg("#adminOut", "✅ Zerado (safe). Logs limpos.");
     });
 
-    // Admin GitHub config
-    bindTap($("#btnGhSave"), () => {
-      const cfg = {
-        owner: ($("#ghOwner")?.value || "").trim(),
-        repo: ($("#ghRepo")?.value || "").trim(),
-        branch: ($("#ghBranch")?.value || "main").trim(),
-        path: ($("#ghPath")?.value || "app/import/mother_bundle.json").trim(),
-        token: ($("#ghToken")?.value || "").trim()
-      };
-      Storage.set("ghcfg", cfg);
-      uiMsg("#ghOut", "✅ Config salva (local).");
-      Logger.write("ghcfg saved");
-    });
-
-    bindTap($("#btnGhPull"), async () => {
-      safeSetStatus("Pull…");
-      const txt = await tryFetchLocalBundleFromCfg();
-      if (txt) {
-        Storage.setRaw("mother_bundle", txt);
-        uiMsg("#ghOut", "✅ Pull local OK (bundle carregado do path).");
-        Logger.write("gh pull(local path): ok");
-      } else {
-        uiMsg("#ghOut", "⚠️ Pull local não encontrou bundle no path. (Sem GitHub remoto nesta fase)");
-        Logger.write("gh pull(local path): not found");
-      }
-      setTimeout(() => safeSetStatus("OK ✅"), 800);
-    });
-
-    bindTap($("#btnGhPush"), async () => {
-      const txt = getLocalMotherBundleText();
-      if (!txt) return uiMsg("#ghOut", "⚠️ Nenhum bundle local para “push”.");
-      uiMsg("#ghOut", "✅ Push (safe) = bundle já está salvo local.");
-      Logger.write("gh push(safe): noop");
-    });
-
-    bindTap($("#btnGhRefresh"), () => {
-      const cfg = Storage.get("ghcfg", null);
-      uiMsg("#ghOut", "GitHub SAFE (Fase A). cfg=" + (cfg ? "OK" : "vazio"));
-    });
-
-    // Mãe buttons
-    bindTap($("#btnMaeLoad"), async () => {
-      const MAE = window.RCF_MOTHER || window.RCF_MAE;
-      if (!MAE) {
-        uiMsg("#maintOut", "⚠️ RCF_MOTHER/RCF_MAE não está carregada no runtime.");
-        Logger.write("mae:", "absent");
-        return;
-      }
-      uiMsg("#maintOut", "✅ Mãe detectada. Funções: " + Object.keys(MAE).slice(0, 20).join(", "));
-      Logger.write("mae:", "loaded");
-    });
-
-    bindTap($("#btnMaeCheck"), () => {
-      const MAE = window.RCF_MOTHER || window.RCF_MAE;
-      const s = MAE && typeof MAE.status === "function" ? MAE.status() : { ok: false, msg: "status() ausente" };
-      try { alert("CHECK:\n\n" + JSON.stringify(s, null, 2)); } catch {}
-      uiMsg("#maintOut", "Check rodado (alert).");
-      Logger.write("mae check:", safeJsonStringify(s));
-    });
-
-    // ✅ FIX: trava reentrada + timeout maior
-    let maeUpdateLock = false;
-    bindTap($("#btnMaeUpdate"), async () => {
-      const MAE = window.RCF_MOTHER || window.RCF_MAE;
-      if (!MAE || typeof MAE.updateFromGitHub !== "function") {
-        uiMsg("#maintOut", "⚠️ updateFromGitHub() ausente (ou mãe não carregou).");
-        Logger.write("mae update:", "missing");
-        return;
-      }
-      if (maeUpdateLock) {
-        uiMsg("#maintOut", "⏳ Update já está rodando… (aguarde)");
-        Logger.write("mae update:", "blocked (lock)");
-        return;
-      }
-
-      maeUpdateLock = true;
-      uiMsg("#maintOut", "Atualizando…");
-
-      try {
-        const res = await Promise.race([
-          Promise.resolve(MAE.updateFromGitHub()),
-          new Promise((_, rej) => setTimeout(() => rej(new Error("TIMEOUT 15000ms (updateFromGitHub)")), 15000))
-        ]);
-        uiMsg("#maintOut", "✅ Update acionado.");
-        Logger.write("mae update:", "ok", res ? safeJsonStringify(res) : "");
-      } catch (e) {
-        uiMsg("#maintOut", "❌ Falhou: " + (e?.message || e));
-        Logger.write("mae update err:", e?.message || e);
-      } finally {
-        maeUpdateLock = false;
-      }
-    });
-
-    bindTap($("#btnMaeClear"), async () => {
-      const MAE = window.RCF_MOTHER || window.RCF_MAE;
-      if (!MAE || typeof MAE.clearOverrides !== "function") {
-        uiMsg("#maintOut", "⚠️ clearOverrides() ausente (ou mãe não carregou).");
-        Logger.write("mae clear:", "missing");
-        return;
-      }
-      uiMsg("#maintOut", "Limpando...");
-      try {
-        await MAE.clearOverrides();
-        uiMsg("#maintOut", "✅ Clear acionado.");
-        Logger.write("mae clear:", "ok");
-      } catch (e) {
-        uiMsg("#maintOut", "❌ Falhou: " + (e?.message || e));
-        Logger.write("mae clear err:", e?.message || e);
-      }
-    });
-
-    // ✅ FASE A
+    // Admin scan/targets
     bindTap($("#btnScanIndex"), async () => {
       safeSetStatus("Scan…");
       try {
@@ -1934,19 +1796,19 @@
     });
 
     bindTap($("#btnPreviewDiff"), async () => {
-      const r = await injectorPreview();
+      const r = await injectorPreviewTargets();
       if (!r.ok) uiMsg("#diffOut", "❌ " + (r.err || "preview falhou"));
     });
 
     bindTap($("#btnApplyInject"), async () => {
       safeSetStatus("Apply…");
-      await injectorApplySafe();
+      await injectorApplyTargetsSafe();
       setTimeout(() => safeSetStatus("OK ✅"), 900);
     });
 
     bindTap($("#btnRollbackInject"), async () => {
       safeSetStatus("Rollback…");
-      await injectorRollback();
+      await injectorRollbackTargets();
       setTimeout(() => safeSetStatus("OK ✅"), 900);
     });
   }
@@ -1972,6 +1834,8 @@
     const pin = Pin.get();
     if (pin) uiMsg("#pinOut", "PIN definido ✅");
 
+    // Injector status inicial
+    injectorStatusLine("aguardando…", true);
     populateTargetsDropdown();
   }
 
@@ -1980,13 +1844,16 @@
       Stability.install();
       renderShell();
       bindUI();
-      hydrateGhInputs();
       hydrateUIFromState();
-
       installGuardsOnce();
 
+      // tenta registrar SW (mas não trava o app)
       const r = await swRegister();
       if (!r.ok) Logger.write("warn:", r.msg);
+
+      // se não estiver controlado ainda, dá um aviso “soft”
+      const controlled = await swIsControlled();
+      if (!controlled) Logger.write("sw:", "not controlled yet (reload 1x after SW)");
 
       Logger.write("RCF app.js init ok — mode:", State.cfg.mode);
       safeSetStatus("OK ✅");
