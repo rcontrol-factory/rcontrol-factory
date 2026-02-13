@@ -1,303 +1,242 @@
-/* app/js/core/mother_selfupdate.js — v3.3 (bundle_local IDB real + retry iOS + root /app)
-   - Normaliza paths pro root "/app"
-   - Retry iOS no put (timeouts progressivos)
-   - Guarda bundle em memória: window.__MAE_BUNDLE_MEM__
-   - Persistência REAL do bundle_local via IndexedDB:
-       DB: rcf_mother
-       Store: bundles
-       Key: mother_bundle_local_v1
-   - Espelho meta no localStorage (rcf:mother_bundle_meta)
+/* RControl Factory — /app/js/admin.github.js (SAFE UI) — v1
+   - UI estável pro GitHub Sync (Privado)
+   - Salva config em localStorage: rcf:ghcfg
+   - Pull: RCF_GH_SYNC.pull()
+   - Push: RCF_GH_SYNC.pushMotherBundle()  ✅ gera bundle e cria app/import/mother_bundle.json
+   - Token oculto (password) com botão 👁 mostrar/ocultar
 */
-
 (() => {
   "use strict";
 
-  const TAG = "[MAE]";
-  const log = (type, msg) => {
-    try { window.RCF_LOGGER?.push?.(type, msg); } catch {}
-    try { console.log(TAG, type, msg); } catch {}
-  };
+  if (window.RCF_ADMIN_GITHUB && window.RCF_ADMIN_GITHUB.__v1) return;
 
-  const isIOS = () => {
-    try {
-      const ua = navigator.userAgent || "";
-      return /iPad|iPhone|iPod/.test(ua) && /AppleWebKit/.test(ua);
-    } catch { return false; }
-  };
+  const LS_KEY = "rcf:ghcfg";
 
-  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-
-  function guessType(path) {
-    const p = String(path || "");
-    if (p.endsWith(".js")) return "application/javascript; charset=utf-8";
-    if (p.endsWith(".css")) return "text/css; charset=utf-8";
-    if (p.endsWith(".html")) return "text/html; charset=utf-8";
-    if (p.endsWith(".json")) return "application/json; charset=utf-8";
-    return "text/plain; charset=utf-8";
+  function uiLog(level, msg) {
+    try { window.RCF_LOGGER?.push?.(level, msg); } catch {}
+    try { console.log("[ADMIN_GH]", level, msg); } catch {}
   }
 
-  // ===== ROOT REAL do projeto (padrão: /app) =====
-  function getMotherRoot() {
-    const cfgRoot =
-      window.RCF_CONFIG?.MOTHER_ROOT ||
-      window.RCF?.config?.MOTHER_ROOT ||
-      window.MOTHER_ROOT;
+  function $(sel, root = document) { return root.querySelector(sel); }
 
-    const r = String(cfgRoot || "/app").trim();
-    if (!r) return "/app";
-    if (r === "/") return "/app";
-    return r.startsWith("/") ? r.replace(/\/+$/g, "") : ("/" + r.replace(/\/+$/g, ""));
+  function safeParseJson(raw, fallback) {
+    try { return raw ? JSON.parse(raw) : fallback; } catch { return fallback; }
   }
 
-  // ===== NORMALIZA PATH -> SEMPRE dentro do root (/app) =====
-  function normalizePath(inputPath) {
-    let p = String(inputPath || "").trim();
-    if (!p) return "";
-
-    p = p.split("#")[0].split("?")[0].trim();
-    if (!p.startsWith("/")) p = "/" + p;
-    p = p.replace(/\/{2,}/g, "/");
-
-    if (p.includes("..")) {
-      p = p.replace(/\.\./g, "");
-      p = p.replace(/\/{2,}/g, "/");
-    }
-
-    const ROOT = getMotherRoot();
-
-    if (p.startsWith(ROOT + "/")) return p;
-    if (p.startsWith("/js/")) return ROOT + p;
-
-    if (/^\/[^/]+\.(html|js|css|json|txt|md|png|jpg|jpeg|webp|svg|ico)$/i.test(p)) {
-      return ROOT + p;
-    }
-
-    return ROOT + p;
+  function loadCfg() {
+    const raw = localStorage.getItem(LS_KEY);
+    const cfg = safeParseJson(raw, {});
+    return {
+      owner: String(cfg.owner || "").trim(),
+      repo: String(cfg.repo || "").trim(),
+      branch: String(cfg.branch || "main").trim(),
+      path: String(cfg.path || "app/import/mother_bundle.json").trim(),
+      token: String(cfg.token || "").trim(),
+    };
   }
 
-  function shouldSkip(path) {
-    const p = String(path || "");
-    if (!p) return true;
-    if (p.endsWith("/")) return true;
-    if (p.includes("/.git/")) return true;
-    if (p.endsWith(".DS_Store")) return true;
-    if (p.endsWith("thumbs.db")) return true;
-    return false;
+  function saveCfg(cfg) {
+    const safe = {
+      owner: String(cfg.owner || "").trim(),
+      repo: String(cfg.repo || "").trim(),
+      branch: String(cfg.branch || "main").trim(),
+      path: String(cfg.path || "app/import/mother_bundle.json").trim(),
+      token: String(cfg.token || "").trim(),
+    };
+    localStorage.setItem(LS_KEY, JSON.stringify(safe));
+    uiLog("ok", "ghcfg saved");
+    return safe;
   }
 
-  async function tryUpdateSW() {
-    try { await navigator.serviceWorker?.ready; } catch {}
-    try {
-      const reg = await navigator.serviceWorker?.getRegistration?.("/");
-      await reg?.update?.();
-      return true;
-    } catch {
-      return false;
-    }
+  function maskToken(tok) {
+    const t = String(tok || "");
+    if (!t) return "";
+    if (t.length <= 10) return "********";
+    return t.slice(0, 6) + "…" + t.slice(-4);
   }
 
-  function withTimeout(promise, ms, label) {
-    let t;
-    const timeout = new Promise((_, rej) => {
-      t = setTimeout(() => rej(new Error(`TIMEOUT ${ms}ms em: ${label}`)), ms);
+  function ensureDeps() {
+    if (!window.RCF_GH_SYNC) throw new Error("RCF_GH_SYNC não carregou (js/core/github_sync.js)");
+    if (typeof window.RCF_GH_SYNC.pull !== "function") throw new Error("RCF_GH_SYNC.pull ausente");
+    if (typeof window.RCF_GH_SYNC.push !== "function") throw new Error("RCF_GH_SYNC.push ausente");
+  }
+
+  function setPanelText(text) {
+    const out = document.getElementById("ghOut");
+    if (out) out.textContent = String(text || "");
+  }
+
+  function render() {
+    const host =
+      document.querySelector("#adminView") ||
+      document.querySelector("#view-admin") ||
+      document.querySelector('[data-view="admin"]') ||
+      document.querySelector("#rcfRoot") ||
+      document.body;
+
+    if ($("#rcfGitHubPanel", host)) return;
+
+    const cfg = loadCfg();
+
+    const wrap = document.createElement("section");
+    wrap.id = "rcfGitHubPanel";
+    wrap.style.cssText =
+      "margin-top:14px;padding:14px;border-radius:16px;" +
+      "background:rgba(255,255,255,.04);" +
+      "border:1px solid rgba(255,255,255,.06)";
+
+    wrap.innerHTML = `
+      <div style="font-weight:800;font-size:20px;margin-bottom:10px">
+        GitHub Sync (Privado) — SAFE
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <input id="ghOwner"  placeholder="owner"  value="${cfg.owner.replace(/"/g, "&quot;")}"
+          style="padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,.08);background:rgba(0,0,0,.25);color:#fff">
+
+        <input id="ghRepo"   placeholder="repo"   value="${cfg.repo.replace(/"/g, "&quot;")}"
+          style="padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,.08);background:rgba(0,0,0,.25);color:#fff">
+
+        <input id="ghBranch" placeholder="branch" value="${cfg.branch.replace(/"/g, "&quot;")}"
+          style="padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,.08);background:rgba(0,0,0,.25);color:#fff">
+
+        <input id="ghPath"   placeholder="path"   value="${cfg.path.replace(/"/g, "&quot;")}"
+          style="padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,.08);background:rgba(0,0,0,.25);color:#fff">
+
+        <div style="display:flex;gap:8px;align-items:center">
+          <input id="ghToken" type="password" placeholder="token (PAT)"
+            value="${cfg.token.replace(/"/g, "&quot;")}"
+            style="flex:1;padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,.08);background:rgba(0,0,0,.25);color:#fff">
+          <button id="ghToggleToken"
+            style="padding:10px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.06);color:#fff">👁</button>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
+        <button id="ghSave"
+          style="padding:10px 14px;border-radius:999px;border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.06);color:#fff">
+          Salvar config
+        </button>
+
+        <button id="ghPull"
+          style="padding:10px 14px;border-radius:999px;border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.06);color:#fff">
+          ⬇ Pull
+        </button>
+
+        <button id="ghPush"
+          style="padding:10px 14px;border-radius:999px;border:1px solid rgba(46,204,113,.35);background:rgba(46,204,113,.18);color:#fff">
+          ⬆ Push (gera bundle)
+        </button>
+
+        <button id="ghStatus"
+          style="padding:10px 14px;border-radius:999px;border:1px solid rgba(241,196,15,.35);background:rgba(241,196,15,.18);color:#fff">
+          ⚡ Status
+        </button>
+      </div>
+
+      <pre id="ghOut"
+        style="margin-top:12px;white-space:pre-wrap;padding:12px;border-radius:14px;border:1px solid rgba(255,255,255,.08);background:rgba(0,0,0,.30);color:#d7fbe2;min-height:54px">
+Pronto.
+      </pre>
+    `;
+
+    host.appendChild(wrap);
+
+    const btnSave = $("#ghSave", wrap);
+    const btnPull = $("#ghPull", wrap);
+    const btnPush = $("#ghPush", wrap);
+    const btnStatus = $("#ghStatus", wrap);
+
+    const btnToggleToken = $("#ghToggleToken", wrap);
+    const inputToken = $("#ghToken", wrap);
+    btnToggleToken?.addEventListener("click", () => {
+      if (!inputToken) return;
+      inputToken.type = inputToken.type === "password" ? "text" : "password";
     });
-    return Promise.race([promise, timeout]).finally(() => clearTimeout(t));
-  }
 
-  async function putWithRetry(putFn, path, content, contentType) {
-    const base = isIOS() ? 20000 : 6000; // 🔧 aumentei pra iOS
-    const timeouts = [base, base + 3000, base + 6000];
-    const backs = [400, 900, 1700];
-
-    for (let i = 0; i < 3; i++) {
-      try {
-        log("info", `Mãe: put try #${i + 1} (${timeouts[i]}ms) -> ${path}`);
-        await withTimeout(
-          Promise.resolve(putFn(path, content, contentType)),
-          timeouts[i],
-          `put(${path})`
-        );
-        return true;
-      } catch (e) {
-        log("warn", `Mãe: put falhou #${i + 1} -> ${path} :: ${e?.message || e}`);
-        if (i < 2) await sleep(backs[i]);
-      }
-    }
-    throw new Error(`Falhou: put after retries: ${path}`);
-  }
-
-  // -----------------------------
-  // IndexedDB bundle_local (REAL)
-  // -----------------------------
-  const IDB_DB = "rcf_mother";
-  const IDB_STORE = "bundles";
-  const IDB_KEY = "mother_bundle_local_v1";
-
-  function openIDB() {
-    return new Promise((resolve, reject) => {
-      if (!("indexedDB" in window)) return reject(new Error("indexedDB não suportado"));
-      const req = indexedDB.open(IDB_DB, 1);
-      req.onupgradeneeded = () => {
-        const db = req.result;
-        if (!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE);
+    function readInputs() {
+      return {
+        owner: $("#ghOwner", wrap)?.value || "",
+        repo: $("#ghRepo", wrap)?.value || "",
+        branch: $("#ghBranch", wrap)?.value || "main",
+        path: $("#ghPath", wrap)?.value || "app/import/mother_bundle.json",
+        token: $("#ghToken", wrap)?.value || "",
       };
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error || new Error("Falha ao abrir IDB"));
+    }
+
+    btnSave?.addEventListener("click", () => {
+      const c = saveCfg(readInputs());
+      setPanelText(
+        `✅ Config salva.\nowner=${c.owner}\nrepo=${c.repo}\nbranch=${c.branch}\npath=${c.path}\ntoken=${maskToken(c.token)}`
+      );
     });
-  }
 
-  async function idbPut(key, value) {
-    const db = await openIDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(IDB_STORE, "readwrite");
-      const st = tx.objectStore(IDB_STORE);
-      st.put(value, key);
-      tx.oncomplete = () => { try { db.close(); } catch {} resolve(true); };
-      tx.onerror = () => { try { db.close(); } catch {} reject(tx.error || new Error("IDB put falhou")); };
-      tx.onabort = () => { try { db.close(); } catch {} reject(tx.error || new Error("IDB put abort")); };
+    btnPull?.addEventListener("click", async () => {
+      try {
+        ensureDeps();
+        setPanelText("⏳ Pull…");
+        const cfgNow = saveCfg(readInputs());
+        const txt = await window.RCF_GH_SYNC.pull(cfgNow);
+        setPanelText(
+          `✅ Pull OK.\nTamanho: ${String(txt || "").length} chars\nHead: ${String(txt || "").slice(0, 120).replace(/\s+/g, " ")}…`
+        );
+      } catch (e) {
+        const m = e?.message || String(e);
+        uiLog("err", "gh pull err: " + m);
+        setPanelText("❌ Pull ERRO:\n" + m);
+      }
     });
-  }
 
-  async function idbDel(key) {
-    const db = await openIDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(IDB_STORE, "readwrite");
-      const st = tx.objectStore(IDB_STORE);
-      st.delete(key);
-      tx.oncomplete = () => { try { db.close(); } catch {} resolve(true); };
-      tx.onerror = () => { try { db.close(); } catch {} reject(tx.error || new Error("IDB del falhou")); };
-      tx.onabort = () => { try { db.close(); } catch {} reject(tx.error || new Error("IDB del abort")); };
+    // ✅ Push blindado: gera bundle automaticamente e cria o arquivo no GitHub
+    btnPush?.addEventListener("click", async () => {
+      try {
+        ensureDeps();
+        setPanelText("⏳ Push… (gerando mother bundle)");
+        const cfgNow = saveCfg(readInputs());
+
+        if (typeof window.RCF_GH_SYNC.pushMotherBundle === "function") {
+          const r = await window.RCF_GH_SYNC.pushMotherBundle(cfgNow);
+          setPanelText("✅ Push OK.\n" + String(r || "OK"));
+          uiLog("ok", "GitHub: pushMotherBundle ok");
+          return;
+        }
+
+        // fallback: push() sem content já gera bundle (se seu github_sync suportar)
+        const r2 = await window.RCF_GH_SYNC.push(cfgNow, null);
+        setPanelText("✅ Push OK.\n" + String(r2 || "OK"));
+        uiLog("ok", "GitHub: push ok");
+      } catch (e) {
+        const m = e?.message || String(e);
+        uiLog("err", "gh push err: " + m);
+        setPanelText("❌ Push ERRO:\n" + m);
+      }
     });
+
+    btnStatus?.addEventListener("click", () => {
+      try {
+        const c = loadCfg();
+        const mae = window.RCF_MAE?.status?.() || window.RCF_MOTHER?.status?.() || null;
+        setPanelText(
+          "STATUS\n" +
+          `cfg: owner=${c.owner} repo=${c.repo} branch=${c.branch} path=${c.path} token=${maskToken(c.token)}\n\n` +
+          "MAE:\n" + (mae ? JSON.stringify(mae, null, 2) : "(sem RCF_MAE.status)")
+        );
+      } catch (e) {
+        setPanelText("❌ Status erro:\n" + (e?.message || String(e)));
+      }
+    });
+
+    uiLog("ok", "admin.github.js ready ✅");
   }
 
-  function saveMeta(metaObj) {
-    try {
-      localStorage.setItem("rcf:mother_bundle_meta", JSON.stringify(metaObj || {}));
-    } catch {}
-  }
-
-  function head80(t) {
-    return String(t || "").slice(0, 80).replace(/\s+/g, " ").trim();
-  }
-
-  function ensureBundleJson(bundleText) {
-    const t = String(bundleText || "").trim();
-    if (!t) throw new Error("Bundle vazio");
-    if (t.startsWith("<!DOCTYPE") || t.startsWith("<html")) throw new Error(`Bundle veio HTML (head="${head80(t)}")`);
-    if (!t.startsWith("{")) throw new Error(`Bundle não parece JSON (head="${head80(t)}")`);
+  function install() {
+    try { render(); } catch {}
     return true;
   }
 
-  async function persistBundleLocal(bundleObj) {
-    const files = bundleObj?.files || {};
-    const meta = bundleObj?.meta || null;
-    const count = Object.keys(files || {}).length;
+  window.RCF_ADMIN_GITHUB = { __v1: true, install };
 
-    // memória
-    try { window.__MAE_BUNDLE_MEM__ = { meta, files }; } catch {}
-
-    // IDB (real)
-    try {
-      await idbPut(IDB_KEY, { meta, files, savedAt: new Date().toISOString() });
-      saveMeta({ savedAt: new Date().toISOString(), count, hasMeta: !!meta, key: IDB_KEY });
-      log("ok", `Mãe: bundle_local persistido ✅ (IDB) files=${count}`);
-      return true;
-    } catch (e) {
-      saveMeta({ savedAt: new Date().toISOString(), count, hasMeta: !!meta, key: IDB_KEY, idbErr: String(e?.message || e) });
-      log("warn", `Mãe: falha ao persistir IDB bundle_local :: ${e?.message || e}`);
-      return false;
-    }
-  }
-
-  async function applyBundle(bundleText) {
-    ensureBundleJson(bundleText);
-
-    let bundle;
-    try { bundle = JSON.parse(bundleText); }
-    catch (e) { throw new Error("Bundle JSON inválido: " + (e?.message || e)); }
-
-    const files = bundle?.files || bundle;
-    if (!files || typeof files !== "object") throw new Error("Bundle sem 'files'.");
-
-    // ✅ persiste ANTES de aplicar overrides (pra Scan B nunca ser 0 se pull ok)
-    await persistBundleLocal({ meta: bundle?.meta || null, files });
-
-    const put = window.RCF_VFS_OVERRIDES?.put;
-    if (typeof put !== "function") throw new Error("RCF_VFS_OVERRIDES.put não existe.");
-
-    const entries = Object.entries(files);
-    log("info", `Mãe: bundle tem ${entries.length} item(ns). root=${getMotherRoot()}`);
-
-    let count = 0;
-    for (const [rawPath, v] of entries) {
-      const normPath = normalizePath(rawPath);
-      if (shouldSkip(normPath)) continue;
-
-      const content =
-        (v && typeof v === "object" && "content" in v)
-          ? String(v.content ?? "")
-          : String(v ?? "");
-
-      const contentType =
-        (v && typeof v === "object" && v.contentType)
-          ? String(v.contentType)
-          : guessType(normPath);
-
-      log("info", `Mãe: aplicando -> ${normPath}`);
-      await putWithRetry(put, normPath, content, contentType);
-      count++;
-    }
-
-    return count;
-  }
-
-  const api = {
-    status() {
-      return {
-        ok: true,
-        motherRoot: getMotherRoot(),
-        hasGh: !!window.RCF_GH_SYNC?.pull,
-        hasOverrides: typeof window.RCF_VFS_OVERRIDES?.put === "function",
-        swSupported: !!navigator.serviceWorker,
-        swControlled: !!navigator.serviceWorker?.controller,
-        ua: navigator.userAgent,
-      };
-    },
-
-    async updateFromGitHub() {
-      if (!window.RCF_GH_SYNC?.pull) throw new Error("GitHub Sync ausente: RCF_GH_SYNC.pull()");
-      log("info", "Mãe: puxando bundle do GitHub...");
-      const bundleText = await window.RCF_GH_SYNC.pull();
-
-      log("info", "Mãe: aplicando overrides...");
-      const n = await applyBundle(bundleText);
-
-      log("ok", `Mãe: ${n} arquivo(s) aplicado(s). Atualizando SW...`);
-      const swOk = await tryUpdateSW();
-      log("ok", `Mãe: SW update ${swOk ? "OK" : "falhou/ignorado"} — recarregando...`);
-      setTimeout(() => location.reload(), 250);
-      return n;
-    },
-
-    async clearOverrides() {
-      const clear = window.RCF_VFS_OVERRIDES?.clear;
-      if (typeof clear !== "function") throw new Error("RCF_VFS_OVERRIDES.clear não existe.");
-      log("warn", "Mãe: limpando overrides...");
-      await clear();
-
-      // também limpa o bundle_local pra evitar leitura velha
-      try { await idbDel(IDB_KEY); } catch {}
-      try { saveMeta({ clearedAt: new Date().toISOString(), key: IDB_KEY }); } catch {}
-
-      await tryUpdateSW();
-      log("ok", "Mãe: overrides limpos. Recarregando...");
-      setTimeout(() => location.reload(), 200);
-      return true;
-    }
-  };
-
-  window.RCF_MOTHER = api;
-  window.RCF_MAE = api;
-
-  log("ok", "mother_selfupdate.js loaded (v3.3)");
+  try { install(); } catch {}
+  setTimeout(() => { try { install(); } catch {} }, 300);
+  setTimeout(() => { try { install(); } catch {} }, 1200);
 })();
