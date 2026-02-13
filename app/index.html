@@ -6,7 +6,7 @@
   <title>RControl Factory</title>
   <meta name="theme-color" content="#0b1020" />
 
-  <!-- ✅ PADRÃO: base relativo pra funcionar em /app/ -->
+  <!-- ✅ importante: base relativo pra funcionar em /app/ -->
   <base href="./" />
 
   <link rel="manifest" href="./manifest.json" />
@@ -61,7 +61,7 @@
         };
       } catch {}
 
-      // logger global (compatível)
+      // logger global (não sobrescreve se logger.js já criar)
       window.RCF_LOGGER = window.RCF_LOGGER || {
         push(level, msg){
           const line = "[" + level + "] " + msg;
@@ -80,31 +80,24 @@
         window.RCF_LOGGER.push("err", "UNHANDLED_REJECTION: " + m);
       });
 
-      function loadScript(src, timeoutMs = 12000){
+      function loadScript(src){
         return new Promise((resolve, reject) => {
           const s = document.createElement("script");
           s.src = src;
           s.async = false;
-
-          const to = setTimeout(() => {
-            reject(new Error("timeout loading: " + src));
-          }, timeoutMs);
-
-          s.onload = () => { clearTimeout(to); resolve(src); };
-          s.onerror = () => { clearTimeout(to); reject(new Error("load failed: " + src)); };
-
+          s.onload = () => resolve(src);
+          s.onerror = () => reject(new Error("load failed: " + src));
           document.head.appendChild(s);
         });
       }
 
       async function boot(){
-        window.RCF_LOGGER.push("boot", "index boot: starting…");
-        window.RCF_LOGGER.push("boot", "href = " + location.href);
-        window.RCF_LOGGER.push("boot", "base href = " + document.baseURI);
+        window.RCF_LOGGER.push("BOOT", "index boot: starting…");
+        window.RCF_LOGGER.push("BOOT", "base href = " + document.baseURI);
 
-        // ✅ módulos (SAFE) — não quebra se faltar
+        // ✅ ordem mínima (antes do app.js)
         const modules = [
-          "./js/core/logger.js",           // (se existir) antes
+          "./js/core/logger.js",
           "./js/core/storage.js",
           "./js/core/github_sync.js",
           "./js/core/vfs_overrides.js",
@@ -115,26 +108,27 @@
         for (const src of modules) {
           try {
             await loadScript(src);
-            window.RCF_LOGGER.push("boot", "module loaded ✅ " + src);
+            window.RCF_LOGGER.push("BOOT", "module loaded ✅ " + src);
           } catch (e) {
-            window.RCF_LOGGER.push("warn", "module missing/failed ❌ " + src + " :: " + (e.message||e));
+            window.RCF_LOGGER.push("WARN", "module missing/failed ❌ " + src + " :: " + (e.message||e));
           }
         }
 
         // app principal
         try {
           await loadScript("./app.js");
-          window.RCF_LOGGER.push("boot", "app.js loaded ✅ ./app.js");
+          window.RCF_LOGGER.push("BOOT", "app.js loaded ✅ ./app.js");
         } catch (e) {
-          window.RCF_LOGGER.push("err", "app.js missing/failed ❌ ./app.js :: " + (e.message||e));
+          window.RCF_LOGGER.push("ERR", "app.js missing/failed ❌ ./app.js :: " + (e.message||e));
         }
 
-        // ✅ SW: PADRÃO = registrar no app.js (evita duplicidade)
+        // ✅ SW (scope ./) — PADRÃO /app/
+        // IMPORTANTE: depois que eu revisar seu app.js, vamos manter o register APENAS AQUI (ou só lá).
         try {
           if ("serviceWorker" in navigator) {
-            window.RCF_LOGGER.push("boot", "sw: supported (registration handled by app.js)");
-          } else {
-            window.RCF_LOGGER.push("warn", "sw: not supported");
+            navigator.serviceWorker.register("./sw.js", { scope: "./" })
+              .then(() => window.RCF_LOGGER.push("BOOT", "sw register: ok (scope ./)"))
+              .catch((e) => window.RCF_LOGGER.push("WARN", "sw register: fail/ignored :: " + (e?.message||e)));
           }
         } catch {}
       }
