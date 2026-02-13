@@ -5,6 +5,7 @@
    - Inventory REAL: A (VFS runtime) -> B (mother_bundle local) -> C (DOM anchors only)
    - ✅ FIX: SW stability vira AUTO-FIX + WARN (não derruba RCF_STABLE por timing)
    - ✅ FIX: Injector funciona sem VFS runtime via Overrides VFS (localStorage)
+   - ✅ FIX CRÍTICO: Scan não “trava” em A vazio — fallback automático p/ B/C + garante /runtime/document.html
 */
 
 (() => {
@@ -229,7 +230,6 @@
       if (ev.type === "click" && (t - last) < 250) return;
       last = t;
 
-      // Não mata input focus: só previne em botão/link
       try {
         const tag = (ev.target && ev.target.tagName) ? String(ev.target.tagName).toLowerCase() : "";
         const isButtonish = tag === "button" || tag === "a" || (ev.currentTarget && ev.currentTarget.tagName && String(ev.currentTarget.tagName).toLowerCase() === "button");
@@ -329,7 +329,6 @@
     };
   })();
 
-  // expõe para debug / futura mãe
   window.RCF_OVERRIDES_VFS = OverridesVFS;
 
   // -----------------------------
@@ -1256,8 +1255,8 @@
     }
   }
 
-  function pickRuntimeVFS() {
-    // prioridade: VFS real -> depois overrides
+  // ✅ detecta VFS real (sem “enganar” com overrides)
+  function pickRealRuntimeVFS() {
     const candidates = [
       window.RCF_VFS,
       window.RCF_FS,
@@ -1280,9 +1279,7 @@
 
       if (hasList && hasRead) return v;
     }
-
-    // fallback: overrides vfs sempre existe
-    return OverridesVFS;
+    return null;
   }
 
   async function vfsListAll(vfs) {
@@ -1317,54 +1314,55 @@
     return "";
   }
 
+  // ✅ SCAN FIXED: A vazio -> cai pro B/C; SEMPRE garante /runtime/document.html
   async function scanFactoryFiles() {
     const index = {
       meta: { scannedAt: nowISO(), source: "", count: 0 },
       files: []
     };
 
-    // 0) sempre inclui overrides no index (pra mapear targets de patches)
+    const pushFile = (rawPath, rawText) => {
+      const p = normalizePath(rawPath);
+      const txt = (rawText == null) ? "" : String(rawText);
+      const type = guessType(p);
+      index.files.push({
+        path: p,
+        type,
+        size: txt.length,
+        hash: simpleHash(txt),
+        markers: detectMarkers(txt),
+        anchors: getAnchorsForContent(type, txt)
+      });
+    };
+
+    // 0) sempre inclui overrides (se existir algo)
     try {
       const olist = await OverridesVFS.listFiles();
       for (const p0 of (olist || []).slice(0, 800)) {
-        const p = normalizePath(p0);
-        const txt = String((await OverridesVFS.readFile(p)) ?? "");
-        const type = guessType(p);
-        index.files.push({
-          path: p,
-          type,
-          size: txt.length,
-          hash: simpleHash(txt),
-          markers: detectMarkers(txt),
-          anchors: getAnchorsForContent(type, txt)
-        });
+        const txt = await OverridesVFS.readFile(p0);
+        pushFile(p0, txt);
       }
     } catch {}
 
-    // A) runtime VFS real (se existir), senão segue
-    const vfs = (window.RCF_VFS || window.RCF_FS || window.RCF_VFS_OVERRIDES || window.RCF_FILES || window.RCF_STORE) || null;
-    if (vfs) {
-      index.meta.source = "A:runtime_vfs";
-      const list = await vfsListAll(vfs);
+    // A) runtime VFS REAL (somente se listar algo)
+    const realVFS = pickRealRuntimeVFS();
+    if (realVFS) {
+      let list = [];
+      try { list = await vfsListAll(realVFS); } catch { list = []; }
       const paths = (list || []).map(p => normalizePath(p)).filter(Boolean).slice(0, 1200);
-      for (const p of paths) {
-        const content = await vfsRead(vfs, p);
-        const txt = (content == null) ? "" : String(content);
-        const type = guessType(p);
-        const markers = detectMarkers(txt);
-        const anchors = getAnchorsForContent(type, txt);
-        index.files.push({
-          path: p,
-          type,
-          size: txt.length,
-          hash: simpleHash(txt),
-          markers,
-          anchors
-        });
+
+      if (paths.length) {
+        index.meta.source = "A:runtime_vfs";
+        for (const p of paths) {
+          const content = await vfsRead(realVFS, p);
+          pushFile(p, content);
+        }
+        index.meta.count = index.files.length;
+        Storage.set("RCF_FILE_INDEX", index);
+        return index;
+      } else {
+        Logger.write("scan:", "runtime_vfs vazio -> fallback B/C");
       }
-      index.meta.count = index.files.length;
-      Storage.set("RCF_FILE_INDEX", index);
-      return index;
     }
 
     // B) mother_bundle.json local
@@ -1372,46 +1370,38 @@
     if (!bundleText) bundleText = await tryFetchLocalBundleFromCfg();
 
     if (bundleText) {
-      index.meta.source = "B:mother_bundle_local";
       let parsed = null;
       try { parsed = JSON.parse(bundleText); } catch { parsed = null; }
 
-      const filesObj = (parsed && parsed.files && typeof parsed.files === "object") ? parsed.files : (parsed && typeof parsed === "object" ? parsed : {});
+      const filesObj =
+        (parsed && parsed.files && typeof parsed.files === "object")
+          ? parsed.files
+          : (parsed && typeof parsed === "object" ? parsed : {});
+
       const entries = Object.entries(filesObj || {});
-      for (const [rawPath, rawVal] of entries) {
-        const p = normalizePath(rawPath);
-        const txt = (rawVal && typeof rawVal === "object" && "content" in rawVal) ? String(rawVal.content ?? "") : String(rawVal ?? "");
-        const type = guessType(p);
-        const markers = detectMarkers(txt);
-        const anchors = getAnchorsForContent(type, txt);
-        index.files.push({
-          path: p,
-          type,
-          size: txt.length,
-          hash: simpleHash(txt),
-          markers,
-          anchors
-        });
+      if (entries.length) {
+        index.meta.source = "B:mother_bundle_local";
+        for (const [rawPath, rawVal] of entries) {
+          const txt =
+            (rawVal && typeof rawVal === "object" && "content" in rawVal)
+              ? String(rawVal.content ?? "")
+              : String(rawVal ?? "");
+          pushFile(rawPath, txt);
+        }
+        index.meta.count = index.files.length;
+        Storage.set("RCF_FILE_INDEX", index);
+        Storage.setRaw("mother_bundle", bundleText);
+        return index;
+      } else {
+        Logger.write("scan:", "bundle local vazio -> fallback C");
       }
-      index.meta.count = index.files.length;
-      Storage.set("RCF_FILE_INDEX", index);
-      Storage.setRaw("mother_bundle", bundleText);
-      return index;
     }
 
-    // C) fallback DOM (anchors only)
+    // C) fallback DOM — SEMPRE adiciona 1 arquivo
     index.meta.source = "C:dom_anchors_only";
     const html = document.documentElement ? document.documentElement.outerHTML : "";
-    const markers = detectMarkers(html);
-    const anchors = getAnchorsForContent("html", html);
-    index.files.push({
-      path: "/runtime/document.html",
-      type: "html",
-      size: html.length,
-      hash: simpleHash(html),
-      markers,
-      anchors
-    });
+    pushFile("/runtime/document.html", html);
+
     index.meta.count = index.files.length;
     Storage.set("RCF_FILE_INDEX", index);
     return index;
@@ -1452,7 +1442,7 @@
             offset: a.at,
             anchorId: a.id,
             supportedModes: ["INSERT", "REPLACE", "DELETE"],
-            defaultRisk: (a.id.includes("BODY") || a.id.includes("JS_EOF")) ? "medium" : "low",
+            defaultRisk: (String(a.id || "").includes("BODY") || String(a.id || "").includes("JS_EOF")) ? "medium" : "low",
             note: a.note
           });
         }
@@ -1517,18 +1507,18 @@
   async function readTextFromInventoryPath(path) {
     const p = normalizePath(path);
 
-    // ✅ prioridade: override
+    // 1) override primeiro
     const ov = await OverridesVFS.readFile(p);
     if (ov != null) return String(ov);
 
-    // A) runtime vfs real (se existir)
-    const vfs = (window.RCF_VFS || window.RCF_FS || window.RCF_VFS_OVERRIDES || window.RCF_FILES || window.RCF_STORE) || null;
+    // 2) runtime VFS real
+    const vfs = pickRealRuntimeVFS();
     if (vfs) {
       const txt = await vfsRead(vfs, p);
       return (txt == null) ? "" : String(txt);
     }
 
-    // B) bundle local
+    // 3) bundle local
     const bundleText = getLocalMotherBundleText() || (await tryFetchLocalBundleFromCfg()) || "";
     if (bundleText) {
       try {
@@ -1540,7 +1530,7 @@
       } catch {}
     }
 
-    // C) dom doc
+    // 4) dom doc
     if (p === "/runtime/document.html") {
       return document.documentElement ? document.documentElement.outerHTML : "";
     }
@@ -1551,8 +1541,8 @@
   async function writeTextToInventoryPath(path, newText) {
     const p = normalizePath(path);
 
-    // A) runtime vfs real se tiver write
-    const vfs = (window.RCF_VFS || window.RCF_FS || window.RCF_VFS_OVERRIDES || window.RCF_FILES || window.RCF_STORE) || null;
+    // tenta runtime VFS real se tiver write
+    const vfs = pickRealRuntimeVFS();
     if (vfs) {
       try {
         if (typeof vfs.writeFile === "function") { await vfs.writeFile(p, String(newText ?? "")); return { ok: true, mode: "vfs.writeFile" }; }
@@ -1562,10 +1552,10 @@
       } catch (e) {
         return { ok: false, err: e?.message || e };
       }
-      // se não tem método de escrita, cai pro override
+      // sem write -> cai pro override
     }
 
-    // ✅ fallback: override vfs (sempre escreve)
+    // fallback: override vfs (sempre escreve)
     try {
       await OverridesVFS.writeFile(p, String(newText ?? ""));
       return { ok: true, mode: "override.writeFile" };
