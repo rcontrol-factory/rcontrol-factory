@@ -1,23 +1,13 @@
-/* RControl Factory — /app/js/core/vfs_overrides.js (PADRÃO) — v2
-  - Scope correto do SW em /app/: ./sw.js com scope ./
-  - getRegistration no scope ./ (não "/")
-  - normalizeMotherPath(p): tudo vira /app/...
-  - put() com retry/backoff + espera SW controlar (iOS safe)
+/* /app/js/core/vfs_overrides.js — v1.1
+  - PostMessage para SW com MessageChannel
+  - ✅ PADRÃO: scope/registration em /app (não "/")
+  - ✅ normalizeMotherPath(p): /index.html -> /app/index.html e tudo vira /app/*
+  - ✅ retry + timeout para iOS/travadas
 */
 (() => {
   "use strict";
 
-  // -----------------------------
-  // Logging (compat)
-  // -----------------------------
-  const log = (lvl, msg) => {
-    try { window.RCF_LOGGER?.push?.(lvl, String(msg)); } catch {}
-    try { console.log("[VFS_OVERRIDES]", lvl, msg); } catch {}
-  };
-
-  // -----------------------------
-  // PADRÃO: MotherRoot é /app
-  // -----------------------------
+  // ✅ PADRÃO: normalizeMotherPath (mesmas regras da Mãe)
   function normalizeMotherPath(p) {
     let x = String(p || "").trim();
     if (!x) return "";
@@ -25,94 +15,51 @@
     if (!x.startsWith("/")) x = "/" + x;
     x = x.replace(/\/{2,}/g, "/");
 
-    // regra de ouro: tudo vira /app/...
     if (x === "/index.html") x = "/app/index.html";
-    if (x === "/styles.css") x = "/app/styles.css";
-    if (x === "/app.js") x = "/app/app.js";
-    if (x === "/sw.js") x = "/app/sw.js";
-    if (x === "/manifest.json") x = "/app/manifest.json";
 
-    // /js/... vira /app/js/...
+    const ROOT_FILES = new Set(["/styles.css", "/app.js", "/sw.js", "/manifest.json", "/favicon.ico"]);
+    if (ROOT_FILES.has(x)) x = "/app" + x;
+
     if (x.startsWith("/js/")) x = "/app" + x;
 
-    // garante /app/
     if (!x.startsWith("/app/")) x = "/app" + x;
-
     x = x.replace(/\/{2,}/g, "/");
     return x;
   }
 
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-  async function waitForController(timeoutMs = 3500) {
-    if (!("serviceWorker" in navigator)) return null;
-
-    // já controlando?
-    if (navigator.serviceWorker.controller) return navigator.serviceWorker.controller;
-
-    // espera controllerchange
-    let done = false;
-    return await new Promise((resolve) => {
-      const t = setTimeout(() => {
-        if (done) return;
-        done = true;
-        resolve(navigator.serviceWorker.controller || null);
-      }, timeoutMs);
-
-      navigator.serviceWorker.addEventListener("controllerchange", () => {
-        if (done) return;
-        clearTimeout(t);
-        done = true;
-        resolve(navigator.serviceWorker.controller || null);
-      }, { once: true });
-    });
+  function log(lvl, msg) {
+    try { window.RCF_LOGGER?.push?.(lvl, String(msg)); } catch {}
+    try { console.log("[VFS_OVERRIDES]", lvl, msg); } catch {}
   }
 
-  // ✅ pega registration do scope ./ (baseURI do /app/)
-  async function getAppRegistration() {
-    if (!("serviceWorker" in navigator)) return null;
+  function withTimeout(promise, ms, label) {
+    let t;
+    const timeout = new Promise((_, rej) => {
+      t = setTimeout(() => rej(new Error(`TIMEOUT ${ms}ms em ${label}`)), ms);
+    });
+    return Promise.race([promise, timeout]).finally(() => clearTimeout(t));
+  }
 
-    // 1) tenta explicitamente scope "./"
+  async function getRegSmart() {
+    // ✅ /app/ scope
+    const scopePath = new URL("./", document.baseURI).pathname; // "/app/"
     try {
-      const reg1 = await navigator.serviceWorker.getRegistration("./");
-      if (reg1) return reg1;
+      const reg = await navigator.serviceWorker?.getRegistration?.(scopePath);
+      if (reg) return reg;
     } catch {}
-
-    // 2) tenta baseURI (seguro com <base href="./">)
     try {
-      const scope = new URL("./", document.baseURI).toString();
-      const reg2 = await navigator.serviceWorker.getRegistration(scope);
+      const reg2 = await navigator.serviceWorker?.getRegistration?.();
       if (reg2) return reg2;
     } catch {}
-
-    // 3) fallback genérico
-    try {
-      const reg3 = await navigator.serviceWorker.getRegistration();
-      return reg3 || null;
-    } catch {}
-
     return null;
   }
 
   async function post(msg) {
-    const reg = await getAppRegistration();
+    if (!("serviceWorker" in navigator)) throw new Error("SW não suportado.");
 
-    // pega SW ativo/controlador
-    const sw =
-      reg?.active ||
-      reg?.waiting ||
-      navigator.serviceWorker?.controller ||
-      null;
-
-    // tenta aguardar controller se não existir ainda
-    if (!sw) {
-      await waitForController(3500);
-    }
-
-    const reg2 = await getAppRegistration();
-    const sw2 = reg2?.active || navigator.serviceWorker?.controller;
-
-    if (!sw2) throw new Error("SW não controlando a página ainda (scope ./).");
+    const reg = await getRegSmart();
+    const sw = reg?.active || navigator.serviceWorker?.controller;
+    if (!sw) throw new Error("SW não controlando a página ainda (recarregue 1x).");
 
     return await new Promise((resolve, reject) => {
       const ch = new MessageChannel();
@@ -121,52 +68,41 @@
         if (d.type?.endsWith("_ERR")) reject(new Error(d.error || "ERR"));
         else resolve(d);
       };
-      sw2.postMessage(msg, [ch.port2]);
+      sw.postMessage(msg, [ch.port2]);
     });
   }
 
-  async function postWithRetry(msg, tries = 4) {
-    let lastErr = null;
-    for (let i = 0; i < tries; i++) {
+  async function postRetry(msg, label) {
+    const tries = 3;
+    let last = null;
+    for (let i = 1; i <= tries; i++) {
       try {
-        if (i > 0) log("warn", `retry ${i + 1}/${tries}: ${msg?.type || "MSG"}`);
-        return await post(msg);
+        return await withTimeout(post(msg), 8000, label + ` (try ${i}/${tries})`);
       } catch (e) {
-        lastErr = e;
-        // backoff iOS safe
-        await sleep(350 + i * 600);
+        last = e;
+        await new Promise(r => setTimeout(r, 250 * i));
       }
     }
-    throw lastErr || new Error("postWithRetry failed");
+    throw last || new Error("post failed");
   }
 
   const api = {
     async put(path, content, contentType) {
       const from = String(path || "");
       const to = normalizeMotherPath(from);
-
-      // ✅ log obrigatório do PATCH MÍNIMO
       if (from !== to) log("info", `path normalized: ${from} -> ${to}`);
 
-      await postWithRetry({
-        type: "RCF_OVERRIDE_PUT",
-        path: to,
-        content: String(content ?? ""),
-        contentType: String(contentType || "")
-      });
-
+      await postRetry(
+        { type: "RCF_OVERRIDE_PUT", path: to, content: String(content ?? ""), contentType },
+        `put(${to})`
+      );
       return true;
     },
-
     async clear() {
-      await postWithRetry({ type: "RCF_OVERRIDE_CLEAR" });
+      await postRetry({ type: "RCF_OVERRIDE_CLEAR" }, "clear()");
       return true;
-    },
-
-    // expose p/ debug
-    _normalizeMotherPath: normalizeMotherPath
+    }
   };
 
   window.RCF_VFS_OVERRIDES = api;
-  log("ok", "vfs_overrides.js ready ✅ (scope ./, normalize + retry)");
 })();
