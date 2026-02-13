@@ -1,8 +1,8 @@
-/* RControl Factory — /app/js/core/vfs_overrides.js (PADRÃO) — v1.2
-   - Corrige seleção do Service Worker (scope) mesmo quando document.baseURI engana (iOS / Pages)
-   - Descobre o root real (/app/) pela URL do script carregado (vfs_overrides.js)
-   - Usa getRegistration() do contexto + fallback por getRegistrations()
-   - postMessage com timeout + retry curto (iOS)
+/* RControl Factory — /app/js/core/vfs_overrides.js (PADRÃO) — v1.3
+   - FIX iOS: descobre o root real via new URL("./sw.js", document.baseURI)
+   - Garante scope "/app/" quando o app roda em /app/ (Pages/Cache confuso)
+   - getRegistration() + fallback getRegistrations()
+   - postMessage com timeout + retry (iOS)
    - API: put(path, content, contentType) + clear()
 */
 (() => {
@@ -18,77 +18,63 @@
     try { console.log("[VFS_OVR]", lvl, msg); } catch {}
   }
 
-  function findThisScriptSrc(){
-    // 1) melhor: currentScript
+  function deriveAppRoot(){
+    // 🔒 Fonte de verdade: "./sw.js" relativo ao baseURI (seu SW fica em /app/sw.js)
     try {
-      const s = document.currentScript;
-      if (s && s.src) return s.src;
+      const u = new URL("./sw.js", document.baseURI);
+      const p = String(u.pathname || "");
+      if (p.endsWith("/sw.js")) {
+        const root = p.slice(0, -"/sw.js".length) || "/";
+        return root.endsWith("/") ? root : (root + "/");
+      }
     } catch {}
 
-    // 2) fallback: procura pelo script que contém "vfs_overrides.js"
+    // fallback 1: tenta baseURI por /app/
     try {
-      const els = Array.from(document.querySelectorAll('script[src]'));
-      const hit = els.find(x => String(x.src || "").includes("vfs_overrides.js"));
-      if (hit && hit.src) return hit.src;
+      const b = new URL(document.baseURI);
+      if ((b.pathname || "").includes("/app/")) return "/app/";
     } catch {}
 
-    return "";
-  }
-
-  function deriveAppRootFromScript(){
-    // Se o script veio de ".../app/js/core/vfs_overrides.js" → root é "/app/"
-    const src = String(findThisScriptSrc() || "");
-    try {
-      const u = new URL(src, location.href);
-      const p = u.pathname || "";
-      const idx = p.indexOf("/app/");
-      if (idx >= 0) return "/app/";
-    } catch {}
-
-    // fallback: tenta por pathname atual
+    // fallback 2: pathname
     if (location.pathname.startsWith("/app/") || location.pathname === "/app") return "/app/";
 
-    // último fallback
     return "/";
   }
 
-  const APP_ROOT = deriveAppRootFromScript(); // "/app/" ou "/"
-  log("ok", `vfs_overrides ready ✅ scope=${APP_ROOT}`);
+  const APP_ROOT = deriveAppRoot(); // esperado: "/app/"
+  log("ok", `vfs_overrides ready ✅ scope=${APP_ROOT} base=${String(document.baseURI || "")}`);
 
   async function getActiveSW(){
     if (!("serviceWorker" in navigator)) return null;
 
-    // 1) se já existe controller, usa (mais confiável quando já controlando)
+    // 1) se já controlando, usa controller
     const ctrl = navigator.serviceWorker.controller;
     if (ctrl) return ctrl;
 
-    // 2) registration do contexto atual (sem argumento) — pega a registration “do cliente”
+    // 2) registration do cliente (sem arg)
     try {
       const reg = await navigator.serviceWorker.getRegistration();
       const sw = reg?.active || reg?.waiting || reg?.installing;
       if (sw) return sw;
     } catch {}
 
-    // 3) tenta registration especificamente do root detectado (/app/)
+    // 3) registration do root detectado (/app/)
     try {
       const reg = await navigator.serviceWorker.getRegistration(APP_ROOT);
       const sw = reg?.active || reg?.waiting || reg?.installing;
       if (sw) return sw;
     } catch {}
 
-    // 4) fallback: procura a melhor registration por prefixo de scope
+    // 4) procura nas registrations pela que casa com scope
     try {
       const regs = await navigator.serviceWorker.getRegistrations();
       if (regs && regs.length) {
         const wantedPrefix = location.origin + APP_ROOT;
         let best = null;
-
         for (const r of regs) {
           const s = String(r?.scope || "");
-          if (!s) continue;
           if (wantedPrefix && s.startsWith(wantedPrefix)) best = r;
         }
-
         const pick = best || regs[0];
         const sw = pick?.active || pick?.waiting || pick?.installing;
         if (sw) return sw;
@@ -143,7 +129,6 @@
       await post({ type: "RCF_OVERRIDE_PUT", path, content, contentType });
       return true;
     },
-
     async clear() {
       await post({ type: "RCF_OVERRIDE_CLEAR" });
       return true;
