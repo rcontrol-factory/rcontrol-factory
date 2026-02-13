@@ -123,4 +123,145 @@
     if (!j || j.type !== "file") throw new Error("Resposta inesperada do GitHub (não é file)");
 
     const decoded = b64decode(String(j.content || "").replace(/\n/g, ""));
-    return { exists: true,
+    return { exists: true, sha: j.sha, content: decoded, url };
+  }
+
+  async function putFile(c, content, sha) {
+    const url = apiUrl(c);
+    const body = {
+      message: `RControl Factory sync ${nowISO()}`,
+      content: b64encode(content),
+      branch: c.branch,
+    };
+    if (sha) body.sha = sha;
+
+    const res = await fetch(url, {
+      method: "PUT",
+      headers: { ...headers(c), "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    if (!res.ok) {
+      const t = await res.text().catch(() => "");
+      throw new Error(`GitHub PUT falhou: ${res.status} ${head80(t)} url=${url}`);
+    }
+    return res.json();
+  }
+
+  async function test(cfg) {
+    const c = requireCfg(cfg, { requireToken: true });
+    await sleep(100);
+    const res = await fetch(`https://api.github.com/user`, { headers: headers(c) });
+    if (!res.ok) throw new Error("Token inválido ou sem permissão");
+    return "OK: token válido.";
+  }
+
+  // -----------------------------
+  // Bundle Builder (Mãe)
+  // -----------------------------
+  function guessType(path) {
+    const p = String(path || "");
+    if (p.endsWith(".js")) return "application/javascript; charset=utf-8";
+    if (p.endsWith(".css")) return "text/css; charset=utf-8";
+    if (p.endsWith(".html")) return "text/html; charset=utf-8";
+    if (p.endsWith(".json")) return "application/json; charset=utf-8";
+    return "text/plain; charset=utf-8";
+  }
+
+  async function fetchText(pathOrUrl) {
+    const res = await fetch(pathOrUrl, { cache: "no-store" });
+    if (!res.ok) throw new Error(`Falhou fetch ${pathOrUrl}: ${res.status}`);
+    return await res.text();
+  }
+
+  // ✅ lista “mãe” (paths relativos ao ROOT do site, mas a Mãe normaliza pra /app)
+  const DEFAULT_MOTHER_FILES = [
+    "/index.html",
+    "/styles.css",
+    "/app.js",
+    "/manifest.json",
+    "/sw.js",
+    "/js/core/vfs_overrides.js",
+    "/js/core/github_sync.js",
+    "/js/core/mother_selfupdate.js",
+  ];
+
+  async function buildMotherBundle(fileList = DEFAULT_MOTHER_FILES) {
+    const files = {};
+    for (const path of fileList) {
+      const content = await fetchText(path);
+      files[path] = { content, contentType: guessType(path) };
+    }
+    return JSON.stringify({ files }, null, 2);
+  }
+
+  async function pushMotherBundle(cfg, fileList) {
+    const bundleText = await buildMotherBundle(fileList);
+    return await push(cfg, bundleText);
+  }
+
+  // -----------------------------
+  // ✅ Local bundle fetch (SEM GitHub)
+  // -----------------------------
+  async function pullLocalBundleFromPath(localPath = "import/mother_bundle.json") {
+    // baseURI vem do <base href="./"> e aponta pra /app/
+    const u = new URL(String(localPath || "import/mother_bundle.json"), document.baseURI);
+    log(`GitHubSync: pullLocal url=${u.toString()}`);
+    const txt = await fetchText(u.toString());
+    assertBundleJson(txt);
+    return txt;
+  }
+
+  // -----------------------------
+  // Public API (pull / push)
+  // -----------------------------
+  async function pull(cfg) {
+    const c = requireCfg(cfg, { requireToken: true });
+
+    log(`GitHub: pull iniciando... path=${c.path}`);
+    const f = await getFile(c);
+
+    if (!f.exists) {
+      throw new Error(`Bundle não existe no repo (404): ${c.path}`);
+    }
+
+    assertBundleJson(f.content);
+
+    log(`GitHub: pull ok (bundle JSON válido). url=${f.url}`);
+    return f.content;
+  }
+
+  async function push(cfg, content) {
+    const c = requireCfg(cfg, { requireToken: true });
+
+    let payload = content;
+    if (payload == null) {
+      warn("GitHub: push sem content → gerando mother bundle automaticamente...");
+      payload = await buildMotherBundle();
+    }
+
+    // valida antes de enviar
+    assertBundleJson(payload);
+
+    log(`GitHub: push iniciando... path=${c.path}`);
+    const f = await getFile(c);
+    const sha = f.exists ? f.sha : undefined;
+    await putFile(c, payload, sha);
+    log("GitHub: push ok.");
+    return "OK: enviado pro GitHub.";
+  }
+
+  window.RCF_GH_SYNC = {
+    __v: "v2.3",
+    saveConfig,
+    loadConfig,
+    test,
+    pull,
+    push,
+    buildMotherBundle,
+    pushMotherBundle,
+    pullLocalBundleFromPath,
+  };
+
+  log("github_sync.js loaded (v2.3)");
+})();
