@@ -6,22 +6,23 @@
   <title>RControl Factory</title>
   <meta name="theme-color" content="#0b1020" />
 
-  <!-- ✅ tudo mora em /app -->
-  <link rel="manifest" href="/app/manifest.json" />
-  <link rel="stylesheet" href="/app/styles.css" />
+  <!-- fallback visual mínimo (pra nunca parecer “tela branca”) -->
+  <style>
+    html,body{margin:0;padding:0;background:#0b1020;color:#e9eefc;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial}
+    #app{min-height:100vh}
+    .bootline{padding:12px 14px; opacity:.9}
+  </style>
 </head>
 <body>
   <noscript>Ative o JavaScript para usar o app.</noscript>
 
   <div id="app">
-    <div style="padding:14px;font-family:system-ui">Carregando…</div>
+    <div class="bootline">Carregando…</div>
   </div>
 
   <script>
     (function () {
-      const ROOT = "/app";
-
-      // LOG interno (aparece na sua aba Logs)
+      // LOG interno (aparece na sua aba Logs quando logger existir)
       function rcfLog(msg) {
         try {
           if (window.RCF_LOGGER && typeof window.RCF_LOGGER.push === "function") {
@@ -32,7 +33,7 @@
         } catch {}
       }
 
-      // carrega um script tentando mais de 1 path (fallback)
+      // tenta carregar um script em cascata
       function loadAny(paths) {
         return new Promise((resolve, reject) => {
           let i = 0;
@@ -41,7 +42,7 @@
             const src = paths[i++];
             const s = document.createElement("script");
             s.src = src;
-            s.async = false; // mantém ordem
+            s.async = false;
             s.onload = () => resolve(src);
             s.onerror = () => tryNext();
             document.head.appendChild(s);
@@ -50,48 +51,132 @@
         });
       }
 
+      // tenta carregar CSS em cascata
+      function loadAnyCSS(paths) {
+        return new Promise((resolve, reject) => {
+          let i = 0;
+          function tryNext() {
+            if (i >= paths.length) return reject(new Error("all css paths failed"));
+            const href = paths[i++];
+            const l = document.createElement("link");
+            l.rel = "stylesheet";
+            l.href = href;
+            l.onload = () => resolve(href);
+            l.onerror = () => tryNext();
+            document.head.appendChild(l);
+          }
+          tryNext();
+        });
+      }
+
+      // tenta manifest em cascata
+      function setManifestAny(paths) {
+        const link = document.createElement("link");
+        link.rel = "manifest";
+        document.head.appendChild(link);
+
+        let i = 0;
+        function tryNext() {
+          if (i >= paths.length) {
+            rcfLog("manifest missing ❌ (tentou: " + paths.join(" | ") + ")");
+            return;
+          }
+          const href = paths[i++];
+          link.href = href;
+
+          // valida “leve”: tenta fetch do manifest (se falhar, tenta o próximo)
+          try {
+            fetch(href, { cache: "no-store" })
+              .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); rcfLog("manifest ✅ " + href); })
+              .catch(() => tryNext());
+          } catch {
+            // se fetch não rolar, pelo menos fica setado
+            rcfLog("manifest set (no-fetch) " + href);
+          }
+        }
+        tryNext();
+      }
+
       async function boot() {
-        rcfLog("index boot: starting module loader... root=" + ROOT);
+        rcfLog("index boot: auto-detect root…");
 
-        // ✅ módulos: primeiro tenta /app/... (real), depois tenta raiz (fallback)
+        // vamos testar os 2 cenários:
+        // A) root publicado como "/" (quando Pages root = app/)
+        // B) root publicado como "/app" (quando app/ é subpasta)
+        const ROOTS = ["", "/app"];
+
+        // 1) CSS (se o CSS entrar, o “visual pelado” some)
+        try {
+          const cssTried = [];
+          ROOTS.forEach(root => cssTried.push((root || "") + "/styles.css"));
+          const okCss = await loadAnyCSS(cssTried);
+          rcfLog("styles ✅ " + okCss);
+        } catch {
+          rcfLog("styles missing ❌ (tentou: /styles.css | /app/styles.css)");
+        }
+
+        // 2) manifest (não quebra se falhar)
+        setManifestAny([
+          "/manifest.json",
+          "/app/manifest.json"
+        ]);
+
+        // 3) módulos essenciais (tentando nos 2 roots)
+        const modPaths = (p) => [ "/" + p, "/app/" + p ];
+
         const modules = [
-          { name: "github_sync",      paths: [ROOT + "/js/core/github_sync.js", "/js/core/github_sync.js"] },
-          { name: "vfs_overrides",    paths: [ROOT + "/js/core/vfs_overrides.js", "/js/core/vfs_overrides.js"] },
-          { name: "mother_selfupdate",paths: [ROOT + "/js/core/mother_selfupdate.js", "/js/core/mother_selfupdate.js"] },
-
-          // admin UI real do seu repo (você tem admin.github.js)
-          { name: "admin_github_ui",  paths: [ROOT + "/js/admin.github.js", "/js/admin.github.js"] },
-
-          // engine/builder (se existir)
-          { name: "patchQueue",       paths: [ROOT + "/js/engine/patchQueue.js", "/js/engine/patchQueue.js"] },
-          { name: "organizerEngine",  paths: [ROOT + "/js/engine/organizerEngine.js", "/js/engine/organizerEngine.js"] },
-          { name: "applyPipeline",    paths: [ROOT + "/js/engine/applyPipeline.js", "/js/engine/applyPipeline.js"] },
-          { name: "builderSafe",      paths: [ROOT + "/js/builder/builderSafe.js", "/js/builder/builderSafe.js"] },
+          { name: "github_sync",       paths: modPaths("js/core/github_sync.js") },
+          { name: "vfs_overrides",     paths: modPaths("js/core/vfs_overrides.js") },
+          { name: "mother_selfupdate", paths: modPaths("js/core/mother_selfupdate.js") },
+          { name: "admin_github_ui",   paths: modPaths("js/admin.github.js") },
+          { name: "patchQueue",        paths: modPaths("js/engine/patchQueue.js") },
+          { name: "organizerEngine",   paths: modPaths("js/engine/organizerEngine.js") },
+          { name: "applyPipeline",     paths: modPaths("js/engine/applyPipeline.js") },
+          { name: "builderSafe",       paths: modPaths("js/builder/builderSafe.js") },
         ];
 
         for (const m of modules) {
           try {
             const okPath = await loadAny(m.paths);
-            rcfLog("module loaded ✅ " + m.name + " ← " + okPath);
+            rcfLog("module ✅ " + m.name + " ← " + okPath);
           } catch {
-            rcfLog("module missing ❌ " + m.name + " (tentou: " + m.paths.join(" | ") + ")");
+            rcfLog("module ❌ " + m.name + " (tentou: " + m.paths.join(" | ") + ")");
           }
         }
 
-        // ✅ app principal: no seu repo é /app/app.js
+        // 4) app principal (nos 2 roots)
         try {
-          const okApp = await loadAny([ROOT + "/app.js", "/app.js"]);
-          rcfLog("app.js loaded ✅ " + okApp);
+          const okApp = await loadAny([
+            "/app.js",
+            "/app/app.js"
+          ]);
+          rcfLog("app ✅ " + okApp);
         } catch {
-          rcfLog("app.js missing ❌ (tentou: " + ROOT + "/app.js | /app.js)");
+          rcfLog("app ❌ (tentou: /app.js | /app/app.js)");
         }
 
-        // ✅ SW também está em /app/sw.js e o scope deve ser /app/
+        // 5) service worker (nos 2 roots; scope correspondente)
         try {
           if ("serviceWorker" in navigator) {
-            navigator.serviceWorker.register(ROOT + "/sw.js", { scope: ROOT + "/" })
-              .then(() => rcfLog("sw register: ok (" + ROOT + "/)"))
-              .catch(() => rcfLog("sw register: fail/ignored"));
+            const tried = [];
+            async function trySW(src, scope){
+              tried.push(src + " scope=" + scope);
+              try {
+                await navigator.serviceWorker.register(src, { scope });
+                rcfLog("sw ✅ " + src + " (" + scope + ")");
+                return true;
+              } catch {
+                return false;
+              }
+            }
+
+            // tenta root primeiro (quando Pages root = app/)
+            const ok1 = await trySW("/sw.js", "/");
+            if (!ok1) {
+              // tenta /app (quando app é subpasta)
+              await trySW("/app/sw.js", "/app/");
+            }
+            if (!ok1) rcfLog("sw tentou: " + tried.join(" | "));
           }
         } catch {}
       }
