@@ -1,25 +1,23 @@
-/* RControl Factory — /app/js/admin.github.js (PADRÃO) — v1.4
-   FIXES:
-   - Monta o painel SOMENTE no Settings (procura settingsMount + fallbacks)
-   - Não usa setInterval (evita travar UI / render do app)
-   - Usa MutationObserver para remontar quando o Settings é re-renderizado
-   - ClickFallback iOS (somente dentro do card do GitHub)
-   - Normaliza path -> app/import/mother_bundle.json
+/* RControl Factory — /app/js/admin.github.js (PADRÃO) — v2.4
+   FIX UI:
+   - Renderiza SOMENTE dentro de #settingsMount (nunca overlay global)
+   - Colapsado por padrão (abre/fecha no botão)
+   - Sem position:fixed (não “gruda” em todas as telas)
+   - Click/touch iOS safe
 */
 (() => {
   "use strict";
 
-  // evita duplicar
-  if (window.RCF_ADMIN_GITHUB && window.RCF_ADMIN_GITHUB.__v14) return;
+  if (window.RCF_ADMIN_GH && window.RCF_ADMIN_GH.__v24) return;
 
-  const CARD_ID = "rcfGitHubCard";
-  const OUT_ID  = "rcfGitHubOut";
-  const DEFAULT_PATH = "app/import/mother_bundle.json";
+  const MOUNT_ID = "settingsMount";
+  const OUT_ID = "settingsOut";
+  const UI_OPEN_KEY = "rcf:ghui:open";
 
-  function logger(lvl, msg){
-    try { window.RCF_LOGGER?.push?.(lvl, String(msg)); } catch {}
-    try { console.log("[GH-ADMIN]", lvl, msg); } catch {}
-  }
+  const log = (lvl, msg) => {
+    try { window.RCF_LOGGER?.push?.(lvl, msg); } catch {}
+    try { console.log("[GHUI]", lvl, msg); } catch {}
+  };
 
   function $(id){ return document.getElementById(id); }
 
@@ -27,265 +25,257 @@
     try { return raw ? JSON.parse(raw) : fallback; } catch { return fallback; }
   }
 
-  function loadCfg(){
-    try {
-      if (window.RCF_GH_SYNC?.loadConfig) return window.RCF_GH_SYNC.loadConfig() || {};
-    } catch {}
+  function getCfg(){
+    // usa a API do github_sync.js quando disponível
+    if (window.RCF_GH_SYNC?.loadConfig) return window.RCF_GH_SYNC.loadConfig();
+    // fallback direto no LS
     return safeParse(localStorage.getItem("rcf:ghcfg"), {}) || {};
   }
 
-  function normalizePath(input){
-    let p = String(input || "").trim();
-    if (!p) return DEFAULT_PATH;
+  function saveCfg(cfg){
+    if (window.RCF_GH_SYNC?.saveConfig) return window.RCF_GH_SYNC.saveConfig(cfg);
+    const safe = {
+      owner: String(cfg.owner || "").trim(),
+      repo: String(cfg.repo || "").trim(),
+      branch: String(cfg.branch || "main").trim(),
+      path: String(cfg.path || "app/import/mother_bundle.json").trim(),
+      token: String(cfg.token || "").trim(),
+    };
+    localStorage.setItem("rcf:ghcfg", JSON.stringify(safe));
+    return safe;
+  }
 
-    // remove / iniciais
-    p = p.replace(/^\/+/, "");
+  function setOut(text){
+    const out = $(OUT_ID);
+    if (out) out.textContent = String(text || "");
+  }
 
-    // "mother_bundle.json" -> app/import/mother_bundle.json
-    if (!p.includes("/")) p = `app/import/${p}`;
-
-    // "import/..." -> "app/import/..."
-    if (p.startsWith("import/")) p = "app/" + p;
-
-    // "app/xxx" mas não "app/import/xxx" -> joga pra import
-    if (p.startsWith("app/") && !p.startsWith("app/import/")) {
-      const rest = p.slice("app/".length).replace(/^\/+/, "");
-      p = "app/import/" + rest;
-    }
-
-    // colapsa barras
-    p = p.replace(/\/{2,}/g, "/");
-
-    return p || DEFAULT_PATH;
+  function normalizePathInput(p){
+    let x = String(p || "").trim();
+    if (!x) return "app/import/mother_bundle.json";
+    x = x.replace(/^\/+/, "");
+    // se o user digitar "import/..." a gente salva como "app/import/..."
+    if (x.startsWith("import/")) x = "app/" + x;
+    return x;
   }
 
   function enableClickFallback(container){
     if (!container) return;
-
-    // iOS: alguns clicks em elementos dentro de áreas roláveis falham
-    container.style.pointerEvents = "auto";
 
     container.addEventListener("touchend", (ev) => {
       const t = ev.target;
       if (!t) return;
       const tag = (t.tagName || "").toLowerCase();
       const isBtn = tag === "button";
+      const isInput = tag === "input" || tag === "textarea" || tag === "select";
       if (isBtn && typeof t.click === "function") t.click();
+      if (isInput && typeof t.focus === "function") t.focus();
     }, { capture:true, passive:true });
   }
 
-  function findSettingsMount(){
-    // ✅ prioridade: settingsMount (padrão do Injector)
-    const a = $("settingsMount");
-    if (a) return a;
+  function render(){
+    const mount = $(MOUNT_ID);
+    if (!mount) return false;
 
-    // fallbacks comuns (caso seu app.js use outro id)
-    const b = $("settings");
-    if (b) return b;
+    // evita duplicar
+    if (document.getElementById("rcfGhCard")) return true;
 
-    const c = document.querySelector('[data-view="settings"]');
-    if (c) return c;
+    const open = localStorage.getItem(UI_OPEN_KEY) === "1";
 
-    return null;
-  }
+    mount.innerHTML += `
+      <div class="card" id="rcfGhCard" style="margin-top:12px">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <h3 style="margin:0;">GitHub (Sync)</h3>
+          <button id="rcfGhToggle" class="btn" type="button" style="margin-left:auto;">
+            ${open ? "Fechar" : "Abrir"} GitHub Sync
+          </button>
+        </div>
 
-  function unmount(){
-    const el = $(CARD_ID);
-    if (el && el.parentNode) el.parentNode.removeChild(el);
-  }
+        <div id="rcfGhBody" style="${open ? "" : "display:none;"} margin-top:12px">
+          <p class="hint" style="margin-top:0">
+            Bundle padrão: <b>app/import/mother_bundle.json</b><br/>
+            (Se você digitar <b>import/mother_bundle.json</b>, eu salvo como <b>app/import/mother_bundle.json</b>)
+          </p>
 
-  function mount(){
-    const mountEl = findSettingsMount();
-    if (!mountEl) return false;
+          <div class="row" style="gap:12px; flex-wrap:wrap;">
+            <div style="flex:1; min-width:180px;">
+              <label class="label">Owner</label>
+              <input id="ghOwner" class="input" placeholder="owner" />
+            </div>
 
-    // já montado
-    if ($(CARD_ID)) return true;
+            <div style="flex:1; min-width:180px;">
+              <label class="label">Repo</label>
+              <input id="ghRepo" class="input" placeholder="repo" />
+            </div>
+          </div>
 
-    const cfg = loadCfg();
-    const normPath = normalizePath(cfg.path || DEFAULT_PATH);
+          <div class="row" style="gap:12px; flex-wrap:wrap; margin-top:10px;">
+            <div style="flex:1; min-width:180px;">
+              <label class="label">Branch</label>
+              <input id="ghBranch" class="input" placeholder="main" />
+            </div>
 
-    const card = document.createElement("div");
-    card.id = CARD_ID;
-    card.className = "card";
-    card.style.marginTop = "12px";
-    card.innerHTML = `
-      <h3>GitHub (Sync)</h3>
-      <p class="hint">
-        Bundle padrão: <code>${DEFAULT_PATH}</code><br/>
-        (Se você digitar <code>import/mother_bundle.json</code>, eu salvo como <code>${DEFAULT_PATH}</code>)
-      </p>
+            <div style="flex:1; min-width:180px;">
+              <label class="label">Path</label>
+              <input id="ghPath" class="input" placeholder="app/import/mother_bundle.json" />
+            </div>
+          </div>
 
-      <div class="row" style="gap:10px; flex-wrap:wrap">
-        <label style="flex:1; min-width:160px">
-          <div class="hint">Owner</div>
-          <input id="ghOwner" class="input" placeholder="rcontrol-factory" />
-        </label>
+          <div style="margin-top:10px;">
+            <label class="label">Token (PAT)</label>
+            <input id="ghToken" class="input" placeholder="ghp_..." />
+          </div>
 
-        <label style="flex:1; min-width:160px">
-          <div class="hint">Repo</div>
-          <input id="ghRepo" class="input" placeholder="rcontrol-factory" />
-        </label>
+          <div class="row" style="margin-top:12px; gap:10px; flex-wrap:wrap;">
+            <button id="btnSaveCfg" class="btn" type="button">Salvar cfg</button>
+            <button id="btnTestToken" class="btn" type="button">Testar token</button>
+            <button id="btnPull" class="btn" type="button">Pull bundle</button>
+          </div>
 
-        <label style="width:120px">
-          <div class="hint">Branch</div>
-          <input id="ghBranch" class="input" placeholder="main" />
-        </label>
+          <div class="row" style="margin-top:10px; gap:10px; flex-wrap:wrap;">
+            <button id="btnPushMother" class="btn" type="button">Push Mother Bundle</button>
+            <button id="btnMaeUpdate" class="btn primary" type="button">MAE update</button>
+          </div>
+
+          <pre id="ghOut" class="mono small" style="margin-top:12px;">Pronto.</pre>
+        </div>
       </div>
-
-      <label style="display:block; margin-top:10px">
-        <div class="hint">Path</div>
-        <input id="ghPath" class="input" placeholder="${DEFAULT_PATH}" />
-      </label>
-
-      <label style="display:block; margin-top:10px">
-        <div class="hint">Token (PAT)</div>
-        <input id="ghToken" class="input" placeholder="ghp_..." />
-      </label>
-
-      <div class="row" style="margin-top:12px; gap:10px; flex-wrap:wrap">
-        <button id="btnGhSave" class="btn" type="button">Salvar cfg</button>
-        <button id="btnGhTest" class="btn" type="button">Testar token</button>
-        <button id="btnGhPull" class="btn" type="button">Pull bundle</button>
-        <button id="btnGhPushMother" class="btn primary" type="button">Push Mother Bundle</button>
-        <button id="btnMaeUpdate" class="btn" type="button">MAE update</button>
-      </div>
-
-      <pre id="${OUT_ID}" class="mono small" style="margin-top:10px">Pronto.</pre>
     `;
 
-    mountEl.appendChild(card);
+    const card = document.getElementById("rcfGhCard");
+    const body = document.getElementById("rcfGhBody");
+    const toggle = document.getElementById("rcfGhToggle");
+    const out = document.getElementById("ghOut");
+
     enableClickFallback(card);
 
-    // preencher campos
-    $("ghOwner").value  = String(cfg.owner || "");
-    $("ghRepo").value   = String(cfg.repo || "");
-    $("ghBranch").value = String(cfg.branch || "main");
-    $("ghPath").value   = normPath;
-    $("ghToken").value  = String(cfg.token || "");
+    function setGHOut(t){ out.textContent = String(t || "Pronto."); }
 
-    function setOut(t){
-      const out = $(OUT_ID);
-      if (out) out.textContent = String(t || "");
+    function readInputs(){
+      return {
+        owner: String(document.getElementById("ghOwner")?.value || "").trim(),
+        repo: String(document.getElementById("ghRepo")?.value || "").trim(),
+        branch: String(document.getElementById("ghBranch")?.value || "main").trim(),
+        path: normalizePathInput(document.getElementById("ghPath")?.value || ""),
+        token: String(document.getElementById("ghToken")?.value || "").trim(),
+      };
     }
 
-    // handlers
-    $("btnGhSave").addEventListener("click", () => {
-      try {
-        if (!window.RCF_GH_SYNC?.saveConfig) throw new Error("RCF_GH_SYNC.saveConfig ausente");
+    function fillInputs(cfg){
+      document.getElementById("ghOwner").value = cfg.owner || "";
+      document.getElementById("ghRepo").value = cfg.repo || "";
+      document.getElementById("ghBranch").value = cfg.branch || "main";
+      document.getElementById("ghPath").value = cfg.path || "app/import/mother_bundle.json";
+      document.getElementById("ghToken").value = cfg.token || "";
+    }
 
-        const rawPath = String($("ghPath").value || "");
-        const fixedPath = normalizePath(rawPath);
+    // load cfg
+    fillInputs(getCfg());
 
-        if (rawPath.trim() !== fixedPath.trim()) {
-          logger("info", `path normalized: ${rawPath.trim() || "(empty)"} -> ${fixedPath}`);
-        }
-
-        const cfg2 = {
-          owner:  String($("ghOwner").value || "").trim(),
-          repo:   String($("ghRepo").value || "").trim(),
-          branch: String($("ghBranch").value || "main").trim(),
-          path:   fixedPath,
-          token:  String($("ghToken").value || "").trim(),
-        };
-
-        window.RCF_GH_SYNC.saveConfig(cfg2);
-        setOut("OK: ghcfg saved");
-        logger("ok", "OK: ghcfg saved");
-      } catch (e) {
-        setOut("ERR: " + (e?.message || e));
-        logger("err", "ghcfg save err: " + (e?.message || e));
+    toggle.addEventListener("click", () => {
+      const isOpen = body.style.display !== "none";
+      if (isOpen) {
+        body.style.display = "none";
+        toggle.textContent = "Abrir GitHub Sync";
+        localStorage.setItem(UI_OPEN_KEY, "0");
+      } else {
+        body.style.display = "";
+        toggle.textContent = "Fechar GitHub Sync";
+        localStorage.setItem(UI_OPEN_KEY, "1");
       }
     });
 
-    $("btnGhTest").addEventListener("click", async () => {
+    document.getElementById("btnSaveCfg").addEventListener("click", () => {
+      const cfg = readInputs();
+      saveCfg(cfg);
+      setGHOut("OK: ghcfg saved");
+      log("ok", "OK: ghcfg saved");
+    });
+
+    document.getElementById("btnTestToken").addEventListener("click", async () => {
       try {
+        const cfg = readInputs();
+        saveCfg(cfg);
+        setGHOut("Testando token…");
         if (!window.RCF_GH_SYNC?.test) throw new Error("RCF_GH_SYNC.test ausente");
-        setOut("Testando token...");
-        const msg = await window.RCF_GH_SYNC.test(loadCfg());
-        setOut(msg);
-        logger("ok", msg);
+        const res = await window.RCF_GH_SYNC.test(cfg);
+        setGHOut(String(res || "OK"));
+        log("ok", "OK: token test ok");
       } catch (e) {
-        setOut("ERR: " + (e?.message || e));
-        logger("err", "gh test err: " + (e?.message || e));
+        setGHOut("ERR: " + (e?.message || e));
+        log("err", "ERR: token test fail");
       }
     });
 
-    $("btnGhPull").addEventListener("click", async () => {
+    document.getElementById("btnPull").addEventListener("click", async () => {
       try {
+        const cfg = readInputs();
+        saveCfg(cfg);
+        setGHOut("Pull…");
         if (!window.RCF_GH_SYNC?.pull) throw new Error("RCF_GH_SYNC.pull ausente");
-        setOut("Pull iniciando...");
-        const txt = await window.RCF_GH_SYNC.pull(loadCfg());
-        setOut("OK: pull ok (bytes=" + String(txt || "").length + ")");
-        logger("ok", "GitHub: pull ok");
+        const txt = await window.RCF_GH_SYNC.pull(cfg);
+        setGHOut("OK: pull ok (bytes=" + String(txt || "").length + ")");
+        log("ok", "OK: gh pull ok");
       } catch (e) {
-        setOut("ERR: gh pull err: " + (e?.message || e));
-        logger("err", "gh pull err: " + (e?.message || e));
+        setGHOut("ERR: " + (e?.message || e));
+        log("err", "ERR: gh pull err");
       }
     });
 
-    $("btnGhPushMother").addEventListener("click", async () => {
+    document.getElementById("btnPushMother").addEventListener("click", async () => {
       try {
+        const cfg = readInputs();
+        saveCfg(cfg);
+        setGHOut("Push Mother Bundle…");
         if (!window.RCF_GH_SYNC?.pushMotherBundle) throw new Error("RCF_GH_SYNC.pushMotherBundle ausente");
-        setOut("Push Mother Bundle iniciando...");
-        await window.RCF_GH_SYNC.pushMotherBundle(loadCfg());
-        setOut("OK: GitHub: pushMotherBundle ok");
-        logger("ok", "GitHub: pushMotherBundle ok");
+        await window.RCF_GH_SYNC.pushMotherBundle(cfg);
+        setGHOut("OK: GitHub: pushMotherBundle ok");
+        log("ok", "OK: GitHub: pushMotherBundle ok");
       } catch (e) {
-        setOut("ERR: pushMotherBundle err: " + (e?.message || e));
-        logger("err", "pushMotherBundle err: " + (e?.message || e));
+        setGHOut("ERR: " + (e?.message || e));
+        log("err", "ERR: pushMotherBundle fail");
       }
     });
 
-    $("btnMaeUpdate").addEventListener("click", async () => {
+    document.getElementById("btnMaeUpdate").addEventListener("click", async () => {
       try {
+        setGHOut("MAE update…");
         if (!window.RCF_MAE?.updateFromGitHub) throw new Error("RCF_MAE.updateFromGitHub ausente");
-        setOut("MAE update iniciando...");
         const res = await window.RCF_MAE.updateFromGitHub({
           onProgress: (p) => {
-            if (p?.step === "apply_progress") setOut(`Aplicando... ${p.done}/${p.total}`);
+            if (p?.step === "apply_progress") setGHOut(`Aplicando… ${p.done}/${p.total}`);
+            if (p?.step === "apply_done") setGHOut(`OK: aplicado ${p.done}/${p.total}`);
           }
         });
-        setOut("OK: mae update ok " + JSON.stringify(res));
-        logger("ok", "mae update ok");
+        setGHOut("OK: mae update ok " + JSON.stringify(res));
+        log("ok", "OK: mae update ok");
       } catch (e) {
-        setOut("ERR: mae update err: " + (e?.message || e));
-        logger("err", "mae update err: " + (e?.message || e));
+        setGHOut("ERR: " + (e?.message || e));
+        log("err", "ERR: mae update err");
       }
     });
 
-    logger("ok", "OK: admin.github.js ready ✅");
+    log("ok", "OK: admin.github.js ready ✅");
     return true;
   }
 
-  // Observa re-render do app e remonta quando Settings aparece
-  function startObserver(){
-    const obs = new MutationObserver(() => {
-      try {
-        const mountEl = findSettingsMount();
-        if (!mountEl) {
-          // se saiu do settings e o card ficou preso em algum lugar, remove
-          // (segurança)
-          if ($(CARD_ID) && !document.body.contains(findSettingsMount())) {
-            // não faz nada, porque findSettingsMount() é null aqui
-          }
-          return;
-        }
-
-        // se o mount existe e o card não, remonta
-        if (!$(CARD_ID)) mount();
-      } catch {}
-    });
-
-    obs.observe(document.documentElement, { childList:true, subtree:true });
-
-    return obs;
+  function boot(){
+    // tenta várias vezes (porque app.js troca views e pode montar depois)
+    let tries = 0;
+    const tick = () => {
+      tries++;
+      if (render()) return;
+      if (tries < 25) setTimeout(tick, 200);
+    };
+    tick();
   }
 
-  // init
-  window.addEventListener("load", () => {
-    try { mount(); } catch {}
-    try { startObserver(); } catch {}
-  });
+  window.RCF_ADMIN_GH = { __v24: true, boot };
 
-  window.RCF_ADMIN_GITHUB = { __v14: true, mount, unmount };
+  // init
+  if (document.readyState === "loading") {
+    window.addEventListener("DOMContentLoaded", boot);
+  } else {
+    boot();
+  }
 })();
