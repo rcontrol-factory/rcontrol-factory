@@ -1,7 +1,8 @@
-/* RControl Factory — /app/js/core/vfs_overrides.js (PADRÃO) — v1.1
-   - Corrige lookup do Service Worker quando o app roda em /app/ com scope "./"
-   - Evita getRegistration("/") (errado) e usa baseURI (/app/)
-   - postMessage com timeout e retry curto (iOS)
+/* RControl Factory — /app/js/core/vfs_overrides.js (PADRÃO) — v1.2
+   - Corrige seleção do Service Worker (scope) mesmo quando document.baseURI engana (iOS / Pages)
+   - Descobre o root real (/app/) pela URL do script carregado (vfs_overrides.js)
+   - Usa getRegistration() do contexto + fallback por getRegistrations()
+   - postMessage com timeout + retry curto (iOS)
    - API: put(path, content, contentType) + clear()
 */
 (() => {
@@ -17,38 +18,69 @@
     try { console.log("[VFS_OVR]", lvl, msg); } catch {}
   }
 
-  function getAppScopePathname(){
-    // baseURI deve estar em /app/ por causa do <base href="./">
+  function findThisScriptSrc(){
+    // 1) melhor: currentScript
     try {
-      const u = new URL("./", document.baseURI);
-      // garante "/app/" (termina com /)
-      return u.pathname.endsWith("/") ? u.pathname : (u.pathname + "/");
-    } catch {
-      return "/app/";
-    }
+      const s = document.currentScript;
+      if (s && s.src) return s.src;
+    } catch {}
+
+    // 2) fallback: procura pelo script que contém "vfs_overrides.js"
+    try {
+      const els = Array.from(document.querySelectorAll('script[src]'));
+      const hit = els.find(x => String(x.src || "").includes("vfs_overrides.js"));
+      if (hit && hit.src) return hit.src;
+    } catch {}
+
+    return "";
   }
+
+  function deriveAppRootFromScript(){
+    // Se o script veio de ".../app/js/core/vfs_overrides.js" → root é "/app/"
+    const src = String(findThisScriptSrc() || "");
+    try {
+      const u = new URL(src, location.href);
+      const p = u.pathname || "";
+      const idx = p.indexOf("/app/");
+      if (idx >= 0) return "/app/";
+    } catch {}
+
+    // fallback: tenta por pathname atual
+    if (location.pathname.startsWith("/app/") || location.pathname === "/app") return "/app/";
+
+    // último fallback
+    return "/";
+  }
+
+  const APP_ROOT = deriveAppRootFromScript(); // "/app/" ou "/"
+  log("ok", `vfs_overrides ready ✅ scope=${APP_ROOT}`);
 
   async function getActiveSW(){
     if (!("serviceWorker" in navigator)) return null;
 
-    // 1) se já existe controller, usa ele (mais rápido)
+    // 1) se já existe controller, usa (mais confiável quando já controlando)
     const ctrl = navigator.serviceWorker.controller;
     if (ctrl) return ctrl;
 
-    // 2) tenta pegar registration do escopo do app (/app/)
-    const scopePath = getAppScopePathname();
-
+    // 2) registration do contexto atual (sem argumento) — pega a registration “do cliente”
     try {
-      const reg = await navigator.serviceWorker.getRegistration(scopePath);
+      const reg = await navigator.serviceWorker.getRegistration();
       const sw = reg?.active || reg?.waiting || reg?.installing;
       if (sw) return sw;
     } catch {}
 
-    // 3) fallback: pega qualquer registration e escolhe a mais específica pro /app/
+    // 3) tenta registration especificamente do root detectado (/app/)
+    try {
+      const reg = await navigator.serviceWorker.getRegistration(APP_ROOT);
+      const sw = reg?.active || reg?.waiting || reg?.installing;
+      if (sw) return sw;
+    } catch {}
+
+    // 4) fallback: procura a melhor registration por prefixo de scope
     try {
       const regs = await navigator.serviceWorker.getRegistrations();
       if (regs && regs.length) {
-        const wantedPrefix = location.origin + scopePath;
+        const wantedPrefix = location.origin + APP_ROOT;
         let best = null;
 
         for (const r of regs) {
@@ -97,11 +129,9 @@
     let lastErr = null;
     for (let i = 1; i <= SW_TRIES; i++){
       try {
-        const res = await postOnce(msg);
-        return res;
+        return await postOnce(msg);
       } catch (e) {
         lastErr = e;
-        // backoff curto (iOS)
         await sleep(250 * i);
       }
     }
@@ -110,7 +140,6 @@
 
   const api = {
     async put(path, content, contentType) {
-      // mantém o path exatamente como veio (a Mãe já normaliza pra /app/...)
       await post({ type: "RCF_OVERRIDE_PUT", path, content, contentType });
       return true;
     },
@@ -122,6 +151,4 @@
   };
 
   window.RCF_VFS_OVERRIDES = api;
-
-  log("ok", `vfs_overrides ready ✅ scope=${getAppScopePathname()}`);
 })();
