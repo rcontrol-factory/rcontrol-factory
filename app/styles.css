@@ -13,9 +13,8 @@
   --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   --ui: -apple-system, system-ui, Segoe UI, Roboto, Helvetica, Arial;
 
-  /* ✅ token do Diagnostics */
-  --rcf-css-token: "v7";
-  --rcf_css_ok: 1;
+  /* V7 token */
+  --rcf-css-token:"v7";
 }
 
 *{ box-sizing:border-box; }
@@ -25,39 +24,35 @@ html{ -webkit-text-size-adjust: 100%; }
 body{
   margin:0;
   font-family:var(--ui);
-  background: radial-gradient(1200px 600px at 30% 10%, rgba(22,199,132,.12), transparent 60%),
-              radial-gradient(800px 400px at 90% 20%, rgba(72,120,255,.10), transparent 55%),
-              var(--bg);
+  background:
+    radial-gradient(1200px 600px at 30% 10%, rgba(22,199,132,.12), transparent 60%),
+    radial-gradient(800px 400px at 90% 20%, rgba(72,120,255,.10), transparent 55%),
+    var(--bg);
   color:var(--text);
 
-  /* iOS: reduz bugs de empilhamento */
+  /* iOS: evita bugs de empilhamento */
   position: relative;
   isolation: isolate;
 }
 
-/* ===========================
-   iOS / CLICK HARDENING (base)
-   =========================== */
-#app, #rcfRoot, .views, #views, .container, .card, .view, header, nav, main, section{
-  pointer-events: auto;
+/* =================================
+   iOS CLICK HARDENING (base)
+   ================================= */
+#app, #rcfRoot, header, main, nav, section,
+.views, .view, .container, .card, .row, .tabs, .topbar{
+  pointer-events: auto !important;
   position: relative;
 }
 
-button, a, .btn, .tab, input, textarea, select, label, .file-item, .app-item{
-  pointer-events: auto;
-  touch-action: manipulation;
+button, a, .btn, .tab, input, textarea, select, label{
+  pointer-events: auto !important;
+  touch-action: manipulation !important;
   -webkit-tap-highlight-color: transparent;
 }
 
-input[type="checkbox"]{
-  pointer-events:auto;
-  -webkit-appearance: auto;
-  appearance: auto;
-}
-
-/* ===========================
+/* =================================
    TOP BAR
-   =========================== */
+   ================================= */
 .topbar{
   position: sticky;
   top:0;
@@ -66,7 +61,6 @@ input[type="checkbox"]{
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--line);
-  pointer-events: auto;
 }
 
 .brand{
@@ -74,7 +68,6 @@ input[type="checkbox"]{
   gap:12px;
   padding: 14px 16px 6px;
   align-items:center;
-  pointer-events: auto;
 }
 .dot{
   width:12px;height:12px;border-radius:50%;
@@ -90,12 +83,11 @@ input[type="checkbox"]{
   padding: 10px 12px 14px;
   align-items:center;
   flex-wrap: wrap;
-  position: relative;
-  pointer-events: auto;
 }
 
 .spacer{ flex:1; }
 
+/* Botões/abas */
 .tab, .btn, .dockbtn, .gear{
   border:1px solid var(--line);
   background: rgba(255,255,255,.03);
@@ -111,26 +103,18 @@ input[type="checkbox"]{
   box-shadow: 0 0 0 6px rgba(22,199,132,.10);
 }
 
-.gear{
-  width:44px;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-}
-
 .status-pill{
   display:flex; align-items:center; gap:8px;
   padding: 10px 14px;
   border-radius:999px;
   border:1px solid var(--line);
   background: rgba(255,255,255,.03);
-  pointer-events: auto;
 }
 .status-pill .ok{ font-size:14px; }
 
-/* ===========================
+/* =================================
    CONTEÚDO
-   =========================== */
+   ================================= */
 .container{
   max-width: 980px;
   margin: 14px auto 110px;
@@ -159,7 +143,8 @@ input[type="checkbox"]{
   margin: 10px 0;
 }
 
-.btn.primary{
+.btn.small{ padding: 8px 12px; font-size: 13px; }
+.btn.ok{
   background: rgba(22,199,132,.12);
   border-color: rgba(22,199,132,.45);
 }
@@ -167,21 +152,11 @@ input[type="checkbox"]{
   background: rgba(211,90,90,.14);
   border-color: rgba(211,90,90,.45);
 }
-.btn.ok{
-  background: rgba(22,199,132,.12);
-  border-color: rgba(22,199,132,.45);
-}
-.btn.ghost{
-  background: rgba(255,255,255,.02);
-}
-
-.btn.small{
-  padding: 8px 12px;
-  font-size: 13px;
-}
+.btn.ghost{ background: rgba(255,255,255,.02); }
 
 h1,h2{ margin: 0 0 10px; }
 h2{ margin-top: 12px; }
+
 .hint{ color: var(--muted); font-size: 13px; }
 
 .apps{ display:flex; flex-direction:column; gap:10px; margin-top:10px; }
@@ -192,6 +167,7 @@ h2{ margin-top: 12px; }
   padding: 12px;
   background: rgba(255,255,255,.02);
 }
+
 .badge{
   padding: 8px 12px;
   border-radius: 999px;
@@ -209,13 +185,10 @@ h2{ margin-top: 12px; }
   align-items:center;
 }
 
-/* ===========================
-   VIEWS (✅ essencial)
-   =========================== */
+/* views */
 .view{ display:none; }
 .view.active{ display:block; }
 
-/* inputs */
 .form input, textarea, .cmd input{
   width:100%;
   border:1px solid var(--line);
@@ -284,30 +257,30 @@ textarea{ min-height: 120px; resize: vertical; }
 .mono.small{ font-size: 12px; }
 
 /* OUTPUT BOXES (GitHub / Maintenance / Logs) */
-#ghOut, #maintOut, #adminOut, #agentOut, #editorOut, #genOut, #diagOut, #logsOut, #logsBox, #logsViewBox {
-  display: block;
-  width: 100%;
-  min-height: 90px;
-  padding: 12px 12px;
-  margin-top: 10px;
-  border-radius: 14px;
-  border: 1px solid rgba(255,255,255,.10);
+#ghOut, #maintOut, #adminOut, #agentOut, #editorOut, #genOut, #diagOut, #logsOut, #logsBox, #logsViewBox{
+  display:block;
+  width:100%;
+  min-height:90px;
+  padding:12px 12px;
+  margin-top:10px;
+  border-radius:14px;
+  border:1px solid rgba(255,255,255,.10);
   background: rgba(0,0,0,.28);
   color: rgba(255,255,255,.92);
   white-space: pre-wrap;
   word-break: break-word;
-  overflow: auto;
+  overflow:auto;
   -webkit-overflow-scrolling: touch;
   line-height: 1.35;
   font-family: var(--mono);
   font-size: 13px;
 }
-#maintOut { min-height: 120px; }
+#maintOut{ min-height:120px; }
 
-/* ===========================
-   TOOLS DRAWER (✅ SEM conflito)
-   =========================== */
-.tools, #toolsDrawer{
+/* =================================
+   TOOLS DRAWER
+   ================================= */
+.tools{
   position: fixed;
   top: 12px;
   right: 12px;
@@ -317,21 +290,19 @@ textarea{ min-height: 120px; resize: vertical; }
   border: 1px solid var(--line);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
-  overflow:hidden;
-  z-index: 99999;
   display:none;
+  z-index: 99999;
+  overflow:hidden;
 
-  /* fechado não pega toque */
+  /* fechado: não captura toque */
   pointer-events: none;
 }
-
-.tools.open, #toolsDrawer.open{
+.tools.open{
   display:block;
   pointer-events: auto;
 }
-
-.tools.open *, #toolsDrawer.open *{
-  pointer-events: auto;
+.tools.open, .tools.open *{
+  pointer-events: auto !important;
   touch-action: manipulation;
 }
 
@@ -344,45 +315,25 @@ textarea{ min-height: 120px; resize: vertical; }
 }
 .tools-body{ padding: 12px; }
 
-/* ===========================
-   DOCK
-   =========================== */
-.dock{
-  position: fixed;
-  left: 50%;
-  transform: translateX(-50%);
-  bottom: 16px;
-  display:flex;
-  gap:10px;
-  padding: 10px;
-  border-radius: 999px;
-  border:1px solid var(--line);
-  background: rgba(0,0,0,.35);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  z-index: 1500;
-  pointer-events: auto;
-}
-.dock.hidden{ display:none; }
-
-/* ===========================
-   MODAL DA ENGRENAGEM (se existir)
-   =========================== */
+/* =================================
+   GEAR MODAL
+   ================================= */
 .rcf-gear-backdrop{
   position: fixed; inset: 0;
   background: rgba(0,0,0,.45);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
   z-index: 99998;
-  display:flex; align-items:flex-end; justify-content:center;
+  display:flex;
+  align-items:flex-end;
+  justify-content:center;
   padding: 16px;
 
-  /* fechado (se ficar no DOM invisível) não pode bloquear toque */
+  /* fechado por default (se você usar classe/open no JS) */
   pointer-events: none;
 }
-.rcf-gear-backdrop.open{
-  pointer-events: auto;
-}
+.rcf-gear-backdrop.open{ pointer-events: auto; }
+
 .rcf-gear-sheet{
   width: min(560px, 100%);
   background: rgba(11,18,32,.92);
@@ -390,30 +341,49 @@ textarea{ min-height: 120px; resize: vertical; }
   border-radius: 16px;
   box-shadow: 0 20px 60px rgba(0,0,0,.45);
   padding: 14px;
-  pointer-events: auto;
 }
 .rcf-gear-sheet h3{ margin: 0 0 10px 0; font-size: 16px; }
 .rcf-gear-grid{ display:flex; gap:10px; flex-wrap:wrap; }
 .rcf-gear-grid .btn{ flex: 1 1 160px; }
 
-/* ===========================
-   OVERLAYS GENÉRICOS (não bloquear toque)
-   =========================== */
-.overlay, .backdrop, .modal, .sheet, .scrim, #overlay, #backdrop {
+/* =================================
+   OVERLAYS GENÉRICOS: não podem bloquear toque
+   (mas SEM matar .glass/.blur do layout)
+   ================================= */
+.overlay, .backdrop, #overlay, #backdrop, .scrim, .modal, .sheet{
   pointer-events: none !important;
 }
 
-/* ===========================
-   MÃE BOX (se existir)
-   =========================== */
-#rcfMotherBox, #rcfMotherBox * { pointer-events: auto; }
-#rcfMotherBox textarea{
-  -webkit-user-select: text !important;
-  user-select: text !important;
+/* checkbox (iOS) */
+input[type="checkbox"]{
+  pointer-events:auto !important;
+  -webkit-appearance: auto !important;
+  appearance: auto !important;
+  width: 22px;
+  height: 22px;
 }
-#rcfMotherBox button{
-  pointer-events: auto !important;
-  touch-action: manipulation !important;
-  position: relative !important;
-  z-index: 5 !important;
+
+/* Switch */
+.switch{ position:relative; width:44px; height:26px; display:inline-block; }
+.switch input{ display:none; }
+.slider{
+  position:absolute; inset:0;
+  border-radius:999px;
+  background: rgba(255,255,255,.18);
+  border:1px solid var(--line);
+  transition: .2s;
 }
+.slider::after{
+  content:"";
+  position:absolute;
+  width:20px;height:20px;
+  top:2px; left:2px;
+  border-radius:50%;
+  background: rgba(255,255,255,.90);
+  transition:.2s;
+}
+.switch input:checked + .slider{
+  background: rgba(22,199,132,.25);
+  border-color: rgba(22,199,132,.45);
+}
+.switch input:checked + .slider::after{ transform: translateX(18px); }
