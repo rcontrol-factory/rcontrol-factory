@@ -5,7 +5,8 @@
    - Inventory REAL: A (VFS runtime) -> B (mother_bundle local) -> C (DOM anchors only)
    - ✅ FIX: SW stability vira AUTO-FIX + WARN (não derruba RCF_STABLE por timing)
    - ✅ FIX: Injector funciona sem VFS runtime via Overrides VFS (localStorage)
-   - ✅ FIX CRÍTICO: Scan não “trava” em A vazio — fallback automático p/ B/C + garante /runtime/document.html
+   - ✅ FIX CRÍTICO iOS: bindTap NÃO dispara 2x (removido pointerup+touchend+click juntos)
+   - ✅ FIX: trava reentrada do Update From GitHub (evita TIMEOUT em put(/index.html))
 */
 
 (() => {
@@ -98,7 +99,7 @@
 
       // Admin injector outputs
       const injLog = $("#injLog");
-      if (injLog) injLog.textContent = txt.slice(-8000); // não explode UI
+      if (injLog) injLog.textContent = txt.slice(-8000);
     },
 
     write(...args) {
@@ -219,21 +220,23 @@
   })();
 
   // -----------------------------
-  // Touch / Tap bind (iOS safe)
+  // Touch / Tap bind (iOS safe) — ✅ FIX DUPLO
   // -----------------------------
   function bindTap(el, fn) {
     if (!el) return;
+    if (el.__rcf_bound__) return;         // ✅ evita bind duplicado
+    el.__rcf_bound__ = true;
+
     let last = 0;
 
     const handler = (ev) => {
       const t = Date.now();
-      if (ev.type === "click" && (t - last) < 250) return;
+      if ((t - last) < 350) return;        // ✅ dedupe PARA QUALQUER EVENTO
       last = t;
 
       try {
-        const tag = (ev.target && ev.target.tagName) ? String(ev.target.tagName).toLowerCase() : "";
-        const isButtonish = tag === "button" || tag === "a" || (ev.currentTarget && ev.currentTarget.tagName && String(ev.currentTarget.tagName).toLowerCase() === "button");
-        if (isButtonish && ev.cancelable) ev.preventDefault();
+        if (ev && ev.cancelable) ev.preventDefault();
+        if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
       } catch {}
 
       try { fn(ev); }
@@ -246,9 +249,14 @@
       el.style.webkitTapHighlightColor = "transparent";
     } catch {}
 
-    el.addEventListener("pointerup", handler, { passive: false });
-    el.addEventListener("touchend", handler, { passive: false });
-    el.addEventListener("click", handler, { passive: true });
+    // ✅ iOS: se PointerEvent existe, usa SÓ pointerup (não adiciona touchend junto)
+    if (window.PointerEvent) {
+      el.addEventListener("pointerup", handler, { passive: false });
+    } else {
+      // fallback antigo
+      el.addEventListener("touchend", handler, { passive: false });
+      el.addEventListener("click", handler, { passive: false });
+    }
   }
 
   // -----------------------------
@@ -268,13 +276,13 @@
     Storage.set("pending", State.pending);
   }
 
-  // ✅ MUITO IMPORTANTE: expõe RCF.state ANTES do init (corrige timing)
+  // ✅ expõe RCF.state ANTES do init (corrige timing)
   window.RCF = window.RCF || {};
   window.RCF.state = State;
   window.RCF.log = (...a) => Logger.write(...a);
 
   // =========================================================
-  // ✅ Overrides VFS (localStorage) — permite injector funcionar sem VFS runtime
+  // ✅ Overrides VFS (localStorage)
   // =========================================================
   const OverridesVFS = (() => {
     const KEY = "RCF_OVERRIDES_MAP"; // { "/path": "content" }
@@ -547,7 +555,6 @@
               <pre class="mono" id="maintOut">Pronto.</pre>
             </div>
 
-            <!-- ✅ FASE A -->
             <div class="card" id="admin-injector">
               <h2>FASE A • Scan / Target Map / Injector SAFE</h2>
               <p class="hint">“REAL” = A (VFS) → B (bundle local) → C (DOM apenas anchors). Sem GitHub remoto.</p>
@@ -587,7 +594,6 @@
 
         </main>
 
-        <!-- Tools Drawer -->
         <div class="tools" id="toolsDrawer">
           <div class="tools-head">
             <div style="font-weight:800">Ferramentas</div>
@@ -948,7 +954,6 @@
     }
   }
 
-  // ✅ SW AutoFix check (usado no Stability)
   async function swCheckAutoFix() {
     const out = { ok: false, status: "missing", detail: "", attempts: 0, err: "" };
 
@@ -1122,7 +1127,6 @@
     add(true, "[MODULES] CORE_ONCE", "ok");
     add(ModuleFlags.guardsInstalled, "[MODULES] GUARDS_ONCE", ModuleFlags.guardsInstalled ? "ok" : "não instalado");
 
-    // ✅ SW: auto-fix + WARN (não entra como FAIL)
     const swr = await swCheckAutoFix();
     if (swr.ok) {
       add(true, "[SW] SW_REGISTERED", swr.detail || "registrado");
@@ -1177,7 +1181,6 @@
   // =========================================================
   // ✅ FASE A — REAL SCAN / TARGET MAP / INJECT SAFE
   // =========================================================
-
   function simpleHash(str) {
     let h = 2166136261;
     const s = String(str ?? "");
@@ -1255,33 +1258,6 @@
     }
   }
 
-  // ✅ detecta VFS real (sem “enganar” com overrides)
-  function pickRealRuntimeVFS() {
-    const candidates = [
-      window.RCF_VFS,
-      window.RCF_FS,
-      window.RCF_VFS_OVERRIDES,
-      window.RCF_FILES,
-      window.RCF_STORE
-    ].filter(Boolean);
-
-    for (const v of candidates) {
-      const hasList =
-        typeof v.listFiles === "function" ||
-        typeof v.list === "function" ||
-        typeof v.keys === "function" ||
-        typeof v.entries === "function";
-
-      const hasRead =
-        typeof v.readFile === "function" ||
-        typeof v.read === "function" ||
-        typeof v.get === "function";
-
-      if (hasList && hasRead) return v;
-    }
-    return null;
-  }
-
   async function vfsListAll(vfs) {
     if (!vfs) return [];
     try {
@@ -1314,94 +1290,97 @@
     return "";
   }
 
-  // ✅ SCAN FIXED: A vazio -> cai pro B/C; SEMPRE garante /runtime/document.html
   async function scanFactoryFiles() {
     const index = {
       meta: { scannedAt: nowISO(), source: "", count: 0 },
       files: []
     };
 
-    const pushFile = (rawPath, rawText) => {
-      const p = normalizePath(rawPath);
-      const txt = (rawText == null) ? "" : String(rawText);
-      const type = guessType(p);
-      index.files.push({
-        path: p,
-        type,
-        size: txt.length,
-        hash: simpleHash(txt),
-        markers: detectMarkers(txt),
-        anchors: getAnchorsForContent(type, txt)
-      });
-    };
-
-    // 0) sempre inclui overrides (se existir algo)
     try {
       const olist = await OverridesVFS.listFiles();
       for (const p0 of (olist || []).slice(0, 800)) {
-        const txt = await OverridesVFS.readFile(p0);
-        pushFile(p0, txt);
+        const p = normalizePath(p0);
+        const txt = String((await OverridesVFS.readFile(p)) ?? "");
+        const type = guessType(p);
+        index.files.push({
+          path: p,
+          type,
+          size: txt.length,
+          hash: simpleHash(txt),
+          markers: detectMarkers(txt),
+          anchors: getAnchorsForContent(type, txt)
+        });
       }
     } catch {}
 
-    // A) runtime VFS REAL (somente se listar algo)
-    const realVFS = pickRealRuntimeVFS();
-    if (realVFS) {
-      let list = [];
-      try { list = await vfsListAll(realVFS); } catch { list = []; }
+    const vfs = (window.RCF_VFS || window.RCF_FS || window.RCF_VFS_OVERRIDES || window.RCF_FILES || window.RCF_STORE) || null;
+    if (vfs) {
+      index.meta.source = "A:runtime_vfs";
+      const list = await vfsListAll(vfs);
       const paths = (list || []).map(p => normalizePath(p)).filter(Boolean).slice(0, 1200);
-
-      if (paths.length) {
-        index.meta.source = "A:runtime_vfs";
-        for (const p of paths) {
-          const content = await vfsRead(realVFS, p);
-          pushFile(p, content);
-        }
-        index.meta.count = index.files.length;
-        Storage.set("RCF_FILE_INDEX", index);
-        return index;
-      } else {
-        Logger.write("scan:", "runtime_vfs vazio -> fallback B/C");
+      for (const p of paths) {
+        const content = await vfsRead(vfs, p);
+        const txt = (content == null) ? "" : String(content);
+        const type = guessType(p);
+        const markers = detectMarkers(txt);
+        const anchors = getAnchorsForContent(type, txt);
+        index.files.push({
+          path: p,
+          type,
+          size: txt.length,
+          hash: simpleHash(txt),
+          markers,
+          anchors
+        });
       }
+      index.meta.count = index.files.length;
+      Storage.set("RCF_FILE_INDEX", index);
+      return index;
     }
 
-    // B) mother_bundle.json local
     let bundleText = getLocalMotherBundleText();
     if (!bundleText) bundleText = await tryFetchLocalBundleFromCfg();
 
     if (bundleText) {
+      index.meta.source = "B:mother_bundle_local";
       let parsed = null;
       try { parsed = JSON.parse(bundleText); } catch { parsed = null; }
 
-      const filesObj =
-        (parsed && parsed.files && typeof parsed.files === "object")
-          ? parsed.files
-          : (parsed && typeof parsed === "object" ? parsed : {});
-
+      const filesObj = (parsed && parsed.files && typeof parsed.files === "object") ? parsed.files : (parsed && typeof parsed === "object" ? parsed : {});
       const entries = Object.entries(filesObj || {});
-      if (entries.length) {
-        index.meta.source = "B:mother_bundle_local";
-        for (const [rawPath, rawVal] of entries) {
-          const txt =
-            (rawVal && typeof rawVal === "object" && "content" in rawVal)
-              ? String(rawVal.content ?? "")
-              : String(rawVal ?? "");
-          pushFile(rawPath, txt);
-        }
-        index.meta.count = index.files.length;
-        Storage.set("RCF_FILE_INDEX", index);
-        Storage.setRaw("mother_bundle", bundleText);
-        return index;
-      } else {
-        Logger.write("scan:", "bundle local vazio -> fallback C");
+      for (const [rawPath, rawVal] of entries) {
+        const p = normalizePath(rawPath);
+        const txt = (rawVal && typeof rawVal === "object" && "content" in rawVal) ? String(rawVal.content ?? "") : String(rawVal ?? "");
+        const type = guessType(p);
+        const markers = detectMarkers(txt);
+        const anchors = getAnchorsForContent(type, txt);
+        index.files.push({
+          path: p,
+          type,
+          size: txt.length,
+          hash: simpleHash(txt),
+          markers,
+          anchors
+        });
       }
+      index.meta.count = index.files.length;
+      Storage.set("RCF_FILE_INDEX", index);
+      Storage.setRaw("mother_bundle", bundleText);
+      return index;
     }
 
-    // C) fallback DOM — SEMPRE adiciona 1 arquivo
     index.meta.source = "C:dom_anchors_only";
     const html = document.documentElement ? document.documentElement.outerHTML : "";
-    pushFile("/runtime/document.html", html);
-
+    const markers = detectMarkers(html);
+    const anchors = getAnchorsForContent("html", html);
+    index.files.push({
+      path: "/runtime/document.html",
+      type: "html",
+      size: html.length,
+      hash: simpleHash(html),
+      markers,
+      anchors
+    });
     index.meta.count = index.files.length;
     Storage.set("RCF_FILE_INDEX", index);
     return index;
@@ -1442,7 +1421,7 @@
             offset: a.at,
             anchorId: a.id,
             supportedModes: ["INSERT", "REPLACE", "DELETE"],
-            defaultRisk: (String(a.id || "").includes("BODY") || String(a.id || "").includes("JS_EOF")) ? "medium" : "low",
+            defaultRisk: (a.id.includes("BODY") || a.id.includes("JS_EOF")) ? "medium" : "low",
             note: a.note
           });
         }
@@ -1507,18 +1486,15 @@
   async function readTextFromInventoryPath(path) {
     const p = normalizePath(path);
 
-    // 1) override primeiro
     const ov = await OverridesVFS.readFile(p);
     if (ov != null) return String(ov);
 
-    // 2) runtime VFS real
-    const vfs = pickRealRuntimeVFS();
+    const vfs = (window.RCF_VFS || window.RCF_FS || window.RCF_VFS_OVERRIDES || window.RCF_FILES || window.RCF_STORE) || null;
     if (vfs) {
       const txt = await vfsRead(vfs, p);
       return (txt == null) ? "" : String(txt);
     }
 
-    // 3) bundle local
     const bundleText = getLocalMotherBundleText() || (await tryFetchLocalBundleFromCfg()) || "";
     if (bundleText) {
       try {
@@ -1530,7 +1506,6 @@
       } catch {}
     }
 
-    // 4) dom doc
     if (p === "/runtime/document.html") {
       return document.documentElement ? document.documentElement.outerHTML : "";
     }
@@ -1541,8 +1516,7 @@
   async function writeTextToInventoryPath(path, newText) {
     const p = normalizePath(path);
 
-    // tenta runtime VFS real se tiver write
-    const vfs = pickRealRuntimeVFS();
+    const vfs = (window.RCF_VFS || window.RCF_FS || window.RCF_VFS_OVERRIDES || window.RCF_FILES || window.RCF_STORE) || null;
     if (vfs) {
       try {
         if (typeof vfs.writeFile === "function") { await vfs.writeFile(p, String(newText ?? "")); return { ok: true, mode: "vfs.writeFile" }; }
@@ -1552,10 +1526,8 @@
       } catch (e) {
         return { ok: false, err: e?.message || e };
       }
-      // sem write -> cai pro override
     }
 
-    // fallback: override vfs (sempre escreve)
     try {
       await OverridesVFS.writeFile(p, String(newText ?? ""));
       return { ok: true, mode: "override.writeFile" };
@@ -1859,7 +1831,7 @@
       uiMsg("#ghOut", "GitHub SAFE (Fase A). cfg=" + (cfg ? "OK" : "vazio"));
     });
 
-    // Mãe buttons (stub safe, mas clicáveis)
+    // Mãe buttons
     bindTap($("#btnMaeLoad"), async () => {
       const MAE = window.RCF_MOTHER || window.RCF_MAE;
       if (!MAE) {
@@ -1879,6 +1851,8 @@
       Logger.write("mae check:", safeJsonStringify(s));
     });
 
+    // ✅ FIX: trava reentrada + timeout maior
+    let maeUpdateLock = false;
     bindTap($("#btnMaeUpdate"), async () => {
       const MAE = window.RCF_MOTHER || window.RCF_MAE;
       if (!MAE || typeof MAE.updateFromGitHub !== "function") {
@@ -1886,14 +1860,27 @@
         Logger.write("mae update:", "missing");
         return;
       }
-      uiMsg("#maintOut", "Atualizando...");
+      if (maeUpdateLock) {
+        uiMsg("#maintOut", "⏳ Update já está rodando… (aguarde)");
+        Logger.write("mae update:", "blocked (lock)");
+        return;
+      }
+
+      maeUpdateLock = true;
+      uiMsg("#maintOut", "Atualizando…");
+
       try {
-        await MAE.updateFromGitHub();
+        const res = await Promise.race([
+          Promise.resolve(MAE.updateFromGitHub()),
+          new Promise((_, rej) => setTimeout(() => rej(new Error("TIMEOUT 15000ms (updateFromGitHub)")), 15000))
+        ]);
         uiMsg("#maintOut", "✅ Update acionado.");
-        Logger.write("mae update:", "ok");
+        Logger.write("mae update:", "ok", res ? safeJsonStringify(res) : "");
       } catch (e) {
         uiMsg("#maintOut", "❌ Falhou: " + (e?.message || e));
         Logger.write("mae update err:", e?.message || e);
+      } finally {
+        maeUpdateLock = false;
       }
     });
 
@@ -1915,7 +1902,7 @@
       }
     });
 
-    // ✅ FASE A — botões
+    // ✅ FASE A
     bindTap($("#btnScanIndex"), async () => {
       safeSetStatus("Scan…");
       try {
@@ -1998,7 +1985,6 @@
 
       installGuardsOnce();
 
-      // tenta registrar, mas não trava se falhar
       const r = await swRegister();
       if (!r.ok) Logger.write("warn:", r.msg);
 
