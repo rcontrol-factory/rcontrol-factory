@@ -5,8 +5,10 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <title>RControl Factory</title>
   <meta name="theme-color" content="#0b1020" />
-  <link rel="manifest" href="/manifest.json" />
-  <link rel="stylesheet" href="/styles.css" />
+
+  <!-- ✅ tudo mora em /app -->
+  <link rel="manifest" href="/app/manifest.json" />
+  <link rel="stylesheet" href="/app/styles.css" />
 </head>
 <body>
   <noscript>Ative o JavaScript para usar o app.</noscript>
@@ -17,6 +19,8 @@
 
   <script>
     (function () {
+      const ROOT = "/app";
+
       // LOG interno (aparece na sua aba Logs)
       function rcfLog(msg) {
         try {
@@ -47,22 +51,22 @@
       }
 
       async function boot() {
-        rcfLog("index boot: starting module loader...");
+        rcfLog("index boot: starting module loader... root=" + ROOT);
 
-        // LISTA de módulos essenciais pra sua tela “Mãe” funcionar
+        // ✅ módulos: primeiro tenta /app/... (real), depois tenta raiz (fallback)
         const modules = [
-          { name: "github_sync", paths: ["/js/core/github_sync.js", "/app/js/core/github_sync.js"] },
-          { name: "vfs_overrides", paths: ["/js/core/vfs_overrides.js", "/app/js/core/vfs_overrides.js"] },
-          { name: "mother_selfupdate", paths: ["/js/core/mother_selfupdate.js", "/app/js/core/mother_selfupdate.js"] },
+          { name: "github_sync",      paths: [ROOT + "/js/core/github_sync.js", "/js/core/github_sync.js"] },
+          { name: "vfs_overrides",    paths: [ROOT + "/js/core/vfs_overrides.js", "/js/core/vfs_overrides.js"] },
+          { name: "mother_selfupdate",paths: [ROOT + "/js/core/mother_selfupdate.js", "/js/core/mother_selfupdate.js"] },
 
-          // (opcional) admin UI (se seu app.js não renderiza tudo sozinho)
-          { name: "admin_ui", paths: ["/js/admin.js", "/app/js/admin.js"] },
+          // admin UI real do seu repo (você tem admin.github.js)
+          { name: "admin_github_ui",  paths: [ROOT + "/js/admin.github.js", "/js/admin.github.js"] },
 
-          // (opcional) builder/engine
-          { name: "patchQueue", paths: ["/js/engine/patchQueue.js", "/app/js/engine/patchQueue.js"] },
-          { name: "organizerEngine", paths: ["/js/engine/organizerEngine.js", "/app/js/engine/organizerEngine.js"] },
-          { name: "applyPipeline", paths: ["/js/engine/applyPipeline.js", "/app/js/engine/applyPipeline.js"] },
-          { name: "builderSafe", paths: ["/js/builder/builderSafe.js", "/app/js/builder/builderSafe.js"] },
+          // engine/builder (se existir)
+          { name: "patchQueue",       paths: [ROOT + "/js/engine/patchQueue.js", "/js/engine/patchQueue.js"] },
+          { name: "organizerEngine",  paths: [ROOT + "/js/engine/organizerEngine.js", "/js/engine/organizerEngine.js"] },
+          { name: "applyPipeline",    paths: [ROOT + "/js/engine/applyPipeline.js", "/js/engine/applyPipeline.js"] },
+          { name: "builderSafe",      paths: [ROOT + "/js/builder/builderSafe.js", "/js/builder/builderSafe.js"] },
         ];
 
         for (const m of modules) {
@@ -74,19 +78,19 @@
           }
         }
 
-        // Só depois sobe o app principal
+        // ✅ app principal: no seu repo é /app/app.js
         try {
-          await loadAny(["/app.js"]);
-          rcfLog("app.js loaded ✅ /app.js");
+          const okApp = await loadAny([ROOT + "/app.js", "/app.js"]);
+          rcfLog("app.js loaded ✅ " + okApp);
         } catch {
-          rcfLog("app.js missing ❌ /app.js");
+          rcfLog("app.js missing ❌ (tentou: " + ROOT + "/app.js | /app.js)");
         }
 
-        // SW: mantém safe (não trava)
+        // ✅ SW também está em /app/sw.js e o scope deve ser /app/
         try {
           if ("serviceWorker" in navigator) {
-            navigator.serviceWorker.register("/sw.js", { scope: "/" })
-              .then(() => rcfLog("sw register: ok"))
+            navigator.serviceWorker.register(ROOT + "/sw.js", { scope: ROOT + "/" })
+              .then(() => rcfLog("sw register: ok (" + ROOT + "/)"))
               .catch(() => rcfLog("sw register: fail/ignored"));
           }
         } catch {}
