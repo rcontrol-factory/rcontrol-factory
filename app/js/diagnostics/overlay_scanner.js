@@ -1,193 +1,236 @@
+/* =========================================================
+  app/js/diagnostics/overlay_scanner.js  (FULL)
+  FASE A — Scan/TargetMap com fallback em cascata (iOS SAFE)
+
+  SOURCE ORDER:
+  1) runtime_vfs (se existir e tiver arquivos)
+  2) vfs_overrides/storage registry (mesma storage da Mãe)
+  3) bundle em memória (mother_bundle.json)
+  4) DOM anchors (HEAD_END/BODY_END...) => targets >= 2
+
+  Logs:
+  - "scan fallback -> DOM anchors"
+========================================================= */
 (() => {
   "use strict";
 
-  let INSTALLED = false;
-  let LAST_SCAN = 0;
-
-  function log(level, msg) {
-    try { window.RCF_LOGGER?.push?.(level, msg); } catch {}
-  }
-
-  function safeNum(x) {
-    const n = Number(x);
-    return Number.isFinite(n) ? n : 0;
-  }
-
-  function isLikelyVisibleButBlocking(st) {
-    // opacity 0 / visibility hidden ainda pode bloquear se pointer-events != none
-    // display none não bloqueia porque não entra no layout
-    if (st.display === "none") return false;
-    if (st.pointerEvents === "none") return false;
-    return true;
-  }
-
-  function coversViewportMostly(rect, vw, vh) {
-    if (!rect) return false;
-    const covers =
-      rect.width >= vw * 0.80 &&
-      rect.height >= vh * 0.80 &&
-      rect.left <= vw * 0.12 &&
-      rect.top <= vh * 0.12;
-    return !!covers;
-  }
-
-  function getSuspectInfo(el, st, rect) {
-    const z = st.zIndex || "";
-    return {
-      tag: el.tagName.toLowerCase(),
-      id: el.id || "",
-      cls: (el.className || "").toString().slice(0, 140),
-      z,
-      pe: st.pointerEvents || "",
-      op: st.opacity || "",
-      vis: st.visibility || "",
-      disp: st.display || "",
-      pos: st.position || "",
-      w: Math.round(rect.width),
-      h: Math.round(rect.height),
-      x: Math.round(rect.left),
-      y: Math.round(rect.top),
-    };
-  }
-
-  function isBlockingCandidate(el) {
-    try {
-      if (!el || el === document.body || el === document.documentElement) return false;
-
-      const st = getComputedStyle(el);
-      if (!isLikelyVisibleButBlocking(st)) return false;
-
-      // só faz sentido em coisas "overlay-like"
-      if (!(st.position === "fixed" || st.position === "sticky" || st.position === "absolute")) {
-        return false;
-      }
-
-      const rect = el.getBoundingClientRect();
-      const vw = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
-      const vh = Math.max(document.documentElement.clientHeight || 0, window.innerHeight || 0);
-
-      if (!coversViewportMostly(rect, vw, vh)) return false;
-
-      const z = safeNum(st.zIndex || 0);
-      // se zIndex alto ou pointer-events ativo já é suspeito
-      if (z >= 10) return true;
-
-      // mesmo sem zIndex, fixed fullscreen com pointer-events ativo costuma ser blocker
-      return st.pointerEvents !== "none";
-    } catch {
-      return false;
-    }
-  }
-
-  function shouldScanNow() {
-    const t = Date.now();
-    if (t - LAST_SCAN < 800) return false;
-    LAST_SCAN = t;
-    return true;
-  }
-
-  function scan(opts = {}) {
-    const limit = Number.isFinite(opts.limit) ? opts.limit : 25;
-    const suspects = [];
-
-    try {
-      const all = Array.from(document.querySelectorAll("body *"));
-      for (const el of all) {
-        try {
-          if (isBlockingCandidate(el)) {
-            const st = getComputedStyle(el);
-            const rect = el.getBoundingClientRect();
-            suspects.push(getSuspectInfo(el, st, rect));
-          }
-        } catch {}
-        if (suspects.length >= limit) break;
-      }
-
-      // Heurística extra: o que está “por cima” no centro do viewport?
-      try {
-        const vw = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
-        const vh = Math.max(document.documentElement.clientHeight || 0, window.innerHeight || 0);
-        const top = document.elementFromPoint(Math.floor(vw / 2), Math.floor(vh / 2));
-        if (top && isBlockingCandidate(top)) {
-          const st = getComputedStyle(top);
-          const rect = top.getBoundingClientRect();
-          const info = getSuspectInfo(top, st, rect);
-          info.note = "top@center";
-          // evita duplicar
-          const dup = suspects.some(s => s.tag === info.tag && s.id === info.id && s.x === info.x && s.y === info.y);
-          if (!dup) suspects.unshift(info);
-        }
-      } catch {}
-
-      if (suspects.length) {
-        log("warn", "OverlayScanner: POSSÍVEL overlay bloqueando cliques:\n" + JSON.stringify(suspects, null, 2));
-      } else {
-        log("ok", "OverlayScanner: nenhum overlay grande suspeito ✅");
-      }
-    } catch (e) {
-      log("err", "OverlayScanner scan err: " + (e?.message || e));
-    }
-
-    return suspects;
-  }
-
-  function highlightFirst() {
-    try {
-      const s = scan({ limit: 1 })[0];
-      if (!s) return false;
-
-      // tenta achar de novo pelo id (se tiver)
-      let el = null;
-      if (s.id) el = document.getElementById(s.id);
-      if (!el) {
-        // fallback: tenta pelo centro
-        const vw = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
-        const vh = Math.max(document.documentElement.clientHeight || 0, window.innerHeight || 0);
-        el = document.elementFromPoint(Math.floor(vw / 2), Math.floor(vh / 2));
-      }
-      if (!el) return false;
-
-      el.style.outline = "3px solid #ef4444";
-      el.style.outlineOffset = "2px";
-      log("warn", "OverlayScanner: highlight aplicado no possível blocker.");
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  function install() {
-    if (INSTALLED) {
-      log("warn", "OverlayScanner já estava instalado (skip).");
-      return;
-    }
-    INSTALLED = true;
-
-    // varre após load e depois de mudanças leves no DOM
-    const kick = () => {
-      try {
-        if (!shouldScanNow()) return;
-        scan();
-      } catch {}
-    };
-
-    window.addEventListener("load", () => setTimeout(kick, 120), { passive: true });
-    window.addEventListener("resize", () => setTimeout(kick, 120), { passive: true });
-
-    // MutationObserver (leve)
-    try {
-      const mo = new MutationObserver(() => setTimeout(kick, 120));
-      mo.observe(document.documentElement, { childList: true, subtree: true });
-    } catch {}
-
-    log("ok", "OverlayScanner instalado ✅");
-  }
-
-  window.RCF_OVERLAY_SCANNER = window.RCF_OVERLAY_SCANNER || {
-    scan,
-    install,
-    highlightFirst
+  const TAG = "[SCAN]";
+  const log = (msg) => {
+    try { window.RCF_LOGGER?.push?.("scan", msg); } catch {}
+    try { console.log(TAG, msg); } catch {}
   };
 
-  log("ok", "overlay_scanner.js loaded ✅");
+  const isObj = (v) => v && typeof v === "object";
+  const isFn = (v) => typeof v === "function";
+
+  const uniq = (arr) => Array.from(new Set(arr.filter(Boolean)));
+
+  // --- DOM fallback targets (garante >= 2) ---
+  function domTargets() {
+    const t = [
+      { id: "DOM::HEAD_END", label: "DOM::HEAD_END", mode: "HEAD_END", selector: "head" },
+      { id: "DOM::BODY_END", label: "DOM::BODY_END", mode: "BODY_END", selector: "body" },
+    ];
+    try {
+      const hasJs = !!document.querySelector("script");
+      const hasCss = !!document.querySelector('link[rel="stylesheet"], style');
+      if (hasJs) t.push({ id: "DOM::JS_EOF", label: "DOM::JS_EOF", mode: "JS_EOF", selector: "body" });
+      if (hasCss) t.push({ id: "DOM::CSS_ROOT", label: "DOM::CSS_ROOT", mode: "CSS_ROOT", selector: "head" });
+    } catch {}
+    return t;
+  }
+
+  // --- normalize para /app (porque seu motherRoot = /app) ---
+  function normalizePath(p) {
+    p = String(p || "").trim();
+    if (!p) return "";
+    p = p.split("#")[0].split("?")[0];
+    if (!p.startsWith("/")) p = "/" + p;
+    p = p.replace(/\/{2,}/g, "/");
+
+    // força /app/*
+    if (!p.startsWith("/app/")) {
+      if (p.startsWith("/js/")) p = "/app" + p;
+      else if (/^\/[^/]+\.(html|js|css|json|txt|md|svg|png|jpg|jpeg|webp|ico)$/i.test(p)) p = "/app" + p;
+    }
+    return p;
+  }
+
+  // ---------------------------------------------------------
+  // SOURCE 1: runtime_vfs (se existir)
+  // ---------------------------------------------------------
+  async function scanRuntimeVFS() {
+    const rv = window.runtime_vfs || window.RUNTIME_VFS || window.RCF_RUNTIME_VFS;
+    if (!rv) return [];
+
+    try {
+      // tentativas comuns
+      if (isFn(rv.listFiles)) return (await rv.listFiles()) || [];
+      if (isFn(rv.keys)) return (await rv.keys()) || [];
+      if (Array.isArray(rv.files)) return rv.files;
+      if (isObj(rv.files)) return Object.keys(rv.files);
+      return [];
+    } catch {
+      return [];
+    }
+  }
+
+  // ---------------------------------------------------------
+  // SOURCE 2: overrides (RCF_VFS_OVERRIDES / RCF_VFS)
+  // ---------------------------------------------------------
+  async function scanOverrides() {
+    const ov = window.RCF_VFS_OVERRIDES || window.RCF_VFS || window.RCF_VFS_OVERRIDE;
+    if (!ov) return [];
+
+    try {
+      // padrões: list/keys/index/dump
+      if (isFn(ov.list)) return (await ov.list()) || [];
+      if (isFn(ov.keys)) return (await ov.keys()) || [];
+      if (isFn(ov.index)) return (await ov.index()) || [];
+      if (isFn(ov.dumpIndex)) return (await ov.dumpIndex()) || [];
+      if (Array.isArray(ov._index)) return ov._index;
+      if (isObj(ov._index)) return Object.keys(ov._index);
+      return [];
+    } catch {
+      return [];
+    }
+  }
+
+  // ---------------------------------------------------------
+  // SOURCE 3: bundle da Mãe (mother_bundle.json)
+  // - tenta cache + fetch normal
+  // ---------------------------------------------------------
+  async function scanMotherBundle() {
+    const paths = [
+      "./import/mother_bundle.json",
+      "/app/import/mother_bundle.json",
+      "app/import/mother_bundle.json"
+    ];
+
+    for (const p of paths) {
+      try {
+        const res = await fetch(p, { cache: "no-store" });
+        if (!res.ok) continue;
+        const txt = await res.text();
+        const json = JSON.parse(txt);
+        const files = json?.files || {};
+        const keys = Object.keys(files);
+        if (keys.length) return keys;
+      } catch {}
+    }
+    return [];
+  }
+
+  // ---------------------------------------------------------
+  // gera targets baseado em lista de arquivos
+  // (se vazio -> DOM)
+  // ---------------------------------------------------------
+  function generateTargetsFromFiles(fileList) {
+    const files = uniq((fileList || []).map(normalizePath));
+
+    // se não tem nada -> DOM anchors
+    if (!files.length) {
+      log("scan fallback -> DOM anchors");
+      return domTargets();
+    }
+
+    // targets derivados
+    const targets = [];
+
+    // sempre dá ao menos DOM também (safe)
+    targets.push(...domTargets());
+
+    // se achar index.html, cria target específico de html
+    if (files.includes("/app/index.html")) {
+      targets.push({ id: "/app/index.html::HEAD_END", label: "/app/index.html::HEAD_END", mode: "HEAD_END", file: "/app/index.html" });
+      targets.push({ id: "/app/index.html::BODY_END", label: "/app/index.html::BODY_END", mode: "BODY_END", file: "/app/index.html" });
+    }
+
+    // se achar app.js, cria target específico de js
+    if (files.includes("/app/app.js")) {
+      targets.push({ id: "/app/app.js::EOF", label: "/app/app.js::EOF", mode: "JS_EOF", file: "/app/app.js" });
+    }
+
+    // se achar styles.css, cria target css
+    if (files.includes("/app/styles.css")) {
+      targets.push({ id: "/app/styles.css::ROOT", label: "/app/styles.css::ROOT", mode: "CSS_ROOT", file: "/app/styles.css" });
+    }
+
+    // garante >=2
+    if (targets.length < 2) {
+      log("scan fallback -> DOM anchors");
+      return domTargets();
+    }
+
+    return targets;
+  }
+
+  // ---------------------------------------------------------
+  // API principal: scanFactoryFiles()
+  // ---------------------------------------------------------
+  async function scanFactoryFiles() {
+    // 1) runtime_vfs
+    const a = await scanRuntimeVFS();
+    if (a && a.length) {
+      log(`A:runtime_vfs files=${a.length}`);
+      return { source: "A:runtime_vfs", files: a };
+    }
+
+    // 2) overrides
+    const b = await scanOverrides();
+    if (b && b.length) {
+      log(`B:overrides files=${b.length}`);
+      return { source: "B:overrides", files: b };
+    }
+
+    // 3) mother bundle
+    const c = await scanMotherBundle();
+    if (c && c.length) {
+      log(`C:mother_bundle files=${c.length}`);
+      return { source: "C:mother_bundle", files: c };
+    }
+
+    // 4) DOM
+    log("A:runtime_vfs files=0");
+    log("scan fallback -> DOM anchors");
+    return { source: "D:DOM", files: [] };
+  }
+
+  // ---------------------------------------------------------
+  // API: generateTargetMap()
+  // - guarda em window.RCF_TARGET_MAP para o dropdown usar
+  // ---------------------------------------------------------
+  async function generateTargetMap() {
+    const res = await scanFactoryFiles();
+    const targets = generateTargetsFromFiles(res.files);
+
+    // salva em locais comuns
+    window.RCF_TARGET_MAP = {
+      count: targets.length,
+      source: res.source,
+      createdAt: new Date().toISOString(),
+      targets
+    };
+
+    // compat: se algum código usa window.targets
+    if (Array.isArray(window.targets)) window.targets = targets;
+
+    log(`targets: generated count=${targets.length}`);
+    return window.RCF_TARGET_MAP;
+  }
+
+  // ---------------------------------------------------------
+  // export global
+  // ---------------------------------------------------------
+  window.RCF_OVERLAY_SCANNER = {
+    scanFactoryFiles,
+    generateTargetMap,
+    normalizePath
+  };
+
+  // compat com chamadores antigos
+  window.scanFactoryFiles = window.scanFactoryFiles || scanFactoryFiles;
+  window.generateTargetMap = window.generateTargetMap || generateTargetMap;
+
+  log("overlay_scanner loaded ✅ (cascade fallback enabled)");
 })();
