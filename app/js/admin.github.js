@@ -1,14 +1,14 @@
-/* RControl Factory — /app/js/admin.github.js (PADRÃO) — v2.4
-   FIX UI:
-   - Renderiza SOMENTE dentro de #settingsMount (nunca overlay global)
-   - Colapsado por padrão (abre/fecha no botão)
-   - Sem position:fixed (não “gruda” em todas as telas)
-   - Click/touch iOS safe
+/* RControl Factory — /app/js/admin.github.js (PADRÃO) — v2.5
+   FIX UI (sem grudar em outras telas):
+   - Renderiza GitHub Sync SOMENTE quando a tela ativa for "Settings"
+   - Colapsado por padrão (abre/fecha)
+   - Nunca usa position:fixed (nada overlay global)
+   - Auto-repara se a UI for “apagada” pelo app.js (re-render leve)
 */
 (() => {
   "use strict";
 
-  if (window.RCF_ADMIN_GH && window.RCF_ADMIN_GH.__v24) return;
+  if (window.RCF_ADMIN_GH && window.RCF_ADMIN_GH.__v25) return;
 
   const MOUNT_ID = "settingsMount";
   const OUT_ID = "settingsOut";
@@ -26,9 +26,7 @@
   }
 
   function getCfg(){
-    // usa a API do github_sync.js quando disponível
     if (window.RCF_GH_SYNC?.loadConfig) return window.RCF_GH_SYNC.loadConfig();
-    // fallback direto no LS
     return safeParse(localStorage.getItem("rcf:ghcfg"), {}) || {};
   }
 
@@ -54,14 +52,12 @@
     let x = String(p || "").trim();
     if (!x) return "app/import/mother_bundle.json";
     x = x.replace(/^\/+/, "");
-    // se o user digitar "import/..." a gente salva como "app/import/..."
     if (x.startsWith("import/")) x = "app/" + x;
     return x;
   }
 
   function enableClickFallback(container){
     if (!container) return;
-
     container.addEventListener("touchend", (ev) => {
       const t = ev.target;
       if (!t) return;
@@ -73,16 +69,33 @@
     }, { capture:true, passive:true });
   }
 
+  // ✅ Detecta se a tela atual é Settings (pela presença do título "Settings")
+  function isSettingsScreen(){
+    const headings = Array.from(document.querySelectorAll("h1,h2,h3,.title,.viewTitle"));
+    for (const el of headings) {
+      const t = String(el?.textContent || "").trim().toLowerCase();
+      if (t === "settings") return true;
+    }
+    // fallback: se existir o mount e um texto "Segurança" + "Settings" no topo do conteúdo
+    const bodyText = String(document.body?.innerText || "").toLowerCase();
+    if (bodyText.includes("\nsettings") || bodyText.includes("settings\n")) return true;
+    return false;
+  }
+
+  function alreadyMounted(){
+    return !!document.getElementById("rcfGhCard");
+  }
+
   function render(){
     const mount = $(MOUNT_ID);
     if (!mount) return false;
-
-    // evita duplicar
-    if (document.getElementById("rcfGhCard")) return true;
+    if (!isSettingsScreen()) return false; // ✅ não injeta fora do Settings
+    if (alreadyMounted()) return true;
 
     const open = localStorage.getItem(UI_OPEN_KEY) === "1";
 
-    mount.innerHTML += `
+    const wrapper = document.createElement("div");
+    wrapper.innerHTML = `
       <div class="card" id="rcfGhCard" style="margin-top:12px">
         <div style="display:flex; align-items:center; gap:10px;">
           <h3 style="margin:0;">GitHub (Sync)</h3>
@@ -142,6 +155,13 @@
       </div>
     `;
 
+    // ✅ coloca no topo do Settings (pra ficar “quietinho” e não misturar com logs)
+    try {
+      mount.prepend(wrapper.firstElementChild);
+    } catch {
+      mount.appendChild(wrapper.firstElementChild);
+    }
+
     const card = document.getElementById("rcfGhCard");
     const body = document.getElementById("rcfGhBody");
     const toggle = document.getElementById("rcfGhToggle");
@@ -169,7 +189,6 @@
       document.getElementById("ghToken").value = cfg.token || "";
     }
 
-    // load cfg
     fillInputs(getCfg());
 
     toggle.addEventListener("click", () => {
@@ -255,24 +274,39 @@
       }
     });
 
-    log("ok", "OK: admin.github.js ready ✅");
+    log("ok", "OK: admin.github.js ready ✅ (v2.5)");
     return true;
   }
 
+  // Repara se o app.js apagar o card quando troca view
+  function startRepairLoop(){
+    let last = 0;
+    setInterval(() => {
+      const t = Date.now();
+      if (t - last < 800) return;
+      last = t;
+
+      // se está em settings e o card sumiu, injeta de novo
+      if (isSettingsScreen() && !alreadyMounted()) {
+        render();
+      }
+    }, 900);
+  }
+
   function boot(){
-    // tenta várias vezes (porque app.js troca views e pode montar depois)
+    // tenta várias vezes no boot
     let tries = 0;
     const tick = () => {
       tries++;
-      if (render()) return;
-      if (tries < 25) setTimeout(tick, 200);
+      render();
+      if (tries < 40) setTimeout(tick, 200);
     };
     tick();
+    startRepairLoop();
   }
 
-  window.RCF_ADMIN_GH = { __v24: true, boot };
+  window.RCF_ADMIN_GH = { __v25: true, boot };
 
-  // init
   if (document.readyState === "loading") {
     window.addEventListener("DOMContentLoaded", boot);
   } else {
