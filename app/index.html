@@ -7,11 +7,9 @@
   <meta name="theme-color" content="#0b1020" />
 
   <script>
-    // Detecta se está rodando em /app ou /
     (function () {
       try {
         var p = location.pathname || "/";
-        // Se abrir /app/... ou /app, root = /app
         window.__RCF_ROOT__ = (p === "/app" || p.startsWith("/app/")) ? "/app" : "";
       } catch {
         window.__RCF_ROOT__ = "";
@@ -20,11 +18,9 @@
   </script>
 
   <script>
-    // Ajusta links cedo (antes do CSS)
     (function () {
       try {
         var R = window.__RCF_ROOT__ || "";
-        // Injeta <link> dinamicamente pra não depender do path hardcoded
         var manifest = document.createElement("link");
         manifest.rel = "manifest";
         manifest.href = (R || "") + "/manifest.json";
@@ -68,19 +64,16 @@
       function loadAny(paths) {
         return new Promise((resolve, reject) => {
           let i = 0;
-
           function tryNext() {
             if (i >= paths.length) return reject(new Error("all paths failed"));
             const src = paths[i++];
-
             const s = document.createElement("script");
             s.src = src;
-            s.async = false; // mantém ordem
+            s.async = false;
             s.onload = () => resolve(src);
             s.onerror = () => tryNext();
             document.head.appendChild(s);
           }
-
           tryNext();
         });
       }
@@ -89,20 +82,18 @@
         const R = window.__RCF_ROOT__ || "";
         rcfLog("index boot: root=" + (R || "/"));
 
-        // MÓDULOS ESSENCIAIS
-        // (coloquei injector aqui — é o que estava faltando)
         const modules = [
           { name: "github_sync",       paths: [rootPath("/js/core/github_sync.js")] },
           { name: "vfs_overrides",     paths: [rootPath("/js/core/vfs_overrides.js")] },
           { name: "mother_selfupdate", paths: [rootPath("/js/core/mother_selfupdate.js")] },
 
-          // ✅ INJECTOR (aba Settings)
           { name: "injector",          paths: [rootPath("/js/core/injector.js")] },
 
-          // UI admin opcional (se existir)
+          // ✅ NOVO: compactador do Settings (remove Logs do Settings)
+          { name: "settings_compact",  paths: [rootPath("/js/settings_compact.js")] },
+
           { name: "admin_github_ui",   paths: [rootPath("/js/admin.github.js"), rootPath("/js/admin.js")] },
 
-          // engine/builder (se existir)
           { name: "patchQueue",        paths: [rootPath("/js/engine/patchQueue.js")] },
           { name: "organizerEngine",   paths: [rootPath("/js/engine/organizerEngine.js")] },
           { name: "applyPipeline",     paths: [rootPath("/js/engine/applyPipeline.js")] },
@@ -113,12 +104,11 @@
           try {
             const okPath = await loadAny(m.paths);
             rcfLog("module loaded ✅ " + m.name + " ← " + okPath);
-          } catch (e) {
+          } catch {
             rcfLog("module missing ❌ " + m.name + " (tentou: " + m.paths.join(" | ") + ")");
           }
         }
 
-        // APP PRINCIPAL
         try {
           const appPath = rootPath("/app.js");
           await loadAny([appPath]);
@@ -127,7 +117,6 @@
           rcfLog("app.js missing ❌ " + rootPath("/app.js"));
         }
 
-        // SERVICE WORKER (scope correto)
         try {
           if ("serviceWorker" in navigator) {
             const swPath = rootPath("/sw.js");
