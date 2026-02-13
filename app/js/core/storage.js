@@ -1,113 +1,88 @@
 /* =========================================================
-  RControl Factory — app/js/core/storage.js (FULL) — v2
-  - Sem export (compatível com <script> normal)
-  - Storage híbrido:
-      * IndexedDB (KV) -> dados grandes (bundle_local etc.)
-      * localStorage -> config/meta pequena (compatibilidade)
-  - API compatível:
-      get/set/del (mantidos)
-      + put (alias de set), remove (alias de del)
+  RControl Factory — app/js/core/storage.js (V2 FULL)
+  - Sem "export" (compatível com <script> normal)
+  - localStorage wrapper + IndexedDB KV simples
+  - Prefixo padrão: rcf:
+  - ✅ adiciona: put/getAsync (IDB) para bundle_local e afins
 ========================================================= */
 (function () {
   "use strict";
 
-  const TAG = "[STORAGE]";
-  const log = (type, msg) => {
-    try { window.RCF_LOGGER?.push?.(type, `${TAG} ${msg}`); } catch {}
-    try { console.log(TAG, type, msg); } catch {}
-  };
+  const PREFIX = "rcf:";
 
-  const DB_NAME = "rcf_db";
-  const DB_VERSION = 1;
-  const STORE = "kv";
-
-  function hasIDB() {
-    try { return !!window.indexedDB; } catch { return false; }
-  }
+  // ----------------------------
+  // IndexedDB KV (simples)
+  // ----------------------------
+  const IDB_DB   = "RCF_DB";
+  const IDB_VER  = 1;
+  const IDB_STORE = "kv";
 
   function idbOpen() {
     return new Promise((resolve, reject) => {
-      const req = indexedDB.open(DB_NAME, DB_VERSION);
-
-      req.onupgradeneeded = () => {
-        const db = req.result;
-        if (!db.objectStoreNames.contains(STORE)) {
-          db.createObjectStore(STORE);
-        }
-      };
-
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error || new Error("IDB open error"));
-    });
-  }
-
-  let _dbPromise = null;
-  async function getDB() {
-    if (!hasIDB()) return null;
-    if (!_dbPromise) _dbPromise = idbOpen().catch((e) => {
-      log("error", "Falha ao abrir IndexedDB: " + (e?.message || e));
-      _dbPromise = null;
-      return null;
-    });
-    return _dbPromise;
-  }
-
-  async function idbGet(key) {
-    const db = await getDB();
-    if (!db) return undefined;
-
-    return new Promise((resolve) => {
       try {
-        const tx = db.transaction(STORE, "readonly");
-        const st = tx.objectStore(STORE);
-        const req = st.get(key);
+        const req = indexedDB.open(IDB_DB, IDB_VER);
+        req.onupgradeneeded = () => {
+          const db = req.result;
+          if (!db.objectStoreNames.contains(IDB_STORE)) {
+            db.createObjectStore(IDB_STORE);
+          }
+        };
         req.onsuccess = () => resolve(req.result);
-        req.onerror = () => resolve(undefined);
-      } catch {
-        resolve(undefined);
+        req.onerror = () => reject(req.error || new Error("IDB open failed"));
+      } catch (e) {
+        reject(e);
       }
     });
   }
 
-  async function idbPut(key, value) {
-    const db = await getDB();
-    if (!db) return false;
-
-    return new Promise((resolve) => {
+  async function idbGet(key) {
+    const db = await idbOpen();
+    return new Promise((resolve, reject) => {
       try {
-        const tx = db.transaction(STORE, "readwrite");
-        const st = tx.objectStore(STORE);
-        const req = st.put(value, key);
-        req.onsuccess = () => resolve(true);
-        req.onerror = () => resolve(false);
-      } catch {
-        resolve(false);
+        const tx = db.transaction(IDB_STORE, "readonly");
+        const st = tx.objectStore(IDB_STORE);
+        const rq = st.get(key);
+        rq.onsuccess = () => resolve(rq.result);
+        rq.onerror = () => reject(rq.error || new Error("IDB get failed"));
+      } catch (e) {
+        reject(e);
+      }
+    });
+  }
+
+  async function idbPut(key, val) {
+    const db = await idbOpen();
+    return new Promise((resolve, reject) => {
+      try {
+        const tx = db.transaction(IDB_STORE, "readwrite");
+        const st = tx.objectStore(IDB_STORE);
+        const rq = st.put(val, key);
+        rq.onsuccess = () => resolve(true);
+        rq.onerror = () => reject(rq.error || new Error("IDB put failed"));
+      } catch (e) {
+        reject(e);
       }
     });
   }
 
   async function idbDel(key) {
-    const db = await getDB();
-    if (!db) return false;
-
-    return new Promise((resolve) => {
+    const db = await idbOpen();
+    return new Promise((resolve, reject) => {
       try {
-        const tx = db.transaction(STORE, "readwrite");
-        const st = tx.objectStore(STORE);
-        const req = st.delete(key);
-        req.onsuccess = () => resolve(true);
-        req.onerror = () => resolve(false);
-      } catch {
-        resolve(false);
+        const tx = db.transaction(IDB_STORE, "readwrite");
+        const st = tx.objectStore(IDB_STORE);
+        const rq = st.delete(key);
+        rq.onsuccess = () => resolve(true);
+        rq.onerror = () => reject(rq.error || new Error("IDB del failed"));
+      } catch (e) {
+        reject(e);
       }
     });
   }
 
   const Storage = {
-    // mantém prefixo legado do localStorage (compat)
-    prefix: "rcf:",
+    prefix: PREFIX,
 
-    // ========= LOCALSTORAGE (compat / pequeno) =========
     get(key, fallback) {
       try {
         const v = localStorage.getItem(this.prefix + key);
@@ -141,65 +116,41 @@
       try { localStorage.setItem(fullKey, String(value)); } catch {}
     },
 
-    // ========= INDEXEDDB (oficial / grande) =========
-    async idbGet(key, fallback) {
-      const v = await idbGet(key);
-      return v === undefined ? fallback : v;
-    },
-
-    async idbPut(key, value) {
-      return await idbPut(key, value);
-    },
-
-    async idbDel(key) {
-      return await idbDel(key);
-    },
-
-    // ========= API “OFICIAL” PARA O SISTEMA =========
-    // put/get/del vão para IDB por padrão (bundle_local, registry, etc.)
+    // ✅ API esperada pelo self-update (persistência "bundle_local")
+    // put/getAsync/delAsync gravam no IndexedDB (KV)
     async put(key, value) {
-      const ok = await idbPut(key, value);
-      if (!ok) {
-        // fallback mínimo: só grava no localStorage se couber (pequeno)
-        try {
-          localStorage.setItem(this.prefix + key, JSON.stringify(value));
-          log("warn", `IDB falhou, fallback localStorage: ${key}`);
-          return true;
-        } catch {
-          log("error", `Falhou salvar (IDB+LS): ${key}`);
-          return false;
-        }
+      try {
+        const fullKey = this.prefix + key;
+        await idbPut(fullKey, value);
+        // meta simples pra debug
+        this.rawSet(this.prefix + key + ":meta", Date.now());
+        return true;
+      } catch {
+        return false;
       }
-      return true;
     },
 
-    async fetch(key, fallback) {
-      // tenta IDB primeiro
-      const v = await idbGet(key);
-      if (v !== undefined) return v;
-
-      // fallback legado (caso tenha sido salvo antes em localStorage)
-      return this.get(key, fallback);
+    async getAsync(key, fallback) {
+      try {
+        const fullKey = this.prefix + key;
+        const v = await idbGet(fullKey);
+        return v == null ? fallback : v;
+      } catch {
+        return fallback;
+      }
     },
 
-    async remove(key) {
-      const ok = await idbDel(key);
-      // também limpa legado
-      try { localStorage.removeItem(this.prefix + key); } catch {}
-      return ok;
-    },
-
-    // aliases para compatibilidade com códigos antigos
-    async getAsync(key, fallback) { return await this.fetch(key, fallback); },
-    async delAsync(key) { return await this.remove(key); }
+    async delAsync(key) {
+      try {
+        const fullKey = this.prefix + key;
+        await idbDel(fullKey);
+        try { localStorage.removeItem(this.prefix + key + ":meta"); } catch {}
+        return true;
+      } catch {
+        return false;
+      }
+    }
   };
 
-  // Exposição global
   window.RCF_STORAGE = Storage;
-
-  // Sinalizador de “IDB pronto” (ajuda no diagnóstico interno)
-  (async () => {
-    const db = await getDB();
-    log("info", `IndexedDB ${db ? "OK" : "INDISPONÍVEL"} (db=${DB_NAME}, store=${STORE})`);
-  })();
 })();
