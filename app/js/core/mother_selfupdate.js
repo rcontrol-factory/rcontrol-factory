@@ -1,7 +1,8 @@
-/* app/js/core/mother_selfupdate.js — v3 (iOS timeout+retry + root /app + bundle mem)
-   - Corrige path: bundle "/index.html" vira "/app/index.html"
-   - Corrige timeout no iOS: 15000ms + retry/backoff
-   - Guarda bundle em memória: window.__MAE_BUNDLE_MEM__
+/* app/js/core/mother_selfupdate.js — v3.1
+   - iOS timeout+retry
+   - root fix (/app)
+   - bundle em memória
+   - PERSISTÊNCIA REAL EM IndexedDB (mother_bundle_local)
 */
 
 (() => {
@@ -31,9 +32,7 @@
     return "text/plain; charset=utf-8";
   }
 
-  // ===== ROOT REAL do seu projeto (padrão: /app) =====
   function getMotherRoot() {
-    // se você já tiver config em algum lugar, dá pra ler aqui depois
     const cfgRoot =
       window.RCF_CONFIG?.MOTHER_ROOT ||
       window.RCF?.config?.MOTHER_ROOT ||
@@ -45,7 +44,6 @@
     return r.startsWith("/") ? r.replace(/\/+$/g, "") : ("/" + r.replace(/\/+$/g, ""));
   }
 
-  // ===== NORMALIZA PATH -> SEMPRE dentro do root (/app) =====
   function normalizePath(inputPath) {
     let p = String(inputPath || "").trim();
     if (!p) return "";
@@ -54,26 +52,20 @@
     if (!p.startsWith("/")) p = "/" + p;
     p = p.replace(/\/{2,}/g, "/");
 
-    // remove traversal
     if (p.includes("..")) {
       p = p.replace(/\.\./g, "");
       p = p.replace(/\/{2,}/g, "/");
     }
 
-    const ROOT = getMotherRoot(); // ex: "/app"
+    const ROOT = getMotherRoot();
 
-    // se já começa com /app/, ok
     if (p.startsWith(ROOT + "/")) return p;
-
-    // se veio "/index.html" etc, joga pra "/app/index.html"
-    // também cobre "/js/*" e arquivos na raiz
     if (p.startsWith("/js/")) return ROOT + p;
 
     if (/^\/[^/]+\.(html|js|css|json|txt|md|png|jpg|jpeg|webp|svg|ico)$/i.test(p)) {
       return ROOT + p;
     }
 
-    // default: joga tudo pra dentro do root também
     return ROOT + p;
   }
 
@@ -136,10 +128,31 @@
     const files = bundle?.files || bundle;
     if (!files || typeof files !== "object") throw new Error("Bundle sem 'files'.");
 
-    // guarda em memória (Source 3 pra FASE A depois)
+    // ===== GUARDA EM MEMÓRIA =====
     try {
       window.__MAE_BUNDLE_MEM__ = { meta: bundle?.meta || null, files };
     } catch {}
+
+    // ===== PERSISTÊNCIA REAL (SCAN B) =====
+    try {
+      const dbPut =
+        window.RCF_STORAGE?.put ||
+        window.RCF_DB?.put ||
+        window.RCF_IDB?.put;
+
+      if (typeof dbPut === "function") {
+        await dbPut("mother_bundle_local", {
+          meta: bundle?.meta || null,
+          files
+        });
+
+        log("ok", `Mãe: bundle persistido em IndexedDB (${Object.keys(files).length} files)`);
+      } else {
+        log("warn", "Mãe: API de storage não encontrada — bundle não persistido");
+      }
+    } catch (e) {
+      log("error", "Mãe: erro ao persistir bundle_local -> " + (e?.message || e));
+    }
 
     const put = window.RCF_VFS_OVERRIDES?.put;
     if (typeof put !== "function") throw new Error("RCF_VFS_OVERRIDES.put não existe.");
@@ -164,7 +177,6 @@
 
       log("info", `Mãe: aplicando -> ${normPath}`);
       await putWithRetry(put, normPath, content, contentType);
-
       count++;
     }
 
@@ -214,5 +226,5 @@
   window.RCF_MOTHER = api;
   window.RCF_MAE = api;
 
-  log("ok", "mother_selfupdate.js loaded (v3)");
+  log("ok", "mother_selfupdate.js loaded (v3.1)");
 })();
