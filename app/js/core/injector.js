@@ -1,72 +1,143 @@
-/* =========================================================
-   /app/js/core/injector.js  (RCF Injector v2 - self-mount)
-   - NÃO depende de #settingsMount existir.
-   - Monta sozinho dentro da aba Settings.
+/* app/js/core/injector.js  (RCF Injector v2 - robust / iOS-safe)
    - Recebe pack JSON { meta, files, registryPatch }
    - Aplica arquivos via window.RCF_VFS.put() (SW override)
    - Clear via window.RCF_VFS.clearAll()
-========================================================= */
-
+   - NÃO trava em "Aplicando..." (timeout + retry + progresso)
+*/
 (() => {
   "use strict";
 
+  const OUT_ID = "settingsOut";
+  const MOUNT_ID = "settingsMount";
+
   const TAG = "[INJECTOR]";
-  const CARD_ID = "rcfInjectorCard";
-  const INPUT_ID = "injInput";
-  const OUT_ID = "injOut";
-  const STATUS_ID = "injStatus";
+  const $ = (id) => document.getElementById(id);
+  const nowISO = () => new Date().toISOString();
 
-  function log(...a) { try { console.log(TAG, ...a); } catch {} }
+  const isIOS = () => {
+    try {
+      const ua = navigator.userAgent || "";
+      return /iPhone|iPad|iPod/i.test(ua) && /AppleWebKit/i.test(ua);
+    } catch { return false; }
+  };
 
-  function $(id) { return document.getElementById(id); }
+  function logTop(msg) {
+    const el = $(OUT_ID);
+    if (el) el.textContent = String(msg || "Pronto.");
+    try { console.log(TAG, msg); } catch {}
+  }
 
   function safeParseJSON(txt) {
     try { return JSON.parse(txt); } catch { return null; }
   }
 
-  function normPath(p) {
-    p = String(p || "").trim();
-    if (!p) return "";
-    if (!p.startsWith("/")) p = "/" + p;
-    // colapsa //
-    p = p.replace(/\/{2,}/g, "/");
-    // remove traversal básico
-    if (p.includes("..")) p = p.replace(/\.\./g, "");
-    return p;
+  // root da Mãe (quando existir)
+  function getMotherRoot() {
+    try {
+      const r = window.RCF_MAE?.status?.()?.motherRoot;
+      if (typeof r === "string" && r.trim()) return r.trim();
+    } catch {}
+    // fallback (se não tiver status)
+    return "/app";
+  }
+
+  // Normaliza: sempre começa com "/" e, se root for "/app",
+  // converte "/app/x" -> "/x" (VFS costuma ser virtual-root)
+  function normalizePath(p) {
+    let path = String(p || "").trim();
+    if (!path) return "";
+
+    path = path.split("#")[0].split("?")[0].trim();
+    if (!path.startsWith("/")) path = "/" + path;
+    path = path.replace(/\/{2,}/g, "/");
+
+    // anti traversal
+    if (path.includes("..")) {
+      path = path.replace(/\.\./g, "");
+      path = path.replace(/\/{2,}/g, "/");
+    }
+
+    const root = getMotherRoot();
+    if (root === "/app") {
+      if (path === "/app") return "/";
+      if (path.startsWith("/app/")) path = path.slice(4); // remove "/app"
+      // IMPORTANT: manter "/" na frente
+      if (!path.startsWith("/")) path = "/" + path;
+    }
+
+    return path;
   }
 
   function hasVFS() {
-    return !!(window.RCF_VFS
-      && typeof window.RCF_VFS.put === "function"
-      && typeof window.RCF_VFS.clearAll === "function");
+    return !!(window.RCF_VFS && typeof window.RCF_VFS.put === "function" && typeof window.RCF_VFS.clearAll === "function");
   }
 
-  // aplica arquivos via SW override
-  async function applyFilesViaVFS(filesMap) {
-    if (!hasVFS()) {
-      throw new Error("RCF_VFS não está disponível (vfs_overrides.js não carregou ou SW não controlou a página ainda).");
-    }
+  function withTimeout(promise, ms, label) {
+    let t;
+    const timeout = new Promise((_, rej) => {
+      t = setTimeout(() => rej(new Error(`TIMEOUT ${ms}ms em ${label}`)), ms);
+    });
+    return Promise.race([promise, timeout]).finally(() => clearTimeout(t));
+  }
 
-    const keys = Object.keys(filesMap || {});
-    let ok = 0, fail = 0;
+  async function putWithRetry(path, content) {
+    const timeoutBase = isIOS() ? 15000 : 8000;
+    const timeouts = [timeoutBase, timeoutBase + 3000, timeoutBase + 6000];
+    const backs = [250, 700, 1500];
 
-    for (const k of keys) {
-      const path = normPath(k);
-      if (!path) continue;
-      const content = String(filesMap[k] ?? "");
+    for (let i = 0; i < 3; i++) {
       try {
-        await window.RCF_VFS.put(path, content);
-        ok++;
+        const label = `RCF_VFS.put(${path})#${i + 1}`;
+        const res = await withTimeout(
+          Promise.resolve(window.RCF_VFS.put(path, content)),
+          timeouts[i],
+          label
+        );
+        return { ok: true, res };
       } catch (e) {
-        log("VFS.put falhou:", path, e?.message || e);
-        fail++;
+        if (i === 2) return { ok: false, error: e };
+        await new Promise(r => setTimeout(r, backs[i]));
       }
     }
-    return { ok, fail, total: keys.length };
+    return { ok: false, error: new Error("unknown put retry error") };
+  }
+
+  // aplica arquivos via SW override (robusto)
+  async function applyFilesViaVFS(filesMap, uiHooks) {
+    if (!hasVFS()) throw new Error("RCF_VFS não está disponível (SW ainda não controlou / vfs_overrides não carregou).");
+
+    const keys = Object.keys(filesMap || {});
+    const total = keys.length;
+
+    let ok = 0, fail = 0;
+    const details = [];
+
+    for (let idx = 0; idx < keys.length; idx++) {
+      const rawKey = keys[idx];
+      const vPath = normalizePath(rawKey);
+      if (!vPath) continue;
+
+      const content = String(filesMap[rawKey] ?? "");
+
+      uiHooks?.onStep?.(idx + 1, total, rawKey, vPath);
+
+      const r = await putWithRetry(vPath, content);
+      if (r.ok) {
+        ok++;
+        details.push({ path: vPath, status: "ok" });
+      } else {
+        fail++;
+        details.push({ path: vPath, status: "fail", error: String(r.error?.message || r.error) });
+        // continua (não trava)
+      }
+    }
+
+    return { ok, fail, total, details };
   }
 
   function applyRegistryPatch(patch) {
     if (!patch || typeof patch !== "object") return;
+
     const R = window.RCF_REGISTRY;
     if (!R) return;
 
@@ -95,7 +166,7 @@
     }
   }
 
-  async function applyPack(pack) {
+  async function applyPack(pack, uiHooks) {
     if (!pack || typeof pack !== "object") return { ok: false, msg: "Pack inválido." };
 
     const meta = pack.meta || {};
@@ -105,172 +176,155 @@
     const name = meta.name || "pack";
     const ver = meta.version || "1.0";
 
-    const res = await applyFilesViaVFS(files);
+    const res = await applyFilesViaVFS(files, uiHooks);
     applyRegistryPatch(patch);
 
     const msg =
-      `Aplicado: ${name} v${ver} — ok:${res.ok}/${res.total}` +
-      (res.fail ? ` (falhas:${res.fail})` : "");
+      `Aplicado: ${name} v${ver}\n` +
+      `ok: ${res.ok}/${res.total}` + (res.fail ? ` (falhas: ${res.fail})` : "") +
+      `\nroot: ${getMotherRoot()}  (paths normalizados p/ VFS)` +
+      `\n${nowISO()}`;
 
-    return { ok: true, msg };
+    return { ok: true, msg, res };
   }
 
-  // acha um “container” confiável da aba Settings
-  function findSettingsContainer() {
-    // Tentativas comuns (sua UI parece ter views por id)
-    const candidates = [
-      document.getElementById("view-settings"),
-      document.getElementById("settingsView"),
-      document.getElementById("settings"),
-      document.querySelector('[data-view="settings"]'),
-    ].filter(Boolean);
-
-    if (candidates.length) return candidates[0];
-
-    // fallback: procura por título "Settings" e sobe um pai razoável
-    const h = Array.from(document.querySelectorAll("h1,h2,h3")).find(el =>
-      String(el.textContent || "").trim().toLowerCase() === "settings"
-    );
-    if (h) return h.closest("section,div") || h.parentElement;
-
-    return null;
-  }
-
-  function setOut(txt) {
-    const out = $(OUT_ID);
-    if (out) out.textContent = String(txt || "Pronto.");
-  }
-
-  function setStatus(txt) {
-    const st = $(STATUS_ID);
-    if (st) st.textContent = String(txt || "");
-  }
-
-  function renderCard(container) {
+  function enableClickFallback(container) {
     if (!container) return;
+    container.style.pointerEvents = "auto";
 
-    // já existe?
-    if ($(CARD_ID)) return;
+    container.addEventListener("click", (ev) => {
+      const t = ev.target;
+      if (!t) return;
+      if (t.tagName === "LABEL") {
+        const fid = t.getAttribute("for");
+        if (fid) {
+          const inp = document.getElementById(fid);
+          if (inp && typeof inp.click === "function") inp.click();
+        }
+      }
+    }, true);
 
-    const card = document.createElement("div");
-    card.className = "card";
-    card.id = CARD_ID;
-    card.style.pointerEvents = "auto";
-    card.style.marginTop = "12px";
+    container.addEventListener("touchend", (ev) => {
+      const t = ev.target;
+      if (!t) return;
+      const tag = (t.tagName || "").toLowerCase();
+      const isBtn = tag === "button";
+      const isInput = tag === "input" || tag === "textarea" || tag === "select";
+      if (isBtn && typeof t.click === "function") t.click();
+      if (isInput && typeof t.focus === "function") t.focus();
+    }, { capture: true, passive: true });
+  }
 
-    card.innerHTML = `
-      <h3>Injeção (Injector)</h3>
-      <p class="hint">Cole um pack JSON (meta + files). Aplica via SW override (RCF_VFS). Sem mexer no core.</p>
+  function renderSettings() {
+    const mount = $(MOUNT_ID);
+    if (!mount) return;
 
-      <textarea id="${INPUT_ID}" class="textarea mono" spellcheck="false"
-        style="min-height:180px"
-        placeholder='Cole um JSON:
+    mount.innerHTML = `
+      <div class="card" style="margin-top:12px">
+        <h3>Injeção (Injector)</h3>
+        <p class="hint">Cole um pack JSON (meta + files). Aplica via SW override (RCF_VFS). Sem mexer no core.</p>
+
+        <textarea id="injInput" class="textarea mono" spellcheck="false"
+          placeholder='Cole um JSON:
 {
   "meta": {"name":"pack-x","version":"1.0"},
-  "files": { "/app/core/TESTE.txt": "OK" }
+  "files": { "/TESTE_OK.txt": "OK" }
 }'></textarea>
 
-      <div class="row" style="gap:10px; flex-wrap:wrap">
-        <button id="btnInjDry" class="btn" type="button">Dry-run</button>
-        <button id="btnInjApply" class="btn primary" type="button">Aplicar pack</button>
-        <button id="btnInjClear" class="btn danger" type="button">Zerar overrides</button>
-      </div>
+        <div class="row">
+          <button id="btnInjDry" class="btn" type="button">Dry-run</button>
+          <button id="btnInjApply" class="btn primary" type="button">Aplicar pack</button>
+          <button id="btnInjClear" class="btn danger" type="button">Zerar overrides</button>
+        </div>
 
-      <pre id="${OUT_ID}" class="mono small">Pronto.</pre>
-
-      <div class="hint" style="margin-top:10px">
-        Status: <span id="${STATUS_ID}">checando...</span>
+        <pre id="injOut" class="mono small">Pronto.</pre>
+        <div class="hint" style="margin-top:10px">
+          Status: <span id="injStatus">checando...</span>
+        </div>
       </div>
     `;
 
-    // coloca no final da tela Settings (não remove nada existente)
-    container.appendChild(card);
+    enableClickFallback(mount);
 
-    // binds
-    const input = $(INPUT_ID);
+    const input = $("injInput");
+    const out = $("injOut");
+    const status = $("injStatus");
 
-    setStatus(hasVFS()
+    const setOut = (t) => { if (out) out.textContent = String(t || "Pronto."); };
+
+    status.textContent = hasVFS()
       ? "RCF_VFS OK ✅ (override via SW)"
-      : "RCF_VFS não disponível ❌ (recarregue 1x após instalar SW)");
+      : "RCF_VFS não disponível ❌ (recarregue 1x após instalar SW)";
 
-    const btnDry = document.getElementById("btnInjDry");
-    const btnApply = document.getElementById("btnInjApply");
-    const btnClear = document.getElementById("btnInjClear");
-
-    if (btnDry) btnDry.addEventListener("click", () => {
-      const pack = safeParseJSON((input && input.value) || "");
+    $("btnInjDry").addEventListener("click", () => {
+      const pack = safeParseJSON(input.value || "");
       if (!pack) return setOut("JSON inválido (não parseou).");
       const files = pack.files || {};
       const keys = Object.keys(files);
-      setOut(`OK (dry-run). Arquivos: ${keys.length}\n` + keys.slice(0, 120).join("\n"));
+      const preview = keys.map(k => `${k}  ->  ${normalizePath(k)}`).slice(0, 60).join("\n");
+      setOut(`OK (dry-run). Arquivos: ${keys.length}\n\nNORMALIZAÇÃO:\n${preview}`);
     });
 
-    if (btnApply) btnApply.addEventListener("click", async () => {
-      const pack = safeParseJSON((input && input.value) || "");
+    $("btnInjApply").addEventListener("click", async () => {
+      const pack = safeParseJSON(input.value || "");
       if (!pack) return setOut("JSON inválido (não parseou).");
 
       try {
         setOut("Aplicando...");
-        const res = await applyPack(pack);
-        setOut(res.msg);
-        setStatus("OK ✅");
+        logTop("Injector: aplicando pack...");
+
+        const uiHooks = {
+          onStep(step, total, raw, norm) {
+            setOut(`Aplicando ${step}/${total}\nraw: ${raw}\nvfs: ${norm}`);
+          }
+        };
+
+        const r = await applyPack(pack, uiHooks);
+
+        // mostra detalhes
+        const d = r?.res?.details || [];
+        const lines = [];
+        lines.push(r.msg);
+        lines.push("");
+        lines.push("Detalhes (VFS):");
+        d.slice(0, 40).forEach((it) => {
+          lines.push((it.status === "ok" ? "✅" : "❌") + " " + it.path + (it.error ? " — " + it.error : ""));
+        });
+        if (d.length > 40) lines.push("… +" + (d.length - 40));
+
+        setOut(lines.join("\n"));
+        logTop("Injector: pack aplicado.");
       } catch (e) {
         const msg = `Falhou: ${e?.message || e}`;
         setOut(msg);
-        setStatus("Erro ❌");
+        logTop(msg);
       }
     });
 
-    if (btnClear) btnClear.addEventListener("click", async () => {
+    $("btnInjClear").addEventListener("click", async () => {
       try {
         if (!hasVFS()) throw new Error("RCF_VFS não disponível.");
-        await window.RCF_VFS.clearAll();
+        setOut("Limpando overrides...");
+        await withTimeout(Promise.resolve(window.RCF_VFS.clearAll()), isIOS() ? 15000 : 8000, "RCF_VFS.clearAll()");
         setOut("Overrides zerados ✅");
-        setStatus("OK ✅");
+        logTop("Overrides zerados ✅");
       } catch (e) {
         const msg = `Falhou: ${e?.message || e}`;
         setOut(msg);
-        setStatus("Erro ❌");
+        logTop(msg);
       }
     });
-
-    log("Injector card mounted ✅");
   }
 
-  function ensureMounted() {
-    const container = findSettingsContainer();
-    if (!container) {
-      log("Settings container não encontrado ainda (vou tentar de novo).");
-      return false;
-    }
-    renderCard(container);
-    return true;
-  }
+  window.addEventListener("load", () => {
+    try { renderSettings(); } catch (e) { console.warn(TAG, "render falhou:", e); }
+  });
 
-  // tenta montar agora + retries (porque seu app renderiza views depois do boot)
-  function mountWithRetries() {
-    if (ensureMounted()) return;
-
-    let tries = 0;
-    const max = 40; // ~8s
-    const t = setInterval(() => {
-      tries++;
-      if (ensureMounted() || tries >= max) clearInterval(t);
-    }, 200);
-  }
-
-  // init
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", mountWithRetries);
-  } else {
-    mountWithRetries();
-  }
-
-  // API global
   window.RCF_INJECTOR = {
     applyPack,
-    applyFilesViaVFS
+    applyFilesViaVFS,
+    normalizePath
   };
 
-  log("injector.js loaded (v2 self-mount)");
+  logTop("Injector v2 carregado ✅");
 })();
