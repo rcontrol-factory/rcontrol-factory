@@ -1,8 +1,8 @@
 {
   "meta": { "name": "rcf-release", "version": "1.0", "createdAt": "..." },
   "files": {
-    "/index.html": "<!doctype html>....",
-    "/js/admin.js": "(function(){ ... })();",
-    "/sw.js": "/* service worker */"
+    "/app/index.html": "<!doctype html>....",
+    "/app/js/admin.github.js": "(function(){ ... })();",
+    "/app/sw.js": "/* service worker */"
   }
 }
