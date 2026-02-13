@@ -1,9 +1,10 @@
-/* core/injector.js  (RCF Injector v2 - robust iOS + timeout + normalize)
-   - Recebe pack JSON { meta, files, registryPatch }
-   - Aplica via overrides: prefere RCF_VFS_OVERRIDES, fallback RCF_VFS
-   - Normaliza paths: remove /app/ automaticamente
-   - Timeout por arquivo + progresso no injOut
-   - Clear via clear/clearAll
+/* /app/js/core/injector.js  (RCF Injector v2.1 - PADRÃO /app)
+  - Aplica pack JSON { meta, files, registryPatch }
+  - Aplica via overrides: prefere RCF_VFS_OVERRIDES, fallback RCF_VFS
+  - ✅ PADRÃO: MotherRoot=/app
+  - ✅ normalizeMotherPath: /index.html -> /app/index.html, /js/* -> /app/js/*
+  - ✅ LOG: "path normalized: from -> to"
+  - Timeout por arquivo + retries curtos (iOS)
 */
 (() => {
   "use strict";
@@ -23,16 +24,22 @@
     try { return JSON.parse(txt); } catch { return null; }
   }
 
-  function normalizePath(inputPath){
+  // ✅ PADRÃO: normalizeMotherPath (não remove /app/)
+  function normalizeMotherPath(inputPath){
     let p = String(inputPath || "").trim();
     if (!p) return "";
     p = p.split("#")[0].split("?")[0].trim();
     if (!p.startsWith("/")) p = "/" + p;
+    p = p.replace(/\/{2,}/g, "/");
 
-    // MUITO IMPORTANTE: remove /app/ pq seu app roda com root /app
-    if (p.startsWith("/app/")) p = p.slice(4);
+    if (p === "/index.html") p = "/app/index.html";
 
-    // colapsa ////
+    const ROOT_FILES = new Set(["/styles.css", "/app.js", "/sw.js", "/manifest.json", "/favicon.ico"]);
+    if (ROOT_FILES.has(p)) p = "/app" + p;
+
+    if (p.startsWith("/js/")) p = "/app" + p;
+
+    if (!p.startsWith("/app/")) p = "/app" + p;
     p = p.replace(/\/{2,}/g, "/");
     return p;
   }
@@ -48,7 +55,6 @@
   }
 
   function pickVFS(){
-    // preferido (mais consistente com mother_selfupdate)
     if (window.RCF_VFS_OVERRIDES && typeof window.RCF_VFS_OVERRIDES.put === "function") {
       return {
         kind: "OVERRIDES",
@@ -59,7 +65,6 @@
       };
     }
 
-    // fallback antigo
     if (window.RCF_VFS && typeof window.RCF_VFS.put === "function") {
       return {
         kind: "VFS",
@@ -93,33 +98,35 @@
 
     for (let i = 0; i < keys.length; i++){
       const raw = keys[i];
-      const path = normalizePath(raw);
-      if (shouldSkip(path)) continue;
+      const norm = normalizeMotherPath(raw);
+      if (shouldSkip(norm)) continue;
+
+      if (raw !== norm) {
+        try { window.RCF_LOGGER?.push?.("info", `path normalized: ${raw} -> ${norm}`); } catch {}
+      }
 
       const content = String(filesMap[raw] ?? "");
-      const label = `put(${path})`;
+      const label = `put(${norm})`;
 
-      if (ui) ui(`Aplicando ${i+1}/${total}…\n${path}`);
+      if (ui) ui(`Aplicando ${i+1}/${total}…\n${norm}`);
 
-      // retries curtos (iOS)
       let lastErr = null;
       const tries = 3;
       for (let a = 1; a <= tries; a++){
         try {
-          await withTimeout(Promise.resolve(vfs.put(path, content)), 6000, label);
+          await withTimeout(Promise.resolve(vfs.put(norm, content)), 8000, label);
           ok++;
           lastErr = null;
           break;
         } catch (e) {
           lastErr = e;
-          // backoff
-          await new Promise(r => setTimeout(r, 250 * a));
+          await new Promise(r => setTimeout(r, 300 * a));
         }
       }
 
       if (lastErr){
         fail++;
-        if (ui) ui(`Falhou em ${path}\n${String(lastErr?.message || lastErr)}`);
+        if (ui) ui(`Falhou em ${norm}\n${String(lastErr?.message || lastErr)}`);
       }
     }
 
@@ -180,128 +187,97 @@
     return { ok:true, msg };
   }
 
-  function enableClickFallback(container){
-    if (!container) return;
-    container.style.pointerEvents = "auto";
+  // init (mantém seu UI)
+  window.addEventListener("load", () => {
+    try {
+      const mount = $(MOUNT_ID);
+      if (!mount) return;
 
-    container.addEventListener("click", (ev) => {
-      const t = ev.target;
-      if (!t) return;
+      if (document.getElementById("injInput")) return;
 
-      if (t.tagName === "LABEL") {
-        const fid = t.getAttribute("for");
-        if (fid) {
-          const inp = document.getElementById(fid);
-          if (inp && typeof inp.click === "function") inp.click();
-        }
-      }
-    }, true);
+      mount.innerHTML += `
+        <div class="card" style="margin-top:12px">
+          <h3>Injeção (Injector)</h3>
+          <p class="hint">
+            Cole um pack JSON (meta + files). Aplica via override (SW).<br/>
+            PADRÃO: paths serão normalizados para /app/* (ex: /index.html -> /app/index.html).
+          </p>
 
-    container.addEventListener("touchend", (ev) => {
-      const t = ev.target;
-      if (!t) return;
-      const tag = (t.tagName || "").toLowerCase();
-      const isBtn = tag === "button";
-      const isInput = tag === "input" || tag === "textarea" || tag === "select";
-      if (isBtn && typeof t.click === "function") t.click();
-      if (isInput && typeof t.focus === "function") t.focus();
-    }, { capture:true, passive:true });
-  }
-
-  function renderSettings(){
-    const mount = $(MOUNT_ID);
-    if (!mount) return;
-
-    // evita duplicar
-    if (document.getElementById("injInput")) return;
-
-    mount.innerHTML += `
-      <div class="card" style="margin-top:12px">
-        <h3>Injeção (Injector)</h3>
-        <p class="hint">
-          Cole um pack JSON (meta + files). Aplica via override (SW).<br/>
-          Dica: NÃO use /app/ no path — mas se usar, eu removo automaticamente.
-        </p>
-
-        <textarea id="injInput" class="textarea mono" spellcheck="false"
-          placeholder='Cole um JSON:
+          <textarea id="injInput" class="textarea mono" spellcheck="false"
+            placeholder='Cole um JSON:
 {
   "meta": {"name":"teste-real","version":"1.0"},
-  "files": { "/TESTE_OK.txt": "INJECTION WORKING" }
+  "files": { "/index.html": "<!-- ok -->" }
 }'></textarea>
 
-        <div class="row">
-          <button id="btnInjDry" class="btn" type="button">Dry-run</button>
-          <button id="btnInjApply" class="btn primary" type="button">Aplicar pack</button>
-          <button id="btnInjClear" class="btn danger" type="button">Zerar overrides</button>
+          <div class="row">
+            <button id="btnInjDry" class="btn" type="button">Dry-run</button>
+            <button id="btnInjApply" class="btn primary" type="button">Aplicar pack</button>
+            <button id="btnInjClear" class="btn danger" type="button">Zerar overrides</button>
+          </div>
+
+          <pre id="injOut" class="mono small">Pronto.</pre>
+          <div class="hint" style="margin-top:10px">
+            Status: <span id="injStatus">checando...</span>
+          </div>
         </div>
+      `;
 
-        <pre id="injOut" class="mono small">Pronto.</pre>
-        <div class="hint" style="margin-top:10px">
-          Status: <span id="injStatus">checando...</span>
-        </div>
-      </div>
-    `;
+      const input  = document.getElementById("injInput");
+      const out    = document.getElementById("injOut");
+      const status = document.getElementById("injStatus");
 
-    const input  = document.getElementById("injInput");
-    const out    = document.getElementById("injOut");
-    const status = document.getElementById("injStatus");
+      function setOut(t){ out.textContent = String(t || "Pronto."); }
 
-    enableClickFallback(mount);
+      const vfs = pickVFS();
+      status.textContent = vfs
+        ? `OK ✅ (${vfs.kind})`
+        : "VFS não disponível ❌ (recarregue 1x após SW controlar a página)";
 
-    function setOut(t){ out.textContent = String(t || "Pronto."); }
+      document.getElementById("btnInjDry").addEventListener("click", () => {
+        const pack = safeParseJSON(input.value || "");
+        if (!pack) return setOut("JSON inválido (não parseou).");
+        const files = pack.files || {};
+        const keys = Object.keys(files).map(k => normalizeMotherPath(k));
+        setOut(`OK (dry-run)\nArquivos: ${keys.length}\n\n` + keys.slice(0, 80).join("\n"));
+      });
 
-    // status VFS
-    const vfs = pickVFS();
-    status.textContent = vfs
-      ? `OK ✅ (${vfs.kind})`
-      : "VFS não disponível ❌ (recarregue 1x após SW controlar a página)";
+      document.getElementById("btnInjApply").addEventListener("click", async () => {
+        const pack = safeParseJSON(input.value || "");
+        if (!pack) return setOut("JSON inválido (não parseou).");
 
-    document.getElementById("btnInjDry").addEventListener("click", () => {
-      const pack = safeParseJSON(input.value || "");
-      if (!pack) return setOut("JSON inválido (não parseou).");
-      const files = pack.files || {};
-      const keys = Object.keys(files).map(k => normalizePath(k));
-      setOut(`OK (dry-run)\nArquivos: ${keys.length}\n\n` + keys.slice(0, 80).join("\n"));
-    });
+        try {
+          setOut("Aplicando…");
+          logTop("Injector: aplicando…");
+          const res = await applyPack(pack, setOut);
+          setOut(res.msg);
+          logTop(res.msg);
+        } catch (e) {
+          const msg = `❌ Falhou: ${e?.message || e}`;
+          setOut(msg);
+          logTop(msg);
+        }
+      });
 
-    document.getElementById("btnInjApply").addEventListener("click", async () => {
-      const pack = safeParseJSON(input.value || "");
-      if (!pack) return setOut("JSON inválido (não parseou).");
+      document.getElementById("btnInjClear").addEventListener("click", async () => {
+        try {
+          const v = pickVFS();
+          if (!v || !v.clear) throw new Error("Clear não disponível (sem clear/clearAll).");
+          setOut("Limpando overrides…");
+          await withTimeout(Promise.resolve(v.clear()), 10000, "clear()");
+          setOut("✅ Overrides zerados.");
+          logTop("✅ Overrides zerados.");
+        } catch (e) {
+          const msg = `❌ Falhou: ${e?.message || e}`;
+          setOut(msg);
+          logTop(msg);
+        }
+      });
 
-      try {
-        setOut("Aplicando…");
-        logTop("Injector: aplicando…");
-        const res = await applyPack(pack, setOut);
-        setOut(res.msg);
-        logTop(res.msg);
-      } catch (e) {
-        const msg = `❌ Falhou: ${e?.message || e}`;
-        setOut(msg);
-        logTop(msg);
-      }
-    });
-
-    document.getElementById("btnInjClear").addEventListener("click", async () => {
-      try {
-        const v = pickVFS();
-        if (!v || !v.clear) throw new Error("Clear não disponível (sem clear/clearAll).");
-        setOut("Limpando overrides…");
-        await withTimeout(Promise.resolve(v.clear()), 8000, "clear()");
-        setOut("✅ Overrides zerados.");
-        logTop("✅ Overrides zerados.");
-      } catch (e) {
-        const msg = `❌ Falhou: ${e?.message || e}`;
-        setOut(msg);
-        logTop(msg);
-      }
-    });
-  }
-
-  // init
-  window.addEventListener("load", () => {
-    try { renderSettings(); } catch (e) { console.warn("Injector UI falhou:", e); }
+    } catch (e) {
+      console.warn("Injector UI falhou:", e);
+    }
   });
 
-  window.RCF_INJECTOR = { applyPack };
+  window.RCF_INJECTOR = { applyPack, normalizeMotherPath };
 })();
