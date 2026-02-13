@@ -1,23 +1,25 @@
-/* RControl Factory — /app/js/admin.github.js (PADRÃO) — v1.3
-   - Painel GitHub fica APENAS na tela Settings (settingsMount)
-   - Normaliza path para app/import/mother_bundle.json (padrão da Mãe /app)
-   - Integra com window.RCF_GH_SYNC e window.RCF_MAE
+/* RControl Factory — /app/js/admin.github.js (PADRÃO) — v1.4
+   FIXES:
+   - Monta o painel SOMENTE no Settings (procura settingsMount + fallbacks)
+   - Não usa setInterval (evita travar UI / render do app)
+   - Usa MutationObserver para remontar quando o Settings é re-renderizado
+   - ClickFallback iOS (somente dentro do card do GitHub)
+   - Normaliza path -> app/import/mother_bundle.json
 */
 (() => {
   "use strict";
 
-  if (window.RCF_ADMIN_GITHUB && window.RCF_ADMIN_GITHUB.__v13) return;
+  // evita duplicar
+  if (window.RCF_ADMIN_GITHUB && window.RCF_ADMIN_GITHUB.__v14) return;
 
-  const MOUNT_ID = "settingsMount";   // ✅ só aqui
-  const CARD_ID  = "rcfGitHubCard";
-  const OUT_ID   = "rcfGitHubOut";
-
+  const CARD_ID = "rcfGitHubCard";
+  const OUT_ID  = "rcfGitHubOut";
   const DEFAULT_PATH = "app/import/mother_bundle.json";
 
-  const log = (lvl, msg) => {
+  function logger(lvl, msg){
     try { window.RCF_LOGGER?.push?.(lvl, String(msg)); } catch {}
     try { console.log("[GH-ADMIN]", lvl, msg); } catch {}
-  };
+  }
 
   function $(id){ return document.getElementById(id); }
 
@@ -26,7 +28,6 @@
   }
 
   function loadCfg(){
-    // preferir GH_SYNC.loadConfig se existir
     try {
       if (window.RCF_GH_SYNC?.loadConfig) return window.RCF_GH_SYNC.loadConfig() || {};
     } catch {}
@@ -35,40 +36,70 @@
 
   function normalizePath(input){
     let p = String(input || "").trim();
-
     if (!p) return DEFAULT_PATH;
 
-    // remove / inicial
+    // remove / iniciais
     p = p.replace(/^\/+/, "");
 
-    // atalhos comuns:
-    // "mother_bundle.json" -> "app/import/mother_bundle.json"
+    // "mother_bundle.json" -> app/import/mother_bundle.json
     if (!p.includes("/")) p = `app/import/${p}`;
 
     // "import/..." -> "app/import/..."
     if (p.startsWith("import/")) p = "app/" + p;
 
-    // se veio "app/mother_bundle.json" (errado), empurra pra import/
+    // "app/xxx" mas não "app/import/xxx" -> joga pra import
     if (p.startsWith("app/") && !p.startsWith("app/import/")) {
-      // se tiver "app/" mas não "app/import/"
-      const rest = p.slice("app/".length);
-      if (!rest.startsWith("import/")) p = "app/import/" + rest.replace(/^\/+/, "");
+      const rest = p.slice("app/".length).replace(/^\/+/, "");
+      p = "app/import/" + rest;
     }
 
-    // colapsa barras duplicadas
+    // colapsa barras
     p = p.replace(/\/{2,}/g, "/");
 
     return p || DEFAULT_PATH;
   }
 
-  function setOut(t){
-    const out = $(OUT_ID);
-    if (out) out.textContent = String(t || "");
+  function enableClickFallback(container){
+    if (!container) return;
+
+    // iOS: alguns clicks em elementos dentro de áreas roláveis falham
+    container.style.pointerEvents = "auto";
+
+    container.addEventListener("touchend", (ev) => {
+      const t = ev.target;
+      if (!t) return;
+      const tag = (t.tagName || "").toLowerCase();
+      const isBtn = tag === "button";
+      if (isBtn && typeof t.click === "function") t.click();
+    }, { capture:true, passive:true });
   }
 
-  function renderCard(mount){
-    if (!mount) return;
-    if ($(CARD_ID)) return; // já existe
+  function findSettingsMount(){
+    // ✅ prioridade: settingsMount (padrão do Injector)
+    const a = $("settingsMount");
+    if (a) return a;
+
+    // fallbacks comuns (caso seu app.js use outro id)
+    const b = $("settings");
+    if (b) return b;
+
+    const c = document.querySelector('[data-view="settings"]');
+    if (c) return c;
+
+    return null;
+  }
+
+  function unmount(){
+    const el = $(CARD_ID);
+    if (el && el.parentNode) el.parentNode.removeChild(el);
+  }
+
+  function mount(){
+    const mountEl = findSettingsMount();
+    if (!mountEl) return false;
+
+    // já montado
+    if ($(CARD_ID)) return true;
 
     const cfg = loadCfg();
     const normPath = normalizePath(cfg.path || DEFAULT_PATH);
@@ -80,8 +111,8 @@
     card.innerHTML = `
       <h3>GitHub (Sync)</h3>
       <p class="hint">
-        Painel do GitHub fica apenas aqui em <b>Settings</b>.<br/>
-        Bundle padrão: <code>${DEFAULT_PATH}</code>
+        Bundle padrão: <code>${DEFAULT_PATH}</code><br/>
+        (Se você digitar <code>import/mother_bundle.json</code>, eu salvo como <code>${DEFAULT_PATH}</code>)
       </p>
 
       <div class="row" style="gap:10px; flex-wrap:wrap">
@@ -102,11 +133,8 @@
       </div>
 
       <label style="display:block; margin-top:10px">
-        <div class="hint">Path (Contents API)</div>
+        <div class="hint">Path</div>
         <input id="ghPath" class="input" placeholder="${DEFAULT_PATH}" />
-        <div class="hint" style="margin-top:6px">
-          Se você digitar <code>import/mother_bundle.json</code>, eu salvo como <code>${DEFAULT_PATH}</code>.
-        </div>
       </label>
 
       <label style="display:block; margin-top:10px">
@@ -125,131 +153,139 @@
       <pre id="${OUT_ID}" class="mono small" style="margin-top:10px">Pronto.</pre>
     `;
 
-    mount.appendChild(card);
+    mountEl.appendChild(card);
+    enableClickFallback(card);
 
-    // preencher inputs
-    const owner  = $("ghOwner");
-    const repo   = $("ghRepo");
-    const branch = $("ghBranch");
-    const path   = $("ghPath");
-    const token  = $("ghToken");
+    // preencher campos
+    $("ghOwner").value  = String(cfg.owner || "");
+    $("ghRepo").value   = String(cfg.repo || "");
+    $("ghBranch").value = String(cfg.branch || "main");
+    $("ghPath").value   = normPath;
+    $("ghToken").value  = String(cfg.token || "");
 
-    if (owner)  owner.value  = String(cfg.owner || "");
-    if (repo)   repo.value   = String(cfg.repo || "");
-    if (branch) branch.value = String(cfg.branch || "main");
-    if (path)   path.value   = normPath;
-    if (token)  token.value  = String(cfg.token || "");
+    function setOut(t){
+      const out = $(OUT_ID);
+      if (out) out.textContent = String(t || "");
+    }
 
     // handlers
-    $("btnGhSave")?.addEventListener("click", () => {
+    $("btnGhSave").addEventListener("click", () => {
       try {
-        const rawPath = String(path?.value || "");
+        if (!window.RCF_GH_SYNC?.saveConfig) throw new Error("RCF_GH_SYNC.saveConfig ausente");
+
+        const rawPath = String($("ghPath").value || "");
         const fixedPath = normalizePath(rawPath);
 
         if (rawPath.trim() !== fixedPath.trim()) {
-          log("info", `path normalized: ${rawPath.trim() || "(empty)"} -> ${fixedPath}`);
+          logger("info", `path normalized: ${rawPath.trim() || "(empty)"} -> ${fixedPath}`);
         }
 
         const cfg2 = {
-          owner:  String(owner?.value || "").trim(),
-          repo:   String(repo?.value || "").trim(),
-          branch: String(branch?.value || "main").trim(),
+          owner:  String($("ghOwner").value || "").trim(),
+          repo:   String($("ghRepo").value || "").trim(),
+          branch: String($("ghBranch").value || "main").trim(),
           path:   fixedPath,
-          token:  String(token?.value || "").trim(),
+          token:  String($("ghToken").value || "").trim(),
         };
 
-        if (!window.RCF_GH_SYNC?.saveConfig) throw new Error("RCF_GH_SYNC.saveConfig ausente");
         window.RCF_GH_SYNC.saveConfig(cfg2);
-
         setOut("OK: ghcfg saved");
-        log("ok", "ghcfg saved");
+        logger("ok", "OK: ghcfg saved");
       } catch (e) {
         setOut("ERR: " + (e?.message || e));
-        log("err", "ghcfg save err: " + (e?.message || e));
+        logger("err", "ghcfg save err: " + (e?.message || e));
       }
     });
 
-    $("btnGhTest")?.addEventListener("click", async () => {
+    $("btnGhTest").addEventListener("click", async () => {
       try {
         if (!window.RCF_GH_SYNC?.test) throw new Error("RCF_GH_SYNC.test ausente");
         setOut("Testando token...");
-        const cfgNow = loadCfg();
-        const msg = await window.RCF_GH_SYNC.test(cfgNow);
+        const msg = await window.RCF_GH_SYNC.test(loadCfg());
         setOut(msg);
-        log("ok", msg);
+        logger("ok", msg);
       } catch (e) {
         setOut("ERR: " + (e?.message || e));
-        log("err", "gh test err: " + (e?.message || e));
+        logger("err", "gh test err: " + (e?.message || e));
       }
     });
 
-    $("btnGhPull")?.addEventListener("click", async () => {
+    $("btnGhPull").addEventListener("click", async () => {
       try {
         if (!window.RCF_GH_SYNC?.pull) throw new Error("RCF_GH_SYNC.pull ausente");
         setOut("Pull iniciando...");
-        const cfgNow = loadCfg();
-        const txt = await window.RCF_GH_SYNC.pull(cfgNow);
+        const txt = await window.RCF_GH_SYNC.pull(loadCfg());
         setOut("OK: pull ok (bytes=" + String(txt || "").length + ")");
-        log("ok", "gh pull ok");
+        logger("ok", "GitHub: pull ok");
       } catch (e) {
         setOut("ERR: gh pull err: " + (e?.message || e));
-        log("err", "gh pull err: " + (e?.message || e));
+        logger("err", "gh pull err: " + (e?.message || e));
       }
     });
 
-    $("btnGhPushMother")?.addEventListener("click", async () => {
+    $("btnGhPushMother").addEventListener("click", async () => {
       try {
         if (!window.RCF_GH_SYNC?.pushMotherBundle) throw new Error("RCF_GH_SYNC.pushMotherBundle ausente");
         setOut("Push Mother Bundle iniciando...");
-        const cfgNow = loadCfg();
-        await window.RCF_GH_SYNC.pushMotherBundle(cfgNow);
+        await window.RCF_GH_SYNC.pushMotherBundle(loadCfg());
         setOut("OK: GitHub: pushMotherBundle ok");
-        log("ok", "GitHub: pushMotherBundle ok");
+        logger("ok", "GitHub: pushMotherBundle ok");
       } catch (e) {
         setOut("ERR: pushMotherBundle err: " + (e?.message || e));
-        log("err", "pushMotherBundle err: " + (e?.message || e));
+        logger("err", "pushMotherBundle err: " + (e?.message || e));
       }
     });
 
-    $("btnMaeUpdate")?.addEventListener("click", async () => {
+    $("btnMaeUpdate").addEventListener("click", async () => {
       try {
         if (!window.RCF_MAE?.updateFromGitHub) throw new Error("RCF_MAE.updateFromGitHub ausente");
         setOut("MAE update iniciando...");
         const res = await window.RCF_MAE.updateFromGitHub({
           onProgress: (p) => {
-            // mostra algo leve
             if (p?.step === "apply_progress") setOut(`Aplicando... ${p.done}/${p.total}`);
           }
         });
         setOut("OK: mae update ok " + JSON.stringify(res));
-        log("ok", "mae update ok");
+        logger("ok", "mae update ok");
       } catch (e) {
         setOut("ERR: mae update err: " + (e?.message || e));
-        log("err", "mae update err: " + (e?.message || e));
+        logger("err", "mae update err: " + (e?.message || e));
       }
     });
 
-    log("ok", "admin.github.js ready ✅");
+    logger("ok", "OK: admin.github.js ready ✅");
+    return true;
   }
 
-  function unmountCard(){
-    const el = $(CARD_ID);
-    if (el && el.parentNode) el.parentNode.removeChild(el);
+  // Observa re-render do app e remonta quando Settings aparece
+  function startObserver(){
+    const obs = new MutationObserver(() => {
+      try {
+        const mountEl = findSettingsMount();
+        if (!mountEl) {
+          // se saiu do settings e o card ficou preso em algum lugar, remove
+          // (segurança)
+          if ($(CARD_ID) && !document.body.contains(findSettingsMount())) {
+            // não faz nada, porque findSettingsMount() é null aqui
+          }
+          return;
+        }
+
+        // se o mount existe e o card não, remonta
+        if (!$(CARD_ID)) mount();
+      } catch {}
+    });
+
+    obs.observe(document.documentElement, { childList:true, subtree:true });
+
+    return obs;
   }
 
-  // ✅ mantém o card somente se settingsMount existir
-  function tick(){
-    const mount = $(MOUNT_ID);
-    if (mount) renderCard(mount);
-    else unmountCard();
-  }
-
-  // boot
+  // init
   window.addEventListener("load", () => {
-    try { tick(); } catch {}
-    // polling leve (troca de views pode recriar DOM)
-    setInterval(() => { try { tick(); } catch {} }, 500);
+    try { mount(); } catch {}
+    try { startObserver(); } catch {}
   });
 
-  window.RCF_ADMIN_GITHUB = { __v13: true, tick };
+  window.RCF_ADMIN_GITHUB = { __v14: true, mount, unmount };
 })();
