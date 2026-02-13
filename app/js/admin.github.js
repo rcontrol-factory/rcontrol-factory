@@ -1,234 +1,112 @@
-/* =========================================================
-  app/js/admin.github.js (FULL)
-  - UI Admin: GitHub Sync (SAFE)
-  - Toggle Auto-sync on Save (low-risk)
-  - Botões: Sync arquivo atual / Ver fila / Limpar fila
-========================================================= */
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>RControl Factory</title>
+  <meta name="theme-color" content="#0b1020" />
 
-(() => {
-  "use strict";
+  <!-- importante: base relativo pra funcionar em /app/ -->
+  <base href="./" />
 
-  const $ = (id) => document.getElementById(id);
+  <link rel="manifest" href="./manifest.json" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <noscript>Ative o JavaScript para usar o app.</noscript>
 
-  const TAP_GUARD_MS = 450;
-  let _lastTapAt = 0;
+  <div id="app">
+    <div style="padding:14px;font-family:system-ui">Carregando…</div>
+  </div>
 
-  function bindTap(el, fn) {
-    if (!el) return;
-    const handler = async (e) => {
-      const now = Date.now();
-      if (now - _lastTapAt < TAP_GUARD_MS) { try { e.preventDefault(); e.stopPropagation(); } catch {} ; return; }
-      _lastTapAt = now;
-      try { e.preventDefault(); e.stopPropagation(); } catch {}
-      await fn(e);
-    };
-    try {
-      el.style.pointerEvents = "auto";
-      el.style.touchAction = "manipulation";
-      el.style.webkitTapHighlightColor = "transparent";
-    } catch {}
-    el.addEventListener("touchend", handler, { passive: false, capture: true });
-    el.addEventListener("click", handler, { passive: false, capture: true });
-  }
+  <script>
+    (function () {
+      function rcfLog(msg) {
+        try {
+          if (window.RCF_LOGGER && typeof window.RCF_LOGGER.push === "function") {
+            window.RCF_LOGGER.push("boot", msg);
+          } else {
+            console.log("[BOOT]", msg);
+          }
+        } catch {}
+      }
 
-  function out(id, txt) {
-    const el = $(id);
-    if (el) el.textContent = String(txt || "");
-  }
+      function loadAny(paths) {
+        return new Promise((resolve, reject) => {
+          let i = 0;
+          function tryNext() {
+            if (i >= paths.length) return reject(new Error("all paths failed"));
+            const src = paths[i++];
+            const s = document.createElement("script");
+            s.src = src;
+            s.async = false;
+            s.onload = () => resolve(src);
+            s.onerror = () => tryNext();
+            document.head.appendChild(s);
+          }
+          tryNext();
+        });
+      }
 
-  function status(txt) {
-    const el = $("statusText");
-    if (el) el.textContent = String(txt || "");
-  }
+      async function boot() {
+        rcfLog("index boot: starting module loader...");
 
-  function ensureCard() {
-    const adminView = $("view-admin");
-    if (!adminView) return;
+        // MÓDULOS CORE (ordem importa)
+        const modules = [
+          // github pull/push
+          { name: "github_sync", paths: ["./js/core/github_sync.js"] },
 
-    if ($("ghSyncCard")) return;
+          // overrides
+          { name: "vfs_overrides", paths: ["./js/core/vfs_overrides.js"] },
 
-    const card = document.createElement("div");
-    card.className = "card";
-    card.id = "ghSyncCard";
-    card.style.pointerEvents = "auto";
+          // mae selfupdate
+          { name: "mother_selfupdate", paths: ["./js/core/mother_selfupdate.js"] },
 
-    card.innerHTML = `
-      <h2 style="margin-top:4px">GitHub Sync (privado)</h2>
-      <p class="hint">Treino: se o endpoint /api/push não existir ainda, ele fila (queue) e mostra aqui.</p>
+          // injector (Settings)
+          { name: "injector", paths: ["./js/core/injector.js"] },
 
-      <div style="margin-top:10px; padding:10px; border:1px dashed rgba(255,255,255,.15); border-radius:14px">
-        <label style="display:flex; gap:10px; align-items:center">
-          <input id="ghAuto" type="checkbox" />
-          <span class="hint">Auto-sync ao salvar arquivo (somente low-risk)</span>
-        </label>
+          // remove Logs dentro do Settings (patch)
+          { name: "settings_cleanup", paths: ["./js/core/settings_cleanup.js"] },
 
-        <div style="height:10px"></div>
+          // sua UI do Admin GitHub (o seu arquivo real é admin.github.js)
+          { name: "admin_ui_github", paths: ["./js/admin.github.js"] },
 
-        <label style="display:flex; gap:10px; align-items:center">
-          <input id="ghAllowCritical" type="checkbox" />
-          <span class="hint">Permitir CRÍTICOS (SAFE) — usar com cuidado</span>
-        </label>
+          // engine/builder opcionais (se existirem)
+          { name: "patchQueue", paths: ["./js/engine/patchQueue.js"] },
+          { name: "organizerEngine", paths: ["./js/engine/organizerEngine.js"] },
+          { name: "applyPipeline", paths: ["./js/engine/applyPipeline.js"] },
+          { name: "builderSafe", paths: ["./js/builder/builderSafe.js"] },
+        ];
 
-        <div style="height:10px"></div>
-
-        <div class="hint">basePath no repo (onde salvar):</div>
-        <input id="ghBasePath" placeholder="ex: factory/app" style="width:100%; margin-top:6px" />
-      </div>
-
-      <div class="row" style="flex-wrap:wrap; gap:10px; margin-top:10px">
-        <button class="btn ok" id="btnGhSyncCurrent" type="button">Sync arquivo atual</button>
-        <button class="btn" id="btnGhShowQueue" type="button">Ver fila</button>
-        <button class="btn danger" id="btnGhClearQueue" type="button">Limpar fila</button>
-      </div>
-
-      <pre class="mono small" id="ghOut" style="margin-top:10px">Pronto.</pre>
-    `;
-
-    // coloca depois do card da Mãe (se existir), senão no fim
-    const motherCard = $("motherMaintCard");
-    if (motherCard && motherCard.parentNode) motherCard.parentNode.insertBefore(card, motherCard.nextSibling);
-    else adminView.appendChild(card);
-  }
-
-  function loadCfgToUI() {
-    const gh = window.RCF_GH;
-    if (!gh) return;
-
-    const cfg = gh.cfgGet();
-    const a = $("ghAuto");
-    const c = $("ghAllowCritical");
-    const bp = $("ghBasePath");
-
-    if (a) a.checked = !!cfg.enabled;
-    if (c) c.checked = !!cfg.allowCritical;
-    if (bp) bp.value = cfg.basePath || "factory/app";
-  }
-
-  function saveUIToCfg() {
-    const gh = window.RCF_GH;
-    if (!gh) return;
-
-    const a = $("ghAuto");
-    const c = $("ghAllowCritical");
-    const bp = $("ghBasePath");
-
-    gh.cfgSet({
-      enabled: !!(a && a.checked),
-      allowCritical: !!(c && c.checked),
-      basePath: String((bp && bp.value) || "factory/app").trim() || "factory/app"
-    });
-  }
-
-  async function syncCurrent() {
-    const gh = window.RCF_GH;
-    if (!gh) { out("ghOut", "ERRO: core/github_sync.js não carregou."); return; }
-
-    saveUIToCfg();
-
-    status("Sync…");
-    const r = await gh.pushCurrentFile();
-    if (r.ok) {
-      out("ghOut",
-        "✅ Sync OK\n" +
-        "path: " + r.job.repoPath + "\n" +
-        "bytes: " + r.job.bytes + "\n" +
-        "msg: " + r.job.message
-      );
-      status("Sync ✅");
-    } else {
-      out("ghOut",
-        "⚠️ Não sincronizou (endpoint pode não existir ainda)\n" +
-        "Fila criada ✅\n" +
-        "erro: " + r.error + "\n" +
-        "path: " + r.job.repoPath
-      );
-      status("Queue ✅");
-    }
-  }
-
-  function showQueue() {
-    const gh = window.RCF_GH;
-    if (!gh) { out("ghOut", "ERRO: core/github_sync.js não carregou."); return; }
-
-    const q = gh.qGet();
-    if (!q.length) { out("ghOut", "Queue: (vazia)"); return; }
-
-    const lines = [];
-    lines.push("QUEUE (" + q.length + ")");
-    lines.push("");
-    q.slice(0, 15).forEach((j, i) => {
-      lines.push((i+1) + ") " + (j.at || "-") + " — " + (j.repoPath || "-"));
-      lines.push("   " + (j.error || "queued"));
-    });
-    if (q.length > 15) lines.push("\n… +" + (q.length - 15));
-    out("ghOut", lines.join("\n"));
-  }
-
-  function clearQueue() {
-    const gh = window.RCF_GH;
-    if (!gh) { out("ghOut", "ERRO: core/github_sync.js não carregou."); return; }
-
-    gh.qSet([]);
-    out("ghOut", "✅ Queue limpa.");
-    status("OK ✅");
-  }
-
-  function hookSaveButton() {
-    // Auto-sync no save sem mexer no app.js
-    const btn = $("btnSaveFile");
-    if (!btn) return;
-
-    btn.addEventListener("click", async () => {
-      try {
-        const gh = window.RCF_GH;
-        if (!gh) return;
-
-        const cfg = gh.cfgGet();
-        if (!cfg.enabled) return;
-
-        // tenta sync low-risk (se for crítico, ele bloqueia e fila)
-        const r = await gh.pushCurrentFile();
-        if (!r.ok) {
-          // não spammar UI, só status
-          status("Queue ✅");
-        } else {
-          status("Sync ✅");
-          setTimeout(() => status("OK ✅"), 600);
+        for (const m of modules) {
+          try {
+            const okPath = await loadAny(m.paths);
+            rcfLog("module loaded ✅ " + m.name + " ← " + okPath);
+          } catch {
+            rcfLog("module missing ❌ " + m.name + " (tentou: " + m.paths.join(" | ") + ")");
+          }
         }
-      } catch {}
-    }, { capture: false });
-  }
 
-  function init() {
-    ensureCard();
+        // app principal
+        try {
+          await loadAny(["./app.js"]);
+          rcfLog("app.js loaded ✅ ./app.js");
+        } catch {
+          rcfLog("app.js missing ❌ ./app.js");
+        }
 
-    if (!window.RCF_GH) {
-      out("ghOut", "ERRO: window.RCF_GH não existe. Verifique se <script src='core/github_sync.js'> está antes.");
-      return;
-    }
+        // SW (scope /app/ para ficar estável com base href)
+        try {
+          if ("serviceWorker" in navigator) {
+            navigator.serviceWorker.register("./sw.js", { scope: "./" })
+              .then(() => rcfLog("sw register: ok"))
+              .catch(() => rcfLog("sw register: fail/ignored"));
+          }
+        } catch {}
+      }
 
-    loadCfgToUI();
-
-    // binds
-    bindTap($("btnGhSyncCurrent"), syncCurrent);
-    bindTap($("btnGhShowQueue"), () => { saveUIToCfg(); showQueue(); });
-    bindTap($("btnGhClearQueue"), () => { clearQueue(); });
-
-    // salvar cfg quando mexer nos checkboxes/inputs
-    const auto = $("ghAuto");
-    const crit = $("ghAllowCritical");
-    const bp = $("ghBasePath");
-    [auto, crit, bp].forEach(el => {
-      if (!el) return;
-      el.addEventListener("change", () => { try { saveUIToCfg(); } catch {} });
-      el.addEventListener("input", () => { try { saveUIToCfg(); } catch {} });
-    });
-
-    hookSaveButton();
-
-    out("ghOut", "GitHub Sync UI carregado ✅\nDica: ative Auto-sync e teste Sync arquivo atual.");
-  }
-
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
-  else init();
-})();
+      boot();
+    })();
+  </script>
+</body>
+</html>
