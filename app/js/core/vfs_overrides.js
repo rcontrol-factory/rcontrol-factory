@@ -1,105 +1,89 @@
-/* /app/js/core/vfs_overrides.js — v1.1
-  - PostMessage para SW com MessageChannel
-  - ✅ PADRÃO: scope/registration em /app (não "/")
-  - ✅ normalizeMotherPath(p): /index.html -> /app/index.html e tudo vira /app/*
-  - ✅ retry + timeout para iOS/travadas
+/* RControl Factory — /app/js/core/vfs_overrides.js (PADRÃO) — v1.1
+   FIX:
+   - getRegistration("./") (compatível com SW scope "./")
+   - fallback: getRegistration() + controller + ready
+   - retry curto quando SW ainda não controlou a página
+   - aliases: write / writeFile (pra compat com mother_selfupdate)
 */
 (() => {
   "use strict";
 
-  // ✅ PADRÃO: normalizeMotherPath (mesmas regras da Mãe)
-  function normalizeMotherPath(p) {
-    let x = String(p || "").trim();
-    if (!x) return "";
-    x = x.split("#")[0].split("?")[0].trim();
-    if (!x.startsWith("/")) x = "/" + x;
-    x = x.replace(/\/{2,}/g, "/");
+  if (window.RCF_VFS_OVERRIDES && window.RCF_VFS_OVERRIDES.__v11) return;
 
-    if (x === "/index.html") x = "/app/index.html";
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-    const ROOT_FILES = new Set(["/styles.css", "/app.js", "/sw.js", "/manifest.json", "/favicon.ico"]);
-    if (ROOT_FILES.has(x)) x = "/app" + x;
+  async function getSWController() {
+    // 1) controller direto
+    if (navigator.serviceWorker?.controller) return navigator.serviceWorker.controller;
 
-    if (x.startsWith("/js/")) x = "/app" + x;
+    // 2) tenta pegar registration do scope "./" (PWA em /app/)
+    let reg = null;
+    try { reg = await navigator.serviceWorker?.getRegistration?.("./"); } catch {}
+    if (!reg) {
+      try { reg = await navigator.serviceWorker?.getRegistration?.(); } catch {}
+    }
 
-    if (!x.startsWith("/app/")) x = "/app" + x;
-    x = x.replace(/\/{2,}/g, "/");
-    return x;
-  }
+    const sw = reg?.active || reg?.waiting || reg?.installing || null;
+    if (sw) return sw;
 
-  function log(lvl, msg) {
-    try { window.RCF_LOGGER?.push?.(lvl, String(msg)); } catch {}
-    try { console.log("[VFS_OVERRIDES]", lvl, msg); } catch {}
-  }
-
-  function withTimeout(promise, ms, label) {
-    let t;
-    const timeout = new Promise((_, rej) => {
-      t = setTimeout(() => rej(new Error(`TIMEOUT ${ms}ms em ${label}`)), ms);
-    });
-    return Promise.race([promise, timeout]).finally(() => clearTimeout(t));
-  }
-
-  async function getRegSmart() {
-    // ✅ /app/ scope
-    const scopePath = new URL("./", document.baseURI).pathname; // "/app/"
+    // 3) espera ready (quando o SW terminar de instalar)
     try {
-      const reg = await navigator.serviceWorker?.getRegistration?.(scopePath);
-      if (reg) return reg;
+      const readyReg = await navigator.serviceWorker.ready;
+      const sw2 = readyReg?.active || null;
+      if (sw2) return sw2;
     } catch {}
-    try {
-      const reg2 = await navigator.serviceWorker?.getRegistration?.();
-      if (reg2) return reg2;
-    } catch {}
+
     return null;
   }
 
   async function post(msg) {
-    if (!("serviceWorker" in navigator)) throw new Error("SW não suportado.");
+    if (!("serviceWorker" in navigator)) {
+      throw new Error("ServiceWorker não suportado.");
+    }
 
-    const reg = await getRegSmart();
-    const sw = reg?.active || navigator.serviceWorker?.controller;
-    if (!sw) throw new Error("SW não controlando a página ainda (recarregue 1x).");
-
-    return await new Promise((resolve, reject) => {
-      const ch = new MessageChannel();
-      ch.port1.onmessage = (ev) => {
-        const d = ev.data || {};
-        if (d.type?.endsWith("_ERR")) reject(new Error(d.error || "ERR"));
-        else resolve(d);
-      };
-      sw.postMessage(msg, [ch.port2]);
-    });
-  }
-
-  async function postRetry(msg, label) {
-    const tries = 3;
-    let last = null;
-    for (let i = 1; i <= tries; i++) {
+    // iOS: às vezes precisa esperar o SW controlar a página
+    let lastErr = null;
+    for (let i = 0; i < 4; i++) {
       try {
-        return await withTimeout(post(msg), 8000, label + ` (try ${i}/${tries})`);
+        const sw = await getSWController();
+        if (!sw) throw new Error("SW não controlando a página ainda.");
+
+        return await new Promise((resolve, reject) => {
+          const ch = new MessageChannel();
+          ch.port1.onmessage = (ev) => {
+            const d = ev.data || {};
+            if (d.type?.endsWith("_ERR")) reject(new Error(d.error || "ERR"));
+            else resolve(d);
+          };
+          sw.postMessage(msg, [ch.port2]);
+        });
       } catch (e) {
-        last = e;
-        await new Promise(r => setTimeout(r, 250 * i));
+        lastErr = e;
+        await sleep(180 + i * 220);
       }
     }
-    throw last || new Error("post failed");
+
+    throw (lastErr || new Error("post failed"));
   }
 
   const api = {
-    async put(path, content, contentType) {
-      const from = String(path || "");
-      const to = normalizeMotherPath(from);
-      if (from !== to) log("info", `path normalized: ${from} -> ${to}`);
+    __v11: true,
 
-      await postRetry(
-        { type: "RCF_OVERRIDE_PUT", path: to, content: String(content ?? ""), contentType },
-        `put(${to})`
-      );
+    async put(path, content, contentType) {
+      await post({ type: "RCF_OVERRIDE_PUT", path, content, contentType });
       return true;
     },
+
+    // aliases p/ compat
+    async write(path, content, contentType) {
+      return await api.put(path, content, contentType);
+    },
+    async writeFile(path, content, contentType) {
+      return await api.put(path, content, contentType);
+    },
+
     async clear() {
-      await postRetry({ type: "RCF_OVERRIDE_CLEAR" }, "clear()");
+      await post({ type: "RCF_OVERRIDE_CLEAR" });
       return true;
     }
   };
