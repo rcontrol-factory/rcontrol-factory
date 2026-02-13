@@ -6,10 +6,39 @@
   <title>RControl Factory</title>
   <meta name="theme-color" content="#0b1020" />
 
-  <!-- Tudo relativo porque o app real está em /app/ -->
-  <link rel="manifest" href="./manifest.json" />
-  <link rel="stylesheet" href="./styles.css" />
+  <script>
+    // Detecta se está rodando em /app ou /
+    (function () {
+      try {
+        var p = location.pathname || "/";
+        // Se abrir /app/... ou /app, root = /app
+        window.__RCF_ROOT__ = (p === "/app" || p.startsWith("/app/")) ? "/app" : "";
+      } catch {
+        window.__RCF_ROOT__ = "";
+      }
+    })();
+  </script>
+
+  <script>
+    // Ajusta links cedo (antes do CSS)
+    (function () {
+      try {
+        var R = window.__RCF_ROOT__ || "";
+        // Injeta <link> dinamicamente pra não depender do path hardcoded
+        var manifest = document.createElement("link");
+        manifest.rel = "manifest";
+        manifest.href = (R || "") + "/manifest.json";
+        document.head.appendChild(manifest);
+
+        var css = document.createElement("link");
+        css.rel = "stylesheet";
+        css.href = (R || "") + "/styles.css";
+        document.head.appendChild(css);
+      } catch {}
+    })();
+  </script>
 </head>
+
 <body>
   <noscript>Ative o JavaScript para usar o app.</noscript>
 
@@ -29,12 +58,21 @@
         } catch {}
       }
 
+      function rootPath(p) {
+        var R = window.__RCF_ROOT__ || "";
+        if (!p) return R || "";
+        if (!p.startsWith("/")) p = "/" + p;
+        return (R || "") + p;
+      }
+
       function loadAny(paths) {
         return new Promise((resolve, reject) => {
           let i = 0;
+
           function tryNext() {
             if (i >= paths.length) return reject(new Error("all paths failed"));
             const src = paths[i++];
+
             const s = document.createElement("script");
             s.src = src;
             s.async = false; // mantém ordem
@@ -42,51 +80,60 @@
             s.onerror = () => tryNext();
             document.head.appendChild(s);
           }
+
           tryNext();
         });
       }
 
       async function boot() {
-        rcfLog("index boot: starting module loader...");
+        const R = window.__RCF_ROOT__ || "";
+        rcfLog("index boot: root=" + (R || "/"));
 
-        // módulos essenciais (tentando relativo ./ primeiro)
+        // MÓDULOS ESSENCIAIS
+        // (coloquei injector aqui — é o que estava faltando)
         const modules = [
-          { name: "github_sync",      paths: ["./js/core/github_sync.js", "./app/js/core/github_sync.js", "/app/js/core/github_sync.js"] },
-          { name: "vfs_overrides",    paths: ["./js/core/vfs_overrides.js", "./app/js/core/vfs_overrides.js", "/app/js/core/vfs_overrides.js"] },
-          { name: "mother_selfupdate",paths: ["./js/core/mother_selfupdate.js", "./app/js/core/mother_selfupdate.js", "/app/js/core/mother_selfupdate.js"] },
+          { name: "github_sync",       paths: [rootPath("/js/core/github_sync.js")] },
+          { name: "vfs_overrides",     paths: [rootPath("/js/core/vfs_overrides.js")] },
+          { name: "mother_selfupdate", paths: [rootPath("/js/core/mother_selfupdate.js")] },
 
-          // (opcional) admin UI
-          { name: "admin_ui",         paths: ["./js/admin.js", "./app/js/admin.js", "/app/js/admin.js"] },
+          // ✅ INJECTOR (aba Settings)
+          { name: "injector",          paths: [rootPath("/js/core/injector.js")] },
 
-          // (opcional) engine/builder
-          { name: "patchQueue",       paths: ["./js/engine/patchQueue.js", "./app/js/engine/patchQueue.js", "/app/js/engine/patchQueue.js"] },
-          { name: "organizerEngine",  paths: ["./js/engine/organizerEngine.js", "./app/js/engine/organizerEngine.js", "/app/js/engine/organizerEngine.js"] },
-          { name: "applyPipeline",    paths: ["./js/engine/applyPipeline.js", "./app/js/engine/applyPipeline.js", "/app/js/engine/applyPipeline.js"] },
-          { name: "builderSafe",      paths: ["./js/builder/builderSafe.js", "./app/js/builder/builderSafe.js", "/app/js/builder/builderSafe.js"] },
+          // UI admin opcional (se existir)
+          { name: "admin_github_ui",   paths: [rootPath("/js/admin.github.js"), rootPath("/js/admin.js")] },
+
+          // engine/builder (se existir)
+          { name: "patchQueue",        paths: [rootPath("/js/engine/patchQueue.js")] },
+          { name: "organizerEngine",   paths: [rootPath("/js/engine/organizerEngine.js")] },
+          { name: "applyPipeline",     paths: [rootPath("/js/engine/applyPipeline.js")] },
+          { name: "builderSafe",       paths: [rootPath("/js/builder/builderSafe.js")] },
         ];
 
         for (const m of modules) {
           try {
             const okPath = await loadAny(m.paths);
             rcfLog("module loaded ✅ " + m.name + " ← " + okPath);
-          } catch {
+          } catch (e) {
             rcfLog("module missing ❌ " + m.name + " (tentou: " + m.paths.join(" | ") + ")");
           }
         }
 
-        // sobe o app principal (relativo)
+        // APP PRINCIPAL
         try {
-          const ok = await loadAny(["./app.js", "/app/app.js"]);
-          rcfLog("app.js loaded ✅ " + ok);
+          const appPath = rootPath("/app.js");
+          await loadAny([appPath]);
+          rcfLog("app.js loaded ✅ " + appPath);
         } catch {
-          rcfLog("app.js missing ❌ (./app.js | /app/app.js)");
+          rcfLog("app.js missing ❌ " + rootPath("/app.js"));
         }
 
-        // SW (registrar relativo ao /app/)
+        // SERVICE WORKER (scope correto)
         try {
           if ("serviceWorker" in navigator) {
-            navigator.serviceWorker.register("./sw.js")
-              .then(() => rcfLog("sw register: ok"))
+            const swPath = rootPath("/sw.js");
+            const scope = (window.__RCF_ROOT__ || "/") + "/";
+            navigator.serviceWorker.register(swPath, { scope })
+              .then(() => rcfLog("sw register: ok (" + swPath + " scope=" + scope + ")"))
               .catch(() => rcfLog("sw register: fail/ignored"));
           }
         } catch {}
