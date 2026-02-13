@@ -1,16 +1,12 @@
-/* Registry v1 - controla módulos/templates instalados */
+/* Registry v1 - controla módulos/templates instalados (compat + storage híbrido) */
 (() => {
   "use strict";
 
-  const KEY = "rcf:registry:v1";
+  const KEY_FULL = "rcf:registry:v1"; // mantém o mesmo nome EXATO
 
   function nowISO(){ return new Date().toISOString(); }
 
-  function loadRegistry(){
-    try {
-      const raw = localStorage.getItem(KEY);
-      if (raw) return JSON.parse(raw);
-    } catch {}
+  function emptyRegistry(){
     return {
       version: 1,
       updatedAt: nowISO(),
@@ -20,9 +16,31 @@
     };
   }
 
+  function loadRegistry(){
+    // 1) tenta via RCF_STORAGE.rawGet (localStorage direto, compat total)
+    try {
+      const raw = window.RCF_STORAGE?.rawGet?.(KEY_FULL, null);
+      if (raw) return JSON.parse(raw);
+    } catch {}
+
+    // 2) fallback localStorage direto (igual antes)
+    try {
+      const raw = localStorage.getItem(KEY_FULL);
+      if (raw) return JSON.parse(raw);
+    } catch {}
+
+    return emptyRegistry();
+  }
+
   function saveRegistry(reg){
     reg.updatedAt = nowISO();
-    localStorage.setItem(KEY, JSON.stringify(reg));
+
+    // salva no localStorage (compat)
+    try {
+      if (window.RCF_STORAGE?.rawSet) window.RCF_STORAGE.rawSet(KEY_FULL, JSON.stringify(reg));
+      else localStorage.setItem(KEY_FULL, JSON.stringify(reg));
+    } catch {}
+
     return reg;
   }
 
@@ -34,7 +52,7 @@
   }
 
   const Registry = {
-    KEY,
+    KEY: KEY_FULL,
     load: loadRegistry,
     save: saveRegistry,
     upsertModule(mod){
@@ -49,6 +67,5 @@
     }
   };
 
-  // expõe global (padrão do teu core)
   window.RCF_REGISTRY = Registry;
 })();
