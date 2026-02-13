@@ -1,21 +1,23 @@
-/* RControl Factory — /app/js/core/mother_selfupdate.js (PADRÃO) — v1.1
-  - Define a "Mãe" (Self-Update): window.RCF_MAE / window.RCF_MOTHER
-  - Usa GitHub Sync (RCF_GH_SYNC) para puxar mother_bundle.json
-  - Salva bundle em localStorage (rcf:mother_bundle) para o app.js ler
-  - Aplica arquivos no VFS de overrides com retry/backoff (iOS)
-  - ✅ PADRÃO: MotherRoot = /app (source of truth = /app/index.html)
-  - ✅ normalizeMotherPath(p) em TUDO + log "path normalized: from -> to"
-  - ✅ nunca escreve /index.html (vira /app/index.html)
+/* RControl Factory — /app/js/core/mother_selfupdate.js (PADRÃO) — v1.2
+   - Define a "Mãe" corretamente: window.RCF_MAE / window.RCF_MOTHER
+   - MotherRoot = /app (source of truth)
+   - Puxa mother_bundle.json via GitHub Sync (RCF_GH_SYNC.pull)
+   - Salva bundle em localStorage (rcf:mother_bundle)
+   - Aplica arquivos no Overrides VFS (window.RCF_VFS_OVERRIDES) com retry/backoff (iOS)
+   - ✅ Normaliza paths: NUNCA escreve /index.html (sempre /app/index.html)
+   - ✅ clearOverrides: usa clear() se não existir listFiles/deleteFile
 */
 (() => {
   "use strict";
 
-  if (window.RCF_MAE && window.RCF_MAE.__v1_1) return;
+  if (window.RCF_MAE && window.RCF_MAE.__v12) return;
 
   const log = (lvl, msg, extra) => {
     try { window.RCF_LOGGER?.push?.(lvl, String(msg)); } catch {}
     try { console.log("[MAE]", lvl, msg, extra || ""); } catch {}
   };
+
+  const MOTHER_ROOT = "/app";
 
   const LS_BUNDLE_KEY = "rcf:mother_bundle"; // raw JSON text (string)
   const LS_CFG_KEY    = "rcf:ghcfg";         // {owner,repo,branch,path,token}
@@ -28,56 +30,37 @@
 
   function getCfg() {
     const cfg = safeParse(localStorage.getItem(LS_CFG_KEY), {}) || {};
+    // ✅ default path agora é relativo ao /app (com base href ./)
+    // mas se o usuário salvar "app/import/..." também funciona.
     return {
       owner: String(cfg.owner || "").trim(),
       repo: String(cfg.repo || "").trim(),
       branch: String(cfg.branch || "main").trim(),
-
-      // ✅ PADRÃO: dentro de /app/, o path local do bundle é relativo:
-      // import/mother_bundle.json  => new URL(path, baseURI) => /app/import/mother_bundle.json
       path: String(cfg.path || "import/mother_bundle.json").trim(),
-
       token: String(cfg.token || "").trim(),
     };
   }
 
-  // =========================================================
-  // ✅ PADRÃO: normalizeMotherPath (source of truth)
-  // Regras:
-  // - "/index.html" => "/app/index.html"
-  // - "/styles.css" "/app.js" "/sw.js" "/manifest.json" => "/app/<file>"
-  // - "/js/..." => "/app/js/..."
-  // - qualquer path sem "/app/" => força "/app/"
-  // =========================================================
+  // ✅ PATCH MÍNIMO (PADRÃO): MotherRoot é /app
   function normalizeMotherPath(p) {
     let x = String(p || "").trim();
     if (!x) return "";
     x = x.split("#")[0].split("?")[0].trim();
+
     if (!x.startsWith("/")) x = "/" + x;
     x = x.replace(/\/{2,}/g, "/");
 
-    // converte /index.html => /app/index.html
+    // ✅ regra: qualquer "/index.html" => "/app/index.html"
     if (x === "/index.html") x = "/app/index.html";
+    if (x === "/styles.css") x = "/app/styles.css";
+    if (x === "/app.js")     x = "/app/app.js";
+    if (x === "/sw.js")      x = "/app/sw.js";
+    if (x === "/manifest.json") x = "/app/manifest.json";
 
-    // arquivos raiz comuns
-    const ROOT_FILES = new Set([
-      "/styles.css",
-      "/app.js",
-      "/sw.js",
-      "/manifest.json",
-      "/favicon.ico",
-    ]);
-    if (ROOT_FILES.has(x)) x = "/app" + x;
-
-    // /js/... => /app/js/...
-    if (x.startsWith("/js/")) x = "/app" + x;
-
-    // se não começa com /app/, força /app/
-    if (!x.startsWith("/app/")) {
-      x = "/app" + (x.startsWith("/") ? x : ("/" + x));
-      x = x.replace(/\/{2,}/g, "/");
+    // ✅ se não começa com /app/, empurra pra dentro do MotherRoot
+    if (!x.startsWith(MOTHER_ROOT + "/")) {
+      x = (MOTHER_ROOT + (x.startsWith("/") ? x : ("/" + x))).replace(/\/{2,}/g, "/");
     }
-
     return x;
   }
 
@@ -108,7 +91,7 @@
       } catch (e) {
         lastErr = e;
         onProgress && onProgress({ step: "write_fail", i: i + 1, path, err: String(e?.message || e) });
-        await sleep(400 + i * 600); // iOS safe backoff
+        await sleep(400 + i * 650); // backoff iOS safe
       }
     }
 
@@ -119,15 +102,16 @@
     const parsed = safeParse(bundleText, null);
     if (!parsed || typeof parsed !== "object") return { files: {}, meta: { ok: false } };
 
+    // aceita {files:{...}} OU objeto direto
     const filesObj = (parsed.files && typeof parsed.files === "object") ? parsed.files : parsed;
 
     const out = {};
     for (const [rawPath, rawVal] of Object.entries(filesObj || {})) {
-      const pNorm = normalizeMotherPath(rawPath);
+      const normalized = normalizeMotherPath(rawPath);
       const txt = (rawVal && typeof rawVal === "object" && "content" in rawVal)
         ? String(rawVal.content ?? "")
         : String(rawVal ?? "");
-      if (pNorm) out[pNorm] = txt;
+      if (normalized) out[normalized] = txt;
     }
 
     return { files: out, meta: { ok: true, count: Object.keys(out).length } };
@@ -147,7 +131,11 @@
     const onProgress = typeof opts.onProgress === "function" ? opts.onProgress : null;
 
     if (!cfg.owner || !cfg.repo) throw new Error("ghcfg incompleto (owner/repo)");
-    onProgress && onProgress({ step: "start", cfg: { owner: cfg.owner, repo: cfg.repo, branch: cfg.branch, path: cfg.path } });
+
+    onProgress && onProgress({
+      step: "start",
+      cfg: { owner: cfg.owner, repo: cfg.repo, branch: cfg.branch, path: cfg.path }
+    });
 
     log("ok", "update start", `${cfg.owner}/${cfg.repo}@${cfg.branch} path=${cfg.path}`);
 
@@ -164,78 +152,85 @@
     const vfs = getOverridesVFS();
     if (!vfs) throw new Error("Overrides VFS ausente (js/core/vfs_overrides.js)");
 
-    const paths = Object.keys(parsed.files);
+    let paths = Object.keys(parsed.files);
+
+    // ordem: primeiro /app/index.html /app/app.js /app/styles.css (reduz chance de “tela branca”)
+    const prio = (p) => (
+      p === "/app/index.html" ? 0 :
+      p === "/app/app.js"     ? 1 :
+      p === "/app/styles.css" ? 2 : 9
+    );
+    paths.sort((a, b) => prio(a) - prio(b));
+
     onProgress && onProgress({ step: "apply_begin", count: paths.length });
 
-    // ordem: index/app.js/styles (reduz chance de “tela branca”)
-    paths.sort((a, b) => {
-      const prio = (p) => (
-        p.endsWith("/index.html") ? 0 :
-        p.endsWith("/app.js") ? 1 :
-        p.endsWith("/styles.css") ? 2 : 9
-      );
-      return prio(a) - prio(b);
-    });
+    let wrote = 0;
+    for (const originalPath of paths) {
+      const content = parsed.files[originalPath];
 
-    let done = 0;
-    for (const p of paths) {
-      const content = parsed.files[p];
+      // ✅ normaliza SEMPRE e loga o de->para
+      const safePath = normalizeMotherPath(originalPath);
+      if (safePath !== originalPath) {
+        log("info", `path normalized: ${originalPath} -> ${safePath}`);
+      }
 
-      // ✅ proteção final + LOG
-      const safePath = normalizeMotherPath(p);
-      if (safePath !== p) log("info", `path normalized: ${p} -> ${safePath}`);
-      if (!safePath.startsWith("/app/")) throw new Error("proteção: path fora de /app/ bloqueado: " + safePath);
+      // ✅ proteção final: nunca escrever fora de /app/
+      if (!safePath.startsWith("/app/")) {
+        log("warn", "skip (outside /app): " + safePath);
+        continue;
+      }
 
       await writeWithRetry(vfs, safePath, content, onProgress);
-
-      done++;
-      if (done % 10 === 0 || done === paths.length) {
-        onProgress && onProgress({ step: "apply_progress", done, total: paths.length });
+      wrote++;
+      if (wrote % 10 === 0 || wrote === paths.length) {
+        onProgress && onProgress({ step: "apply_progress", done: wrote, total: paths.length });
       }
     }
 
-    onProgress && onProgress({ step: "apply_done", done, total: paths.length });
-    log("ok", "update done", `files=${paths.length}`);
+    onProgress && onProgress({ step: "apply_done", done: wrote, total: paths.length });
+    log("ok", "update done", `wrote=${wrote}`);
 
-    return { ok: true, wrote: paths.length, failed: 0 };
+    return { ok: true, wrote, failed: 0 };
   }
 
+  // ✅ Clear robusto: se vfs só tem clear(), usa clear()
   async function clearOverrides() {
     const vfs = getOverridesVFS();
     if (!vfs) throw new Error("Overrides VFS ausente");
 
-    if (typeof vfs.listFiles !== "function" || typeof vfs.deleteFile !== "function") {
-      if (typeof vfs.list === "function" && typeof vfs.del === "function") {
-        const list = await vfs.list();
-        for (const p of list || []) await vfs.del(p);
-        log("ok", "clearOverrides ok", `count=${(list || []).length}`);
-        return { ok: true, count: (list || []).length };
-      }
-      throw new Error("Overrides VFS sem listFiles/deleteFile");
+    if (typeof vfs.clear === "function") {
+      await vfs.clear();
+      log("ok", "clearOverrides ok", "via clear()");
+      return { ok: true, mode: "clear()", count: null };
     }
 
-    const list = await vfs.listFiles();
-    let n = 0;
-    for (const p of list || []) {
-      try { await vfs.deleteFile(p); n++; } catch {}
+    // fallback caso algum VFS mais completo exista
+    if (typeof vfs.listFiles === "function" && typeof vfs.deleteFile === "function") {
+      const list = await vfs.listFiles();
+      let n = 0;
+      for (const p of list || []) { try { await vfs.deleteFile(p); n++; } catch {} }
+      log("ok", "clearOverrides ok", `count=${n}`);
+      return { ok: true, mode: "listFiles+deleteFile", count: n };
     }
 
-    log("ok", "clearOverrides ok", `count=${n}`);
-    return { ok: true, count: n };
+    throw new Error("Overrides VFS sem clear() e sem listFiles/deleteFile");
   }
 
   function status() {
     const cfg = getCfg();
     const hasSync = !!(window.RCF_GH_SYNC && typeof window.RCF_GH_SYNC.pull === "function");
-    const hasVfs = !!getOverridesVFS();
+    const vfs = getOverridesVFS();
+    const hasVfs = !!vfs;
+
     const bundleLen = (localStorage.getItem(LS_BUNDLE_KEY) || "").length;
 
     return {
       ok: true,
-      v: "v1.1",
-      motherRoot: "/app",
+      v: "v1.2",
+      motherRoot: MOTHER_ROOT,
       hasSync,
       hasOverridesVFS: hasVfs,
+      overridesKind: vfs ? (typeof vfs.put === "function" ? "RCF_VFS_OVERRIDES.put" : "custom") : "absent",
       bundleSize: bundleLen,
       cfg: {
         owner: cfg.owner,
@@ -247,8 +242,15 @@
     };
   }
 
-  window.RCF_MAE = { __v1_1: true, updateFromGitHub, clearOverrides, status, normalizeMotherPath };
+  window.RCF_MAE = {
+    __v12: true,
+    motherRoot: MOTHER_ROOT,
+    normalizeMotherPath,
+    updateFromGitHub,
+    clearOverrides,
+    status
+  };
   window.RCF_MOTHER = window.RCF_MAE; // alias
 
-  log("ok", "mother_selfupdate.js ready ✅");
+  log("ok", "mother_selfupdate.js ready ✅", "v1.2");
 })();
