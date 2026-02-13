@@ -1,31 +1,67 @@
-/* RControl Factory — /app/js/admin.github.js (SAFE UI) — v1
-   - UI estável pro GitHub Sync (Privado)
-   - Salva config em localStorage: rcf:ghcfg
-   - Pull: RCF_GH_SYNC.pull()
-   - Push: RCF_GH_SYNC.pushMotherBundle()  ✅ gera bundle e cria app/import/mother_bundle.json
-   - Token oculto (password) com botão 👁 mostrar/ocultar
+/* RControl Factory — /app/js/core/mother_selfupdate.js — v2 (PADRÃO SAFE)
+   - Expõe: window.RCF_MAE e window.RCF_MOTHER (alias)
+   - API: status(), updateFromGitHub(), clearOverrides()
+   - Usa Overrides VFS (localStorage) como destino (sem tela branca)
+   - Pull do GitHub via RCF_GH_SYNC.pull(cfg) (mother_bundle.json)
+   - iOS safe write: timeout 15s + retries/backoff por arquivo
+   - Normaliza paths para começar em /app/ quando necessário
 */
 (() => {
   "use strict";
 
-  if (window.RCF_ADMIN_GITHUB && window.RCF_ADMIN_GITHUB.__v1) return;
+  if (window.RCF_MAE && window.RCF_MAE.__v2) return;
 
-  const LS_KEY = "rcf:ghcfg";
+  const LOG = (lvl, msg) => {
+    try { window.RCF_LOGGER?.push?.(lvl, msg); } catch {}
+    try { console.log("[MAE]", lvl, msg); } catch {}
+  };
 
-  function uiLog(level, msg) {
-    try { window.RCF_LOGGER?.push?.(level, msg); } catch {}
-    try { console.log("[ADMIN_GH]", level, msg); } catch {}
-  }
+  const LS_GHCFG = "rcf:ghcfg";
+  const LS_BUNDLE = "rcf:mother_bundle";
 
-  function $(sel, root = document) { return root.querySelector(sel); }
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-  function safeParseJson(raw, fallback) {
-    try { return raw ? JSON.parse(raw) : fallback; } catch { return fallback; }
+  const safeJsonParse = (s, fb = null) => { try { return JSON.parse(s); } catch { return fb; } };
+
+  const normPath = (p) => {
+    let x = String(p || "").trim();
+    if (!x) return "";
+    x = x.split("#")[0].split("?")[0].trim();
+    if (!x.startsWith("/")) x = "/" + x;
+    x = x.replace(/\/{2,}/g, "/");
+
+    // ✅ padrão da Factory: tudo no root /app
+    // Se vier "index.html" ou "/index.html", força "/app/index.html"
+    if (x === "/index.html") x = "/app/index.html";
+    if (x === "/styles.css") x = "/app/styles.css";
+    if (x === "/app.js") x = "/app/app.js";
+
+    // se não começar com /app/ e parecer arquivo da factory, empurra pra /app/
+    if (!x.startsWith("/app/")) {
+      const looksFactory = /\.(html|js|css|json|txt|md)$/i.test(x) || x.includes("/js/") || x.includes("/styles");
+      if (looksFactory && !x.startsWith("/runtime/")) x = "/app" + (x.startsWith("/") ? "" : "/") + x.replace(/^\//, "");
+      x = x.replace(/\/{2,}/g, "/");
+    }
+
+    return x;
+  };
+
+  function ensureOverridesVFS() {
+    // Preferir o Overrides do app.js (fase A)
+    const vfs =
+      window.RCF_OVERRIDES_VFS ||
+      window.RCF_VFS_OVERRIDES ||
+      null;
+
+    if (!vfs || typeof vfs.writeFile !== "function" || typeof vfs.listFiles !== "function") {
+      throw new Error("RCF_OVERRIDES_VFS ausente (precisa do OverridesVFS no app.js)");
+    }
+    return vfs;
   }
 
   function loadCfg() {
-    const raw = localStorage.getItem(LS_KEY);
-    const cfg = safeParseJson(raw, {});
+    const raw = localStorage.getItem(LS_GHCFG);
+    const cfg = safeJsonParse(raw, {}) || {};
     return {
       owner: String(cfg.owner || "").trim(),
       repo: String(cfg.repo || "").trim(),
@@ -35,208 +71,156 @@
     };
   }
 
-  function saveCfg(cfg) {
-    const safe = {
-      owner: String(cfg.owner || "").trim(),
-      repo: String(cfg.repo || "").trim(),
-      branch: String(cfg.branch || "main").trim(),
-      path: String(cfg.path || "app/import/mother_bundle.json").trim(),
-      token: String(cfg.token || "").trim(),
-    };
-    localStorage.setItem(LS_KEY, JSON.stringify(safe));
-    uiLog("ok", "ghcfg saved");
-    return safe;
+  async function saveBundleLocal(txt) {
+    const s = String(txt || "");
+    try { localStorage.setItem(LS_BUNDLE, s); } catch {}
+    // Se tiver o storage V2 FULL (IndexedDB), salva também
+    try {
+      if (window.RCF_STORAGE && typeof window.RCF_STORAGE.put === "function") {
+        await window.RCF_STORAGE.put("mother_bundle_local", s);
+      }
+    } catch {}
   }
 
-  function maskToken(tok) {
-    const t = String(tok || "");
-    if (!t) return "";
-    if (t.length <= 10) return "********";
-    return t.slice(0, 6) + "…" + t.slice(-4);
+  function parseBundle(txt) {
+    const obj = safeJsonParse(txt, null);
+    if (!obj || typeof obj !== "object") return null;
+
+    // aceita {files:{...}} ou direto {...}
+    const files = (obj.files && typeof obj.files === "object") ? obj.files : obj;
+    if (!files || typeof files !== "object") return null;
+
+    return { raw: obj, files };
   }
 
-  function ensureDeps() {
-    if (!window.RCF_GH_SYNC) throw new Error("RCF_GH_SYNC não carregou (js/core/github_sync.js)");
-    if (typeof window.RCF_GH_SYNC.pull !== "function") throw new Error("RCF_GH_SYNC.pull ausente");
-    if (typeof window.RCF_GH_SYNC.push !== "function") throw new Error("RCF_GH_SYNC.push ausente");
-  }
-
-  function setPanelText(text) {
-    const out = document.getElementById("ghOut");
-    if (out) out.textContent = String(text || "");
-  }
-
-  function render() {
-    const host =
-      document.querySelector("#adminView") ||
-      document.querySelector("#view-admin") ||
-      document.querySelector('[data-view="admin"]') ||
-      document.querySelector("#rcfRoot") ||
-      document.body;
-
-    if ($("#rcfGitHubPanel", host)) return;
-
-    const cfg = loadCfg();
-
-    const wrap = document.createElement("section");
-    wrap.id = "rcfGitHubPanel";
-    wrap.style.cssText =
-      "margin-top:14px;padding:14px;border-radius:16px;" +
-      "background:rgba(255,255,255,.04);" +
-      "border:1px solid rgba(255,255,255,.06)";
-
-    wrap.innerHTML = `
-      <div style="font-weight:800;font-size:20px;margin-bottom:10px">
-        GitHub Sync (Privado) — SAFE
-      </div>
-
-      <div style="display:flex;flex-direction:column;gap:10px">
-        <input id="ghOwner"  placeholder="owner"  value="${cfg.owner.replace(/"/g, "&quot;")}"
-          style="padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,.08);background:rgba(0,0,0,.25);color:#fff">
-
-        <input id="ghRepo"   placeholder="repo"   value="${cfg.repo.replace(/"/g, "&quot;")}"
-          style="padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,.08);background:rgba(0,0,0,.25);color:#fff">
-
-        <input id="ghBranch" placeholder="branch" value="${cfg.branch.replace(/"/g, "&quot;")}"
-          style="padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,.08);background:rgba(0,0,0,.25);color:#fff">
-
-        <input id="ghPath"   placeholder="path"   value="${cfg.path.replace(/"/g, "&quot;")}"
-          style="padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,.08);background:rgba(0,0,0,.25);color:#fff">
-
-        <div style="display:flex;gap:8px;align-items:center">
-          <input id="ghToken" type="password" placeholder="token (PAT)"
-            value="${cfg.token.replace(/"/g, "&quot;")}"
-            style="flex:1;padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,.08);background:rgba(0,0,0,.25);color:#fff">
-          <button id="ghToggleToken"
-            style="padding:10px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.06);color:#fff">👁</button>
-        </div>
-      </div>
-
-      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
-        <button id="ghSave"
-          style="padding:10px 14px;border-radius:999px;border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.06);color:#fff">
-          Salvar config
-        </button>
-
-        <button id="ghPull"
-          style="padding:10px 14px;border-radius:999px;border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.06);color:#fff">
-          ⬇ Pull
-        </button>
-
-        <button id="ghPush"
-          style="padding:10px 14px;border-radius:999px;border:1px solid rgba(46,204,113,.35);background:rgba(46,204,113,.18);color:#fff">
-          ⬆ Push (gera bundle)
-        </button>
-
-        <button id="ghStatus"
-          style="padding:10px 14px;border-radius:999px;border:1px solid rgba(241,196,15,.35);background:rgba(241,196,15,.18);color:#fff">
-          ⚡ Status
-        </button>
-      </div>
-
-      <pre id="ghOut"
-        style="margin-top:12px;white-space:pre-wrap;padding:12px;border-radius:14px;border:1px solid rgba(255,255,255,.08);background:rgba(0,0,0,.30);color:#d7fbe2;min-height:54px">
-Pronto.
-      </pre>
-    `;
-
-    host.appendChild(wrap);
-
-    const btnSave = $("#ghSave", wrap);
-    const btnPull = $("#ghPull", wrap);
-    const btnPush = $("#ghPush", wrap);
-    const btnStatus = $("#ghStatus", wrap);
-
-    const btnToggleToken = $("#ghToggleToken", wrap);
-    const inputToken = $("#ghToken", wrap);
-    btnToggleToken?.addEventListener("click", () => {
-      if (!inputToken) return;
-      inputToken.type = inputToken.type === "password" ? "text" : "password";
-    });
-
-    function readInputs() {
-      return {
-        owner: $("#ghOwner", wrap)?.value || "",
-        repo: $("#ghRepo", wrap)?.value || "",
-        branch: $("#ghBranch", wrap)?.value || "main",
-        path: $("#ghPath", wrap)?.value || "app/import/mother_bundle.json",
-        token: $("#ghToken", wrap)?.value || "",
-      };
+  async function writeWithRetry(vfs, path, content) {
+    const tries = 3;
+    for (let i = 0; i < tries; i++) {
+      const timeoutMs = 15000;
+      try {
+        await Promise.race([
+          Promise.resolve(vfs.writeFile(path, content)),
+          new Promise((_, rej) => setTimeout(() => rej(new Error("TIMEOUT writeFile " + timeoutMs + "ms")), timeoutMs))
+        ]);
+        return { ok: true, attempt: i + 1 };
+      } catch (e) {
+        const msg = String(e?.message || e);
+        LOG("warn", `write fail (${i + 1}/${tries}) path=${path} err=${msg}`);
+        // backoff progressivo
+        await sleep(500 + i * 900);
+      }
     }
-
-    btnSave?.addEventListener("click", () => {
-      const c = saveCfg(readInputs());
-      setPanelText(
-        `✅ Config salva.\nowner=${c.owner}\nrepo=${c.repo}\nbranch=${c.branch}\npath=${c.path}\ntoken=${maskToken(c.token)}`
-      );
-    });
-
-    btnPull?.addEventListener("click", async () => {
-      try {
-        ensureDeps();
-        setPanelText("⏳ Pull…");
-        const cfgNow = saveCfg(readInputs());
-        const txt = await window.RCF_GH_SYNC.pull(cfgNow);
-        setPanelText(
-          `✅ Pull OK.\nTamanho: ${String(txt || "").length} chars\nHead: ${String(txt || "").slice(0, 120).replace(/\s+/g, " ")}…`
-        );
-      } catch (e) {
-        const m = e?.message || String(e);
-        uiLog("err", "gh pull err: " + m);
-        setPanelText("❌ Pull ERRO:\n" + m);
-      }
-    });
-
-    // ✅ Push blindado: gera bundle automaticamente e cria o arquivo no GitHub
-    btnPush?.addEventListener("click", async () => {
-      try {
-        ensureDeps();
-        setPanelText("⏳ Push… (gerando mother bundle)");
-        const cfgNow = saveCfg(readInputs());
-
-        if (typeof window.RCF_GH_SYNC.pushMotherBundle === "function") {
-          const r = await window.RCF_GH_SYNC.pushMotherBundle(cfgNow);
-          setPanelText("✅ Push OK.\n" + String(r || "OK"));
-          uiLog("ok", "GitHub: pushMotherBundle ok");
-          return;
-        }
-
-        // fallback: push() sem content já gera bundle (se seu github_sync suportar)
-        const r2 = await window.RCF_GH_SYNC.push(cfgNow, null);
-        setPanelText("✅ Push OK.\n" + String(r2 || "OK"));
-        uiLog("ok", "GitHub: push ok");
-      } catch (e) {
-        const m = e?.message || String(e);
-        uiLog("err", "gh push err: " + m);
-        setPanelText("❌ Push ERRO:\n" + m);
-      }
-    });
-
-    btnStatus?.addEventListener("click", () => {
-      try {
-        const c = loadCfg();
-        const mae = window.RCF_MAE?.status?.() || window.RCF_MOTHER?.status?.() || null;
-        setPanelText(
-          "STATUS\n" +
-          `cfg: owner=${c.owner} repo=${c.repo} branch=${c.branch} path=${c.path} token=${maskToken(c.token)}\n\n` +
-          "MAE:\n" + (mae ? JSON.stringify(mae, null, 2) : "(sem RCF_MAE.status)")
-        );
-      } catch (e) {
-        setPanelText("❌ Status erro:\n" + (e?.message || String(e)));
-      }
-    });
-
-    uiLog("ok", "admin.github.js ready ✅");
+    return { ok: false, err: "write failed after retries: " + path };
   }
 
-  function install() {
-    try { render(); } catch {}
-    return true;
+  let UPDATE_LOCK = false;
+
+  async function updateFromGitHub() {
+    if (UPDATE_LOCK) {
+      LOG("warn", "updateFromGitHub bloqueado (lock)");
+      return { ok: false, msg: "update já está rodando" };
+    }
+    UPDATE_LOCK = true;
+
+    try {
+      if (!window.RCF_GH_SYNC || typeof window.RCF_GH_SYNC.pull !== "function") {
+        throw new Error("RCF_GH_SYNC.pull ausente (core/github_sync.js não carregou)");
+      }
+
+      const cfg = loadCfg();
+      if (!cfg.owner || !cfg.repo) {
+        throw new Error("ghcfg incompleto (owner/repo). Abra Admin e salve config.");
+      }
+
+      LOG("ok", `update start: ${cfg.owner}/${cfg.repo} @ ${cfg.branch} :: ${cfg.path}`);
+      const txt = await window.RCF_GH_SYNC.pull(cfg);
+      if (!txt) throw new Error("pull retornou vazio");
+
+      await saveBundleLocal(txt);
+
+      const bundle = parseBundle(txt);
+      if (!bundle) throw new Error("bundle inválido (JSON) — confira mother_bundle.json");
+
+      const vfs = ensureOverridesVFS();
+
+      // escreve arquivos no overrides
+      const entries = Object.entries(bundle.files);
+      let ok = 0, fail = 0;
+
+      for (const [rawPath, rawVal] of entries) {
+        const p = normPath(rawPath);
+        if (!p) continue;
+
+        // aceita {content:""} ou string
+        const content =
+          (rawVal && typeof rawVal === "object" && "content" in rawVal)
+            ? String(rawVal.content ?? "")
+            : String(rawVal ?? "");
+
+        const r = await writeWithRetry(vfs, p, content);
+        if (r.ok) ok++;
+        else fail++;
+
+        // mantém logs leves
+        if ((ok + fail) % 20 === 0) LOG("log", `progress: ok=${ok} fail=${fail}`);
+      }
+
+      LOG("ok", `update done: ok=${ok} fail=${fail}`);
+      return { ok: fail === 0, wrote: ok, failed: fail };
+    } catch (e) {
+      const msg = String(e?.message || e);
+      LOG("err", "update err: " + msg);
+      return { ok: false, msg };
+    } finally {
+      UPDATE_LOCK = false;
+    }
   }
 
-  window.RCF_ADMIN_GITHUB = { __v1: true, install };
+  async function clearOverrides() {
+    try {
+      const vfs = ensureOverridesVFS();
+      const list = await vfs.listFiles();
+      let n = 0;
+      for (const p0 of (list || [])) {
+        const p = normPath(p0);
+        try { await vfs.deleteFile(p); n++; } catch {}
+      }
+      LOG("ok", "clearOverrides ok: " + n);
+      return { ok: true, deleted: n };
+    } catch (e) {
+      const msg = String(e?.message || e);
+      LOG("err", "clearOverrides err: " + msg);
+      return { ok: false, msg };
+    }
+  }
 
-  try { install(); } catch {}
-  setTimeout(() => { try { install(); } catch {} }, 300);
-  setTimeout(() => { try { install(); } catch {} }, 1200);
+  function status() {
+    let overridesCount = 0;
+    try {
+      const vfs = window.RCF_OVERRIDES_VFS;
+      if (vfs && typeof vfs._raw?.list === "function") overridesCount = vfs._raw.list().length;
+    } catch {}
+
+    const cfg = (() => {
+      try { return loadCfg(); } catch { return {}; }
+    })();
+
+    const bundleSize = (() => {
+      try { return (localStorage.getItem(LS_BUNDLE) || "").length; } catch { return 0; }
+    })();
+
+    return {
+      ok: true,
+      v: "v2",
+      lock: UPDATE_LOCK,
+      overridesCount,
+      bundleSize,
+      cfg: { owner: cfg.owner, repo: cfg.repo, branch: cfg.branch, path: cfg.path, token: cfg.token ? "set" : "" }
+    };
+  }
+
+  window.RCF_MAE = { __v2: true, status, updateFromGitHub, clearOverrides };
+  window.RCF_MOTHER = window.RCF_MAE; // alias
+
+  LOG("ok", "mother_selfupdate.js v2 loaded ✅");
 })();
