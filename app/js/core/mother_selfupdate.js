@@ -1,12 +1,26 @@
-/* app/js/core/mother_selfupdate.js — v2 (debug + timeout + check real) */
+/* app/js/core/mother_selfupdate.js — v3 (iOS timeout+retry + root /app + bundle mem)
+   - Corrige path: bundle "/index.html" vira "/app/index.html"
+   - Corrige timeout no iOS: 15000ms + retry/backoff
+   - Guarda bundle em memória: window.__MAE_BUNDLE_MEM__
+*/
 
 (() => {
   "use strict";
 
+  const TAG = "[MAE]";
   const log = (type, msg) => {
     try { window.RCF_LOGGER?.push?.(type, msg); } catch {}
-    try { console.log("[MAE]", type, msg); } catch {}
+    try { console.log(TAG, type, msg); } catch {}
   };
+
+  const isIOS = () => {
+    try {
+      const ua = navigator.userAgent || "";
+      return /iPad|iPhone|iPod/.test(ua) && /AppleWebKit/.test(ua);
+    } catch { return false; }
+  };
+
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
   function guessType(path) {
     const p = String(path || "");
@@ -17,14 +31,50 @@
     return "text/plain; charset=utf-8";
   }
 
+  // ===== ROOT REAL do seu projeto (padrão: /app) =====
+  function getMotherRoot() {
+    // se você já tiver config em algum lugar, dá pra ler aqui depois
+    const cfgRoot =
+      window.RCF_CONFIG?.MOTHER_ROOT ||
+      window.RCF?.config?.MOTHER_ROOT ||
+      window.MOTHER_ROOT;
+
+    const r = String(cfgRoot || "/app").trim();
+    if (!r) return "/app";
+    if (r === "/") return "/app";
+    return r.startsWith("/") ? r.replace(/\/+$/g, "") : ("/" + r.replace(/\/+$/g, ""));
+  }
+
+  // ===== NORMALIZA PATH -> SEMPRE dentro do root (/app) =====
   function normalizePath(inputPath) {
     let p = String(inputPath || "").trim();
     if (!p) return "";
+
     p = p.split("#")[0].split("?")[0].trim();
     if (!p.startsWith("/")) p = "/" + p;
-    if (p.startsWith("/app/")) p = p.slice(4);
     p = p.replace(/\/{2,}/g, "/");
-    return p || "/";
+
+    // remove traversal
+    if (p.includes("..")) {
+      p = p.replace(/\.\./g, "");
+      p = p.replace(/\/{2,}/g, "/");
+    }
+
+    const ROOT = getMotherRoot(); // ex: "/app"
+
+    // se já começa com /app/, ok
+    if (p.startsWith(ROOT + "/")) return p;
+
+    // se veio "/index.html" etc, joga pra "/app/index.html"
+    // também cobre "/js/*" e arquivos na raiz
+    if (p.startsWith("/js/")) return ROOT + p;
+
+    if (/^\/[^/]+\.(html|js|css|json|txt|md|png|jpg|jpeg|webp|svg|ico)$/i.test(p)) {
+      return ROOT + p;
+    }
+
+    // default: joga tudo pra dentro do root também
+    return ROOT + p;
   }
 
   function shouldSkip(path) {
@@ -56,6 +106,28 @@
     return Promise.race([promise, timeout]).finally(() => clearTimeout(t));
   }
 
+  async function putWithRetry(putFn, path, content, contentType) {
+    const base = isIOS() ? 15000 : 5000;
+    const timeouts = [base, base + 2000, base + 4000];
+    const backs = [300, 800, 1500];
+
+    for (let i = 0; i < 3; i++) {
+      try {
+        log("info", `Mãe: put try #${i + 1} (${timeouts[i]}ms) -> ${path}`);
+        await withTimeout(
+          Promise.resolve(putFn(path, content, contentType)),
+          timeouts[i],
+          `put(${path})`
+        );
+        return true;
+      } catch (e) {
+        log("warn", `Mãe: put falhou #${i + 1} -> ${path} :: ${e?.message || e}`);
+        if (i < 2) await sleep(backs[i]);
+      }
+    }
+    throw new Error(`Falhou: put after retries: ${path}`);
+  }
+
   async function applyBundle(bundleText) {
     let bundle;
     try { bundle = JSON.parse(bundleText); }
@@ -64,11 +136,16 @@
     const files = bundle?.files || bundle;
     if (!files || typeof files !== "object") throw new Error("Bundle sem 'files'.");
 
+    // guarda em memória (Source 3 pra FASE A depois)
+    try {
+      window.__MAE_BUNDLE_MEM__ = { meta: bundle?.meta || null, files };
+    } catch {}
+
     const put = window.RCF_VFS_OVERRIDES?.put;
     if (typeof put !== "function") throw new Error("RCF_VFS_OVERRIDES.put não existe.");
 
     const entries = Object.entries(files);
-    log("info", `Mãe: bundle tem ${entries.length} item(ns).`);
+    log("info", `Mãe: bundle tem ${entries.length} item(ns). root=${getMotherRoot()}`);
 
     let count = 0;
     for (const [rawPath, v] of entries) {
@@ -86,11 +163,7 @@
           : guessType(normPath);
 
       log("info", `Mãe: aplicando -> ${normPath}`);
-      await withTimeout(
-        Promise.resolve(put(normPath, content, contentType)),
-        5000,
-        `put(${normPath})`
-      );
+      await putWithRetry(put, normPath, content, contentType);
 
       count++;
     }
@@ -102,6 +175,7 @@
     status() {
       return {
         ok: true,
+        motherRoot: getMotherRoot(),
         hasGh: !!window.RCF_GH_SYNC?.pull,
         hasOverrides: typeof window.RCF_VFS_OVERRIDES?.put === "function",
         swSupported: !!navigator.serviceWorker,
@@ -114,6 +188,7 @@
       if (!window.RCF_GH_SYNC?.pull) throw new Error("GitHub Sync ausente: RCF_GH_SYNC.pull()");
       log("info", "Mãe: puxando bundle do GitHub...");
       const bundleText = await window.RCF_GH_SYNC.pull();
+
       log("info", "Mãe: aplicando overrides...");
       const n = await applyBundle(bundleText);
 
@@ -139,5 +214,5 @@
   window.RCF_MOTHER = api;
   window.RCF_MAE = api;
 
-  log("ok", "mother_selfupdate.js loaded (v2)");
+  log("ok", "mother_selfupdate.js loaded (v3)");
 })();
