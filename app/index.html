@@ -85,11 +85,13 @@
         const modules = [
           { name: "github_sync",       paths: [rootPath("/js/core/github_sync.js")] },
           { name: "vfs_overrides",     paths: [rootPath("/js/core/vfs_overrides.js")] },
-          { name: "mother_selfupdate", paths: [rootPath("/js/core/mother_selfupdate.js")] },
 
+          // ✅ NOVO: ponte que cria window.RCF_VFS (pro Injector enxergar)
+          { name: "vfs_shim",          paths: [rootPath("/js/core/vfs_shim.js")] },
+
+          { name: "mother_selfupdate", paths: [rootPath("/js/core/mother_selfupdate.js")] },
           { name: "injector",          paths: [rootPath("/js/core/injector.js")] },
 
-          // ✅ NOVO: compactador do Settings (remove Logs do Settings)
           { name: "settings_compact",  paths: [rootPath("/js/settings_compact.js")] },
 
           { name: "admin_github_ui",   paths: [rootPath("/js/admin.github.js"), rootPath("/js/admin.js")] },
