@@ -21,86 +21,85 @@
 
   <script>
     (function () {
-      function rcfLog(msg) {
+      function rcfLog(type, msg) {
         try {
           if (window.RCF_LOGGER && typeof window.RCF_LOGGER.push === "function") {
-            window.RCF_LOGGER.push("boot", msg);
+            window.RCF_LOGGER.push(type, msg);
           } else {
-            console.log("[BOOT]", msg);
+            console.log("[BOOT]", type, msg);
           }
         } catch {}
       }
 
-      function loadAny(paths) {
+      function loadScript(src) {
         return new Promise((resolve, reject) => {
-          let i = 0;
-          function tryNext() {
-            if (i >= paths.length) return reject(new Error("all paths failed"));
-            const src = paths[i++];
-            const s = document.createElement("script");
-            s.src = src;
-            s.async = false;
-            s.onload = () => resolve(src);
-            s.onerror = () => tryNext();
-            document.head.appendChild(s);
-          }
-          tryNext();
+          const s = document.createElement("script");
+          s.src = src;
+          s.async = false;
+          s.onload = () => resolve(src);
+          s.onerror = () => reject(new Error("fail " + src));
+          document.head.appendChild(s);
         });
       }
 
+      async function loadAny(paths, name) {
+        let lastErr = null;
+        for (const src of paths) {
+          try {
+            const okSrc = await loadScript(src);
+            rcfLog("boot", "module loaded ✅ " + name + " ← " + okSrc);
+            return okSrc;
+          } catch (e) {
+            lastErr = e;
+            rcfLog("warn", "module missing ❌ " + name + " tentou: " + src);
+          }
+        }
+        throw lastErr || new Error("all paths failed: " + name);
+      }
+
       async function boot() {
-        rcfLog("index boot: starting module loader...");
+        rcfLog("boot", "index boot: starting module loader...");
 
-        // MÓDULOS CORE (ordem importa)
+        // ✅ usar paths ABSOLUTOS dentro de /app para não depender de rota/base do iOS
+        const ROOT = "/app";
+
         const modules = [
-          // github pull/push
-          { name: "github_sync", paths: ["./js/core/github_sync.js"] },
+          { name: "github_sync",      paths: [ROOT + "/js/core/github_sync.js"] },
+          { name: "vfs_overrides",    paths: [ROOT + "/js/core/vfs_overrides.js"] },
+          { name: "mother_selfupdate",paths: [ROOT + "/js/core/mother_selfupdate.js"] },
+          { name: "injector",         paths: [ROOT + "/js/core/injector.js"] },
+          { name: "settings_cleanup", paths: [ROOT + "/js/core/settings_cleanup.js"] },
+          { name: "admin_ui_github",  paths: [ROOT + "/js/admin.github.js"] },
 
-          // overrides
-          { name: "vfs_overrides", paths: ["./js/core/vfs_overrides.js"] },
-
-          // mae selfupdate
-          { name: "mother_selfupdate", paths: ["./js/core/mother_selfupdate.js"] },
-
-          // injector (Settings)
-          { name: "injector", paths: ["./js/core/injector.js"] },
-
-          // remove Logs dentro do Settings (patch)
-          { name: "settings_cleanup", paths: ["./js/core/settings_cleanup.js"] },
-
-          // sua UI do Admin GitHub (o seu arquivo real é admin.github.js)
-          { name: "admin_ui_github", paths: ["./js/admin.github.js"] },
-
-          // engine/builder opcionais (se existirem)
-          { name: "patchQueue", paths: ["./js/engine/patchQueue.js"] },
-          { name: "organizerEngine", paths: ["./js/engine/organizerEngine.js"] },
-          { name: "applyPipeline", paths: ["./js/engine/applyPipeline.js"] },
-          { name: "builderSafe", paths: ["./js/builder/builderSafe.js"] },
+          // opcionais (se existirem)
+          { name: "patchQueue",       paths: [ROOT + "/js/engine/patchQueue.js"] },
+          { name: "organizerEngine",  paths: [ROOT + "/js/engine/organizerEngine.js"] },
+          { name: "applyPipeline",    paths: [ROOT + "/js/engine/applyPipeline.js"] },
+          { name: "builderSafe",      paths: [ROOT + "/js/builder/builderSafe.js"] },
         ];
 
         for (const m of modules) {
           try {
-            const okPath = await loadAny(m.paths);
-            rcfLog("module loaded ✅ " + m.name + " ← " + okPath);
-          } catch {
-            rcfLog("module missing ❌ " + m.name + " (tentou: " + m.paths.join(" | ") + ")");
+            await loadAny(m.paths, m.name);
+          } catch (e) {
+            // ⚠️ deixa explícito no log qual módulo falhou
+            rcfLog("warn", "module missing ❌ " + m.name + " :: " + (e && e.message ? e.message : e));
           }
         }
 
         // app principal
         try {
-          await loadAny(["./app.js"]);
-          rcfLog("app.js loaded ✅ ./app.js");
-        } catch {
-          rcfLog("app.js missing ❌ ./app.js");
+          await loadAny([ROOT + "/app.js"], "app.js");
+        } catch (e) {
+          rcfLog("err", "app.js missing ❌ " + (e && e.message ? e.message : e));
         }
 
-        // SW (scope /app/ para ficar estável com base href)
+        // SW (scope /app/)
         try {
           if ("serviceWorker" in navigator) {
-            navigator.serviceWorker.register("./sw.js", { scope: "./" })
-              .then(() => rcfLog("sw register: ok"))
-              .catch(() => rcfLog("sw register: fail/ignored"));
+            navigator.serviceWorker.register(ROOT + "/sw.js", { scope: ROOT + "/" })
+              .then(() => rcfLog("boot", "sw register: ok"))
+              .catch(() => rcfLog("warn", "sw register: fail/ignored"));
           }
         } catch {}
       }
