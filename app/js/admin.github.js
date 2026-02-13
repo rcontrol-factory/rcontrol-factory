@@ -1,33 +1,37 @@
-/* RControl Factory — /app/js/admin.github.js (PADRÃO) — v2.5
-   FIX UI (sem grudar em outras telas):
-   - Renderiza GitHub Sync SOMENTE quando a tela ativa for "Settings"
-   - Colapsado por padrão (abre/fecha)
-   - Nunca usa position:fixed (nada overlay global)
-   - Auto-repara se a UI for “apagada” pelo app.js (re-render leve)
+/* RControl Factory — /app/js/admin.github.js (PADRÃO) — v2.6
+   GitHub UI como BOTÃO na subnav (ao lado de Logs/Diagnostics), sem depender de Settings/Admin mount.
+   - Procura a barra que tem botões "Admin / Diagnostics / Logs" e injeta "GitHub" depois de "Logs"
+   - Abre/fecha um painel flutuante (modal) com inputs e ações
+   - Não gruda na tela, não mistura views
 */
 (() => {
   "use strict";
 
-  if (window.RCF_ADMIN_GH && window.RCF_ADMIN_GH.__v25) return;
+  if (window.RCF_ADMIN_GH && window.RCF_ADMIN_GH.__v26) return;
 
-  const MOUNT_ID = "settingsMount";
-  const OUT_ID = "settingsOut";
   const UI_OPEN_KEY = "rcf:ghui:open";
+  const LS_CFG_KEY  = "rcf:ghcfg";
 
   const log = (lvl, msg) => {
     try { window.RCF_LOGGER?.push?.(lvl, msg); } catch {}
     try { console.log("[GHUI]", lvl, msg); } catch {}
   };
 
-  function $(id){ return document.getElementById(id); }
-
   function safeParse(raw, fallback){
     try { return raw ? JSON.parse(raw) : fallback; } catch { return fallback; }
   }
 
+  function normalizePathInput(p){
+    let x = String(p || "").trim();
+    if (!x) return "app/import/mother_bundle.json";
+    x = x.replace(/^\/+/, "");
+    if (x.startsWith("import/")) x = "app/" + x;
+    return x;
+  }
+
   function getCfg(){
     if (window.RCF_GH_SYNC?.loadConfig) return window.RCF_GH_SYNC.loadConfig();
-    return safeParse(localStorage.getItem("rcf:ghcfg"), {}) || {};
+    return safeParse(localStorage.getItem(LS_CFG_KEY), {}) || {};
   }
 
   function saveCfg(cfg){
@@ -39,21 +43,8 @@
       path: String(cfg.path || "app/import/mother_bundle.json").trim(),
       token: String(cfg.token || "").trim(),
     };
-    localStorage.setItem("rcf:ghcfg", JSON.stringify(safe));
+    localStorage.setItem(LS_CFG_KEY, JSON.stringify(safe));
     return safe;
-  }
-
-  function setOut(text){
-    const out = $(OUT_ID);
-    if (out) out.textContent = String(text || "");
-  }
-
-  function normalizePathInput(p){
-    let x = String(p || "").trim();
-    if (!x) return "app/import/mother_bundle.json";
-    x = x.replace(/^\/+/, "");
-    if (x.startsWith("import/")) x = "app/" + x;
-    return x;
   }
 
   function enableClickFallback(container){
@@ -69,107 +60,145 @@
     }, { capture:true, passive:true });
   }
 
-  // ✅ Detecta se a tela atual é Settings (pela presença do título "Settings")
-  function isSettingsScreen(){
-    const headings = Array.from(document.querySelectorAll("h1,h2,h3,.title,.viewTitle"));
-    for (const el of headings) {
-      const t = String(el?.textContent || "").trim().toLowerCase();
-      if (t === "settings") return true;
+  function findButtonByText(root, txt){
+    const t = String(txt || "").trim().toLowerCase();
+    const buttons = Array.from((root || document).querySelectorAll("button, a"));
+    for (const b of buttons){
+      const bt = String(b.textContent || "").trim().toLowerCase();
+      if (bt === t) return b;
     }
-    // fallback: se existir o mount e um texto "Segurança" + "Settings" no topo do conteúdo
-    const bodyText = String(document.body?.innerText || "").toLowerCase();
-    if (bodyText.includes("\nsettings") || bodyText.includes("settings\n")) return true;
-    return false;
+    return null;
   }
 
-  function alreadyMounted(){
-    return !!document.getElementById("rcfGhCard");
+  // acha o "grupo" (container) onde estão Admin/Diagnostics/Logs
+  function findSubnavContainer(){
+    const allButtons = Array.from(document.querySelectorAll("button, a"));
+    const logsBtn = allButtons.find(b => String(b.textContent||"").trim().toLowerCase() === "logs");
+    if (!logsBtn) return null;
+
+    // tenta pegar o pai que contém vários botões
+    let p = logsBtn.parentElement;
+    for (let i = 0; i < 6 && p; i++){
+      const btns = p.querySelectorAll("button, a");
+      if (btns && btns.length >= 3) return p;
+      p = p.parentElement;
+    }
+    return logsBtn.parentElement || null;
   }
 
-  function render(){
-    const mount = $(MOUNT_ID);
-    if (!mount) return false;
-    if (!isSettingsScreen()) return false; // ✅ não injeta fora do Settings
-    if (alreadyMounted()) return true;
+  function ensureModal(){
+    if (document.getElementById("rcfGhModal")) return;
 
-    const open = localStorage.getItem(UI_OPEN_KEY) === "1";
+    const div = document.createElement("div");
+    div.id = "rcfGhModal";
+    div.style.cssText = `
+      position: fixed;
+      inset: 0;
+      z-index: 999998;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 18px;
+      background: rgba(0,0,0,.55);
+      backdrop-filter: blur(6px);
+    `;
 
-    const wrapper = document.createElement("div");
-    wrapper.innerHTML = `
-      <div class="card" id="rcfGhCard" style="margin-top:12px">
+    div.innerHTML = `
+      <div id="rcfGhPanel" style="
+        width: min(720px, 100%);
+        max-height: 78vh;
+        overflow: auto;
+        border-radius: 16px;
+        background: rgba(12,18,32,.92);
+        border: 1px solid rgba(255,255,255,.10);
+        padding: 14px;
+        box-shadow: 0 20px 60px rgba(0,0,0,.45);
+      ">
         <div style="display:flex; align-items:center; gap:10px;">
-          <h3 style="margin:0;">GitHub (Sync)</h3>
-          <button id="rcfGhToggle" class="btn" type="button" style="margin-left:auto;">
-            ${open ? "Fechar" : "Abrir"} GitHub Sync
-          </button>
+          <div style="font-weight:900; font-size:16px; color:#eafff4;">GitHub (Sync)</div>
+          <button id="rcfGhClose" style="
+            margin-left:auto;
+            padding:8px 12px;
+            border-radius: 999px;
+            border: 1px solid rgba(255,255,255,.14);
+            background: rgba(255,255,255,.08);
+            color: #fff;
+          ">Fechar</button>
         </div>
 
-        <div id="rcfGhBody" style="${open ? "" : "display:none;"} margin-top:12px">
-          <p class="hint" style="margin-top:0">
-            Bundle padrão: <b>app/import/mother_bundle.json</b><br/>
-            (Se você digitar <b>import/mother_bundle.json</b>, eu salvo como <b>app/import/mother_bundle.json</b>)
-          </p>
-
-          <div class="row" style="gap:12px; flex-wrap:wrap;">
-            <div style="flex:1; min-width:180px;">
-              <label class="label">Owner</label>
-              <input id="ghOwner" class="input" placeholder="owner" />
-            </div>
-
-            <div style="flex:1; min-width:180px;">
-              <label class="label">Repo</label>
-              <input id="ghRepo" class="input" placeholder="repo" />
-            </div>
-          </div>
-
-          <div class="row" style="gap:12px; flex-wrap:wrap; margin-top:10px;">
-            <div style="flex:1; min-width:180px;">
-              <label class="label">Branch</label>
-              <input id="ghBranch" class="input" placeholder="main" />
-            </div>
-
-            <div style="flex:1; min-width:180px;">
-              <label class="label">Path</label>
-              <input id="ghPath" class="input" placeholder="app/import/mother_bundle.json" />
-            </div>
-          </div>
-
-          <div style="margin-top:10px;">
-            <label class="label">Token (PAT)</label>
-            <input id="ghToken" class="input" placeholder="ghp_..." />
-          </div>
-
-          <div class="row" style="margin-top:12px; gap:10px; flex-wrap:wrap;">
-            <button id="btnSaveCfg" class="btn" type="button">Salvar cfg</button>
-            <button id="btnTestToken" class="btn" type="button">Testar token</button>
-            <button id="btnPull" class="btn" type="button">Pull bundle</button>
-          </div>
-
-          <div class="row" style="margin-top:10px; gap:10px; flex-wrap:wrap;">
-            <button id="btnPushMother" class="btn" type="button">Push Mother Bundle</button>
-            <button id="btnMaeUpdate" class="btn primary" type="button">MAE update</button>
-          </div>
-
-          <pre id="ghOut" class="mono small" style="margin-top:12px;">Pronto.</pre>
+        <div style="margin-top:10px; color: rgba(255,255,255,.72); font-size: 12px; line-height:1.35;">
+          Bundle padrão: <b>app/import/mother_bundle.json</b><br/>
+          (Se digitar <b>import/mother_bundle.json</b>, eu salvo como <b>app/import/mother_bundle.json</b>)
         </div>
+
+        <div style="margin-top:12px; display:flex; gap:10px; flex-wrap:wrap;">
+          <div style="flex:1; min-width:160px;">
+            <div style="font-size:12px; color: rgba(255,255,255,.65); margin-bottom:6px;">Owner</div>
+            <input id="ghOwner" style="width:100%; padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,.12); background: rgba(0,0,0,.25); color:#fff;" placeholder="owner" />
+          </div>
+
+          <div style="flex:1; min-width:160px;">
+            <div style="font-size:12px; color: rgba(255,255,255,.65); margin-bottom:6px;">Repo</div>
+            <input id="ghRepo" style="width:100%; padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,.12); background: rgba(0,0,0,.25); color:#fff;" placeholder="repo" />
+          </div>
+        </div>
+
+        <div style="margin-top:10px; display:flex; gap:10px; flex-wrap:wrap;">
+          <div style="flex:1; min-width:160px;">
+            <div style="font-size:12px; color: rgba(255,255,255,.65); margin-bottom:6px;">Branch</div>
+            <input id="ghBranch" style="width:100%; padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,.12); background: rgba(0,0,0,.25); color:#fff;" placeholder="main" />
+          </div>
+
+          <div style="flex:1; min-width:160px;">
+            <div style="font-size:12px; color: rgba(255,255,255,.65); margin-bottom:6px;">Path</div>
+            <input id="ghPath" style="width:100%; padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,.12); background: rgba(0,0,0,.25); color:#fff;" placeholder="app/import/mother_bundle.json" />
+          </div>
+        </div>
+
+        <div style="margin-top:10px;">
+          <div style="font-size:12px; color: rgba(255,255,255,.65); margin-bottom:6px;">Token (PAT)</div>
+          <input id="ghToken" style="width:100%; padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,.12); background: rgba(0,0,0,.25); color:#fff;" placeholder="ghp_..." />
+        </div>
+
+        <div style="margin-top:12px; display:flex; gap:10px; flex-wrap:wrap;">
+          <button id="btnSaveCfg" style="padding:10px 12px; border-radius:999px; border:1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.08); color:#fff;">Salvar cfg</button>
+          <button id="btnTestToken" style="padding:10px 12px; border-radius:999px; border:1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.08); color:#fff;">Testar token</button>
+          <button id="btnPull" style="padding:10px 12px; border-radius:999px; border:1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.08); color:#fff;">Pull bundle</button>
+        </div>
+
+        <div style="margin-top:10px; display:flex; gap:10px; flex-wrap:wrap;">
+          <button id="btnPushMother" style="padding:10px 12px; border-radius:999px; border:1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.08); color:#fff;">Push Mother Bundle</button>
+          <button id="btnMaeUpdate" style="padding:10px 12px; border-radius:999px; border:1px solid rgba(60,255,170,.25); background: rgba(60,255,170,.10); color:#eafff4;">MAE update</button>
+        </div>
+
+        <pre id="ghOut" style="
+          margin-top:12px;
+          padding:12px;
+          border-radius:12px;
+          background: rgba(0,0,0,.25);
+          border:1px solid rgba(255,255,255,.08);
+          color: rgba(255,255,255,.85);
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+          font-size: 12px;
+          white-space: pre-wrap;
+        ">Pronto.</pre>
       </div>
     `;
 
-    // ✅ coloca no topo do Settings (pra ficar “quietinho” e não misturar com logs)
-    try {
-      mount.prepend(wrapper.firstElementChild);
-    } catch {
-      mount.appendChild(wrapper.firstElementChild);
+    document.body.appendChild(div);
+    enableClickFallback(div);
+
+    // fechar clicando fora
+    div.addEventListener("click", (ev) => {
+      if (ev.target === div) closeModal();
+    });
+
+    document.getElementById("rcfGhClose").addEventListener("click", closeModal);
+
+    function setGHOut(t){
+      const out = document.getElementById("ghOut");
+      if (out) out.textContent = String(t || "Pronto.");
     }
-
-    const card = document.getElementById("rcfGhCard");
-    const body = document.getElementById("rcfGhBody");
-    const toggle = document.getElementById("rcfGhToggle");
-    const out = document.getElementById("ghOut");
-
-    enableClickFallback(card);
-
-    function setGHOut(t){ out.textContent = String(t || "Pronto."); }
 
     function readInputs(){
       return {
@@ -189,20 +218,8 @@
       document.getElementById("ghToken").value = cfg.token || "";
     }
 
+    // preencher ao criar
     fillInputs(getCfg());
-
-    toggle.addEventListener("click", () => {
-      const isOpen = body.style.display !== "none";
-      if (isOpen) {
-        body.style.display = "none";
-        toggle.textContent = "Abrir GitHub Sync";
-        localStorage.setItem(UI_OPEN_KEY, "0");
-      } else {
-        body.style.display = "";
-        toggle.textContent = "Fechar GitHub Sync";
-        localStorage.setItem(UI_OPEN_KEY, "1");
-      }
-    });
 
     document.getElementById("btnSaveCfg").addEventListener("click", () => {
       const cfg = readInputs();
@@ -274,42 +291,100 @@
       }
     });
 
-    log("ok", "OK: admin.github.js ready ✅ (v2.5)");
+    // se tava aberto antes, abre de novo
+    if (localStorage.getItem(UI_OPEN_KEY) === "1") openModal();
+  }
+
+  function openModal(){
+    ensureModal();
+    const m = document.getElementById("rcfGhModal");
+    if (m) m.style.display = "flex";
+    localStorage.setItem(UI_OPEN_KEY, "1");
+
+    // sempre repuxa cfg quando abre
+    try {
+      const cfg = getCfg();
+      document.getElementById("ghOwner").value = cfg.owner || "";
+      document.getElementById("ghRepo").value = cfg.repo || "";
+      document.getElementById("ghBranch").value = cfg.branch || "main";
+      document.getElementById("ghPath").value = cfg.path || "app/import/mother_bundle.json";
+      document.getElementById("ghToken").value = cfg.token || "";
+    } catch {}
+  }
+
+  function closeModal(){
+    const m = document.getElementById("rcfGhModal");
+    if (m) m.style.display = "none";
+    localStorage.setItem(UI_OPEN_KEY, "0");
+  }
+
+  function ensureGitHubButton(){
+    const sub = findSubnavContainer();
+    if (!sub) return false;
+
+    // já existe?
+    const existing = Array.from(sub.querySelectorAll("button, a")).find(b =>
+      String(b.textContent||"").trim().toLowerCase() === "github"
+    );
+    if (existing) return true;
+
+    const logsBtn = findButtonByText(sub, "Logs") || findButtonByText(sub, "logs");
+    if (!logsBtn) return false;
+
+    // cria botão parecido (copia classe do Logs)
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = "GitHub";
+
+    // tenta reaproveitar a classe do Logs
+    try {
+      if (logsBtn.className) btn.className = logsBtn.className;
+    } catch {}
+
+    btn.addEventListener("click", () => {
+      // toggle
+      const m = document.getElementById("rcfGhModal");
+      const isOpen = m && m.style.display !== "none";
+      if (isOpen) closeModal();
+      else openModal();
+    });
+
+    // inserir depois de Logs
+    try {
+      logsBtn.insertAdjacentElement("afterend", btn);
+    } catch {
+      sub.appendChild(btn);
+    }
+
+    log("ok", "GitHub button injected ✅");
     return true;
   }
 
-  // Repara se o app.js apagar o card quando troca view
-  function startRepairLoop(){
-    let last = 0;
-    setInterval(() => {
-      const t = Date.now();
-      if (t - last < 800) return;
-      last = t;
-
-      // se está em settings e o card sumiu, injeta de novo
-      if (isSettingsScreen() && !alreadyMounted()) {
-        render();
-      }
-    }, 900);
-  }
-
   function boot(){
-    // tenta várias vezes no boot
+    ensureModal();
+
+    // tenta várias vezes (app.js pode recriar nav)
     let tries = 0;
     const tick = () => {
       tries++;
-      render();
-      if (tries < 40) setTimeout(tick, 200);
+      ensureGitHubButton();
+      if (tries < 120) setTimeout(tick, 250);
     };
     tick();
-    startRepairLoop();
+
+    // repara sempre (se sumir, recoloca)
+    setInterval(() => {
+      ensureGitHubButton();
+    }, 900);
   }
 
-  window.RCF_ADMIN_GH = { __v25: true, boot };
+  window.RCF_ADMIN_GH = { __v26: true, boot, openModal, closeModal };
 
   if (document.readyState === "loading") {
     window.addEventListener("DOMContentLoaded", boot);
   } else {
     boot();
   }
+
+  log("ok", "admin.github.js ready ✅ (v2.6)");
 })();
