@@ -1,75 +1,76 @@
-/* app/js/core/injector.js  (RCF Injector v3 - auto-mount + retry + iOS safe)
-   - Garante que o Injector SEMPRE aparece no Settings
-   - Se #settingsMount não existir, cria dentro de #view-settings
-   - Se Settings renderiza depois, tenta novamente (watcher)
-   - Aplica pack via window.RCF_VFS.put() com timeout + retry
+/* core/injector.js  (RCF Injector v2 - robust iOS + timeout + normalize)
+   - Recebe pack JSON { meta, files, registryPatch }
+   - Aplica via overrides: prefere RCF_VFS_OVERRIDES, fallback RCF_VFS
+   - Normaliza paths: remove /app/ automaticamente
+   - Timeout por arquivo + progresso no injOut
+   - Clear via clear/clearAll
 */
 (() => {
   "use strict";
 
-  const OUT_ID = "settingsOut";
   const MOUNT_ID = "settingsMount";
+  const OUT_ID = "settingsOut";
 
   function $(id){ return document.getElementById(id); }
+  function nowISO(){ return new Date().toISOString(); }
 
-  function isIOS(){
-    try {
-      const ua = navigator.userAgent || "";
-      return /iPad|iPhone|iPod/.test(ua) && /AppleWebKit/.test(ua);
-    } catch { return false; }
-  }
-
-  function logGlobal(msg){
+  function logTop(msg){
     const el = $(OUT_ID);
-    if (el) el.textContent = String(msg || "Pronto.");
-    try { window.RCF_LOGGER?.push?.("injector", String(msg || "")); } catch {}
+    if (el) el.textContent = String(msg || "");
   }
 
   function safeParseJSON(txt){
     try { return JSON.parse(txt); } catch { return null; }
   }
 
-  function guessType(path) {
-    const p = String(path || "");
-    if (p.endsWith(".js")) return "application/javascript; charset=utf-8";
-    if (p.endsWith(".css")) return "text/css; charset=utf-8";
-    if (p.endsWith(".html")) return "text/html; charset=utf-8";
-    if (p.endsWith(".json")) return "application/json; charset=utf-8";
-    if (p.endsWith(".svg")) return "image/svg+xml";
-    if (p.endsWith(".png")) return "image/png";
-    if (p.endsWith(".jpg") || p.endsWith(".jpeg")) return "image/jpeg";
-    if (p.endsWith(".webp")) return "image/webp";
-    if (p.endsWith(".ico")) return "image/x-icon";
-    return "text/plain; charset=utf-8";
+  function normalizePath(inputPath){
+    let p = String(inputPath || "").trim();
+    if (!p) return "";
+    p = p.split("#")[0].split("?")[0].trim();
+    if (!p.startsWith("/")) p = "/" + p;
+
+    // MUITO IMPORTANTE: remove /app/ pq seu app roda com root /app
+    if (p.startsWith("/app/")) p = p.slice(4);
+
+    // colapsa ////
+    p = p.replace(/\/{2,}/g, "/");
+    return p;
   }
 
-  // Normaliza e empurra pra /app/* quando fizer sentido
-  function normalizePath(p){
-    let path = String(p || "").trim();
-    if (!path) return "";
-    path = path.split("#")[0].split("?")[0].trim();
-    if (!path.startsWith("/")) path = "/" + path;
-    path = path.replace(/\/{2,}/g, "/");
+  function shouldSkip(path){
+    const p = String(path || "");
+    if (!p) return true;
+    if (p.endsWith("/")) return true;
+    if (p.includes("/.git/")) return true;
+    if (p.endsWith(".DS_Store")) return true;
+    if (p.endsWith("thumbs.db")) return true;
+    return false;
+  }
 
-    if (path.startsWith("/app/")) return path;
-    if (path.startsWith("/js/")) return "/app" + path;
-
-    // arquivos típicos que moram em /app
-    const rootFiles = new Set([
-      "/index.html","/app.js","/styles.css","/manifest.json","/sw.js",
-      "/privacy.html","/terms.html","/recovery.html"
-    ]);
-    if (rootFiles.has(path)) return "/app" + path;
-
-    if (/^\/[^/]+\.(html|js|css|json|txt|md|png|jpg|jpeg|webp|svg|ico)$/i.test(path)) {
-      return "/app" + path;
+  function pickVFS(){
+    // preferido (mais consistente com mother_selfupdate)
+    if (window.RCF_VFS_OVERRIDES && typeof window.RCF_VFS_OVERRIDES.put === "function") {
+      return {
+        kind: "OVERRIDES",
+        put: window.RCF_VFS_OVERRIDES.put.bind(window.RCF_VFS_OVERRIDES),
+        clear: (typeof window.RCF_VFS_OVERRIDES.clear === "function")
+          ? window.RCF_VFS_OVERRIDES.clear.bind(window.RCF_VFS_OVERRIDES)
+          : null
+      };
     }
 
-    return path;
-  }
+    // fallback antigo
+    if (window.RCF_VFS && typeof window.RCF_VFS.put === "function") {
+      return {
+        kind: "VFS",
+        put: window.RCF_VFS.put.bind(window.RCF_VFS),
+        clear: (typeof window.RCF_VFS.clearAll === "function")
+          ? window.RCF_VFS.clearAll.bind(window.RCF_VFS)
+          : null
+      };
+    }
 
-  function hasVFS(){
-    return !!(window.RCF_VFS && typeof window.RCF_VFS.put === "function" && typeof window.RCF_VFS.clearAll === "function");
+    return null;
   }
 
   function withTimeout(promise, ms, label){
@@ -80,63 +81,54 @@
     return Promise.race([promise, timeout]).finally(() => clearTimeout(t));
   }
 
-  async function putWithRetry(path, content){
-    const vfs = window.RCF_VFS;
-    const contentType = guessType(path);
-
-    const base = isIOS() ? 14000 : 7000;
-    const timeouts = [base, base + 5000, base + 9000];
-    const backs = [250, 700, 1200];
-
-    let lastErr = null;
-
-    for (let i = 0; i < 3; i++){
-      try {
-        return await withTimeout(
-          Promise.resolve(vfs.put(path, content, contentType)),
-          timeouts[i],
-          `RCF_VFS.put(${path})`
-        );
-      } catch (e) {
-        lastErr = e;
-        if (i < 2) await new Promise(r => setTimeout(r, backs[i]));
-      }
-    }
-    throw lastErr || new Error("put failed");
-  }
-
-  async function applyFilesViaVFS(filesMap, uiProgress){
-    if (!hasVFS()) {
-      throw new Error("RCF_VFS não está disponível (SW ainda não controlou a página ou vfs_overrides não carregou).");
-    }
+  async function applyFiles(filesMap, ui){
+    const vfs = pickVFS();
+    if (!vfs) throw new Error("VFS não disponível (RCF_VFS_OVERRIDES/RCF_VFS). Recarregue 1x após SW controlar.");
 
     const keys = Object.keys(filesMap || {});
-    let ok = 0, fail = 0;
+    const total = keys.length;
 
-    for (let idx = 0; idx < keys.length; idx++){
-      const raw = keys[idx];
+    let ok = 0, fail = 0;
+    const startedAt = nowISO();
+
+    for (let i = 0; i < keys.length; i++){
+      const raw = keys[i];
       const path = normalizePath(raw);
-      if (!path) continue;
+      if (shouldSkip(path)) continue;
 
       const content = String(filesMap[raw] ?? "");
+      const label = `put(${path})`;
 
-      if (typeof uiProgress === "function") {
-        uiProgress(`Aplicando ${idx+1}/${keys.length}: ${path}`);
+      if (ui) ui(`Aplicando ${i+1}/${total}…\n${path}`);
+
+      // retries curtos (iOS)
+      let lastErr = null;
+      const tries = 3;
+      for (let a = 1; a <= tries; a++){
+        try {
+          await withTimeout(Promise.resolve(vfs.put(path, content)), 6000, label);
+          ok++;
+          lastErr = null;
+          break;
+        } catch (e) {
+          lastErr = e;
+          // backoff
+          await new Promise(r => setTimeout(r, 250 * a));
+        }
       }
 
-      try {
-        await putWithRetry(path, content);
-        ok++;
-      } catch (e) {
-        console.warn("VFS.put falhou:", path, e);
+      if (lastErr){
         fail++;
+        if (ui) ui(`Falhou em ${path}\n${String(lastErr?.message || lastErr)}`);
       }
     }
-    return { ok, fail, total: keys.length };
+
+    return { ok, fail, total, startedAt, kind: vfs.kind };
   }
 
   function applyRegistryPatch(patch){
     if (!patch || typeof patch !== "object") return;
+
     const R = window.RCF_REGISTRY;
     if (!R) return;
 
@@ -165,7 +157,7 @@
     }
   }
 
-  async function applyPack(pack, uiProgress){
+  async function applyPack(pack, ui){
     if (!pack || typeof pack !== "object") return { ok:false, msg:"Pack inválido." };
 
     const meta = pack.meta || {};
@@ -175,54 +167,67 @@
     const name = meta.name || "pack";
     const ver  = meta.version || "1.0";
 
-    const res = await applyFilesViaVFS(files, uiProgress);
+    const res = await applyFiles(files, ui);
     applyRegistryPatch(patch);
 
-    const msg = `Aplicado: ${name} v${ver} — ok:${res.ok}/${res.total}` + (res.fail ? ` (falhas:${res.fail})` : "");
+    const msg =
+      `✅ Aplicado: ${name} v${ver}\n` +
+      `VFS: ${res.kind}\n` +
+      `ok: ${res.ok}/${res.total}` +
+      (res.fail ? ` (falhas: ${res.fail})` : "") +
+      `\n@ ${nowISO()}`;
+
     return { ok:true, msg };
   }
 
-  // ========= UI / MOUNT =========
+  function enableClickFallback(container){
+    if (!container) return;
+    container.style.pointerEvents = "auto";
 
-  function findOrCreateMount(){
-    // 1) se já existe, retorna
-    let mount = $(MOUNT_ID);
-    if (mount) return mount;
+    container.addEventListener("click", (ev) => {
+      const t = ev.target;
+      if (!t) return;
 
-    // 2) tenta achar a view Settings
-    const view =
-      document.getElementById("view-settings") ||
-      document.querySelector("#settingsView") ||
-      document.querySelector("[data-view='settings']");
+      if (t.tagName === "LABEL") {
+        const fid = t.getAttribute("for");
+        if (fid) {
+          const inp = document.getElementById(fid);
+          if (inp && typeof inp.click === "function") inp.click();
+        }
+      }
+    }, true);
 
-    if (!view) return null;
-
-    // 3) cria o mount no final do Settings
-    mount = document.createElement("div");
-    mount.id = MOUNT_ID;
-    mount.style.marginTop = "12px";
-    try { view.appendChild(mount); } catch { return null; }
-
-    return mount;
+    container.addEventListener("touchend", (ev) => {
+      const t = ev.target;
+      if (!t) return;
+      const tag = (t.tagName || "").toLowerCase();
+      const isBtn = tag === "button";
+      const isInput = tag === "input" || tag === "textarea" || tag === "select";
+      if (isBtn && typeof t.click === "function") t.click();
+      if (isInput && typeof t.focus === "function") t.focus();
+    }, { capture:true, passive:true });
   }
 
-  function renderInjectorUI(){
-    const mount = findOrCreateMount();
-    if (!mount) return false;
+  function renderSettings(){
+    const mount = $(MOUNT_ID);
+    if (!mount) return;
 
-    // já renderizou?
-    if (document.getElementById("injInput")) return true;
+    // evita duplicar
+    if (document.getElementById("injInput")) return;
 
-    mount.innerHTML = `
+    mount.innerHTML += `
       <div class="card" style="margin-top:12px">
         <h3>Injeção (Injector)</h3>
-        <p class="hint">Cole um pack JSON (meta + files). Aplica via SW override (RCF_VFS). Sem mexer no core.</p>
+        <p class="hint">
+          Cole um pack JSON (meta + files). Aplica via override (SW).<br/>
+          Dica: NÃO use /app/ no path — mas se usar, eu removo automaticamente.
+        </p>
 
         <textarea id="injInput" class="textarea mono" spellcheck="false"
           placeholder='Cole um JSON:
 {
-  "meta": {"name":"pack-x","version":"1.0"},
-  "files": { "/app/TESTE_OK.txt": "INJECTION WORKING" }
+  "meta": {"name":"teste-real","version":"1.0"},
+  "files": { "/TESTE_OK.txt": "INJECTION WORKING" }
 }'></textarea>
 
         <div class="row">
@@ -238,83 +243,65 @@
       </div>
     `;
 
-    const input  = $("injInput");
-    const out    = $("injOut");
-    const status = $("injStatus");
+    const input  = document.getElementById("injInput");
+    const out    = document.getElementById("injOut");
+    const status = document.getElementById("injStatus");
 
-    const setOut = (t) => { if (out) out.textContent = String(t || "Pronto."); };
+    enableClickFallback(mount);
 
-    status.textContent = hasVFS()
-      ? "RCF_VFS OK ✅ (override via SW)"
-      : "RCF_VFS não disponível ❌ (recarregue 1x após instalar SW)";
+    function setOut(t){ out.textContent = String(t || "Pronto."); }
 
-    $("btnInjDry").addEventListener("click", () => {
+    // status VFS
+    const vfs = pickVFS();
+    status.textContent = vfs
+      ? `OK ✅ (${vfs.kind})`
+      : "VFS não disponível ❌ (recarregue 1x após SW controlar a página)";
+
+    document.getElementById("btnInjDry").addEventListener("click", () => {
       const pack = safeParseJSON(input.value || "");
       if (!pack) return setOut("JSON inválido (não parseou).");
       const files = pack.files || {};
-      const keys = Object.keys(files);
-      setOut(`OK (dry-run). Arquivos: ${keys.length}\n` + keys.slice(0, 60).join("\n"));
+      const keys = Object.keys(files).map(k => normalizePath(k));
+      setOut(`OK (dry-run)\nArquivos: ${keys.length}\n\n` + keys.slice(0, 80).join("\n"));
     });
 
-    $("btnInjApply").addEventListener("click", async () => {
+    document.getElementById("btnInjApply").addEventListener("click", async () => {
       const pack = safeParseJSON(input.value || "");
       if (!pack) return setOut("JSON inválido (não parseou).");
 
       try {
-        setOut("Aplicando...");
-        const res = await applyPack(pack, (p) => setOut(p));
+        setOut("Aplicando…");
+        logTop("Injector: aplicando…");
+        const res = await applyPack(pack, setOut);
         setOut(res.msg);
-        logGlobal(res.msg);
+        logTop(res.msg);
       } catch (e) {
-        const msg = `Falhou: ${e?.message || e}`;
+        const msg = `❌ Falhou: ${e?.message || e}`;
         setOut(msg);
-        logGlobal(msg);
+        logTop(msg);
       }
     });
 
-    $("btnInjClear").addEventListener("click", async () => {
+    document.getElementById("btnInjClear").addEventListener("click", async () => {
       try {
-        if (!hasVFS()) throw new Error("RCF_VFS não disponível.");
-        await withTimeout(window.RCF_VFS.clearAll(), isIOS() ? 14000 : 7000, "RCF_VFS.clearAll()");
-        setOut("Overrides zerados ✅");
-        logGlobal("Overrides zerados ✅");
+        const v = pickVFS();
+        if (!v || !v.clear) throw new Error("Clear não disponível (sem clear/clearAll).");
+        setOut("Limpando overrides…");
+        await withTimeout(Promise.resolve(v.clear()), 8000, "clear()");
+        setOut("✅ Overrides zerados.");
+        logTop("✅ Overrides zerados.");
       } catch (e) {
-        const msg = `Falhou: ${e?.message || e}`;
+        const msg = `❌ Falhou: ${e?.message || e}`;
         setOut(msg);
-        logGlobal(msg);
+        logTop(msg);
       }
     });
-
-    return true;
-  }
-
-  // tenta renderizar agora e depois tenta de novo quando Settings aparecer
-  function startWatcher(){
-    let tries = 0;
-    const max = 25; // ~25s
-    const t = setInterval(() => {
-      tries++;
-      const ok = renderInjectorUI();
-      if (ok || tries >= max) clearInterval(t);
-    }, 1000);
   }
 
   // init
-  function init(){
-    renderInjectorUI();
-    startWatcher();
-  }
+  window.addEventListener("load", () => {
+    try { renderSettings(); } catch (e) { console.warn("Injector UI falhou:", e); }
+  });
 
-  // API global
-  window.RCF_INJECTOR = {
-    applyPack,
-    applyFilesViaVFS,
-    render: renderInjectorUI
-  };
-
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", init);
-  } else {
-    init();
-  }
+  window.RCF_INJECTOR = { applyPack };
 })();
