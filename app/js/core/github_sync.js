@@ -1,14 +1,13 @@
-/* RControl Factory — GitHub Sync (SAFE)
+/* RControl Factory — GitHub Sync (SAFE) — v2.1
    - GitHub Contents API: GET/PUT file
    - Compatível com app.js (Storage: rcf:ghcfg)
-   - pull(): retorna string do bundle (JSON)
+   - pull(): retorna string do bundle (JSON) OU lança erro (nunca retorna "Arquivo ...")
    - push(content?): se content não vier, gera bundle “mãe” automaticamente via fetch()
    - NUNCA salva token no bundle (só no localStorage)
 */
 (() => {
   "use strict";
 
-  // ✅ Compatível com o app.js que você colou
   const LS_KEY = "rcf:ghcfg";
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -39,7 +38,7 @@
       repo: String(cfg.repo || "").trim(),
       branch: String(cfg.branch || "main").trim(),
       path: String(cfg.path || "app/import/mother_bundle.json").trim(),
-      token: String(cfg.token || "").trim(), // PAT (fica só local)
+      token: String(cfg.token || "").trim(),
     };
     localStorage.setItem(LS_KEY, JSON.stringify(safe));
     return safe;
@@ -75,13 +74,49 @@
     return decodeURIComponent(escape(atob(b64)));
   }
 
+  function head80(t) {
+    return String(t || "").slice(0, 80).replace(/\s+/g, " ").trim();
+  }
+
+  function looksLikeJson(text) {
+    const t = String(text || "").trim();
+    if (!t) return false;
+    if (t.startsWith("<!DOCTYPE") || t.startsWith("<html")) return false;
+    return t[0] === "{";
+  }
+
+  function assertBundleJson(text) {
+    if (!looksLikeJson(text)) {
+      throw new Error(`pull: resposta não é JSON (head="${head80(text)}")`);
+    }
+    let j;
+    try { j = JSON.parse(text); }
+    catch (e) {
+      throw new Error(`pull: JSON inválido (${e?.message || e}) head="${head80(text)}"`);
+    }
+    // aceita {files:{...}} como oficial
+    const files = j?.files || null;
+    if (!files || typeof files !== "object" || Object.keys(files).length === 0) {
+      throw new Error(`pull: JSON sem files (ou vazio) head="${head80(text)}"`);
+    }
+    return true;
+  }
+
   async function getFile(c) {
     const res = await fetch(apiUrl(c), { headers: headers(c) });
+
     if (res.status === 404) return { exists: false };
-    if (!res.ok) throw new Error(`GitHub GET falhou: ${res.status}`);
+
+    if (!res.ok) {
+      const t = await res.text().catch(() => "");
+      throw new Error(`GitHub GET falhou: ${res.status} ${head80(t)}`);
+    }
+
     const j = await res.json();
     if (!j || j.type !== "file") throw new Error("Resposta inesperada do GitHub (não é file)");
-    return { exists: true, sha: j.sha, content: b64decode(String(j.content || "").replace(/\n/g, "")) };
+
+    const decoded = b64decode(String(j.content || "").replace(/\n/g, ""));
+    return { exists: true, sha: j.sha, content: decoded };
   }
 
   async function putFile(c, content, sha) {
@@ -100,7 +135,7 @@
 
     if (!res.ok) {
       const t = await res.text().catch(() => "");
-      throw new Error(`GitHub PUT falhou: ${res.status} ${t}`);
+      throw new Error(`GitHub PUT falhou: ${res.status} ${head80(t)}`);
     }
     return res.json();
   }
@@ -131,15 +166,13 @@
     return await res.text();
   }
 
-  // ✅ Arquivos “mãe” (Factory) que você quer atualizar via overrides
-  // Observação: estes paths precisam bater com o SW (raiz /js/...)
+  // OBS: mantive sua lista (patch mínimo). Normalização do mother_selfupdate já joga pro /app.
   const DEFAULT_MOTHER_FILES = [
     "/index.html",
     "/styles.css",
     "/app.js",
     "/manifest.json",
     "/sw.js",
-
     "/js/core/vfs_overrides.js",
     "/js/core/github_sync.js",
     "/js/core/mother_selfupdate.js",
@@ -151,7 +184,6 @@
       const content = await fetchText(path);
       files[path] = { content, contentType: guessType(path) };
     }
-    // ⚠️ token NUNCA entra aqui
     return JSON.stringify({ files }, null, 2);
   }
 
@@ -165,21 +197,35 @@
   // -----------------------------
   async function pull(cfg) {
     const c = requireCfg(cfg);
+
     log("GitHub: pull iniciando...");
     const f = await getFile(c);
-    if (!f.exists) return "Arquivo nao existe no repo (404).";
-    log("GitHub: pull ok.");
+
+    // ✅ Antes: retornava "Arquivo ..." (quebrava JSON.parse)
+    // ✅ Agora: falha de verdade
+    if (!f.exists) {
+      throw new Error(`Bundle não existe no repo (404): ${c.path}`);
+    }
+
+    // ✅ valida que o conteúdo é bundle JSON válido
+    assertBundleJson(f.content);
+
+    log("GitHub: pull ok (bundle JSON válido).");
     return f.content;
   }
 
   async function push(cfg, content) {
     const c = requireCfg(cfg);
 
-    // ✅ Se não passar content, gera bundle automaticamente
     let payload = content;
     if (payload == null) {
       warn("GitHub: push sem content → gerando mother bundle automaticamente...");
       payload = await buildMotherBundle();
+    }
+
+    // ✅ valida antes de enviar (evita subir lixo)
+    try { assertBundleJson(payload); } catch (e) {
+      throw new Error("push: bundle inválido, não enviado -> " + (e?.message || e));
     }
 
     log("GitHub: push iniciando...");
@@ -200,6 +246,5 @@
     pushMotherBundle,
   };
 
-  log("github_sync.js loaded");
+  log("github_sync.js loaded (v2.1)");
 })();
-  
