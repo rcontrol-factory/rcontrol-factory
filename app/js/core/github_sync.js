@@ -1,9 +1,11 @@
-/* RControl Factory — GitHub Sync (SAFE) — v2.1
-   - GitHub Contents API: GET/PUT file
-   - Compatível com app.js (Storage: rcf:ghcfg)
-   - pull(): retorna string do bundle (JSON) OU lança erro (nunca retorna "Arquivo ...")
-   - push(content?): se content não vier, gera bundle “mãe” automaticamente via fetch()
-   - NUNCA salva token no bundle (só no localStorage)
+/* RControl Factory — GitHub Sync (SAFE) — v2.2
+  - GitHub Contents API: GET/PUT file
+  - Storage: rcf:ghcfg
+  - pull(): retorna string JSON (bundle) ou lança erro
+  - push(content?): se sem content, gera mother bundle via fetch (NO-STORE)
+  - ✅ PADRÃO: MotherRoot=/app
+  - ✅ buildMotherBundle usa new URL(<rel>, document.baseURI)
+  - ✅ DEFAULT_MOTHER_FILES relativos a /app/ (sem “/index.html”)
 */
 (() => {
   "use strict";
@@ -13,15 +15,9 @@
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const nowISO = () => new Date().toISOString();
 
-  function log(msg) {
-    try { window.RCF_LOGGER?.push?.("info", msg); } catch {}
-  }
-  function warn(msg) {
-    try { window.RCF_LOGGER?.push?.("warn", msg); } catch {}
-  }
-  function err(msg) {
-    try { window.RCF_LOGGER?.push?.("err", msg); } catch {}
-  }
+  function log(msg)  { try { window.RCF_LOGGER?.push?.("info", msg); } catch {} }
+  function warn(msg) { try { window.RCF_LOGGER?.push?.("warn", msg); } catch {} }
+  function err(msg)  { try { window.RCF_LOGGER?.push?.("err", msg); } catch {} }
 
   function loadConfig() {
     try {
@@ -37,7 +33,11 @@
       owner: String(cfg.owner || "").trim(),
       repo: String(cfg.repo || "").trim(),
       branch: String(cfg.branch || "main").trim(),
-      path: String(cfg.path || "app/import/mother_bundle.json").trim(),
+
+      // ✅ PADRÃO local: /app/import/mother_bundle.json
+      // No GitHub Contents API, isso vira contents/import/mother_bundle.json (sem /app/)
+      path: String(cfg.path || "import/mother_bundle.json").trim(),
+
       token: String(cfg.token || "").trim(),
     };
     localStorage.setItem(LS_KEY, JSON.stringify(safe));
@@ -67,16 +67,10 @@
     };
   }
 
-  function b64encode(str) {
-    return btoa(unescape(encodeURIComponent(str)));
-  }
-  function b64decode(b64) {
-    return decodeURIComponent(escape(atob(b64)));
-  }
+  function b64encode(str) { return btoa(unescape(encodeURIComponent(str))); }
+  function b64decode(b64) { return decodeURIComponent(escape(atob(b64))); }
 
-  function head80(t) {
-    return String(t || "").slice(0, 80).replace(/\s+/g, " ").trim();
-  }
+  function head80(t) { return String(t || "").slice(0, 80).replace(/\s+/g, " ").trim(); }
 
   function looksLikeJson(text) {
     const t = String(text || "").trim();
@@ -94,7 +88,6 @@
     catch (e) {
       throw new Error(`pull: JSON inválido (${e?.message || e}) head="${head80(text)}"`);
     }
-    // aceita {files:{...}} como oficial
     const files = j?.files || null;
     if (!files || typeof files !== "object" || Object.keys(files).length === 0) {
       throw new Error(`pull: JSON sem files (ou vazio) head="${head80(text)}"`);
@@ -149,7 +142,7 @@
   }
 
   // -----------------------------
-  // Bundle Builder (Mãe)
+  // Bundle Builder (Mãe) — /app/*
   // -----------------------------
   function guessType(path) {
     const p = String(path || "");
@@ -160,29 +153,33 @@
     return "text/plain; charset=utf-8";
   }
 
-  async function fetchText(path) {
-    const res = await fetch(path, { cache: "no-store" });
-    if (!res.ok) throw new Error(`Falhou fetch ${path}: ${res.status}`);
+  async function fetchText(relPath) {
+    // ✅ baseURI aponta para /app/ (por causa do <base href="./">)
+    const url = new URL(String(relPath || ""), document.baseURI);
+    const res = await fetch(url.toString(), { cache: "no-store" });
+    if (!res.ok) throw new Error(`Falhou fetch ${url.pathname}: ${res.status}`);
     return await res.text();
   }
 
-  // OBS: mantive sua lista (patch mínimo). Normalização do mother_selfupdate já joga pro /app.
+  // ✅ PADRÃO: tudo relativo a /app/
   const DEFAULT_MOTHER_FILES = [
-    "/index.html",
-    "/styles.css",
-    "/app.js",
-    "/manifest.json",
-    "/sw.js",
-    "/js/core/vfs_overrides.js",
-    "/js/core/github_sync.js",
-    "/js/core/mother_selfupdate.js",
+    "index.html",
+    "styles.css",
+    "app.js",
+    "manifest.json",
+    "sw.js",
+    "js/core/vfs_overrides.js",
+    "js/core/github_sync.js",
+    "js/core/mother_selfupdate.js",
   ];
 
   async function buildMotherBundle(fileList = DEFAULT_MOTHER_FILES) {
     const files = {};
-    for (const path of fileList) {
-      const content = await fetchText(path);
-      files[path] = { content, contentType: guessType(path) };
+    for (const rel of fileList) {
+      const content = await fetchText(rel);
+      // guardamos no bundle com path ABSOLUTO em /app/ (source of truth)
+      const bundlePath = "/app/" + String(rel).replace(/^\/+/, "");
+      files[bundlePath] = { content, contentType: guessType(rel) };
     }
     return JSON.stringify({ files }, null, 2);
   }
@@ -197,17 +194,11 @@
   // -----------------------------
   async function pull(cfg) {
     const c = requireCfg(cfg);
-
     log("GitHub: pull iniciando...");
     const f = await getFile(c);
 
-    // ✅ Antes: retornava "Arquivo ..." (quebrava JSON.parse)
-    // ✅ Agora: falha de verdade
-    if (!f.exists) {
-      throw new Error(`Bundle não existe no repo (404): ${c.path}`);
-    }
+    if (!f.exists) throw new Error(`Bundle não existe no repo (404): ${c.path}`);
 
-    // ✅ valida que o conteúdo é bundle JSON válido
     assertBundleJson(f.content);
 
     log("GitHub: pull ok (bundle JSON válido).");
@@ -223,7 +214,6 @@
       payload = await buildMotherBundle();
     }
 
-    // ✅ valida antes de enviar (evita subir lixo)
     try { assertBundleJson(payload); } catch (e) {
       throw new Error("push: bundle inválido, não enviado -> " + (e?.message || e));
     }
@@ -246,5 +236,5 @@
     pushMotherBundle,
   };
 
-  log("github_sync.js loaded (v2.1)");
+  log("github_sync.js loaded (v2.2)");
 })();
