@@ -6,7 +6,7 @@
   <title>RControl Factory</title>
   <meta name="theme-color" content="#0b1020" />
 
-  <!-- ✅ importante: base relativo pra funcionar em /app/ -->
+  <!-- ✅ PADRÃO: base relativo pra funcionar em /app/ -->
   <base href="./" />
 
   <link rel="manifest" href="./manifest.json" />
@@ -80,23 +80,31 @@
         window.RCF_LOGGER.push("err", "UNHANDLED_REJECTION: " + m);
       });
 
-      function loadScript(src){
+      function loadScript(src, timeoutMs = 12000){
         return new Promise((resolve, reject) => {
           const s = document.createElement("script");
           s.src = src;
           s.async = false;
-          s.onload = () => resolve(src);
-          s.onerror = () => reject(new Error("load failed: " + src));
+
+          const to = setTimeout(() => {
+            reject(new Error("timeout loading: " + src));
+          }, timeoutMs);
+
+          s.onload = () => { clearTimeout(to); resolve(src); };
+          s.onerror = () => { clearTimeout(to); reject(new Error("load failed: " + src)); };
+
           document.head.appendChild(s);
         });
       }
 
       async function boot(){
         window.RCF_LOGGER.push("boot", "index boot: starting…");
+        window.RCF_LOGGER.push("boot", "href = " + location.href);
         window.RCF_LOGGER.push("boot", "base href = " + document.baseURI);
 
-        // ✅ ordem mínima (sem depender do app.js ainda)
+        // ✅ módulos (SAFE) — não quebra se faltar
         const modules = [
+          "./js/core/logger.js",           // (se existir) antes
           "./js/core/storage.js",
           "./js/core/github_sync.js",
           "./js/core/vfs_overrides.js",
@@ -121,12 +129,12 @@
           window.RCF_LOGGER.push("err", "app.js missing/failed ❌ ./app.js :: " + (e.message||e));
         }
 
-        // SW (scope ./)
+        // ✅ SW: PADRÃO = registrar no app.js (evita duplicidade)
         try {
           if ("serviceWorker" in navigator) {
-            navigator.serviceWorker.register("./sw.js", { scope: "./" })
-              .then(() => window.RCF_LOGGER.push("boot", "sw register: ok"))
-              .catch((e) => window.RCF_LOGGER.push("warn", "sw register: fail/ignored :: " + (e?.message||e)));
+            window.RCF_LOGGER.push("boot", "sw: supported (registration handled by app.js)");
+          } else {
+            window.RCF_LOGGER.push("warn", "sw: not supported");
           }
         } catch {}
       }
