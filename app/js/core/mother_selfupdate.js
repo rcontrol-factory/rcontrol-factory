@@ -1,67 +1,31 @@
-/* RControl Factory — /app/js/core/mother_selfupdate.js — v2 (PADRÃO SAFE)
-   - Expõe: window.RCF_MAE e window.RCF_MOTHER (alias)
-   - API: status(), updateFromGitHub(), clearOverrides()
-   - Usa Overrides VFS (localStorage) como destino (sem tela branca)
-   - Pull do GitHub via RCF_GH_SYNC.pull(cfg) (mother_bundle.json)
-   - iOS safe write: timeout 15s + retries/backoff por arquivo
-   - Normaliza paths para começar em /app/ quando necessário
+/* RControl Factory — /app/js/core/mother_selfupdate.js (PADRÃO) — v1
+   - Define a "Mãe" (Self-Update) corretamente: window.RCF_MAE / window.RCF_MOTHER
+   - Usa GitHub Sync (RCF_GH_SYNC) para puxar o mother_bundle.json
+   - Salva bundle em localStorage (rcf:mother_bundle) para o app.js ler
+   - Aplica arquivos no VFS de overrides (window.RCF_VFS_OVERRIDES) com retry/backoff (iOS)
+   - Normaliza paths para sempre começar em /app/ (evita put errado em /index.html)
 */
 (() => {
   "use strict";
 
-  if (window.RCF_MAE && window.RCF_MAE.__v2) return;
+  if (window.RCF_MAE && window.RCF_MAE.__v1) return;
 
-  const LOG = (lvl, msg) => {
-    try { window.RCF_LOGGER?.push?.(lvl, msg); } catch {}
-    try { console.log("[MAE]", lvl, msg); } catch {}
+  const log = (lvl, msg, extra) => {
+    try { window.RCF_LOGGER?.push?.(lvl, String(msg)); } catch {}
+    try { console.log("[MAE]", lvl, msg, extra || ""); } catch {}
   };
 
-  const LS_GHCFG = "rcf:ghcfg";
-  const LS_BUNDLE = "rcf:mother_bundle";
+  const LS_BUNDLE_KEY = "rcf:mother_bundle";     // raw JSON text (string)
+  const LS_CFG_KEY    = "rcf:ghcfg";             // {owner,repo,branch,path,token}
 
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-  const safeJsonParse = (s, fb = null) => { try { return JSON.parse(s); } catch { return fb; } };
-
-  const normPath = (p) => {
-    let x = String(p || "").trim();
-    if (!x) return "";
-    x = x.split("#")[0].split("?")[0].trim();
-    if (!x.startsWith("/")) x = "/" + x;
-    x = x.replace(/\/{2,}/g, "/");
-
-    // ✅ padrão da Factory: tudo no root /app
-    // Se vier "index.html" ou "/index.html", força "/app/index.html"
-    if (x === "/index.html") x = "/app/index.html";
-    if (x === "/styles.css") x = "/app/styles.css";
-    if (x === "/app.js") x = "/app/app.js";
-
-    // se não começar com /app/ e parecer arquivo da factory, empurra pra /app/
-    if (!x.startsWith("/app/")) {
-      const looksFactory = /\.(html|js|css|json|txt|md)$/i.test(x) || x.includes("/js/") || x.includes("/styles");
-      if (looksFactory && !x.startsWith("/runtime/")) x = "/app" + (x.startsWith("/") ? "" : "/") + x.replace(/^\//, "");
-      x = x.replace(/\/{2,}/g, "/");
-    }
-
-    return x;
-  };
-
-  function ensureOverridesVFS() {
-    // Preferir o Overrides do app.js (fase A)
-    const vfs =
-      window.RCF_OVERRIDES_VFS ||
-      window.RCF_VFS_OVERRIDES ||
-      null;
-
-    if (!vfs || typeof vfs.writeFile !== "function" || typeof vfs.listFiles !== "function") {
-      throw new Error("RCF_OVERRIDES_VFS ausente (precisa do OverridesVFS no app.js)");
-    }
-    return vfs;
+  function safeParse(raw, fallback) {
+    try { return raw ? JSON.parse(raw) : fallback; } catch { return fallback; }
   }
 
-  function loadCfg() {
-    const raw = localStorage.getItem(LS_GHCFG);
-    const cfg = safeJsonParse(raw, {}) || {};
+  function getCfg() {
+    const cfg = safeParse(localStorage.getItem(LS_CFG_KEY), {}) || {};
     return {
       owner: String(cfg.owner || "").trim(),
       repo: String(cfg.repo || "").trim(),
@@ -71,156 +35,185 @@
     };
   }
 
-  async function saveBundleLocal(txt) {
-    const s = String(txt || "");
-    try { localStorage.setItem(LS_BUNDLE, s); } catch {}
-    // Se tiver o storage V2 FULL (IndexedDB), salva também
-    try {
-      if (window.RCF_STORAGE && typeof window.RCF_STORAGE.put === "function") {
-        await window.RCF_STORAGE.put("mother_bundle_local", s);
-      }
-    } catch {}
+  function normalizeToAppRoot(p) {
+    let x = String(p || "").trim();
+    if (!x) return "";
+    x = x.split("#")[0].split("?")[0].trim();
+    if (!x.startsWith("/")) x = "/" + x;
+    x = x.replace(/\/{2,}/g, "/");
+
+    // ✅ regra: tudo vira /app/...
+    if (x === "/index.html") x = "/app/index.html";
+    if (!x.startsWith("/app/")) {
+      // se veio "/js/..." ou "/styles.css", força /app/
+      x = "/app" + (x.startsWith("/") ? x : ("/" + x));
+      x = x.replace(/\/{2,}/g, "/");
+    }
+    return x;
   }
 
-  function parseBundle(txt) {
-    const obj = safeJsonParse(txt, null);
-    if (!obj || typeof obj !== "object") return null;
-
-    // aceita {files:{...}} ou direto {...}
-    const files = (obj.files && typeof obj.files === "object") ? obj.files : obj;
-    if (!files || typeof files !== "object") return null;
-
-    return { raw: obj, files };
+  function getOverridesVFS() {
+    return window.RCF_VFS_OVERRIDES || window.RCF_OVERRIDES_VFS || null;
   }
 
-  async function writeWithRetry(vfs, path, content) {
-    const tries = 3;
+  async function writeWithRetry(vfs, path, content, onProgress) {
+    const tries = 4;
+    let lastErr = null;
+
     for (let i = 0; i < tries; i++) {
-      const timeoutMs = 15000;
       try {
-        await Promise.race([
-          Promise.resolve(vfs.writeFile(path, content)),
-          new Promise((_, rej) => setTimeout(() => rej(new Error("TIMEOUT writeFile " + timeoutMs + "ms")), timeoutMs))
-        ]);
-        return { ok: true, attempt: i + 1 };
+        onProgress && onProgress({ step: "write_try", i: i + 1, path });
+
+        if (typeof vfs.writeFile === "function") {
+          await vfs.writeFile(path, content);
+        } else if (typeof vfs.write === "function") {
+          await vfs.write(path, content);
+        } else if (typeof vfs.put === "function") {
+          await vfs.put(path, content);
+        } else {
+          throw new Error("Overrides VFS sem writeFile/write/put");
+        }
+
+        onProgress && onProgress({ step: "write_ok", i: i + 1, path });
+        return true;
       } catch (e) {
-        const msg = String(e?.message || e);
-        LOG("warn", `write fail (${i + 1}/${tries}) path=${path} err=${msg}`);
-        // backoff progressivo
-        await sleep(500 + i * 900);
+        lastErr = e;
+        onProgress && onProgress({ step: "write_fail", i: i + 1, path, err: String(e?.message || e) });
+
+        // backoff (iOS safe)
+        await sleep(400 + i * 600);
       }
     }
-    return { ok: false, err: "write failed after retries: " + path };
+
+    throw (lastErr || new Error("write failed"));
   }
 
-  let UPDATE_LOCK = false;
+  function parseBundleToFiles(bundleText) {
+    const parsed = safeParse(bundleText, null);
+    if (!parsed || typeof parsed !== "object") return { files: {}, meta: { ok: false } };
 
-  async function updateFromGitHub() {
-    if (UPDATE_LOCK) {
-      LOG("warn", "updateFromGitHub bloqueado (lock)");
-      return { ok: false, msg: "update já está rodando" };
+    // aceita {files:{...}} OU objeto direto
+    const filesObj = (parsed.files && typeof parsed.files === "object") ? parsed.files : parsed;
+
+    const out = {};
+    for (const [rawPath, rawVal] of Object.entries(filesObj || {})) {
+      const p = normalizeToAppRoot(rawPath);
+      const txt = (rawVal && typeof rawVal === "object" && "content" in rawVal)
+        ? String(rawVal.content ?? "")
+        : String(rawVal ?? "");
+      if (p) out[p] = txt;
     }
-    UPDATE_LOCK = true;
 
-    try {
-      if (!window.RCF_GH_SYNC || typeof window.RCF_GH_SYNC.pull !== "function") {
-        throw new Error("RCF_GH_SYNC.pull ausente (core/github_sync.js não carregou)");
-      }
+    return { files: out, meta: { ok: true, count: Object.keys(out).length } };
+  }
 
-      const cfg = loadCfg();
-      if (!cfg.owner || !cfg.repo) {
-        throw new Error("ghcfg incompleto (owner/repo). Abra Admin e salve config.");
-      }
-
-      LOG("ok", `update start: ${cfg.owner}/${cfg.repo} @ ${cfg.branch} :: ${cfg.path}`);
-      const txt = await window.RCF_GH_SYNC.pull(cfg);
-      if (!txt) throw new Error("pull retornou vazio");
-
-      await saveBundleLocal(txt);
-
-      const bundle = parseBundle(txt);
-      if (!bundle) throw new Error("bundle inválido (JSON) — confira mother_bundle.json");
-
-      const vfs = ensureOverridesVFS();
-
-      // escreve arquivos no overrides
-      const entries = Object.entries(bundle.files);
-      let ok = 0, fail = 0;
-
-      for (const [rawPath, rawVal] of entries) {
-        const p = normPath(rawPath);
-        if (!p) continue;
-
-        // aceita {content:""} ou string
-        const content =
-          (rawVal && typeof rawVal === "object" && "content" in rawVal)
-            ? String(rawVal.content ?? "")
-            : String(rawVal ?? "");
-
-        const r = await writeWithRetry(vfs, p, content);
-        if (r.ok) ok++;
-        else fail++;
-
-        // mantém logs leves
-        if ((ok + fail) % 20 === 0) LOG("log", `progress: ok=${ok} fail=${fail}`);
-      }
-
-      LOG("ok", `update done: ok=${ok} fail=${fail}`);
-      return { ok: fail === 0, wrote: ok, failed: fail };
-    } catch (e) {
-      const msg = String(e?.message || e);
-      LOG("err", "update err: " + msg);
-      return { ok: false, msg };
-    } finally {
-      UPDATE_LOCK = false;
+  async function pullBundleFromGitHub(cfg) {
+    if (!window.RCF_GH_SYNC || typeof window.RCF_GH_SYNC.pull !== "function") {
+      throw new Error("RCF_GH_SYNC.pull ausente (js/core/github_sync.js)");
     }
+    const txt = await window.RCF_GH_SYNC.pull(cfg);
+    if (!txt || String(txt).trim().length < 10) throw new Error("bundle vazio (pull retornou vazio)");
+    return String(txt);
+  }
+
+  async function updateFromGitHub(opts = {}) {
+    const cfg = getCfg();
+    const onProgress = typeof opts.onProgress === "function" ? opts.onProgress : null;
+
+    if (!cfg.owner || !cfg.repo) throw new Error("ghcfg incompleto (owner/repo)");
+    onProgress && onProgress({ step: "start", cfg: { owner: cfg.owner, repo: cfg.repo, branch: cfg.branch, path: cfg.path } });
+
+    log("ok", "update start", `${cfg.owner}/${cfg.repo}@${cfg.branch} path=${cfg.path}`);
+
+    // 1) pull bundle
+    const bundleText = await pullBundleFromGitHub(cfg);
+    localStorage.setItem(LS_BUNDLE_KEY, bundleText);
+    onProgress && onProgress({ step: "bundle_saved", bytes: bundleText.length });
+
+    // 2) parse
+    const parsed = parseBundleToFiles(bundleText);
+    if (!parsed.meta.ok || parsed.meta.count < 1) throw new Error("bundle parse falhou ou sem arquivos");
+
+    // 3) apply to overrides vfs
+    const vfs = getOverridesVFS();
+    if (!vfs) throw new Error("Overrides VFS ausente (js/core/vfs_overrides.js)");
+
+    const paths = Object.keys(parsed.files);
+    onProgress && onProgress({ step: "apply_begin", count: paths.length });
+
+    // ordem: primeiro index/app.js/styles (reduz chance de “tela branca” em reload)
+    paths.sort((a, b) => {
+      const prio = (p) => (
+        p.endsWith("/index.html") ? 0 :
+        p.endsWith("/app.js") ? 1 :
+        p.endsWith("/styles.css") ? 2 : 9
+      );
+      return prio(a) - prio(b);
+    });
+
+    let done = 0;
+    for (const p of paths) {
+      const content = parsed.files[p];
+
+      // ✅ proteção final: nunca escrever fora de /app/
+      const safePath = normalizeToAppRoot(p);
+      await writeWithRetry(vfs, safePath, content, onProgress);
+
+      done++;
+      if (done % 10 === 0 || done === paths.length) {
+        onProgress && onProgress({ step: "apply_progress", done, total: paths.length });
+      }
+    }
+
+    onProgress && onProgress({ step: "apply_done", done, total: paths.length });
+    log("ok", "update done", `files=${paths.length}`);
+
+    return { ok: true, files: paths.length };
   }
 
   async function clearOverrides() {
-    try {
-      const vfs = ensureOverridesVFS();
-      const list = await vfs.listFiles();
-      let n = 0;
-      for (const p0 of (list || [])) {
-        const p = normPath(p0);
-        try { await vfs.deleteFile(p); n++; } catch {}
+    const vfs = getOverridesVFS();
+    if (!vfs) throw new Error("Overrides VFS ausente");
+
+    if (typeof vfs.listFiles !== "function" || typeof vfs.deleteFile !== "function") {
+      // tenta modos alternativos
+      if (typeof vfs.list === "function" && typeof vfs.del === "function") {
+        const list = await vfs.list();
+        for (const p of list || []) await vfs.del(p);
+        log("ok", "clearOverrides ok", `count=${(list || []).length}`);
+        return { ok: true, count: (list || []).length };
       }
-      LOG("ok", "clearOverrides ok: " + n);
-      return { ok: true, deleted: n };
-    } catch (e) {
-      const msg = String(e?.message || e);
-      LOG("err", "clearOverrides err: " + msg);
-      return { ok: false, msg };
+      throw new Error("Overrides VFS sem listFiles/deleteFile");
     }
+
+    const list = await vfs.listFiles();
+    let n = 0;
+    for (const p of list || []) {
+      try { await vfs.deleteFile(p); n++; } catch {}
+    }
+
+    log("ok", "clearOverrides ok", `count=${n}`);
+    return { ok: true, count: n };
   }
 
   function status() {
-    let overridesCount = 0;
-    try {
-      const vfs = window.RCF_OVERRIDES_VFS;
-      if (vfs && typeof vfs._raw?.list === "function") overridesCount = vfs._raw.list().length;
-    } catch {}
-
-    const cfg = (() => {
-      try { return loadCfg(); } catch { return {}; }
-    })();
-
-    const bundleSize = (() => {
-      try { return (localStorage.getItem(LS_BUNDLE) || "").length; } catch { return 0; }
-    })();
+    const cfg = getCfg();
+    const hasSync = !!(window.RCF_GH_SYNC && typeof window.RCF_GH_SYNC.pull === "function");
+    const hasVfs = !!getOverridesVFS();
+    const bundleLen = (localStorage.getItem(LS_BUNDLE_KEY) || "").length;
 
     return {
       ok: true,
-      v: "v2",
-      lock: UPDATE_LOCK,
-      overridesCount,
-      bundleSize,
-      cfg: { owner: cfg.owner, repo: cfg.repo, branch: cfg.branch, path: cfg.path, token: cfg.token ? "set" : "" }
+      mae: "v1",
+      hasSync,
+      hasOverridesVFS: hasVfs,
+      bundleBytes: bundleLen,
+      cfg: { owner: cfg.owner, repo: cfg.repo, branch: cfg.branch, path: cfg.path, token: cfg.token ? "set" : "empty" }
     };
   }
 
-  window.RCF_MAE = { __v2: true, status, updateFromGitHub, clearOverrides };
+  window.RCF_MAE = { __v1: true, updateFromGitHub, clearOverrides, status };
   window.RCF_MOTHER = window.RCF_MAE; // alias
 
-  LOG("ok", "mother_selfupdate.js v2 loaded ✅");
+  log("ok", "mother_selfupdate.js ready ✅");
 })();
