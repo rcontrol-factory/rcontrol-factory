@@ -1,22 +1,24 @@
-/* RControl Factory — /app/js/core/mother_selfupdate.js (PADRÃO) — v1
-   - Define a "Mãe" (Self-Update) corretamente: window.RCF_MAE / window.RCF_MOTHER
-   - Usa GitHub Sync (RCF_GH_SYNC) para puxar o mother_bundle.json
-   - Salva bundle em localStorage (rcf:mother_bundle) para o app.js ler
-   - Aplica arquivos no VFS de overrides (window.RCF_VFS_OVERRIDES) com retry/backoff (iOS)
-   - Normaliza paths para sempre começar em /app/ (evita put errado em /index.html)
+/* RControl Factory — /app/js/core/mother_selfupdate.js (PADRÃO) — v1.1
+  - Define a "Mãe" (Self-Update): window.RCF_MAE / window.RCF_MOTHER
+  - Usa GitHub Sync (RCF_GH_SYNC) para puxar mother_bundle.json
+  - Salva bundle em localStorage (rcf:mother_bundle) para o app.js ler
+  - Aplica arquivos no VFS de overrides com retry/backoff (iOS)
+  - ✅ PADRÃO: MotherRoot = /app (source of truth = /app/index.html)
+  - ✅ normalizeMotherPath(p) em TUDO + log "path normalized: from -> to"
+  - ✅ nunca escreve /index.html (vira /app/index.html)
 */
 (() => {
   "use strict";
 
-  if (window.RCF_MAE && window.RCF_MAE.__v1) return;
+  if (window.RCF_MAE && window.RCF_MAE.__v1_1) return;
 
   const log = (lvl, msg, extra) => {
     try { window.RCF_LOGGER?.push?.(lvl, String(msg)); } catch {}
     try { console.log("[MAE]", lvl, msg, extra || ""); } catch {}
   };
 
-  const LS_BUNDLE_KEY = "rcf:mother_bundle";     // raw JSON text (string)
-  const LS_CFG_KEY    = "rcf:ghcfg";             // {owner,repo,branch,path,token}
+  const LS_BUNDLE_KEY = "rcf:mother_bundle"; // raw JSON text (string)
+  const LS_CFG_KEY    = "rcf:ghcfg";         // {owner,repo,branch,path,token}
 
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
@@ -30,25 +32,52 @@
       owner: String(cfg.owner || "").trim(),
       repo: String(cfg.repo || "").trim(),
       branch: String(cfg.branch || "main").trim(),
-      path: String(cfg.path || "app/import/mother_bundle.json").trim(),
+
+      // ✅ PADRÃO: dentro de /app/, o path local do bundle é relativo:
+      // import/mother_bundle.json  => new URL(path, baseURI) => /app/import/mother_bundle.json
+      path: String(cfg.path || "import/mother_bundle.json").trim(),
+
       token: String(cfg.token || "").trim(),
     };
   }
 
-  function normalizeToAppRoot(p) {
+  // =========================================================
+  // ✅ PADRÃO: normalizeMotherPath (source of truth)
+  // Regras:
+  // - "/index.html" => "/app/index.html"
+  // - "/styles.css" "/app.js" "/sw.js" "/manifest.json" => "/app/<file>"
+  // - "/js/..." => "/app/js/..."
+  // - qualquer path sem "/app/" => força "/app/"
+  // =========================================================
+  function normalizeMotherPath(p) {
     let x = String(p || "").trim();
     if (!x) return "";
     x = x.split("#")[0].split("?")[0].trim();
     if (!x.startsWith("/")) x = "/" + x;
     x = x.replace(/\/{2,}/g, "/");
 
-    // ✅ regra: tudo vira /app/...
+    // converte /index.html => /app/index.html
     if (x === "/index.html") x = "/app/index.html";
+
+    // arquivos raiz comuns
+    const ROOT_FILES = new Set([
+      "/styles.css",
+      "/app.js",
+      "/sw.js",
+      "/manifest.json",
+      "/favicon.ico",
+    ]);
+    if (ROOT_FILES.has(x)) x = "/app" + x;
+
+    // /js/... => /app/js/...
+    if (x.startsWith("/js/")) x = "/app" + x;
+
+    // se não começa com /app/, força /app/
     if (!x.startsWith("/app/")) {
-      // se veio "/js/..." ou "/styles.css", força /app/
       x = "/app" + (x.startsWith("/") ? x : ("/" + x));
       x = x.replace(/\/{2,}/g, "/");
     }
+
     return x;
   }
 
@@ -79,9 +108,7 @@
       } catch (e) {
         lastErr = e;
         onProgress && onProgress({ step: "write_fail", i: i + 1, path, err: String(e?.message || e) });
-
-        // backoff (iOS safe)
-        await sleep(400 + i * 600);
+        await sleep(400 + i * 600); // iOS safe backoff
       }
     }
 
@@ -92,16 +119,15 @@
     const parsed = safeParse(bundleText, null);
     if (!parsed || typeof parsed !== "object") return { files: {}, meta: { ok: false } };
 
-    // aceita {files:{...}} OU objeto direto
     const filesObj = (parsed.files && typeof parsed.files === "object") ? parsed.files : parsed;
 
     const out = {};
     for (const [rawPath, rawVal] of Object.entries(filesObj || {})) {
-      const p = normalizeToAppRoot(rawPath);
+      const pNorm = normalizeMotherPath(rawPath);
       const txt = (rawVal && typeof rawVal === "object" && "content" in rawVal)
         ? String(rawVal.content ?? "")
         : String(rawVal ?? "");
-      if (p) out[p] = txt;
+      if (pNorm) out[pNorm] = txt;
     }
 
     return { files: out, meta: { ok: true, count: Object.keys(out).length } };
@@ -141,7 +167,7 @@
     const paths = Object.keys(parsed.files);
     onProgress && onProgress({ step: "apply_begin", count: paths.length });
 
-    // ordem: primeiro index/app.js/styles (reduz chance de “tela branca” em reload)
+    // ordem: index/app.js/styles (reduz chance de “tela branca”)
     paths.sort((a, b) => {
       const prio = (p) => (
         p.endsWith("/index.html") ? 0 :
@@ -155,8 +181,11 @@
     for (const p of paths) {
       const content = parsed.files[p];
 
-      // ✅ proteção final: nunca escrever fora de /app/
-      const safePath = normalizeToAppRoot(p);
+      // ✅ proteção final + LOG
+      const safePath = normalizeMotherPath(p);
+      if (safePath !== p) log("info", `path normalized: ${p} -> ${safePath}`);
+      if (!safePath.startsWith("/app/")) throw new Error("proteção: path fora de /app/ bloqueado: " + safePath);
+
       await writeWithRetry(vfs, safePath, content, onProgress);
 
       done++;
@@ -168,7 +197,7 @@
     onProgress && onProgress({ step: "apply_done", done, total: paths.length });
     log("ok", "update done", `files=${paths.length}`);
 
-    return { ok: true, files: paths.length };
+    return { ok: true, wrote: paths.length, failed: 0 };
   }
 
   async function clearOverrides() {
@@ -176,7 +205,6 @@
     if (!vfs) throw new Error("Overrides VFS ausente");
 
     if (typeof vfs.listFiles !== "function" || typeof vfs.deleteFile !== "function") {
-      // tenta modos alternativos
       if (typeof vfs.list === "function" && typeof vfs.del === "function") {
         const list = await vfs.list();
         for (const p of list || []) await vfs.del(p);
@@ -204,15 +232,22 @@
 
     return {
       ok: true,
-      mae: "v1",
+      v: "v1.1",
+      motherRoot: "/app",
       hasSync,
       hasOverridesVFS: hasVfs,
-      bundleBytes: bundleLen,
-      cfg: { owner: cfg.owner, repo: cfg.repo, branch: cfg.branch, path: cfg.path, token: cfg.token ? "set" : "empty" }
+      bundleSize: bundleLen,
+      cfg: {
+        owner: cfg.owner,
+        repo: cfg.repo,
+        branch: cfg.branch,
+        path: cfg.path,
+        token: cfg.token ? "set" : "empty"
+      }
     };
   }
 
-  window.RCF_MAE = { __v1: true, updateFromGitHub, clearOverrides, status };
+  window.RCF_MAE = { __v1_1: true, updateFromGitHub, clearOverrides, status, normalizeMotherPath };
   window.RCF_MOTHER = window.RCF_MAE; // alias
 
   log("ok", "mother_selfupdate.js ready ✅");
