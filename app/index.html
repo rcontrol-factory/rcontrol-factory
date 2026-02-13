@@ -6,35 +6,10 @@
   <title>RControl Factory</title>
   <meta name="theme-color" content="#0b1020" />
 
-  <script>
-    (function () {
-      try {
-        var p = location.pathname || "/";
-        window.__RCF_ROOT__ = (p === "/app" || p.startsWith("/app/")) ? "/app" : "";
-      } catch {
-        window.__RCF_ROOT__ = "";
-      }
-    })();
-  </script>
-
-  <script>
-    (function () {
-      try {
-        var R = window.__RCF_ROOT__ || "";
-        var manifest = document.createElement("link");
-        manifest.rel = "manifest";
-        manifest.href = (R || "") + "/manifest.json";
-        document.head.appendChild(manifest);
-
-        var css = document.createElement("link");
-        css.rel = "stylesheet";
-        css.href = (R || "") + "/styles.css";
-        document.head.appendChild(css);
-      } catch {}
-    })();
-  </script>
+  <!-- tenta root primeiro, mas mantém fallback /app/ via loader -->
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="stylesheet" href="/styles.css" />
 </head>
-
 <body>
   <noscript>Ative o JavaScript para usar o app.</noscript>
 
@@ -54,13 +29,6 @@
         } catch {}
       }
 
-      function rootPath(p) {
-        var R = window.__RCF_ROOT__ || "";
-        if (!p) return R || "";
-        if (!p.startsWith("/")) p = "/" + p;
-        return (R || "") + p;
-      }
-
       function loadAny(paths) {
         return new Promise((resolve, reject) => {
           let i = 0;
@@ -69,7 +37,7 @@
             const src = paths[i++];
             const s = document.createElement("script");
             s.src = src;
-            s.async = false;
+            s.async = false; // ordem
             s.onload = () => resolve(src);
             s.onerror = () => tryNext();
             document.head.appendChild(s);
@@ -79,27 +47,14 @@
       }
 
       async function boot() {
-        const R = window.__RCF_ROOT__ || "";
-        rcfLog("index boot: root=" + (R || "/"));
+        rcfLog("index boot: starting...");
 
+        // Carrega primeiro as bases que habilitam injeção/override/mãe
         const modules = [
-          { name: "github_sync",       paths: [rootPath("/js/core/github_sync.js")] },
-          { name: "vfs_overrides",     paths: [rootPath("/js/core/vfs_overrides.js")] },
-
-          // ✅ NOVO: ponte que cria window.RCF_VFS (pro Injector enxergar)
-          { name: "vfs_shim",          paths: [rootPath("/js/core/vfs_shim.js")] },
-
-          { name: "mother_selfupdate", paths: [rootPath("/js/core/mother_selfupdate.js")] },
-          { name: "injector",          paths: [rootPath("/js/core/injector.js")] },
-
-          { name: "settings_compact",  paths: [rootPath("/js/settings_compact.js")] },
-
-          { name: "admin_github_ui",   paths: [rootPath("/js/admin.github.js"), rootPath("/js/admin.js")] },
-
-          { name: "patchQueue",        paths: [rootPath("/js/engine/patchQueue.js")] },
-          { name: "organizerEngine",   paths: [rootPath("/js/engine/organizerEngine.js")] },
-          { name: "applyPipeline",     paths: [rootPath("/js/engine/applyPipeline.js")] },
-          { name: "builderSafe",       paths: [rootPath("/js/builder/builderSafe.js")] },
+          { name: "injector", paths: ["/js/core/injector.js", "/app/js/core/injector.js"] },
+          { name: "vfs_overrides", paths: ["/js/core/vfs_overrides.js", "/app/js/core/vfs_overrides.js"] },
+          { name: "github_sync", paths: ["/js/core/github_sync.js", "/app/js/core/github_sync.js"] },
+          { name: "mother_selfupdate", paths: ["/js/core/mother_selfupdate.js", "/app/js/core/mother_selfupdate.js"] }
         ];
 
         for (const m of modules) {
@@ -111,20 +66,20 @@
           }
         }
 
+        // Depois sobe o app principal
         try {
-          const appPath = rootPath("/app.js");
-          await loadAny([appPath]);
-          rcfLog("app.js loaded ✅ " + appPath);
+          await loadAny(["/app.js", "/app/app.js"]);
+          rcfLog("app.js loaded ✅");
         } catch {
-          rcfLog("app.js missing ❌ " + rootPath("/app.js"));
+          rcfLog("app.js missing ❌");
         }
 
+        // SW: registra UMA vez (evita duplicação fail/ignored)
         try {
-          if ("serviceWorker" in navigator) {
-            const swPath = rootPath("/sw.js");
-            const scope = (window.__RCF_ROOT__ || "/") + "/";
-            navigator.serviceWorker.register(swPath, { scope })
-              .then(() => rcfLog("sw register: ok (" + swPath + " scope=" + scope + ")"))
+          if ("serviceWorker" in navigator && !window.__RCF_SW_REGISTERED__) {
+            window.__RCF_SW_REGISTERED__ = true;
+            navigator.serviceWorker.register("/sw.js", { scope: "/" })
+              .then(() => rcfLog("sw register: ok"))
               .catch(() => rcfLog("sw register: fail/ignored"));
           }
         } catch {}
