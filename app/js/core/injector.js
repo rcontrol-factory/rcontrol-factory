@@ -1,9 +1,8 @@
-/* app/js/core/injector.js  (RCF Injector v2 - iOS safe)
-   - Recebe pack JSON { meta, files, registryPatch }
-   - Aplica arquivos via window.RCF_VFS.put() (SW override)
-   - Timeouts + retries (evita “Aplicando…” infinito)
-   - Normaliza paths pra /app/* quando necessário
-   - UI injeta dentro do #settingsMount (aba Settings)
+/* app/js/core/injector.js  (RCF Injector v3 - auto-mount + retry + iOS safe)
+   - Garante que o Injector SEMPRE aparece no Settings
+   - Se #settingsMount não existir, cria dentro de #view-settings
+   - Se Settings renderiza depois, tenta novamente (watcher)
+   - Aplica pack via window.RCF_VFS.put() com timeout + retry
 */
 (() => {
   "use strict";
@@ -12,23 +11,23 @@
   const MOUNT_ID = "settingsMount";
 
   function $(id){ return document.getElementById(id); }
-  function nowISO(){ return new Date().toISOString(); }
+
+  function isIOS(){
+    try {
+      const ua = navigator.userAgent || "";
+      return /iPad|iPhone|iPod/.test(ua) && /AppleWebKit/.test(ua);
+    } catch { return false; }
+  }
 
   function logGlobal(msg){
     const el = $(OUT_ID);
     if (el) el.textContent = String(msg || "Pronto.");
+    try { window.RCF_LOGGER?.push?.("injector", String(msg || "")); } catch {}
   }
 
   function safeParseJSON(txt){
     try { return JSON.parse(txt); } catch { return null; }
   }
-
-  const isIOS = () => {
-    try {
-      const ua = navigator.userAgent || "";
-      return /iPad|iPhone|iPod/.test(ua) && /AppleWebKit/.test(ua);
-    } catch { return false; }
-  };
 
   function guessType(path) {
     const p = String(path || "");
@@ -44,7 +43,7 @@
     return "text/plain; charset=utf-8";
   }
 
-  // Normaliza path e garante que o override trabalhe com /app/*
+  // Normaliza e empurra pra /app/* quando fizer sentido
   function normalizePath(p){
     let path = String(p || "").trim();
     if (!path) return "";
@@ -52,32 +51,20 @@
     if (!path.startsWith("/")) path = "/" + path;
     path = path.replace(/\/{2,}/g, "/");
 
-    // Se já está em /app/, ok
     if (path.startsWith("/app/")) return path;
-
-    // Se é arquivo “raiz” (ex: /index.html, /app.js, /styles.css), joga pra /app/
-    const rootFiles = new Set([
-      "/index.html",
-      "/app.js",
-      "/styles.css",
-      "/manifest.json",
-      "/sw.js",
-      "/privacy.html",
-      "/terms.html",
-      "/recovery.html",
-    ]);
-
-    if (rootFiles.has(path)) return "/app" + path;
-
-    // Se vier /js/... (módulos), normalmente é /app/js/...
     if (path.startsWith("/js/")) return "/app" + path;
 
-    // Se parecer arquivo simples na raiz, joga pra /app/
+    // arquivos típicos que moram em /app
+    const rootFiles = new Set([
+      "/index.html","/app.js","/styles.css","/manifest.json","/sw.js",
+      "/privacy.html","/terms.html","/recovery.html"
+    ]);
+    if (rootFiles.has(path)) return "/app" + path;
+
     if (/^\/[^/]+\.(html|js|css|json|txt|md|png|jpg|jpeg|webp|svg|ico)$/i.test(path)) {
       return "/app" + path;
     }
 
-    // Default: mantém
     return path;
   }
 
@@ -97,16 +84,14 @@
     const vfs = window.RCF_VFS;
     const contentType = guessType(path);
 
-    // iOS costuma precisar de timeout maior
-    const base = isIOS() ? 12000 : 6000;
-    const timeouts = [base, base + 4000, base + 8000];
+    const base = isIOS() ? 14000 : 7000;
+    const timeouts = [base, base + 5000, base + 9000];
     const backs = [250, 700, 1200];
 
     let lastErr = null;
 
     for (let i = 0; i < 3; i++){
       try {
-        // tenta com 3 args (path, content, contentType). Se a implementação ignorar, ok.
         return await withTimeout(
           Promise.resolve(vfs.put(path, content, contentType)),
           timeouts[i],
@@ -114,18 +99,15 @@
         );
       } catch (e) {
         lastErr = e;
-        if (i < 2) {
-          await new Promise(r => setTimeout(r, backs[i]));
-        }
+        if (i < 2) await new Promise(r => setTimeout(r, backs[i]));
       }
     }
     throw lastErr || new Error("put failed");
   }
 
-  // aplica arquivos via SW override
   async function applyFilesViaVFS(filesMap, uiProgress){
     if (!hasVFS()) {
-      throw new Error("RCF_VFS não está disponível (vfs_overrides.js não carregou ou SW não controlou a página ainda).");
+      throw new Error("RCF_VFS não está disponível (SW ainda não controlou a página ou vfs_overrides não carregou).");
     }
 
     const keys = Object.keys(filesMap || {});
@@ -150,13 +132,11 @@
         fail++;
       }
     }
-
     return { ok, fail, total: keys.length };
   }
 
   function applyRegistryPatch(patch){
     if (!patch || typeof patch !== "object") return;
-
     const R = window.RCF_REGISTRY;
     if (!R) return;
 
@@ -202,37 +182,36 @@
     return { ok:true, msg };
   }
 
-  // iOS fallback: se overlay/pointer-events travar clique, capturamos e disparamos click no alvo
-  function enableClickFallback(container){
-    if (!container) return;
-    container.style.pointerEvents = "auto";
+  // ========= UI / MOUNT =========
 
-    container.addEventListener("click", (ev) => {
-      const t = ev.target;
-      if (!t) return;
-      if (t.tagName === "LABEL") {
-        const fid = t.getAttribute("for");
-        if (fid) {
-          const inp = document.getElementById(fid);
-          if (inp && typeof inp.click === "function") inp.click();
-        }
-      }
-    }, true);
+  function findOrCreateMount(){
+    // 1) se já existe, retorna
+    let mount = $(MOUNT_ID);
+    if (mount) return mount;
 
-    container.addEventListener("touchend", (ev) => {
-      const t = ev.target;
-      if (!t) return;
-      const tag = (t.tagName || "").toLowerCase();
-      const isBtn = tag === "button";
-      const isInput = tag === "input" || tag === "textarea" || tag === "select";
-      if (isBtn && typeof t.click === "function") t.click();
-      if (isInput && typeof t.focus === "function") t.focus();
-    }, { capture:true, passive:true });
+    // 2) tenta achar a view Settings
+    const view =
+      document.getElementById("view-settings") ||
+      document.querySelector("#settingsView") ||
+      document.querySelector("[data-view='settings']");
+
+    if (!view) return null;
+
+    // 3) cria o mount no final do Settings
+    mount = document.createElement("div");
+    mount.id = MOUNT_ID;
+    mount.style.marginTop = "12px";
+    try { view.appendChild(mount); } catch { return null; }
+
+    return mount;
   }
 
-  function renderSettings(){
-    const mount = $(MOUNT_ID);
-    if (!mount) return;
+  function renderInjectorUI(){
+    const mount = findOrCreateMount();
+    if (!mount) return false;
+
+    // já renderizou?
+    if (document.getElementById("injInput")) return true;
 
     mount.innerHTML = `
       <div class="card" style="margin-top:12px">
@@ -263,9 +242,7 @@
     const out    = $("injOut");
     const status = $("injStatus");
 
-    enableClickFallback(mount);
-
-    function setOut(t){ if (out) out.textContent = String(t || "Pronto."); }
+    const setOut = (t) => { if (out) out.textContent = String(t || "Pronto."); };
 
     status.textContent = hasVFS()
       ? "RCF_VFS OK ✅ (override via SW)"
@@ -298,7 +275,7 @@
     $("btnInjClear").addEventListener("click", async () => {
       try {
         if (!hasVFS()) throw new Error("RCF_VFS não disponível.");
-        await withTimeout(window.RCF_VFS.clearAll(), isIOS() ? 12000 : 6000, "RCF_VFS.clearAll()");
+        await withTimeout(window.RCF_VFS.clearAll(), isIOS() ? 14000 : 7000, "RCF_VFS.clearAll()");
         setOut("Overrides zerados ✅");
         logGlobal("Overrides zerados ✅");
       } catch (e) {
@@ -307,16 +284,37 @@
         logGlobal(msg);
       }
     });
+
+    return true;
+  }
+
+  // tenta renderizar agora e depois tenta de novo quando Settings aparecer
+  function startWatcher(){
+    let tries = 0;
+    const max = 25; // ~25s
+    const t = setInterval(() => {
+      tries++;
+      const ok = renderInjectorUI();
+      if (ok || tries >= max) clearInterval(t);
+    }, 1000);
   }
 
   // init
-  window.addEventListener("load", () => {
-    try { renderSettings(); } catch (e) { console.warn("Injector UI falhou:", e); }
-  });
+  function init(){
+    renderInjectorUI();
+    startWatcher();
+  }
 
   // API global
   window.RCF_INJECTOR = {
     applyPack,
-    applyFilesViaVFS
+    applyFilesViaVFS,
+    render: renderInjectorUI
   };
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
 })();
