@@ -1,78 +1,97 @@
-/* app/js/core/injector.js  (RCF Injector v2 - robust / iOS-safe)
-   - Recebe pack JSON { meta, files, registryPatch }
-   - Aplica arquivos via window.RCF_VFS.put() (SW override)
-   - Clear via window.RCF_VFS.clearAll()
-   - NÃO trava em "Aplicando..." (timeout + retry + progresso)
-*/
+/* =========================================================
+  app/js/core/injector.js  (RCF Injector v3 - iOS safe)
+  - Recebe pack JSON { meta, files, registryPatch }
+  - Aplica arquivos via VFS override (prefer: RCF_VFS_OVERRIDES.put)
+  - Normaliza path pro motherRoot "/app" (prefixa /app quando faltar)
+  - Timeout + retry por arquivo (não fica preso em "Aplicando...")
+  - Log detalhado dentro do card
+========================================================= */
+
 (() => {
   "use strict";
 
-  const OUT_ID = "settingsOut";
+  const OUT_ID = "injOut";
   const MOUNT_ID = "settingsMount";
 
-  const TAG = "[INJECTOR]";
-  const $ = (id) => document.getElementById(id);
-  const nowISO = () => new Date().toISOString();
+  function $(id){ return document.getElementById(id); }
+  function nowISO(){ return new Date().toISOString(); }
 
-  const isIOS = () => {
-    try {
-      const ua = navigator.userAgent || "";
-      return /iPhone|iPad|iPod/i.test(ua) && /AppleWebKit/i.test(ua);
-    } catch { return false; }
-  };
-
-  function logTop(msg) {
+  function setOut(msg){
     const el = $(OUT_ID);
     if (el) el.textContent = String(msg || "Pronto.");
-    try { console.log(TAG, msg); } catch {}
   }
 
-  function safeParseJSON(txt) {
+  function appendOut(line){
+    const el = $(OUT_ID);
+    if (!el) return;
+    el.textContent = (el.textContent ? el.textContent + "\n" : "") + String(line || "");
+  }
+
+  function safeParseJSON(txt){
     try { return JSON.parse(txt); } catch { return null; }
   }
 
-  // root da Mãe (quando existir)
-  function getMotherRoot() {
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+  function isIOS(){
     try {
-      const r = window.RCF_MAE?.status?.()?.motherRoot;
-      if (typeof r === "string" && r.trim()) return r.trim();
-    } catch {}
-    // fallback (se não tiver status)
-    return "/app";
+      const ua = navigator.userAgent || "";
+      return /iPad|iPhone|iPod/.test(ua) && /AppleWebKit/.test(ua);
+    } catch { return false; }
   }
 
-  // Normaliza: sempre começa com "/" e, se root for "/app",
-  // converte "/app/x" -> "/x" (VFS costuma ser virtual-root)
-  function normalizePath(p) {
+  // ---- VFS selector (prefer overrides)
+  function getVFS(){
+    const ov = window.RCF_VFS_OVERRIDES;
+    if (ov && typeof ov.put === "function") {
+      return { type: "RCF_VFS_OVERRIDES", put: ov.put.bind(ov), clear: ov.clear?.bind(ov) };
+    }
+    const v = window.RCF_VFS;
+    if (v && typeof v.put === "function") {
+      // alguns builds tem clearAll
+      const clear = (typeof v.clearAll === "function") ? v.clearAll.bind(v)
+                  : (typeof v.clear === "function") ? v.clear.bind(v)
+                  : null;
+      return { type: "RCF_VFS", put: v.put.bind(v), clear };
+    }
+    return null;
+  }
+
+  // ---- path normalize: sempre escrever em /app/*
+  function normPath(p){
     let path = String(p || "").trim();
     if (!path) return "";
-
     path = path.split("#")[0].split("?")[0].trim();
     if (!path.startsWith("/")) path = "/" + path;
     path = path.replace(/\/{2,}/g, "/");
 
-    // anti traversal
+    // bloqueia traversal
     if (path.includes("..")) {
       path = path.replace(/\.\./g, "");
       path = path.replace(/\/{2,}/g, "/");
     }
 
-    const root = getMotherRoot();
-    if (root === "/app") {
-      if (path === "/app") return "/";
-      if (path.startsWith("/app/")) path = path.slice(4); // remove "/app"
-      // IMPORTANT: manter "/" na frente
-      if (!path.startsWith("/")) path = "/" + path;
-    }
-
+    // motherRoot fixo do seu check
+    const root = "/app";
+    if (!path.startsWith(root + "/")) path = root + path; // prefixa /app
     return path;
   }
 
-  function hasVFS() {
-    return !!(window.RCF_VFS && typeof window.RCF_VFS.put === "function" && typeof window.RCF_VFS.clearAll === "function");
+  function guessType(path) {
+    const p = String(path || "");
+    if (p.endsWith(".js")) return "application/javascript; charset=utf-8";
+    if (p.endsWith(".css")) return "text/css; charset=utf-8";
+    if (p.endsWith(".html")) return "text/html; charset=utf-8";
+    if (p.endsWith(".json")) return "application/json; charset=utf-8";
+    if (p.endsWith(".svg")) return "image/svg+xml";
+    if (p.endsWith(".png")) return "image/png";
+    if (p.endsWith(".jpg") || p.endsWith(".jpeg")) return "image/jpeg";
+    if (p.endsWith(".webp")) return "image/webp";
+    if (p.endsWith(".ico")) return "image/x-icon";
+    return "text/plain; charset=utf-8";
   }
 
-  function withTimeout(promise, ms, label) {
+  function withTimeout(promise, ms, label){
     let t;
     const timeout = new Promise((_, rej) => {
       t = setTimeout(() => rej(new Error(`TIMEOUT ${ms}ms em ${label}`)), ms);
@@ -80,251 +99,234 @@
     return Promise.race([promise, timeout]).finally(() => clearTimeout(t));
   }
 
-  async function putWithRetry(path, content) {
-    const timeoutBase = isIOS() ? 15000 : 8000;
-    const timeouts = [timeoutBase, timeoutBase + 3000, timeoutBase + 6000];
-    const backs = [250, 700, 1500];
-
-    for (let i = 0; i < 3; i++) {
-      try {
-        const label = `RCF_VFS.put(${path})#${i + 1}`;
-        const res = await withTimeout(
-          Promise.resolve(window.RCF_VFS.put(path, content)),
-          timeouts[i],
-          label
-        );
-        return { ok: true, res };
-      } catch (e) {
-        if (i === 2) return { ok: false, error: e };
-        await new Promise(r => setTimeout(r, backs[i]));
-      }
-    }
-    return { ok: false, error: new Error("unknown put retry error") };
-  }
-
-  // aplica arquivos via SW override (robusto)
-  async function applyFilesViaVFS(filesMap, uiHooks) {
-    if (!hasVFS()) throw new Error("RCF_VFS não está disponível (SW ainda não controlou / vfs_overrides não carregou).");
-
-    const keys = Object.keys(filesMap || {});
-    const total = keys.length;
-
-    let ok = 0, fail = 0;
-    const details = [];
-
-    for (let idx = 0; idx < keys.length; idx++) {
-      const rawKey = keys[idx];
-      const vPath = normalizePath(rawKey);
-      if (!vPath) continue;
-
-      const content = String(filesMap[rawKey] ?? "");
-
-      uiHooks?.onStep?.(idx + 1, total, rawKey, vPath);
-
-      const r = await putWithRetry(vPath, content);
-      if (r.ok) {
-        ok++;
-        details.push({ path: vPath, status: "ok" });
-      } else {
-        fail++;
-        details.push({ path: vPath, status: "fail", error: String(r.error?.message || r.error) });
-        // continua (não trava)
-      }
-    }
-
-    return { ok, fail, total, details };
-  }
-
-  function applyRegistryPatch(patch) {
+  // ---- registry patch (mantém compat)
+  function applyRegistryPatch(patch){
     if (!patch || typeof patch !== "object") return;
-
     const R = window.RCF_REGISTRY;
     if (!R) return;
 
-    if (Array.isArray(patch.modules)) {
-      patch.modules.forEach(m => {
-        if (!m || !m.id) return;
-        R.upsertModule({
-          id: m.id,
-          name: m.name || m.id,
-          entry: m.entry || "",
-          enabled: m.enabled !== false
+    try {
+      if (Array.isArray(patch.modules)) {
+        patch.modules.forEach(m => {
+          if (!m || !m.id) return;
+          R.upsertModule({
+            id: m.id,
+            name: m.name || m.id,
+            entry: m.entry || "",
+            enabled: m.enabled !== false
+          });
         });
-      });
-    }
+      }
 
-    if (Array.isArray(patch.templates)) {
-      patch.templates.forEach(t => {
-        if (!t || !t.id) return;
-        R.upsertTemplate({
-          id: t.id,
-          name: t.name || t.id,
-          version: t.version || "1.0.0",
-          entry: t.entry || ""
+      if (Array.isArray(patch.templates)) {
+        patch.templates.forEach(t => {
+          if (!t || !t.id) return;
+          R.upsertTemplate({
+            id: t.id,
+            name: t.name || t.id,
+            version: t.version || "1.0.0",
+            entry: t.entry || ""
+          });
         });
-      });
+      }
+    } catch (e) {
+      appendOut("⚠️ registryPatch falhou: " + (e?.message || e));
     }
   }
 
-  async function applyPack(pack, uiHooks) {
-    if (!pack || typeof pack !== "object") return { ok: false, msg: "Pack inválido." };
+  // ---- apply files with retry/timeout (iOS-safe)
+  async function applyFiles(filesMap){
+    const vfs = getVFS();
+    if (!vfs) throw new Error("VFS não disponível (RCF_VFS_OVERRIDES/RCF_VFS). Recarregue 1x.");
+
+    const keys = Object.keys(filesMap || {});
+    if (!keys.length) return { ok: 0, fail: 0, total: 0, vfs: vfs.type };
+
+    const ios = isIOS();
+    const timeoutMs = ios ? 12000 : 7000; // iOS precisa maior
+    const retries = ios ? 2 : 1;
+
+    let ok = 0, fail = 0;
+
+    appendOut(`VFS: ${vfs.type} ✅`);
+    appendOut(`Arquivos: ${keys.length}`);
+    appendOut(`Timeout por arquivo: ${timeoutMs}ms | Retries: ${retries}`);
+    appendOut("----");
+
+    for (let idx = 0; idx < keys.length; idx++){
+      const raw = keys[idx];
+      const path = normPath(raw);
+
+      const v = filesMap[raw];
+      const content =
+        (v && typeof v === "object" && "content" in v)
+          ? String(v.content ?? "")
+          : String(v ?? "");
+
+      const contentType =
+        (v && typeof v === "object" && v.contentType)
+          ? String(v.contentType)
+          : guessType(path);
+
+      const label = `${idx+1}/${keys.length} put(${path})`;
+
+      let done = false;
+      for (let r = 0; r <= retries; r++){
+        try {
+          appendOut(`→ ${label} (try ${r+1})`);
+          // IMPORTANTE: passa contentType (muitos puts do seu core aceitam 3 args)
+          await withTimeout(Promise.resolve(vfs.put(path, content, contentType)), timeoutMs, label);
+          appendOut(`✅ ok: ${path}`);
+          ok++;
+          done = true;
+          break;
+        } catch (e) {
+          const msg = e?.message || e;
+          appendOut(`❌ err: ${path} :: ${msg}`);
+          if (r < retries) await sleep(500 + r*700);
+        }
+      }
+
+      if (!done) fail++;
+    }
+
+    appendOut("----");
+    appendOut(`RESULTADO: ok=${ok} fail=${fail} total=${keys.length}`);
+    return { ok, fail, total: keys.length, vfs: vfs.type };
+  }
+
+  async function applyPack(pack){
+    if (!pack || typeof pack !== "object") return { ok:false, msg:"Pack inválido." };
 
     const meta = pack.meta || {};
     const files = pack.files || {};
     const patch = pack.registryPatch || meta.registryPatch || null;
 
     const name = meta.name || "pack";
-    const ver = meta.version || "1.0";
+    const ver  = meta.version || "1.0";
 
-    const res = await applyFilesViaVFS(files, uiHooks);
+    setOut(`Aplicando ${name} v${ver}...`);
+    appendOut(`at: ${nowISO()}`);
+
+    const res = await applyFiles(files);
     applyRegistryPatch(patch);
 
-    const msg =
-      `Aplicado: ${name} v${ver}\n` +
-      `ok: ${res.ok}/${res.total}` + (res.fail ? ` (falhas: ${res.fail})` : "") +
-      `\nroot: ${getMotherRoot()}  (paths normalizados p/ VFS)` +
-      `\n${nowISO()}`;
-
-    return { ok: true, msg, res };
+    const msg = `Aplicado: ${name} v${ver} — ok:${res.ok}/${res.total}` + (res.fail ? ` (falhas:${res.fail})` : "");
+    appendOut(msg);
+    return { ok:true, msg };
   }
 
-  function enableClickFallback(container) {
-    if (!container) return;
-    container.style.pointerEvents = "auto";
-
-    container.addEventListener("click", (ev) => {
-      const t = ev.target;
-      if (!t) return;
-      if (t.tagName === "LABEL") {
-        const fid = t.getAttribute("for");
-        if (fid) {
-          const inp = document.getElementById(fid);
-          if (inp && typeof inp.click === "function") inp.click();
-        }
-      }
-    }, true);
-
-    container.addEventListener("touchend", (ev) => {
-      const t = ev.target;
-      if (!t) return;
-      const tag = (t.tagName || "").toLowerCase();
-      const isBtn = tag === "button";
-      const isInput = tag === "input" || tag === "textarea" || tag === "select";
-      if (isBtn && typeof t.click === "function") t.click();
-      if (isInput && typeof t.focus === "function") t.focus();
-    }, { capture: true, passive: true });
+  async function clearOverrides(){
+    const vfs = getVFS();
+    if (!vfs || typeof vfs.clear !== "function") {
+      throw new Error("Clear não disponível neste VFS (sem clear/clearAll).");
+    }
+    setOut("Limpando overrides...");
+    await withTimeout(Promise.resolve(vfs.clear()), 10000, "clearOverrides()");
+    setOut("Overrides zerados ✅");
   }
 
-  function renderSettings() {
+  // iOS click fallback
+  function bindTap(el, fn){
+    if (!el) return;
+    let last = 0;
+    const guard = 450;
+
+    const handler = async (e) => {
+      const now = Date.now();
+      if (now - last < guard) { try { e.preventDefault(); e.stopPropagation(); } catch {} ; return; }
+      last = now;
+      try { e.preventDefault(); e.stopPropagation(); } catch {}
+      try { await fn(e); } catch (err) { setOut("Falhou: " + (err?.message || err)); }
+    };
+
+    el.style.pointerEvents = "auto";
+    el.style.touchAction = "manipulation";
+    el.style.webkitTapHighlightColor = "transparent";
+
+    el.addEventListener("touchend", handler, { passive: false, capture: true });
+    el.addEventListener("click", handler, { passive: false, capture: true });
+  }
+
+  function render(){
     const mount = $(MOUNT_ID);
     if (!mount) return;
 
-    mount.innerHTML = `
-      <div class="card" style="margin-top:12px">
-        <h3>Injeção (Injector)</h3>
-        <p class="hint">Cole um pack JSON (meta + files). Aplica via SW override (RCF_VFS). Sem mexer no core.</p>
+    // não duplicar
+    if ($("rcfInjectorCard")) return;
 
-        <textarea id="injInput" class="textarea mono" spellcheck="false"
-          placeholder='Cole um JSON:
+    const card = document.createElement("div");
+    card.className = "card";
+    card.id = "rcfInjectorCard";
+    card.style.pointerEvents = "auto";
+
+    card.innerHTML = `
+      <h3>Injeção (Injector)</h3>
+      <p class="hint">Cole um pack JSON (meta + files). Aplica via VFS override. (v3: timeout + /app prefix)</p>
+
+      <textarea id="injInput" class="textarea mono" spellcheck="false"
+        placeholder='Exemplo:
 {
-  "meta": {"name":"pack-x","version":"1.0"},
-  "files": { "/TESTE_OK.txt": "OK" }
+  "meta": {"name":"teste","version":"1.0"},
+  "files": { "/TESTE_OK.txt": "INJECTION OK" }
 }'></textarea>
 
-        <div class="row">
-          <button id="btnInjDry" class="btn" type="button">Dry-run</button>
-          <button id="btnInjApply" class="btn primary" type="button">Aplicar pack</button>
-          <button id="btnInjClear" class="btn danger" type="button">Zerar overrides</button>
-        </div>
+      <div class="row" style="gap:10px; flex-wrap:wrap">
+        <button id="btnInjDry" class="btn" type="button">Dry-run</button>
+        <button id="btnInjApply" class="btn primary" type="button">Aplicar pack</button>
+        <button id="btnInjClear" class="btn danger" type="button">Zerar overrides</button>
+      </div>
 
-        <pre id="injOut" class="mono small">Pronto.</pre>
-        <div class="hint" style="margin-top:10px">
-          Status: <span id="injStatus">checando...</span>
-        </div>
+      <pre id="injOut" class="mono small">Pronto.</pre>
+
+      <div class="hint" style="margin-top:10px">
+        Status: <span id="injStatus">checando...</span>
       </div>
     `;
 
-    enableClickFallback(mount);
+    mount.appendChild(card);
+
+    const status = $("injStatus");
+    const vfs = getVFS();
+    const sw = !!navigator.serviceWorker;
+    const ctl = !!navigator.serviceWorker?.controller;
+
+    if (status) {
+      status.textContent = vfs
+        ? `${vfs.type} OK ✅ | SW:${sw ? "sim" : "não"} | controlled:${ctl ? "sim" : "não"}`
+        : `VFS não disponível ❌ | SW:${sw ? "sim" : "não"} | controlled:${ctl ? "sim" : "não"}`;
+    }
 
     const input = $("injInput");
-    const out = $("injOut");
-    const status = $("injStatus");
 
-    const setOut = (t) => { if (out) out.textContent = String(t || "Pronto."); };
-
-    status.textContent = hasVFS()
-      ? "RCF_VFS OK ✅ (override via SW)"
-      : "RCF_VFS não disponível ❌ (recarregue 1x após instalar SW)";
-
-    $("btnInjDry").addEventListener("click", () => {
-      const pack = safeParseJSON(input.value || "");
+    bindTap($("btnInjDry"), () => {
+      const pack = safeParseJSON((input && input.value) || "");
       if (!pack) return setOut("JSON inválido (não parseou).");
       const files = pack.files || {};
       const keys = Object.keys(files);
-      const preview = keys.map(k => `${k}  ->  ${normalizePath(k)}`).slice(0, 60).join("\n");
-      setOut(`OK (dry-run). Arquivos: ${keys.length}\n\nNORMALIZAÇÃO:\n${preview}`);
+      setOut(`OK (dry-run). Arquivos: ${keys.length}\n` + keys.slice(0, 80).map(k => "• " + normPath(k)).join("\n"));
     });
 
-    $("btnInjApply").addEventListener("click", async () => {
-      const pack = safeParseJSON(input.value || "");
+    bindTap($("btnInjApply"), async () => {
+      const pack = safeParseJSON((input && input.value) || "");
       if (!pack) return setOut("JSON inválido (não parseou).");
-
-      try {
-        setOut("Aplicando...");
-        logTop("Injector: aplicando pack...");
-
-        const uiHooks = {
-          onStep(step, total, raw, norm) {
-            setOut(`Aplicando ${step}/${total}\nraw: ${raw}\nvfs: ${norm}`);
-          }
-        };
-
-        const r = await applyPack(pack, uiHooks);
-
-        // mostra detalhes
-        const d = r?.res?.details || [];
-        const lines = [];
-        lines.push(r.msg);
-        lines.push("");
-        lines.push("Detalhes (VFS):");
-        d.slice(0, 40).forEach((it) => {
-          lines.push((it.status === "ok" ? "✅" : "❌") + " " + it.path + (it.error ? " — " + it.error : ""));
-        });
-        if (d.length > 40) lines.push("… +" + (d.length - 40));
-
-        setOut(lines.join("\n"));
-        logTop("Injector: pack aplicado.");
-      } catch (e) {
-        const msg = `Falhou: ${e?.message || e}`;
-        setOut(msg);
-        logTop(msg);
-      }
+      setOut("Aplicando...");
+      const res = await applyPack(pack);
+      setOut(res.msg);
     });
 
-    $("btnInjClear").addEventListener("click", async () => {
-      try {
-        if (!hasVFS()) throw new Error("RCF_VFS não disponível.");
-        setOut("Limpando overrides...");
-        await withTimeout(Promise.resolve(window.RCF_VFS.clearAll()), isIOS() ? 15000 : 8000, "RCF_VFS.clearAll()");
-        setOut("Overrides zerados ✅");
-        logTop("Overrides zerados ✅");
-      } catch (e) {
-        const msg = `Falhou: ${e?.message || e}`;
-        setOut(msg);
-        logTop(msg);
-      }
+    bindTap($("btnInjClear"), async () => {
+      await clearOverrides();
     });
   }
 
   window.addEventListener("load", () => {
-    try { renderSettings(); } catch (e) { console.warn(TAG, "render falhou:", e); }
+    try { render(); } catch (e) { console.warn("Injector render falhou:", e); }
   });
 
+  // API global
   window.RCF_INJECTOR = {
     applyPack,
-    applyFilesViaVFS,
-    normalizePath
+    applyFiles: applyFiles
   };
-
-  logTop("Injector v2 carregado ✅");
 })();
