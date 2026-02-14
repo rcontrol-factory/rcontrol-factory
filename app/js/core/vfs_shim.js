@@ -1,62 +1,83 @@
-/* app/js/core/vfs_shim.js  (VFS SHIM v1.1 — PADRÃO)
-   - Ponte SAFE: faz qualquer injector antigo enxergar o VFS correto.
-   - Real: window.RCF_VFS_OVERRIDES (put / clearOverrides / listOverrides / delOverride)
-   - Compat: window.RCF_VFS (put / clearAll / clearOverrides / clear)
-   Patch:
-   - NÃO aborta só porque RCF_VFS.put já existe (precisa garantir clearAll)
-   - Mapeia clearAll -> clearOverrides (nome certo)
-*/
+/* =========================================================
+   RControl Factory — VFS SHIM (bridge seguro)
+   - Faz o Injector enxergar o VFS correto.
+   - Seu runtime real usa: window.RCF_VFS_OVERRIDES
+   - Alguns módulos antigos esperam: window.RCF_VFS
+   - Esse arquivo cria a ponte entre os dois.
+
+   Versão: v1.0
+========================================================= */
+
 (() => {
   "use strict";
 
   const TAG = "[VFS-SHIM]";
-  const log = (...a) => { try { console.log(TAG, ...a); } catch {} };
+  const VERSION = "v1.0";
 
-  function install() {
-    const o = window.RCF_VFS_OVERRIDES;
+  const log = (lvl, msg) => {
+    try {
+      if (window.RCF_LOGGER?.push) {
+        window.RCF_LOGGER.push(lvl, msg);
+      } else {
+        console.log(TAG, lvl, msg);
+      }
+    } catch {}
+  };
 
-    if (!o || typeof o.put !== "function") {
-      log("RCF_VFS_OVERRIDES ainda não existe (aguardando)...");
+  function installBridge() {
+    const overrides = window.RCF_VFS_OVERRIDES;
+
+    // Se ainda não carregou overrides, espera
+    if (!overrides || typeof overrides.put !== "function") {
       return false;
     }
 
-    // garante objeto
-    window.RCF_VFS = window.RCF_VFS || {};
+    // Se já existe RCF_VFS funcional, não sobrescreve
+    if (window.RCF_VFS && typeof window.RCF_VFS.put === "function") {
+      log("ok", "RCF_VFS já existe (bridge não necessária) ✅");
+      return true;
+    }
 
-    // ✅ sempre garante put (mesmo se já existir, mantemos se for igual, senão sobrescreve para ficar correto)
-    window.RCF_VFS.put = async (path, content, contentType) => {
-      return o.put(path, content, contentType);
+    // Cria ponte compatível
+    window.RCF_VFS = {
+      put: async (path, content, contentType) => {
+        return overrides.put(path, content, contentType);
+      },
+
+      clearAll: async () => {
+        if (typeof overrides.clear === "function") {
+          return overrides.clear();
+        }
+
+        if (typeof overrides.clearOverrides === "function") {
+          return overrides.clearOverrides();
+        }
+
+        throw new Error("RCF_VFS_OVERRIDES.clear() não encontrado.");
+      }
     };
 
-    // ✅ nomes compatíveis para CLEAR
-    const doClear = async () => {
-      if (typeof o.clearOverrides === "function") return o.clearOverrides();
-      if (typeof o.clearAll === "function") return o.clearAll();       // caso algum build antigo tenha isso
-      if (typeof o.clear === "function") return o.clear();             // último fallback
-      throw new Error("RCF_VFS_OVERRIDES não tem clearOverrides/clearAll/clear");
-    };
-
-    // Injector antigo chama clearAll()
-    window.RCF_VFS.clearAll = doClear;
-
-    // Compat extra (caso algum lugar chame outros nomes)
-    window.RCF_VFS.clearOverrides = doClear;
-    window.RCF_VFS.clear = doClear;
-
-    log("Ponte instalada ✅ window.RCF_VFS (put/clearAll) -> RCF_VFS_OVERRIDES");
+    log("ok", `VFS bridge instalada ✅ (${VERSION})`);
     return true;
   }
 
-  // tenta agora
-  if (install()) return;
+  // Tenta instalar imediatamente
+  if (installBridge()) return;
 
-  // tenta de novo (ordem de load / iOS delay)
+  // Se carregou antes do overrides, tenta por alguns segundos
   let tries = 0;
-  const t = setInterval(() => {
+  const MAX_TRIES = 30;
+
+  const interval = setInterval(() => {
     tries++;
-    if (install() || tries >= 25) {
-      clearInterval(t);
-      if (tries >= 25) log("não conseguiu instalar (timeout).");
+
+    if (installBridge() || tries >= MAX_TRIES) {
+      clearInterval(interval);
+
+      if (tries >= MAX_TRIES) {
+        log("warn", "VFS bridge não conseguiu instalar (timeout).");
+      }
     }
   }, 200);
+
 })();
