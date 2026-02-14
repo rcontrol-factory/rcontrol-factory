@@ -1,14 +1,14 @@
-/* RControl Factory — /app/js/core/github_sync.js (PADRÃO) — v2.4b
+/* RControl Factory — /app/js/core/github_sync.js (PADRÃO) — v2.4c
    - Centraliza GitHub API (pull/push/test)
    - Evita logs duplicados (guard)
-   - pushMotherBundle robusto (retorna ok/throw correto)
+   - pushMotherBundle robusto (auto-pull se bundle local vazio)
    - save/load cfg em rcf:ghcfg
    - PATCH MÍNIMO: normalizeBundlePath -> SEMPRE app/import/mother_bundle.json
 */
 (() => {
   "use strict";
 
-  if (window.RCF_GH_SYNC && window.RCF_GH_SYNC.__v24b) return;
+  if (window.RCF_GH_SYNC && window.RCF_GH_SYNC.__v24c) return;
 
   const LS_CFG_KEY = "rcf:ghcfg";
   const API_BASE = "https://api.github.com";
@@ -188,6 +188,32 @@
     return { ok: true };
   }
 
+  // ✅ PATCH MÍNIMO: se bundle local estiver vazio, faz MAE.updateFromGitHub antes
+  async function getBundleTextOrAutoPull(cfg){
+    if (!window.RCF_MAE?.getLocalBundleText) {
+      throw new Error("RCF_MAE.getLocalBundleText ausente");
+    }
+
+    let txt = String(await window.RCF_MAE.getLocalBundleText() || "").trim();
+    if (txt) return txt;
+
+    // tenta auto-pull via MAE (puxa + salva localStorage padronizado)
+    if (window.RCF_MAE?.updateFromGitHub) {
+      log("info", "pushMotherBundle: bundle local vazio -> fazendo MAE.updateFromGitHub…");
+      await window.RCF_MAE.updateFromGitHub({
+        onProgress: (p) => {
+          // mantém leve, sem spam
+          if (p?.step === "apply_done") log("info", `MAE apply_done ${p.done}/${p.total}`);
+        }
+      });
+
+      txt = String(await window.RCF_MAE.getLocalBundleText() || "").trim();
+      if (txt) return txt;
+    }
+
+    throw new Error("Bundle local vazio");
+  }
+
   async function pushMotherBundle(cfgIn){
     const cfg = saveConfig(cfgIn || loadConfig());
 
@@ -196,19 +222,13 @@
     cfg.path = norm.normalized;
     log("info", "bundle path normalized", { raw: norm.raw, path: cfg.path });
 
-    if (!window.RCF_MAE?.getLocalBundleText) {
-      throw new Error("RCF_MAE.getLocalBundleText ausente");
-    }
-
-    const bundleTxt = await window.RCF_MAE.getLocalBundleText();
-    if (!bundleTxt) throw new Error("Bundle local vazio");
-
+    const bundleTxt = await getBundleTextOrAutoPull(cfg);
     await push(cfg, bundleTxt);
     return { ok: true };
   }
 
   window.RCF_GH_SYNC = {
-    __v24b: true,
+    __v24c: true,
     loadConfig,
     saveConfig,
     test,
@@ -217,5 +237,5 @@
     pushMotherBundle,
   };
 
-  log("info", "github_sync.js loaded (v2.4b)");
+  log("info", "github_sync.js loaded (v2.4c)");
 })();
