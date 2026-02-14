@@ -1,18 +1,10 @@
-/* /app/js/core/injector.js (RCF Injector — PADRÃO /app) — v3
-   - Aplica pack JSON { meta, files, registryPatch }
+/* core/injector.js  (RCF Injector v2.1 - iOS robust + timeout + normalizeToMotherRoot)
+   - Recebe pack JSON { meta, files, registryPatch }
    - Aplica via overrides: prefere RCF_VFS_OVERRIDES, fallback RCF_VFS
-   - PADRÃO: MotherRoot = /app (source of truth = /app/index.html)
-   - Normaliza paths SEMPRE para /app/*
-     Regras:
-       * qualquer "/index.html" => "/app/index.html"
-       * "/app.js" => "/app/app.js"
-       * "/styles.css" => "/app/styles.css"
-       * "/sw.js" => "/app/sw.js"
-       * se vier "/js/..." ou "js/..." => "/app/js/..."
-       * se vier "app/..." ou "/app/..." mantém "/app/..."
-   - Timeout por arquivo + retries curtos (iOS)
+   - NORMALIZA paths: SOURCE OF TRUTH = /app (nunca mais escreve /index.html)
+   - Timeout por arquivo + retries + progresso no injOut
+   - Clear via clear/clearAll
 */
-
 (() => {
   "use strict";
 
@@ -21,11 +13,6 @@
 
   function $(id){ return document.getElementById(id); }
   function nowISO(){ return new Date().toISOString(); }
-
-  function logger(lvl, msg){
-    try { window.RCF_LOGGER?.push?.(lvl, String(msg)); } catch {}
-    try { console.log("[INJ]", lvl, msg); } catch {}
-  }
 
   function logTop(msg){
     const el = $(OUT_ID);
@@ -36,39 +23,28 @@
     try { return JSON.parse(txt); } catch { return null; }
   }
 
-  // -----------------------------
-  // PADRÃO /app — normalização
-  // -----------------------------
-  function normalizeToAppRoot(inputPath){
+  // ✅ PATCH MÍNIMO (PADRÃO): MotherRoot é /app
+  function normalizeMotherPath(inputPath){
     let p = String(inputPath || "").trim();
     if (!p) return "";
-
-    // remove query/hash
     p = p.split("#")[0].split("?")[0].trim();
-
-    // garante barra
     if (!p.startsWith("/")) p = "/" + p;
 
     // colapsa ////
     p = p.replace(/\/{2,}/g, "/");
 
-    // casos clássicos
+    // regras fixas
     if (p === "/index.html") p = "/app/index.html";
     if (p === "/app.js") p = "/app/app.js";
     if (p === "/styles.css") p = "/app/styles.css";
     if (p === "/sw.js") p = "/app/sw.js";
-    if (p === "/manifest.json") p = "/app/manifest.json";
 
-    // se vier "/app/..." ok
-    if (p.startsWith("/app/")) return p;
+    // se não começa com /app/, força /app/
+    if (!p.startsWith("/app/")) {
+      p = "/app" + (p.startsWith("/") ? p : ("/" + p));
+      p = p.replace(/\/{2,}/g, "/");
+    }
 
-    // se veio "/app" seco
-    if (p === "/app") return "/app/index.html";
-
-    // se veio "/js/..." ou "/import/..." etc -> força dentro de /app
-    // Ex: "/js/core/x.js" => "/app/js/core/x.js"
-    p = "/app" + p;
-    p = p.replace(/\/{2,}/g, "/");
     return p;
   }
 
@@ -83,7 +59,7 @@
   }
 
   function pickVFS(){
-    // preferido (compatível com MAE PADRÃO)
+    // preferido (consistent com mother_selfupdate)
     if (window.RCF_VFS_OVERRIDES && typeof window.RCF_VFS_OVERRIDES.put === "function") {
       return {
         kind: "OVERRIDES",
@@ -120,22 +96,26 @@
     const vfs = pickVFS();
     if (!vfs) throw new Error("VFS não disponível (RCF_VFS_OVERRIDES/RCF_VFS). Recarregue 1x após SW controlar.");
 
-    const rawKeys = Object.keys(filesMap || {});
-    const total = rawKeys.length;
+    const keys = Object.keys(filesMap || {});
+    const total = keys.length;
 
     let ok = 0, fail = 0;
     const startedAt = nowISO();
 
-    for (let i = 0; i < rawKeys.length; i++){
-      const raw = rawKeys[i];
-
-      const path = normalizeToAppRoot(raw);
-      if (shouldSkip(path)) continue;
+    for (let i = 0; i < keys.length; i++){
+      const raw = keys[i];
+      const norm = normalizeMotherPath(raw);
+      if (shouldSkip(norm)) continue;
 
       const content = String(filesMap[raw] ?? "");
-      const label = `put(${path})`;
+      const label = `put(${norm})`;
 
-      if (ui) ui(`Aplicando ${i+1}/${total}…\n${path}`);
+      // log de normalização (aceite)
+      if (raw !== norm) {
+        try { window.RCF_LOGGER?.push?.("info", `path normalized: ${raw} -> ${norm}`); } catch {}
+      }
+
+      if (ui) ui(`Aplicando ${i+1}/${total}…\n${norm}`);
 
       // retries curtos (iOS)
       let lastErr = null;
@@ -143,23 +123,19 @@
 
       for (let a = 1; a <= tries; a++){
         try {
-          // timeout um pouco maior pra arquivo pesado
-          await withTimeout(Promise.resolve(vfs.put(path, content)), 12000, label);
+          await withTimeout(Promise.resolve(vfs.put(norm, content)), 6000, label);
           ok++;
           lastErr = null;
           break;
         } catch (e) {
           lastErr = e;
-          await new Promise(r => setTimeout(r, 300 * a)); // backoff
+          await new Promise(r => setTimeout(r, 250 * a));
         }
       }
 
       if (lastErr){
         fail++;
-        if (ui) ui(`Falhou em ${path}\n${String(lastErr?.message || lastErr)}`);
-        logger("warn", `injector put FAIL ${path} :: ${String(lastErr?.message || lastErr)}`);
-      } else {
-        logger("info", `injector put OK ${path}`);
+        if (ui) ui(`Falhou em ${norm}\n${String(lastErr?.message || lastErr)}`);
       }
     }
 
@@ -168,6 +144,7 @@
 
   function applyRegistryPatch(patch){
     if (!patch || typeof patch !== "object") return;
+
     const R = window.RCF_REGISTRY;
     if (!R) return;
 
@@ -259,14 +236,14 @@
         <h3>Injeção (Injector)</h3>
         <p class="hint">
           Cole um pack JSON (meta + files). Aplica via override (SW).<br/>
-          <b>PADRÃO:</b> paths sempre vão para <b>/app/*</b> automaticamente.
+          ✅ Agora o padrão é <b>/app/*</b> (se você colar /index.html eu converto para /app/index.html).
         </p>
 
         <textarea id="injInput" class="textarea mono" spellcheck="false"
           placeholder='Cole um JSON:
 {
   "meta": {"name":"teste-real","version":"1.0"},
-  "files": { "/TESTE_OK.txt": "INJECTION WORKING" }
+  "files": { "/index.html": "<!-- teste -->" }
 }'></textarea>
 
         <div class="row">
@@ -300,8 +277,8 @@
       const pack = safeParseJSON(input.value || "");
       if (!pack) return setOut("JSON inválido (não parseou).");
       const files = pack.files || {};
-      const keys = Object.keys(files).map(k => normalizeToAppRoot(k)).filter(Boolean);
-      setOut(`OK (dry-run)\nArquivos: ${keys.length}\n\n` + keys.slice(0, 120).join("\n"));
+      const keys = Object.keys(files).map(k => normalizeMotherPath(k));
+      setOut(`OK (dry-run)\nArquivos: ${keys.length}\n\n` + keys.slice(0, 80).join("\n"));
     });
 
     document.getElementById("btnInjApply").addEventListener("click", async () => {
@@ -311,16 +288,13 @@
       try {
         setOut("Aplicando…");
         logTop("Injector: aplicando…");
-        logger("info", "injector apply: start");
         const res = await applyPack(pack, setOut);
         setOut(res.msg);
         logTop(res.msg);
-        logger("ok", "injector apply: done");
       } catch (e) {
         const msg = `❌ Falhou: ${e?.message || e}`;
         setOut(msg);
         logTop(msg);
-        logger("err", "injector apply: fail :: " + (e?.message || e));
       }
     });
 
@@ -329,15 +303,13 @@
         const v = pickVFS();
         if (!v || !v.clear) throw new Error("Clear não disponível (sem clear/clearAll).");
         setOut("Limpando overrides…");
-        await withTimeout(Promise.resolve(v.clear()), 12000, "clear()");
+        await withTimeout(Promise.resolve(v.clear()), 8000, "clear()");
         setOut("✅ Overrides zerados.");
         logTop("✅ Overrides zerados.");
-        logger("ok", "injector clear: ok");
       } catch (e) {
         const msg = `❌ Falhou: ${e?.message || e}`;
         setOut(msg);
         logTop(msg);
-        logger("err", "injector clear: fail :: " + (e?.message || e));
       }
     });
   }
@@ -347,6 +319,5 @@
     try { renderSettings(); } catch (e) { console.warn("Injector UI falhou:", e); }
   });
 
-  window.RCF_INJECTOR = { applyPack, normalizeToAppRoot };
-  logger("ok", "injector.js ready ✅ (v3 /app)");
+  window.RCF_INJECTOR = { applyPack };
 })();
