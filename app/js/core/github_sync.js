@@ -1,14 +1,13 @@
-/* RControl Factory — /app/js/core/github_sync.js (PADRÃO) — v2.4c
-   - Centraliza GitHub API (pull/push/test)
-   - Evita logs duplicados (guard)
-   - pushMotherBundle robusto (auto-pull se bundle local vazio)
-   - save/load cfg em rcf:ghcfg
-   - PATCH MÍNIMO: normalizeBundlePath -> SEMPRE app/import/mother_bundle.json
+/* RControl Factory — /app/js/core/github_sync.js (PADRÃO) — v2.4d
+   PATCH MÍNIMO:
+   - pull() robusto: aceita content | download_url | git_url
+   - erro claro quando path vira diretório (array)
+   - mantém normalizeBundlePath sempre app/import/mother_bundle.json
 */
 (() => {
   "use strict";
 
-  if (window.RCF_GH_SYNC && window.RCF_GH_SYNC.__v24c) return;
+  if (window.RCF_GH_SYNC && window.RCF_GH_SYNC.__v24d) return;
 
   const LS_CFG_KEY = "rcf:ghcfg";
   const API_BASE = "https://api.github.com";
@@ -111,7 +110,7 @@
     if (!cfg.owner || !cfg.repo) throw new Error("ghcfg incompleto (owner/repo)");
 
     const norm = normalizeBundlePath(cfg.path);
-    cfg.path = norm.normalized; // ✅ garante dentro do objeto também
+    cfg.path = norm.normalized;
     log("info", "bundle path normalized", { raw: norm.raw, path: cfg.path });
 
     const branch = encodeURIComponent(cfg.branch || "main");
@@ -125,6 +124,19 @@
     return "OK: token test ok";
   }
 
+  function decodeB64Utf8(b64){
+    // GitHub manda base64, pode ter UTF-8
+    const clean = String(b64 || "").replace(/\n/g, "");
+    let bin = "";
+    try { bin = atob(clean); } catch { throw new Error("Falha ao decodificar base64"); }
+    try {
+      // converte binário -> utf8
+      return decodeURIComponent(escape(bin));
+    } catch {
+      return bin; // fallback
+    }
+  }
+
   async function pull(cfgIn){
     const cfg = saveConfig(cfgIn || loadConfig());
     const url = contentUrl(cfg);
@@ -133,16 +145,41 @@
 
     const txt = await ghFetch(url, cfg, { method: "GET" });
     const j = safeParse(txt, null);
-    if (!j || !j.content) throw new Error("Resposta inválida do GitHub (sem content)");
 
-    const b64 = String(j.content || "").replace(/\n/g, "");
-    let decoded = "";
-    try { decoded = atob(b64); } catch { throw new Error("Falha ao decodificar base64"); }
+    // ✅ se path virou diretório, GitHub retorna array
+    if (Array.isArray(j)) {
+      throw new Error("Resposta inválida: path parece ser diretório (array). Confirme cfg.path.");
+    }
 
-    try { JSON.parse(decoded); } catch { throw new Error("Bundle puxado não é JSON válido"); }
+    // caso normal: vem content base64
+    if (j && j.content) {
+      const decoded = decodeB64Utf8(j.content);
+      try { JSON.parse(decoded); } catch { throw new Error("Bundle puxado não é JSON válido"); }
+      log("info", `GitHub: pull ok (content). url=${url}`);
+      return decoded;
+    }
 
-    log("info", `GitHub: pull ok (bundle JSON válido). url=${url}`);
-    return decoded;
+    // ✅ fallback 1: download_url (raw)
+    if (j && j.download_url) {
+      const raw = await ghFetch(j.download_url, cfg, { method: "GET", headers: { "Accept": "application/vnd.github.raw" } });
+      try { JSON.parse(raw); } catch { throw new Error("Bundle (download_url) não é JSON válido"); }
+      log("info", `GitHub: pull ok (download_url). url=${j.download_url}`);
+      return raw;
+    }
+
+    // ✅ fallback 2: git_url -> blob -> content
+    if (j && j.git_url) {
+      const blobTxt = await ghFetch(j.git_url, cfg, { method: "GET" });
+      const blob = safeParse(blobTxt, null);
+      if (!blob || !blob.content) throw new Error("Resposta inválida do GitHub (blob sem content)");
+      const decoded = decodeB64Utf8(blob.content);
+      try { JSON.parse(decoded); } catch { throw new Error("Bundle (git_url blob) não é JSON válido"); }
+      log("info", `GitHub: pull ok (git_url). url=${j.git_url}`);
+      return decoded;
+    }
+
+    // se chegou aqui, o shape não tem nada do que precisamos
+    throw new Error("Resposta inválida do GitHub (sem content/download_url/git_url)");
   }
 
   async function getShaIfExists(cfg){
@@ -188,47 +225,26 @@
     return { ok: true };
   }
 
-  // ✅ PATCH MÍNIMO: se bundle local estiver vazio, faz MAE.updateFromGitHub antes
-  async function getBundleTextOrAutoPull(cfg){
-    if (!window.RCF_MAE?.getLocalBundleText) {
-      throw new Error("RCF_MAE.getLocalBundleText ausente");
-    }
-
-    let txt = String(await window.RCF_MAE.getLocalBundleText() || "").trim();
-    if (txt) return txt;
-
-    // tenta auto-pull via MAE (puxa + salva localStorage padronizado)
-    if (window.RCF_MAE?.updateFromGitHub) {
-      log("info", "pushMotherBundle: bundle local vazio -> fazendo MAE.updateFromGitHub…");
-      await window.RCF_MAE.updateFromGitHub({
-        onProgress: (p) => {
-          // mantém leve, sem spam
-          if (p?.step === "apply_done") log("info", `MAE apply_done ${p.done}/${p.total}`);
-        }
-      });
-
-      txt = String(await window.RCF_MAE.getLocalBundleText() || "").trim();
-      if (txt) return txt;
-    }
-
-    throw new Error("Bundle local vazio");
-  }
-
   async function pushMotherBundle(cfgIn){
     const cfg = saveConfig(cfgIn || loadConfig());
 
-    // ✅ garante normalização antes de qualquer push
     const norm = normalizeBundlePath(cfg.path);
     cfg.path = norm.normalized;
     log("info", "bundle path normalized", { raw: norm.raw, path: cfg.path });
 
-    const bundleTxt = await getBundleTextOrAutoPull(cfg);
+    if (!window.RCF_MAE?.getLocalBundleText) {
+      throw new Error("RCF_MAE.getLocalBundleText ausente");
+    }
+
+    const bundleTxt = await window.RCF_MAE.getLocalBundleText();
+    if (!bundleTxt) throw new Error("Bundle local vazio");
+
     await push(cfg, bundleTxt);
     return { ok: true };
   }
 
   window.RCF_GH_SYNC = {
-    __v24c: true,
+    __v24d: true,
     loadConfig,
     saveConfig,
     test,
@@ -237,5 +253,5 @@
     pushMotherBundle,
   };
 
-  log("info", "github_sync.js loaded (v2.4c)");
+  log("info", "github_sync.js loaded (v2.4d)");
 })();
