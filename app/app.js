@@ -12,6 +12,7 @@
    - ✅ PATCH: fallback de targets usa /index.html primeiro (bundle real)
    - ✅ PATCH: SW register usa ./sw.js + scope ./ (Pages/subpath safe)
    - ✅ PATCH: fetch do bundle resolve com baseURI (subpath safe)
+   - ✅ PATCH: mother_bundle suporta files como ARRAY [{path,content}] e como OBJETO {"/p":"content"}
 */
 
 (() => {
@@ -1334,18 +1335,38 @@
       let parsed = null;
       try { parsed = JSON.parse(bundleText); } catch { parsed = null; }
 
-      const filesObj =
-        (parsed && parsed.files && typeof parsed.files === "object")
-          ? parsed.files
-          : (parsed && typeof parsed === "object" ? parsed : {});
+      // ✅ SUPORTE: files como ARRAY [{path,content}] OU OBJETO MAPA {"/p":"content"}
+      let entries = [];
 
-      const entries = Object.entries(filesObj || {});
+      if (parsed && Array.isArray(parsed.files)) {
+        // formato ARRAY
+        entries = parsed.files
+          .map(it => {
+            const rawPath = it && (it.path || it.file || it.name);
+            const rawVal  = it && ("content" in it ? it.content : (it.text ?? it.data ?? ""));
+            return [rawPath, rawVal];
+          })
+          .filter(([p]) => !!p);
+      } else {
+        // formato OBJETO
+        const filesObj =
+          (parsed && parsed.files && typeof parsed.files === "object")
+            ? parsed.files
+            : (parsed && typeof parsed === "object" ? parsed : {});
+        entries = Object.entries(filesObj || {});
+      }
+
       for (const [rawPath, rawVal] of entries) {
         const p = normalizePath(rawPath);
-        const txt = (rawVal && typeof rawVal === "object" && "content" in rawVal) ? String(rawVal.content ?? "") : String(rawVal ?? "");
+        const txt =
+          (rawVal && typeof rawVal === "object" && "content" in rawVal)
+            ? String(rawVal.content ?? "")
+            : String(rawVal ?? "");
+
         const type = guessType(p);
         const markers = detectMarkers(txt);
         const anchors = getAnchorsForContent(type, txt);
+
         index.files.push({
           path: p,
           type,
@@ -1544,6 +1565,19 @@
     if (bundleText) {
       try {
         const parsed = JSON.parse(bundleText);
+
+        // ✅ formato ARRAY: parsed.files = [{path, content}]
+        if (parsed && Array.isArray(parsed.files)) {
+          const hit = parsed.files.find(it => normalizePath(it?.path || it?.file || it?.name) === p);
+          if (hit) {
+            if ("content" in hit) return String(hit.content ?? "");
+            if ("text" in hit) return String(hit.text ?? "");
+            if ("data" in hit) return String(hit.data ?? "");
+            return "";
+          }
+        }
+
+        // ✅ formato OBJETO: { "/path": "..." } ou { "/path": {content:""} }
         const filesObj = (parsed && parsed.files && typeof parsed.files === "object") ? parsed.files : parsed;
         const v = filesObj && filesObj[p];
         if (v && typeof v === "object" && "content" in v) return String(v.content ?? "");
