@@ -1,13 +1,12 @@
-/* RControl Factory — /app/js/admin.github.js (PADRÃO) — v2.7
-   GitHub UI como BOTÃO na subnav (ao lado de Logs/Diagnostics), sem depender de Settings/Admin mount.
-   - Injeta "GitHub" depois de "Logs"
-   - Abre/fecha painel flutuante (modal)
-   - Anti-duplicação de handler (iOS touch/click) + sem loop infinito pesado
+/* RControl Factory — /app/js/admin.github.js (PADRÃO) — v2.7b
+   PATCH MÍNIMO sobre v2.7:
+   - Remove double-save / double-log de ghcfg (UI não salva antes de chamar GH_SYNC.* porque GH_SYNC já salva)
+   - Mantém iOS safe (sem touchend->click artificial)
 */
 (() => {
   "use strict";
 
-  if (window.RCF_ADMIN_GH && window.RCF_ADMIN_GH.__v27) return;
+  if (window.RCF_ADMIN_GH && window.RCF_ADMIN_GH.__v27b) return;
 
   const UI_OPEN_KEY = "rcf:ghui:open";
   const LS_CFG_KEY  = "rcf:ghcfg";
@@ -29,6 +28,10 @@
     return x;
   }
 
+  function hasGHSYNC(){
+    return !!(window.RCF_GH_SYNC && (window.RCF_GH_SYNC.loadConfig || window.RCF_GH_SYNC.saveConfig));
+  }
+
   function getCfg(){
     if (window.RCF_GH_SYNC?.loadConfig) return window.RCF_GH_SYNC.loadConfig();
     return safeParse(localStorage.getItem(LS_CFG_KEY), {}) || {};
@@ -47,8 +50,7 @@
     return safe;
   }
 
-  // ✅ Fix iOS: não forçar click() em touchend (isso duplica: touchend + click nativo)
-  // Mantém só auxílio de LABEL -> input e foco em inputs
+  // ✅ Fix iOS: não forçar click() em touchend
   function enableClickFallback(container){
     if (!container) return;
 
@@ -68,8 +70,6 @@
       const t = ev.target;
       if (!t) return;
       const tag = (t.tagName || "").toLowerCase();
-
-      // foco em inputs no iOS ajuda (sem duplicar ações)
       const isInput = tag === "input" || tag === "textarea" || tag === "select";
       if (isInput && typeof t.focus === "function") {
         try { t.focus(); } catch {}
@@ -87,13 +87,11 @@
     return null;
   }
 
-  // acha o "grupo" (container) onde estão Admin/Diagnostics/Logs
   function findSubnavContainer(){
     const allButtons = Array.from(document.querySelectorAll("button, a"));
     const logsBtn = allButtons.find(b => String(b.textContent||"").trim().toLowerCase() === "logs");
     if (!logsBtn) return null;
 
-    // tenta pegar o pai que contém vários botões
     let p = logsBtn.parentElement;
     for (let i = 0; i < 7 && p; i++){
       const btns = p.querySelectorAll("button, a");
@@ -205,7 +203,6 @@
     document.body.appendChild(div);
     enableClickFallback(div);
 
-    // fechar clicando fora
     div.addEventListener("click", (ev) => {
       if (ev.target === div) closeModal();
     });
@@ -238,7 +235,6 @@
     // preencher ao criar
     fillInputs(getCfg());
 
-    // ✅ Anti-duplo-clique / dupla ação (se algum navegador ainda duplicar)
     let busy = false;
     const lock = async (fn) => {
       if (busy) return;
@@ -247,6 +243,7 @@
       finally { busy = false; }
     };
 
+    // ✅ Só aqui salva config explicitamente (ação do usuário)
     document.getElementById("btnSaveCfg").addEventListener("click", () => {
       const cfg = readInputs();
       saveCfg(cfg);
@@ -257,10 +254,13 @@
     document.getElementById("btnTestToken").addEventListener("click", () => lock(async () => {
       try {
         const cfg = readInputs();
-        saveCfg(cfg);
+
         setGHOut("Testando token…");
         if (!window.RCF_GH_SYNC?.test) throw new Error("RCF_GH_SYNC.test ausente");
+
+        // ✅ NÃO chama saveCfg aqui (GH_SYNC.test já salva)
         const res = await window.RCF_GH_SYNC.test(cfg);
+
         setGHOut(String(res || "OK"));
         log("ok", "OK: token test ok");
       } catch (e) {
@@ -272,10 +272,13 @@
     document.getElementById("btnPull").addEventListener("click", () => lock(async () => {
       try {
         const cfg = readInputs();
-        saveCfg(cfg);
+
         setGHOut("Pull…");
         if (!window.RCF_GH_SYNC?.pull) throw new Error("RCF_GH_SYNC.pull ausente");
+
+        // ✅ NÃO chama saveCfg aqui (GH_SYNC.pull já salva)
         const txt = await window.RCF_GH_SYNC.pull(cfg);
+
         setGHOut("OK: pull ok (bytes=" + String(txt || "").length + ")");
         log("ok", "OK: gh pull ok");
       } catch (e) {
@@ -287,15 +290,17 @@
     document.getElementById("btnPushMother").addEventListener("click", () => lock(async () => {
       try {
         const cfg = readInputs();
-        saveCfg(cfg);
+
         setGHOut("Push Mother Bundle…");
         if (!window.RCF_GH_SYNC?.pushMotherBundle) throw new Error("RCF_GH_SYNC.pushMotherBundle ausente");
+
+        // ✅ NÃO chama saveCfg aqui (GH_SYNC.pushMotherBundle já salva)
         await window.RCF_GH_SYNC.pushMotherBundle(cfg);
+
         setGHOut("OK: GitHub: pushMotherBundle ok");
         log("ok", "OK: GitHub: pushMotherBundle ok");
       } catch (e) {
         setGHOut("ERR: " + (e?.message || e));
-        // ✅ não aparece mais "fail" junto com "ok"
         log("err", "ERR: pushMotherBundle fail :: " + (e?.message || e));
       }
     }));
@@ -304,12 +309,14 @@
       try {
         setGHOut("MAE update…");
         if (!window.RCF_MAE?.updateFromGitHub) throw new Error("RCF_MAE.updateFromGitHub ausente");
+
         const res = await window.RCF_MAE.updateFromGitHub({
           onProgress: (p) => {
             if (p?.step === "apply_progress") setGHOut(`Aplicando… ${p.done}/${p.total}`);
             if (p?.step === "apply_done") setGHOut(`OK: aplicado ${p.done}/${p.total}`);
           }
         });
+
         setGHOut("OK: mae update ok " + JSON.stringify(res));
         log("ok", "OK: mae update ok");
       } catch (e) {
@@ -318,7 +325,6 @@
       }
     }));
 
-    // se tava aberto antes, abre de novo
     if (localStorage.getItem(UI_OPEN_KEY) === "1") openModal();
   }
 
@@ -328,7 +334,6 @@
     if (m) m.style.display = "flex";
     localStorage.setItem(UI_OPEN_KEY, "1");
 
-    // sempre repuxa cfg quando abre
     try {
       const cfg = getCfg();
       document.getElementById("ghOwner").value = cfg.owner || "";
@@ -349,7 +354,6 @@
     const sub = findSubnavContainer();
     if (!sub) return false;
 
-    // já existe?
     const existing = Array.from(sub.querySelectorAll("button, a")).find(b =>
       String(b.textContent||"").trim().toLowerCase() === "github"
     );
@@ -358,7 +362,6 @@
     const logsBtn = findButtonByText(sub, "Logs") || findButtonByText(sub, "logs");
     if (!logsBtn) return false;
 
-    // cria botão parecido (copia classe do Logs)
     const btn = document.createElement("button");
     btn.type = "button";
     btn.textContent = "GitHub";
@@ -367,9 +370,6 @@
       if (logsBtn.className) btn.className = logsBtn.className;
     } catch {}
 
-    // ✅ guarda para não duplicar listener se alguém reusar o elemento
-    btn.__rcfGhBound = true;
-
     btn.addEventListener("click", () => {
       const m = document.getElementById("rcfGhModal");
       const isOpen = m && m.style.display !== "none";
@@ -377,7 +377,6 @@
       else openModal();
     });
 
-    // inserir depois de Logs
     try { logsBtn.insertAdjacentElement("afterend", btn); }
     catch { sub.appendChild(btn); }
 
@@ -385,7 +384,6 @@
     return true;
   }
 
-  // ✅ Em vez de loop eterno pesado, usa observer + alguns retries leves
   let __started = false;
   let __obs = null;
 
@@ -402,7 +400,7 @@
     const tick = () => {
       tries++;
       try { ensureGitHubButton(); } catch {}
-      if (tries < 40) setTimeout(tick, 250); // ~10s
+      if (tries < 40) setTimeout(tick, 250);
     };
     tick();
   }
@@ -415,12 +413,11 @@
     startObserver();
     lightRetry();
 
-    // tenta também quando URL muda (router/hash)
     window.addEventListener("hashchange", () => { try { ensureGitHubButton(); } catch {} });
     window.addEventListener("popstate",  () => { try { ensureGitHubButton(); } catch {} });
   }
 
-  window.RCF_ADMIN_GH = { __v27: true, boot, openModal, closeModal };
+  window.RCF_ADMIN_GH = { __v27b: true, boot, openModal, closeModal };
 
   if (document.readyState === "loading") {
     window.addEventListener("DOMContentLoaded", boot, { once:true });
@@ -428,5 +425,5 @@
     boot();
   }
 
-  log("ok", "admin.github.js ready ✅ (v2.7)");
+  log("ok", "admin.github.js ready ✅ (v2.7b)");
 })();
