@@ -1,24 +1,32 @@
-/* RControl Factory — /app/js/core/mother_selfupdate.js (PADRÃO) — v2.2
-   FIX: bundle do GitHub vem sem files[] (Injector: files=0)
-
-   - Salva RAW:          rcf:mother_bundle_raw
-   - Salva NORMALIZADO:  rcf:mother_bundle_local  (sempre {files:[...]})
-   - Salva META:         rcf:mother_bundle_meta
-   - Expõe getLocalBundleText() (usado por pushMotherBundle)
+/* RControl Factory — /app/js/core/mother_selfupdate.js (PADRÃO) — v2.2b
+   PATCH MÍNIMO:
+   - Compat total: salva bundle normalizado em múltiplas chaves (scan antigo não fica files=0)
+   - getMotherBundleLocal() único: lê qualquer chave e normaliza {files:[...]}
+   - Apply/Clear: prefere RCF_VFS_OVERRIDES, fallback RCF_VFS
+   - Mantém getLocalBundleText()/status() (usado no pushMotherBundle)
    - NÃO mexe no SW
 */
 (() => {
   "use strict";
 
-  if (window.RCF_MAE && window.RCF_MAE.__v22) return;
+  if (window.RCF_MAE && window.RCF_MAE.__v22b) return;
 
-  const LS_BUNDLE_KEY  = "rcf:mother_bundle_local";
-  const LS_BUNDLE_RAW  = "rcf:mother_bundle_raw";
-  const LS_BUNDLE_META = "rcf:mother_bundle_meta";
+  // ✅ chaves padrão + compat antigas
+  const LS_BUNDLE_KEY       = "rcf:mother_bundle_local";     // padrão: SEMPRE normalizado {version,ts,files:[...]}
+  const LS_BUNDLE_RAW       = "rcf:mother_bundle_raw";       // texto raw do GH
+  const LS_BUNDLE_META      = "rcf:mother_bundle_meta";      // meta/info
+  const LS_BUNDLE_COMPAT_1  = "rcf:mother_bundle";           // compat
+  const LS_BUNDLE_COMPAT_2  = "rcf:mother_bundle_json";      // compat
 
-  const log = (lvl, msg) => {
-    try { window.RCF_LOGGER?.push?.(lvl, msg); } catch {}
-    try { console.log("[MAE]", lvl, msg); } catch {}
+  const log = (lvl, msg, obj) => {
+    try {
+      if (obj !== undefined) window.RCF_LOGGER?.push?.(lvl, String(msg) + " " + JSON.stringify(obj));
+      else window.RCF_LOGGER?.push?.(lvl, String(msg));
+    } catch {}
+    try {
+      if (obj !== undefined) console.log("[MAE]", lvl, msg, obj);
+      else console.log("[MAE]", lvl, msg);
+    } catch {}
   };
 
   function safeParse(raw, fb){
@@ -40,7 +48,6 @@
   }
 
   function pick(obj, pathArr){
-    // pathArr ex: ["bundle","files"]
     let cur = obj;
     for (const k of (pathArr || [])) {
       if (!cur) return null;
@@ -65,7 +72,7 @@
       if (Array.isArray(v) && v.length) return v;
     }
 
-    // 2) maps/objetos (ex.: files: { "/index.html": "..." })
+    // 2) maps/objetos (files: { "/x": "..." } ou { "/x": {content,...} })
     const mapCandidates = [
       ["files"], ["overrides"], ["vfs"], ["entries"], ["map"],
       ["bundle","files"], ["bundle","overrides"],
@@ -96,7 +103,6 @@
             continue;
           }
 
-          // fallback
           out.push({ path, content: String(val ?? ""), contentType: guessType(path) });
         }
 
@@ -104,7 +110,6 @@
       }
     }
 
-    // 3) último fallback: se o JSON tiver uma lista em algum lugar, mas vazia/estranha
     return [];
   }
 
@@ -119,9 +124,7 @@
     const rawKeys = Object.keys(j || {});
     const filesAny = normalizeFilesFromAnyShape(j);
 
-    // normaliza itens
     const files = (filesAny || []).map((f, idx) => {
-      // se já vier no formato {path,content,contentType}
       if (isPlainObject(f) && (f.path || f.name)) {
         const path = String(f.path || f.name || "").trim();
         const content = (f.content != null) ? String(f.content) : "";
@@ -130,7 +133,6 @@
         return { path, content, contentType: ct };
       }
 
-      // se vier como string (raro)
       if (typeof f === "string") {
         return { path: `/unknown_${idx}.txt`, content: f, contentType: "text/plain; charset=utf-8" };
       }
@@ -139,7 +141,7 @@
     }).filter(Boolean);
 
     if (!files.length) {
-      log("err", "bundle normalize failed: sem files. keys=" + JSON.stringify(rawKeys));
+      log("err", "bundle normalize failed: sem files. keys=", rawKeys);
       return { ok:false, rawKeys, normalized:null };
     }
 
@@ -152,15 +154,59 @@
     return { ok:true, rawKeys, normalized };
   }
 
+  // ✅ Função ÚNICA (pra qualquer SCAN/CP1 ler sempre certo)
+  function getMotherBundleLocal(){
+    const raw =
+      localStorage.getItem(LS_BUNDLE_KEY) ||
+      localStorage.getItem(LS_BUNDLE_COMPAT_1) ||
+      localStorage.getItem(LS_BUNDLE_COMPAT_2) ||
+      "";
+
+    if (!raw) return null;
+
+    let j = null;
+    try { j = JSON.parse(raw); } catch { return null; }
+
+    // aceita {version,ts,files:[...]} ou qualquer shape
+    let files = [];
+    if (Array.isArray(j.files)) files = j.files;
+    else files = normalizeFilesFromAnyShape(j);
+
+    // normaliza itens para {path,content,contentType}
+    const out = (files || []).map((f, idx) => {
+      if (isPlainObject(f) && (f.path || f.name)) {
+        const path = String(f.path || f.name || "").trim();
+        if (!path) return null;
+        const content = (f.content != null) ? String(f.content) : "";
+        const ct = String(f.contentType || f.type || guessType(path));
+        return { path, content, contentType: ct };
+      }
+      if (typeof f === "string") {
+        return { path: `/unknown_${idx}.txt`, content: f, contentType: "text/plain; charset=utf-8" };
+      }
+      return null;
+    }).filter(Boolean);
+
+    return { meta: j, files: out };
+  }
+
   function setLocalBundleNormalized(rawTxt, normalizedObj, metaExtra){
+    // RAW (sempre)
     localStorage.setItem(LS_BUNDLE_RAW, String(rawTxt || ""));
 
+    // NORMALIZADO (padrão)
     const normTxt = JSON.stringify(normalizedObj);
     localStorage.setItem(LS_BUNDLE_KEY, normTxt);
 
+    // ✅ COMPAT: salva também nas chaves antigas (evita scan B lendo errado)
+    try { localStorage.setItem(LS_BUNDLE_COMPAT_1, normTxt); } catch {}
+    try { localStorage.setItem(LS_BUNDLE_COMPAT_2, normTxt); } catch {}
+
     const meta = {
       ts: Date.now(),
-      filesCount: Array.isArray(normalizedObj?.files) ? normalizedObj.files.length : null,
+      filesCount: Array.isArray(normalizedObj?.files) ? normalizedObj.files.length : 0,
+      source: "unknown",
+      rawKeys: Object.keys(normalizedObj || {}),
       ...((metaExtra && typeof metaExtra === "object") ? metaExtra : {})
     };
     localStorage.setItem(LS_BUNDLE_META, JSON.stringify(meta));
@@ -168,16 +214,53 @@
     return { ok:true, meta };
   }
 
+  // texto do bundle normalizado (usado pelo pushMotherBundle)
   function getLocalBundleText(){
     const txt = String(localStorage.getItem(LS_BUNDLE_KEY) || "").trim();
     return txt || "";
   }
 
   function status(){
-    const txt = getLocalBundleText();
-    if (!txt) return { ok:false, msg:"bundle local ausente" };
+    const b = getMotherBundleLocal();
+    if (!b) return { ok:false, msg:"bundle local ausente" };
+
     const meta = safeParse(localStorage.getItem(LS_BUNDLE_META), {}) || {};
-    return { ok:true, msg:"bundle local ok", meta };
+    return {
+      ok: true,
+      msg: "bundle local ok",
+      meta: {
+        ...meta,
+        filesCount: b?.files?.length || meta.filesCount || 0
+      }
+    };
+  }
+
+  function pickVFS(){
+    // ✅ preferido (novo)
+    if (window.RCF_VFS_OVERRIDES && typeof window.RCF_VFS_OVERRIDES.put === "function") {
+      return {
+        kind: "OVERRIDES",
+        put: window.RCF_VFS_OVERRIDES.put.bind(window.RCF_VFS_OVERRIDES),
+        clear: (typeof window.RCF_VFS_OVERRIDES.clear === "function")
+          ? window.RCF_VFS_OVERRIDES.clear.bind(window.RCF_VFS_OVERRIDES)
+          : null
+      };
+    }
+
+    // ✅ fallback (antigo)
+    if (window.RCF_VFS && typeof window.RCF_VFS.put === "function") {
+      return {
+        kind: "VFS",
+        put: window.RCF_VFS.put.bind(window.RCF_VFS),
+        clear: (typeof window.RCF_VFS.clearOverrides === "function")
+          ? window.RCF_VFS.clearOverrides.bind(window.RCF_VFS)
+          : (typeof window.RCF_VFS.clearAll === "function")
+            ? window.RCF_VFS.clearAll.bind(window.RCF_VFS)
+            : null
+      };
+    }
+
+    return null;
   }
 
   async function applyBundleToOverrides(normalizedBundleText, opts){
@@ -190,7 +273,8 @@
     const files = Array.isArray(bundle.files) ? bundle.files : [];
     if (!files.length) throw new Error("Bundle normalizado sem files[]");
 
-    if (!window.RCF_VFS?.put) throw new Error("RCF_VFS.put ausente (Overrides VFS incompleto)");
+    const vfs = pickVFS();
+    if (!vfs || !vfs.put) throw new Error("Overrides VFS incompleto (sem put). Recarregue 1x após SW controlar.");
 
     let wrote = 0;
     let failed = 0;
@@ -204,8 +288,8 @@
       if (!path) { failed++; continue; }
 
       try {
-        if (onProgress) onProgress({ step:"apply_progress", done:wrote+failed, total:files.length, path });
-        await window.RCF_VFS.put(path, content, contentType);
+        if (onProgress) onProgress({ step:"apply_progress", done:(wrote+failed), total:files.length, path });
+        await Promise.resolve(vfs.put(path, content, contentType));
         wrote++;
       } catch (e) {
         failed++;
@@ -232,7 +316,7 @@
     }
 
     const saved = setLocalBundleNormalized(rawTxt, norm.normalized, { source:"github_pull", rawKeys: norm.rawKeys });
-    log("info", "mother_bundle_local saved " + JSON.stringify(saved.meta));
+    log("info", "mother_bundle_local saved", saved.meta);
 
     const r = await applyBundleToOverrides(JSON.stringify(norm.normalized), opts);
 
@@ -241,20 +325,23 @@
   }
 
   async function clear(){
-    if (window.RCF_VFS?.clearOverrides) {
-      const r = await window.RCF_VFS.clearOverrides();
-      log("ok", "clearOverrides ok");
+    const vfs = pickVFS();
+    if (vfs?.clear) {
+      const r = await Promise.resolve(vfs.clear());
+      log("ok", "mae clear: ok");
       return r;
     }
-    throw new Error("Overrides VFS sem clearOverrides()");
+    throw new Error("Overrides VFS sem clear/clearOverrides()");
   }
 
   window.RCF_MAE = {
-    __v22: true,
+    __v22b: true,
     updateFromGitHub,
     clear,
     status,
     getLocalBundleText,
+    // ✅ exposto pra CP1/scan usar (se precisar)
+    getMotherBundleLocal,
   };
 
   log("ok", "mother_selfupdate.js ready ✅");
