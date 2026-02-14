@@ -1,63 +1,52 @@
-/* RControl Factory — /app/js/core/vfs_overrides.js (PADRÃO) — v1.2
-   Patch cirúrgico:
-   - Garante API esperada pelo MAE:
-       - status()
-       - clearOverrides()
-   - Mantém o comportamento atual (MessageChannel -> SW).
-   - Não muda SW, não muda estrutura, só completa os nomes faltando.
+/* RControl Factory — /app/js/core/vfs_overrides.js (PADRÃO) — v1.1
+   - Client API para falar com o Service Worker via MessageChannel
+   - Métodos:
+     - put(path, content, contentType)
+     - clear()
+     - listFiles()
+     - deleteFile(path)
+   - Timeout + retries (iOS)
 */
-
 (() => {
   "use strict";
 
-  if (window.RCF_VFS && window.RCF_VFS.__v12) return;
+  const VERSION = "v1.1";
+  const DEFAULT_TIMEOUT = 9000; // iOS safety
+  const RETRIES = 2;
 
-  const log = (lvl, msg) => {
-    try { window.RCF_LOGGER?.push?.(lvl, msg); } catch {}
-    try { console.log("[VFS]", lvl, msg); } catch {}
-  };
+  function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
 
-  const SW_PUT   = "RCF_OVERRIDE_PUT";
-  const SW_CLEAR = "RCF_OVERRIDE_CLEAR";
-
-  // ====== Helpers ======
-  function normalizePath(p) {
-    let x = String(p || "").trim();
-    if (!x) return "/";
-    x = x.split("#")[0].split("?")[0].trim();
-    if (!x.startsWith("/")) x = "/" + x;
-    x = x.replace(/\/{2,}/g, "/");
-
-    // compat repo/runtime
-    if (x === "/app/index.html") x = "/index.html";
-    if (x.startsWith("/app/")) x = x.slice(4);
-    if (!x.startsWith("/")) x = "/" + x;
-
-    return x;
+  async function getSW() {
+    const reg = await navigator.serviceWorker?.getRegistration?.("/");
+    return reg?.active || navigator.serviceWorker?.controller || null;
   }
 
-  function swController() {
-    return navigator?.serviceWorker?.controller || null;
-  }
-
-  async function postToSW(message, timeoutMs = 8000) {
-    const ctrl = swController();
-    if (!ctrl) throw new Error("SW controller ausente");
+  async function post(msg, timeoutMs = DEFAULT_TIMEOUT) {
+    const sw = await getSW();
+    if (!sw) throw new Error("SW não controlando a página ainda (recarregue 1x).");
 
     return await new Promise((resolve, reject) => {
       const ch = new MessageChannel();
-      const t = setTimeout(() => {
-        try { ch.port1.onmessage = null; } catch {}
-        reject(new Error("TIMEOUT " + timeoutMs + "ms (postToSW)"));
-      }, timeoutMs);
+      let t = null;
 
       ch.port1.onmessage = (ev) => {
-        clearTimeout(t);
-        resolve(ev.data);
+        try {
+          clearTimeout(t);
+          const d = ev.data || {};
+          if (d.type?.endsWith("_ERR")) reject(new Error(d.error || "ERR"));
+          else resolve(d);
+        } catch (e) {
+          reject(e);
+        }
       };
 
+      t = setTimeout(() => {
+        try { ch.port1.onmessage = null; } catch {}
+        reject(new Error(`TIMEOUT ${timeoutMs}ms em ${msg?.type || "postMessage"}`));
+      }, timeoutMs);
+
       try {
-        ctrl.postMessage(message, [ch.port2]);
+        sw.postMessage(msg, [ch.port2]);
       } catch (e) {
         clearTimeout(t);
         reject(e);
@@ -65,64 +54,61 @@
     });
   }
 
-  // ====== API real ======
-  async function put(path, content, contentType) {
-    const p = normalizePath(path);
-    const res = await postToSW({ type: SW_PUT, path: p, content, contentType }, 12000);
-
-    // aceitamos OK em vários formatos
-    if (res?.type && String(res.type).includes("_ERR")) {
-      throw new Error(res.error || "SW put err");
+  async function postRetry(msg, timeoutMs){
+    let lastErr = null;
+    for (let i = 0; i <= RETRIES; i++){
+      try {
+        return await post(msg, timeoutMs);
+      } catch (e) {
+        lastErr = e;
+        await sleep(250 * (i + 1));
+      }
     }
-    return { ok: true, path: p, res };
+    throw lastErr || new Error("postRetry failed");
   }
 
-  async function clearOverrides() {
-    const res = await postToSW({ type: SW_CLEAR }, 9000);
-    if (res?.type && String(res.type).includes("_ERR")) {
-      throw new Error(res.error || "SW clear err");
-    }
-    return { ok: true, res };
-  }
-
-  // ====== SHIMS (o que o MAE espera) ======
-  function status() {
-    const ctrl = !!swController();
-    return {
-      ok: true,
-      controller: ctrl,
-      hasPut: true,
-      hasClearOverrides: true,
-      version: "v1.2",
-      scope: (navigator?.serviceWorker?.controller?.scriptURL || "").includes("/app/") ? "/app" : "/",
-    };
-  }
-
-  // objeto público — com compat para nomes antigos/novos
   const api = {
-    __v12: true,
-    normalizePath,
+    __v: VERSION,
 
-    // nomes base
-    put,
-    clearOverrides,
-    status,
+    async put(path, content, contentType) {
+      const r = await postRetry(
+        { type: "RCF_OVERRIDE_PUT", path, content, contentType },
+        12000
+      );
+      return !!r?.ok;
+    },
 
-    // compat: se algum código usa "clear"
-    clear: clearOverrides,
+    async clear() {
+      const r = await postRetry(
+        { type: "RCF_OVERRIDE_CLEAR" },
+        12000
+      );
+      return !!r?.ok;
+    },
 
-    // compat: se algum código usa "putOverride"
-    putOverride: put,
+    async listFiles() {
+      const r = await postRetry(
+        { type: "RCF_OVERRIDE_LIST" },
+        12000
+      );
+      // retorna array de paths ("/index.html", "/js/...", etc)
+      return Array.isArray(r?.paths) ? r.paths : [];
+    },
+
+    async deleteFile(path) {
+      const r = await postRetry(
+        { type: "RCF_OVERRIDE_DEL", path },
+        12000
+      );
+      return !!r?.deleted;
+    }
   };
 
-  window.RCF_VFS = api;
+  window.RCF_VFS_OVERRIDES = api;
 
-  // log de boot igual você já vê
   try {
-    // tenta descobrir base (sem forçar nada)
-    const base = document?.baseURI || location.href;
-    log("ok", `vfs_overrides ready ✅ v1.2 scope=/ base=${base}`);
-  } catch {
-    log("ok", "vfs_overrides ready ✅ v1.2 scope=/");
-  }
+    // log friendly (se tiver logger)
+    window.RCF_LOGGER?.push?.("ok", `vfs_overrides ready ✅ ${VERSION} scope=/`);
+  } catch {}
+
 })();
