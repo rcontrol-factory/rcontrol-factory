@@ -1,18 +1,19 @@
-/* RControl Factory — Service Worker (PADRÃO) — v1.0
+/* RControl Factory — /app/sw.js (PADRÃO) — v1.1
    - Overrides via CacheStorage (rápido e simples)
-   - Suporta mensagens:
+   - RPC (MessageChannel):
      - RCF_OVERRIDE_PUT   {path, content, contentType}
      - RCF_OVERRIDE_CLEAR {}
+     - RCF_OVERRIDE_LIST  {}
+     - RCF_OVERRIDE_DEL   {path}
    - Fetch: se existir override, serve ele antes do network
    - Normaliza paths: aceita /app/... e converte para /...
+   - Clear robusto (iOS): tenta delete do cache + fallback por entries (batch)
 */
-
 (() => {
   "use strict";
 
   const OVERRIDE_CACHE = "rcf_overrides_v1";
-
-  const log = (...a) => { try { /* console.log */ } catch {} };
+  const VERSION = "v1.1";
 
   function normPath(input) {
     let p = String(input || "").trim();
@@ -27,6 +28,16 @@
     if (!p.startsWith("/")) p = "/" + p;
 
     return p;
+  }
+
+  function guessType(path) {
+    const p = String(path || "");
+    if (p.endsWith(".js")) return "application/javascript; charset=utf-8";
+    if (p.endsWith(".css")) return "text/css; charset=utf-8";
+    if (p.endsWith(".html")) return "text/html; charset=utf-8";
+    if (p.endsWith(".json")) return "application/json; charset=utf-8";
+    if (p.endsWith(".txt")) return "text/plain; charset=utf-8";
+    return "text/plain; charset=utf-8";
   }
 
   function makeKeyUrl(path) {
@@ -49,21 +60,54 @@
     return { ok: true, url };
   }
 
-  async function clearOverrides() {
-    const keys = await caches.keys();
-    const toDel = keys.filter(k => k === OVERRIDE_CACHE);
-    for (const k of toDel) await caches.delete(k);
-    return { ok: true, deleted: toDel.length };
+  async function delOverride(path) {
+    const url = makeKeyUrl(path);
+    const cache = await caches.open(OVERRIDE_CACHE);
+    const ok = await cache.delete(url, { ignoreSearch: true });
+    return { ok: true, deleted: !!ok, url, path: normPath(path) };
   }
 
-  function guessType(path) {
-    const p = String(path || "");
-    if (p.endsWith(".js")) return "application/javascript; charset=utf-8";
-    if (p.endsWith(".css")) return "text/css; charset=utf-8";
-    if (p.endsWith(".html")) return "text/html; charset=utf-8";
-    if (p.endsWith(".json")) return "application/json; charset=utf-8";
-    if (p.endsWith(".txt")) return "text/plain; charset=utf-8";
-    return "text/plain; charset=utf-8";
+  async function listOverrides() {
+    const cache = await caches.open(OVERRIDE_CACHE);
+    const reqs = await cache.keys();
+    const out = (reqs || []).map(r => {
+      try {
+        const u = new URL(r.url);
+        return u.pathname || "/";
+      } catch {
+        return "/unknown";
+      }
+    });
+    return { ok: true, count: out.length, paths: out };
+  }
+
+  async function clearOverrides() {
+    // ✅ caminho rápido
+    try {
+      const ok = await caches.delete(OVERRIDE_CACHE);
+      if (ok) return { ok: true, mode: "caches.delete", deleted: 1 };
+    } catch {}
+
+    // ✅ fallback (iOS): limpa por entries em lotes
+    try {
+      const cache = await caches.open(OVERRIDE_CACHE);
+      const reqs = await cache.keys();
+      let n = 0;
+
+      const list = reqs || [];
+      // lote pequeno pra não travar iOS
+      for (let i = 0; i < list.length; i++) {
+        try {
+          const r = list[i];
+          const ok = await cache.delete(r, { ignoreSearch: true });
+          if (ok) n++;
+        } catch {}
+      }
+
+      return { ok: true, mode: "cache.delete(entries)", deleted: n };
+    } catch (e) {
+      return { ok: false, error: String(e?.message || e) };
+    }
   }
 
   self.addEventListener("install", (event) => {
@@ -92,13 +136,13 @@
       try {
         const cache = await caches.open(OVERRIDE_CACHE);
 
-        // tenta match direto
-        let hit = await cache.match(req, { ignoreSearch: true });
+        // tenta pela chave normalizada primeiro (mais consistente)
+        const keyUrl = makeKeyUrl(url.pathname);
+        let hit = await cache.match(keyUrl, { ignoreSearch: true });
         if (hit) return hit;
 
-        // tenta match pela chave normalizada (pra quando veio /app/...)
-        const keyUrl = makeKeyUrl(url.pathname);
-        hit = await cache.match(keyUrl, { ignoreSearch: true });
+        // tenta match direto (caso algum put tenha usado req)
+        hit = await cache.match(req, { ignoreSearch: true });
         if (hit) return hit;
       } catch {}
 
@@ -113,29 +157,42 @@
     const port = event.ports && event.ports[0];
 
     function reply(payload) {
-      try { port && port.postMessage(payload); } catch {}
+      try {
+        if (port) port.postMessage(payload);
+        else if (event.source && typeof event.source.postMessage === "function") event.source.postMessage(payload);
+      } catch {}
     }
 
     (async () => {
       try {
         if (msg.type === "RCF_OVERRIDE_PUT") {
-          const path = msg.path;
-          const content = msg.content;
-          const contentType = msg.contentType;
-          const r = await putOverride(path, content, contentType);
-          reply({ type: "RCF_OVERRIDE_PUT_OK", ...r, path: normPath(path) });
+          const r = await putOverride(msg.path, msg.content, msg.contentType);
+          reply({ type: "RCF_OVERRIDE_PUT_OK", ...r, path: normPath(msg.path), v: VERSION });
+          return;
+        }
+
+        if (msg.type === "RCF_OVERRIDE_DEL") {
+          const r = await delOverride(msg.path);
+          reply({ type: "RCF_OVERRIDE_DEL_OK", ...r, v: VERSION });
+          return;
+        }
+
+        if (msg.type === "RCF_OVERRIDE_LIST") {
+          const r = await listOverrides();
+          reply({ type: "RCF_OVERRIDE_LIST_OK", ...r, v: VERSION });
           return;
         }
 
         if (msg.type === "RCF_OVERRIDE_CLEAR") {
           const r = await clearOverrides();
-          reply({ type: "RCF_OVERRIDE_CLEAR_OK", ...r });
+          if (!r.ok) throw new Error(r.error || "clear failed");
+          reply({ type: "RCF_OVERRIDE_CLEAR_OK", ...r, v: VERSION });
           return;
         }
 
-        reply({ type: "RCF_SW_NOP", ok: true });
+        reply({ type: "RCF_SW_NOP", ok: true, v: VERSION });
       } catch (e) {
-        reply({ type: (msg.type || "RCF_SW") + "_ERR", error: String(e?.message || e) });
+        reply({ type: (msg.type || "RCF_SW") + "_ERR", error: String(e?.message || e), v: VERSION });
       }
     })();
   });
