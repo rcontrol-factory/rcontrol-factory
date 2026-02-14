@@ -73,11 +73,16 @@
       // pega erros que travam em “Carregando…”
       window.addEventListener("error", (e) => {
         const m = (e && (e.message || e.error?.message)) || "Erro desconhecido";
-        window.RCF_LOGGER.push("err", "GLOBAL_ERROR: " + m);
+        const src = e && e.filename ? (" @ " + e.filename + ":" + (e.lineno||0) + ":" + (e.colno||0)) : "";
+        window.RCF_LOGGER.push("ERR", "GLOBAL_ERROR: " + m + src);
+        try { if (e && e.error && e.error.stack) window.RCF_LOGGER.push("ERR", "STACK: " + e.error.stack); } catch {}
       });
+
       window.addEventListener("unhandledrejection", (e) => {
-        const m = e?.reason?.message || String(e?.reason || "Promise rejection");
-        window.RCF_LOGGER.push("err", "UNHANDLED_REJECTION: " + m);
+        const r = e ? e.reason : null;
+        const m = (r && r.message) ? r.message : String(r || "Promise rejection");
+        window.RCF_LOGGER.push("ERR", "UNHANDLED_REJECTION: " + m);
+        try { if (r && r.stack) window.RCF_LOGGER.push("ERR", "STACK: " + r.stack); } catch {}
       });
 
       function loadScript(src){
@@ -96,11 +101,13 @@
         window.RCF_LOGGER.push("BOOT", "base href = " + document.baseURI);
 
         // ✅ ordem mínima (antes do app.js)
+        // ✅ vfs_shim entra DEPOIS do vfs_overrides (porque ele “ponteia”)
         const modules = [
           "./js/core/logger.js",
           "./js/core/storage.js",
           "./js/core/github_sync.js",
           "./js/core/vfs_overrides.js",
+          "./js/core/vfs_shim.js",
           "./js/core/mother_selfupdate.js",
           "./js/admin.github.js"
         ];
@@ -123,7 +130,7 @@
         }
 
         // ✅ SW (scope ./) — PADRÃO /app/
-        // IMPORTANTE: depois que eu revisar seu app.js, vamos manter o register APENAS AQUI (ou só lá).
+        // IMPORTANTE: vamos manter o register APENAS AQUI (ou só no app.js), mas por enquanto pode ficar aqui.
         try {
           if ("serviceWorker" in navigator) {
             navigator.serviceWorker.register("./sw.js", { scope: "./" })
