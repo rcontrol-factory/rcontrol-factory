@@ -1,24 +1,25 @@
-/* RControl Factory — /app/js/core/vfs_overrides.js (PADRÃO) — v1.2
-   - Ponte do app -> SW (CacheStorage overrides)
-   - Exige SW com RPC:
-     RCF_OVERRIDE_PUT, CLEAR, LIST, DEL
-   - API pública:
-     - put(path, content, contentType)
-     - clearOverrides()
-     - listOverrides()
-     - delOverride(path)
-     - status()
+/* RControl Factory — /app/js/core/vfs_overrides.js (PADRÃO) — v1.3
+   Patch mínimo (anti "files=0" falso):
+   - listOverridesSafe(): nunca throw (retorna [] + motivo)
+   - cache da última LIST ok (evita 0 intermitente)
+   - status() mais informativo (can_rpc, last_list_count)
+   - rpc/put/clear/del continuam STRICT (throw) como antes
 */
 (() => {
   "use strict";
 
-  if (window.RCF_VFS_OVERRIDES && window.RCF_VFS_OVERRIDES.__v12) return;
+  if (window.RCF_VFS_OVERRIDES && window.RCF_VFS_OVERRIDES.__v13) return;
 
-  const VERSION = "v1.2";
+  const VERSION = "v1.3";
+
   const log = (lvl, msg) => {
     try { window.RCF_LOGGER?.push?.(lvl, msg); } catch {}
     try { console.log("[VFS_OVR]", lvl, msg); } catch {}
   };
+
+  // ---- last good LIST cache (pra não cair em 0 do nada) ----
+  let _lastList = null; // {ts:number, res:any}
+  let _lastListCount = 0;
 
   function normPath(input) {
     let p = String(input || "").trim();
@@ -57,6 +58,7 @@
   async function rpc(msg, timeoutMs = 6000) {
     const ctrl = await waitForController();
     if (!ctrl) throw new Error("SW controller ausente (recarregue a página)");
+
     const ch = new MessageChannel();
 
     const p = new Promise((resolve, reject) => {
@@ -96,7 +98,41 @@
   async function listOverrides() {
     const res = await rpc({ type: "RCF_OVERRIDE_LIST" }, 8000);
     if (!res || (res.type || "").endsWith("_ERR")) throw new Error(res?.error || "LIST falhou");
+
+    // cache do último ok
+    try {
+      _lastList = { ts: Date.now(), res };
+      const items = Array.isArray(res?.items) ? res.items
+        : Array.isArray(res?.list) ? res.list
+        : Array.isArray(res?.paths) ? res.paths
+        : Array.isArray(res?.keys) ? res.keys
+        : null;
+      _lastListCount = Array.isArray(items) ? items.length : (_lastListCount || 0);
+    } catch {}
+
     return res;
+  }
+
+  // ✅ SAFE para scanner: nunca quebra, nunca throw
+  async function listOverridesSafe(opts = {}) {
+    const maxAgeMs = Number(opts.maxAgeMs || 25_000); // usa cache recente (25s)
+    const allowStale = (opts.allowStale !== false);   // padrão: true
+
+    try {
+      // tenta LIST normal
+      const res = await listOverrides();
+      return { ok: true, res, itemsCount: _lastListCount, from: "rpc" };
+    } catch (e) {
+      const reason = (e && e.message) ? e.message : String(e);
+
+      // se tem cache, devolve pra não cair em 0 “falso”
+      if (allowStale && _lastList && (Date.now() - _lastList.ts) <= maxAgeMs) {
+        return { ok: true, res: _lastList.res, itemsCount: _lastListCount, from: "cache", warn: reason };
+      }
+
+      // sem cache: devolve vazio SEM throw (scanner decide fallback)
+      return { ok: false, res: null, itemsCount: 0, from: "none", warn: reason };
+    }
   }
 
   async function delOverride(path) {
@@ -113,12 +149,15 @@
       v: VERSION,
       scope: (navigator.serviceWorker?.controller?.scriptURL ? "./" : "/"),
       base: document.baseURI || location.href,
-      sw_controller: ctrl
+      sw_controller: ctrl,
+      can_rpc: ctrl,
+      last_list_count: _lastListCount || 0,
+      last_list_at: _lastList?.ts || 0
     };
   }
 
   const api = {
-    __v12: true,
+    __v13: true,
     VERSION,
     normPath,
     guessType,
@@ -126,6 +165,7 @@
     put,
     clearOverrides,
     listOverrides,
+    listOverridesSafe, // ✅ novo (scanner usa isso)
     delOverride,
     status,
   };
