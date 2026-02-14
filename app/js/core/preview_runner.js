@@ -1,13 +1,17 @@
 /* =========================================================
-  RControl Factory — js/core/preview_runner.js (v1.0)
+  RControl Factory — js/core/preview_runner.js (PADRÃO v1.1)
   - Preview instantâneo do app-filho (abre nova aba)
   - Exporta bundle/build (JSON) do app ativo
   - NÃO depende do publish/API (só runtime local)
-  - iOS safe click (touchend + click, capture)
+  - iOS safe tap + init guard
+  - Clipboard robusto (await) + fallback no genOut
+  - Revoke object URL (evita leak)
 ========================================================= */
 
 (function () {
   "use strict";
+
+  if (window.RCF_PREVIEW_RUNNER && window.RCF_PREVIEW_RUNNER.__v11) return;
 
   const $ = (id) => document.getElementById(id);
 
@@ -28,24 +32,26 @@
 
       try { e.preventDefault(); e.stopPropagation(); } catch {}
       try { await fn(e); } catch (err) {
-        log("PREVIEW err:", err?.message || String(err));
+        log("err", "PREVIEW error :: " + (err?.message || String(err)));
         uiOut("genOut", "❌ Erro: " + (err?.message || String(err)));
       }
     };
 
-    el.style.pointerEvents = "auto";
-    el.style.touchAction = "manipulation";
-    el.style.webkitTapHighlightColor = "transparent";
+    try {
+      el.style.pointerEvents = "auto";
+      el.style.touchAction = "manipulation";
+      el.style.webkitTapHighlightColor = "transparent";
+    } catch {}
 
     el.addEventListener("touchend", handler, { passive: false, capture: true });
     el.addEventListener("click", handler, { passive: false, capture: true });
   }
 
-  function log(...a) {
+  function log(level, msg) {
+    try { window.RCF_LOGGER?.push?.(level, msg); } catch {}
     try {
-      if (window.RCF && typeof window.RCF.log === "function") window.RCF.log(...a);
-      else if (window.Logger && typeof window.Logger.write === "function") window.Logger.write(...a);
-      else console.log("[RCF PREVIEW]", ...a);
+      if (window.RCF && typeof window.RCF.log === "function") window.RCF.log(msg);
+      else console.log("[RCF PREVIEW]", level, msg);
     } catch {}
   }
 
@@ -55,9 +61,8 @@
   }
 
   // ---------- Leitura robusta do app ativo ----------
-  // Tenta:
-  // 1) window.RCF.state (se existir)
-  // 2) localStorage rcf:apps + rcf:active (prefixo rcf:)
+  // 1) window.RCF.state
+  // 2) localStorage rcf:apps + rcf:active
   function getFactoryStateFallback() {
     const prefix = "rcf:";
     const safeJson = (s, fb) => { try { return JSON.parse(s); } catch { return fb; } };
@@ -86,7 +91,6 @@
 
   function normalizeFiles(app) {
     const files = (app && app.files && typeof app.files === "object") ? app.files : {};
-    // garante strings
     const out = {};
     for (const k of Object.keys(files)) out[k] = String(files[k] ?? "");
     return out;
@@ -96,16 +100,12 @@
   function buildPreviewHTML(app) {
     const files = normalizeFiles(app);
 
-    // tenta achar index.html
     const html = files["index.html"] || files["/index.html"] || "";
-
-    // CSS e JS padrões
     const css = files["styles.css"] || files["/styles.css"] || "";
-    const js = files["app.js"] || files["/app.js"] || "";
+    const js  = files["app.js"] || files["/app.js"] || "";
 
-    // Se tiver index.html próprio, a gente injeta o CSS/JS nele (para funcionar offline).
-    // Se não tiver, cria um index mínimo.
-    let outHtml = html.trim();
+    let outHtml = String(html || "").trim();
+
     if (!outHtml) {
       outHtml = `<!doctype html>
 <html>
@@ -124,28 +124,22 @@
       return outHtml;
     }
 
-    // injeta CSS no </head> (ou no topo)
-    if (css) {
-      if (outHtml.includes("</head>")) {
-        outHtml = outHtml.replace("</head>", `<style>${css}</style>\n</head>`);
-      } else {
-        outHtml = `<style>${css}</style>\n` + outHtml;
-      }
-    }
-
-    // injeta JS antes do </body> (ou no fim)
-    if (js) {
-      if (outHtml.includes("</body>")) {
-        outHtml = outHtml.replace("</body>", `<script>${js}<\/script>\n</body>`);
-      } else {
-        outHtml = outHtml + `\n<script>${js}<\/script>\n`;
-      }
-    }
-
-    // remove refs externos típicos (se o user colocou <script src="app.js"> etc)
+    // remove refs externos típicos
     outHtml = outHtml
       .replace(/<script\s+[^>]*src=["']app\.js["'][^>]*>\s*<\/script>/gi, "")
       .replace(/<link\s+[^>]*href=["']styles\.css["'][^>]*>/gi, "");
+
+    // injeta CSS
+    if (css) {
+      if (outHtml.includes("</head>")) outHtml = outHtml.replace("</head>", `<style>${css}</style>\n</head>`);
+      else outHtml = `<style>${css}</style>\n` + outHtml;
+    }
+
+    // injeta JS
+    if (js) {
+      if (outHtml.includes("</body>")) outHtml = outHtml.replace("</body>", `<script>${js}<\/script>\n</body>`);
+      else outHtml = outHtml + `\n<script>${js}<\/script>\n`;
+    }
 
     return outHtml;
   }
@@ -166,13 +160,19 @@
     const blob = new Blob([html], { type: "text/html;charset=utf-8" });
     const url = URL.createObjectURL(blob);
 
-    // abre em nova aba
-    window.open(url, "_blank", "noopener,noreferrer");
+    const w = window.open(url, "_blank", "noopener,noreferrer");
     uiOut("genOut", `✅ Preview aberto: ${app.slug}`);
-    log("PREVIEW aberto:", app.slug);
+
+    log("ok", "PREVIEW aberto: " + app.slug);
+
+    // evita leak de blob URLs
+    setTimeout(() => {
+      try { URL.revokeObjectURL(url); } catch {}
+      try { if (w && w.closed) {} } catch {}
+    }, 4000);
   }
 
-  function exportBundleJSON() {
+  async function exportBundleJSON() {
     const { app } = getActiveAppObject();
     if (!app) {
       uiOut("genOut", "⚠️ Sem app ativo. Crie um app e selecione.");
@@ -191,40 +191,47 @@
 
     const txt = JSON.stringify(payload, null, 2);
 
-    // tenta copiar
+    // tenta copiar (iOS pode bloquear, então tem fallback)
+    let copied = false;
     try {
-      navigator.clipboard.writeText(txt);
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+        await navigator.clipboard.writeText(txt);
+        copied = true;
+      }
+    } catch {}
+
+    if (copied) {
       uiOut("genOut", "✅ Bundle exportado e copiado (clipboard).");
-    } catch {
-      uiOut("genOut", "✅ Bundle exportado (não consegui copiar automático). Cole manualmente do console/logs.");
+    } else {
+      // fallback: deixa o JSON no genOut pra copiar manual
+      uiOut("genOut", txt);
+      log("warn", "Clipboard bloqueado no iOS — JSON enviado para genOut (copie manual).");
     }
 
-    log("EXPORT bundle:", app.slug);
+    log("ok", "EXPORT bundle: " + app.slug);
   }
 
   // ---------- bind ----------
   function init() {
-    // usa seus botões existentes:
-    // - btnGenPreview (Preview)
-    // - btnGenZip (vamos reaproveitar como Export Bundle por enquanto)
     const btnPreview = $("btnGenPreview");
-    const btnExport = $("btnGenZip");
+    const btnExport  = $("btnGenZip"); // reaproveitado
 
     bindTap(btnPreview, doPreview);
     bindTap(btnExport, exportBundleJSON);
 
-    // melhora texto do botão, sem quebrar layout
     try {
       if (btnExport) btnExport.textContent = "Export Build (bundle)";
       if (btnPreview) btnPreview.textContent = "Preview App";
     } catch {}
 
-    log("PREVIEW_RUNNER v1.0 carregado ✅");
+    log("ok", "PREVIEW_RUNNER v1.1 carregado ✅");
   }
 
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", init);
+    document.addEventListener("DOMContentLoaded", init, { once: true });
   } else {
     init();
   }
+
+  window.RCF_PREVIEW_RUNNER = { __v11: true };
 })();
