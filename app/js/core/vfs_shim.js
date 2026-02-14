@@ -1,7 +1,10 @@
-/* app/js/core/vfs_shim.js
-   - Ponte SAFE: faz o Injector enxergar o VFS correto.
-   - Seu app tem: window.RCF_VFS_OVERRIDES (put/clear)
-   - Injector espera: window.RCF_VFS (put/clearAll)
+/* app/js/core/vfs_shim.js  (VFS SHIM v1.1 — PADRÃO)
+   - Ponte SAFE: faz qualquer injector antigo enxergar o VFS correto.
+   - Real: window.RCF_VFS_OVERRIDES (put / clearOverrides / listOverrides / delOverride)
+   - Compat: window.RCF_VFS (put / clearAll / clearOverrides / clear)
+   Patch:
+   - NÃO aborta só porque RCF_VFS.put já existe (precisa garantir clearAll)
+   - Mapeia clearAll -> clearOverrides (nome certo)
 */
 (() => {
   "use strict";
@@ -17,36 +20,37 @@
       return false;
     }
 
-    // Já existe RCF_VFS com put? então não mexe
-    if (window.RCF_VFS && typeof window.RCF_VFS.put === "function") {
-      log("RCF_VFS já existe ✅");
-      return true;
-    }
+    // garante objeto
+    window.RCF_VFS = window.RCF_VFS || {};
 
-    // cria a ponte
-    window.RCF_VFS = {
-      put: async (path, content, contentType) => {
-        // passa pelo override real
-        return o.put(path, content, contentType);
-      },
-
-      // Injector chama clearAll(), mas o override real chama clear()
-      clearAll: async () => {
-        if (typeof o.clear === "function") return o.clear();
-        if (typeof o.clearAll === "function") return o.clearAll();
-        // fallback: se não existir, pelo menos não quebra
-        throw new Error("RCF_VFS_OVERRIDES.clear() não existe.");
-      },
+    // ✅ sempre garante put (mesmo se já existir, mantemos se for igual, senão sobrescreve para ficar correto)
+    window.RCF_VFS.put = async (path, content, contentType) => {
+      return o.put(path, content, contentType);
     };
 
-    log("Ponte instalada ✅ window.RCF_VFS -> RCF_VFS_OVERRIDES");
+    // ✅ nomes compatíveis para CLEAR
+    const doClear = async () => {
+      if (typeof o.clearOverrides === "function") return o.clearOverrides();
+      if (typeof o.clearAll === "function") return o.clearAll();       // caso algum build antigo tenha isso
+      if (typeof o.clear === "function") return o.clear();             // último fallback
+      throw new Error("RCF_VFS_OVERRIDES não tem clearOverrides/clearAll/clear");
+    };
+
+    // Injector antigo chama clearAll()
+    window.RCF_VFS.clearAll = doClear;
+
+    // Compat extra (caso algum lugar chame outros nomes)
+    window.RCF_VFS.clearOverrides = doClear;
+    window.RCF_VFS.clear = doClear;
+
+    log("Ponte instalada ✅ window.RCF_VFS (put/clearAll) -> RCF_VFS_OVERRIDES");
     return true;
   }
 
   // tenta agora
   if (install()) return;
 
-  // tenta de novo (porque scripts carregam em ordem, mas iOS às vezes dá delay)
+  // tenta de novo (ordem de load / iOS delay)
   let tries = 0;
   const t = setInterval(() => {
     tries++;
