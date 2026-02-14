@@ -87,7 +87,7 @@
       if (ok) return { ok: true, mode: "caches.delete", deleted: 1 };
     } catch {}
 
-    // ✅ fallback (iOS): limpa por entries em lotes
+    // ✅ fallback (iOS): limpa por entries
     try {
       const cache = await caches.open(OVERRIDE_CACHE);
       const reqs = await cache.keys();
@@ -131,10 +131,12 @@
       try {
         const cache = await caches.open(OVERRIDE_CACHE);
 
+        // tenta pela chave normalizada primeiro
         const keyUrl = makeKeyUrl(url.pathname);
         let hit = await cache.match(keyUrl, { ignoreSearch: true });
         if (hit) return hit;
 
+        // tenta match direto
         hit = await cache.match(req, { ignoreSearch: true });
         if (hit) return hit;
       } catch {}
@@ -187,4 +189,4 @@
       }
     })();
   });
-
+})();
