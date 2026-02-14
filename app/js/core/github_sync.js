@@ -1,44 +1,38 @@
-/* RControl Factory — /app/js/core/github_sync.js (PADRÃO) — v2.4a
+/* RControl Factory — /app/js/core/github_sync.js (PADRÃO) — v2.4b
    - Centraliza GitHub API (pull/push/test)
-   - PATCH MÍNIMO: normalizeBundlePath() garante SEMPRE app/import/mother_bundle.json
-   - Log obrigatório: "bundle path normalized" com {raw,path}
+   - Evita logs duplicados (guard)
+   - pushMotherBundle robusto (retorna ok/throw correto)
    - save/load cfg em rcf:ghcfg
+   - PATCH MÍNIMO: normalizeBundlePath -> SEMPRE app/import/mother_bundle.json
 */
 (() => {
   "use strict";
 
-  if (window.RCF_GH_SYNC && window.RCF_GH_SYNC.__v24a) return;
+  if (window.RCF_GH_SYNC && window.RCF_GH_SYNC.__v24b) return;
 
   const LS_CFG_KEY = "rcf:ghcfg";
   const API_BASE = "https://api.github.com";
 
-  const log = (lvl, msg, extra) => {
-    try { window.RCF_LOGGER?.push?.(lvl, extra ? (msg + " " + JSON.stringify(extra)) : msg); } catch {}
-    try { console.log("[GH]", lvl, msg, extra || ""); } catch {}
+  const log = (lvl, msg, obj) => {
+    try {
+      if (obj !== undefined) window.RCF_LOGGER?.push?.(lvl, `${msg} ${JSON.stringify(obj)}`);
+      else window.RCF_LOGGER?.push?.(lvl, msg);
+    } catch {}
+    try { console.log("[GH]", lvl, msg, obj ?? ""); } catch {}
   };
 
   function safeParse(raw, fb){
     try { return raw ? JSON.parse(raw) : fb; } catch { return fb; }
   }
 
-  // ✅ PATCH DEFINITIVO — padrão de repo-path: app/import/mother_bundle.json (sempre)
+  // ✅ PADRÃO DEFINITIVO: sempre app/import/mother_bundle.json
   function normalizeBundlePath(input) {
     const raw = String(input || "").trim();
     let p = raw.replace(/^\/+/, "");
 
-    // default se vazio
-    if (!p) p = "app/import/mother_bundle.json";
-
-    // se veio "import/..." -> vira "app/import/..."
     if (p.startsWith("import/")) p = "app/" + p;
-
-    // se veio só "mother_bundle.json" ou "mother_index.json" -> força pasta app/import/
-    if (!p.includes("/")) p = "app/import/" + p;
-
-    // garante prefixo app/
     if (!p.startsWith("app/")) p = "app/" + p;
 
-    // garante que está dentro de app/import/
     if (!p.startsWith("app/import/")) {
       const file = (p.split("/").pop() || "mother_bundle.json").trim();
       p = "app/import/" + file;
@@ -49,43 +43,40 @@
 
   function loadConfig(){
     const c = safeParse(localStorage.getItem(LS_CFG_KEY), {}) || {};
-    const nbp = normalizeBundlePath(c.path || "app/import/mother_bundle.json");
-    // log obrigatório (mas sem poluir toda hora — só se raw != normalized)
-    if ((nbp.raw || "") && nbp.raw !== nbp.normalized) {
-      log("info", "bundle path normalized", { raw: nbp.raw, path: nbp.normalized });
-    }
-    return {
+    const norm = normalizeBundlePath(c.path || "app/import/mother_bundle.json");
+
+    const cfg = {
       owner: String(c.owner || "").trim(),
       repo: String(c.repo || "").trim(),
       branch: String(c.branch || "main").trim(),
-      path: nbp.normalized,
+      path: norm.normalized,
       token: String(c.token || "empty").trim(),
     };
+
+    log("info", "bundle path normalized", { raw: norm.raw, path: cfg.path });
+    return cfg;
   }
 
   function saveConfig(cfg){
-    const nbp = normalizeBundlePath(cfg?.path || "app/import/mother_bundle.json");
+    const inCfg = cfg || {};
+    const norm = normalizeBundlePath(inCfg.path || "app/import/mother_bundle.json");
+
     const safe = {
-      owner: String(cfg?.owner || "").trim(),
-      repo: String(cfg?.repo || "").trim(),
-      branch: String(cfg?.branch || "main").trim(),
-      path: nbp.normalized,
-      token: String(cfg?.token || "empty").trim(),
+      owner: String(inCfg.owner || "").trim(),
+      repo: String(inCfg.repo || "").trim(),
+      branch: String(inCfg.branch || "main").trim(),
+      path: norm.normalized,
+      token: String(inCfg.token || "empty").trim(),
     };
 
     localStorage.setItem(LS_CFG_KEY, JSON.stringify(safe));
     log("ok", "OK: ghcfg saved");
-
-    // log obrigatório
-    log("info", "bundle path normalized", { raw: nbp.raw, path: safe.path });
-
+    log("info", "bundle path normalized", { raw: norm.raw, path: safe.path });
     return safe;
   }
 
   function headers(cfg){
-    const h = {
-      "Accept": "application/vnd.github+json",
-    };
+    const h = { "Accept": "application/vnd.github+json" };
     const t = String(cfg.token || "").trim();
     if (t && t !== "empty") h["Authorization"] = "token " + t;
     return h;
@@ -119,12 +110,12 @@
   function contentUrl(cfg){
     if (!cfg.owner || !cfg.repo) throw new Error("ghcfg incompleto (owner/repo)");
 
-    // ✅ sempre normalizado aqui também
-    const nbp = normalizeBundlePath(cfg.path);
-    const path = nbp.normalized;
+    const norm = normalizeBundlePath(cfg.path);
+    cfg.path = norm.normalized; // ✅ garante dentro do objeto também
+    log("info", "bundle path normalized", { raw: norm.raw, path: cfg.path });
 
     const branch = encodeURIComponent(cfg.branch || "main");
-    return `${API_BASE}/repos/${encodeURIComponent(cfg.owner)}/${encodeURIComponent(cfg.repo)}/contents/${path}?ref=${branch}`;
+    return `${API_BASE}/repos/${encodeURIComponent(cfg.owner)}/${encodeURIComponent(cfg.repo)}/contents/${cfg.path}?ref=${branch}`;
   }
 
   async function test(cfgIn){
@@ -136,11 +127,8 @@
 
   async function pull(cfgIn){
     const cfg = saveConfig(cfgIn || loadConfig());
-
-    const nbp = normalizeBundlePath(cfg.path);
-    cfg.path = nbp.normalized;
-
     const url = contentUrl(cfg);
+
     log("info", `GitHub: pull iniciando... path=${cfg.path}`);
 
     const txt = await ghFetch(url, cfg, { method: "GET" });
@@ -172,20 +160,20 @@
   async function push(cfgIn, contentStr){
     const cfg = saveConfig(cfgIn || loadConfig());
 
-    const nbp = normalizeBundlePath(cfg.path);
-    cfg.path = nbp.normalized;
+    const norm = normalizeBundlePath(cfg.path);
+    cfg.path = norm.normalized;
+    log("info", "bundle path normalized", { raw: norm.raw, path: cfg.path });
 
-    const path = cfg.path;
     const branch = cfg.branch || "main";
-
-    log("info", `GitHub: push iniciando... path=${path}`);
+    log("info", `GitHub: push iniciando... path=${cfg.path}`);
 
     const sha = await getShaIfExists(cfg);
-    const url = `${API_BASE}/repos/${encodeURIComponent(cfg.owner)}/${encodeURIComponent(cfg.repo)}/contents/${path}`;
+
+    const url = `${API_BASE}/repos/${encodeURIComponent(cfg.owner)}/${encodeURIComponent(cfg.repo)}/contents/${cfg.path}`;
 
     const body = {
-      message: `rcf: update ${path}`,
-      content: btoa(unescape(encodeURIComponent(String(contentStr ?? "")))), // utf8 safe
+      message: `rcf: update ${cfg.path}`,
+      content: btoa(unescape(encodeURIComponent(String(contentStr ?? "")))),
       branch,
     };
     if (sha) body.sha = sha;
@@ -203,6 +191,11 @@
   async function pushMotherBundle(cfgIn){
     const cfg = saveConfig(cfgIn || loadConfig());
 
+    // ✅ garante normalização antes de qualquer push
+    const norm = normalizeBundlePath(cfg.path);
+    cfg.path = norm.normalized;
+    log("info", "bundle path normalized", { raw: norm.raw, path: cfg.path });
+
     if (!window.RCF_MAE?.getLocalBundleText) {
       throw new Error("RCF_MAE.getLocalBundleText ausente");
     }
@@ -215,7 +208,7 @@
   }
 
   window.RCF_GH_SYNC = {
-    __v24a: true,
+    __v24b: true,
     loadConfig,
     saveConfig,
     test,
@@ -224,5 +217,5 @@
     pushMotherBundle,
   };
 
-  log("info", "github_sync.js loaded (v2.4a)");
+  log("info", "github_sync.js loaded (v2.4b)");
 })();
