@@ -1,13 +1,13 @@
-/* RControl Factory — /app/js/admin.github.js (PADRÃO) — v2.6
+/* RControl Factory — /app/js/admin.github.js (PADRÃO) — v2.7
    GitHub UI como BOTÃO na subnav (ao lado de Logs/Diagnostics), sem depender de Settings/Admin mount.
-   - Procura a barra que tem botões "Admin / Diagnostics / Logs" e injeta "GitHub" depois de "Logs"
-   - Abre/fecha um painel flutuante (modal) com inputs e ações
-   - Não gruda na tela, não mistura views
+   - Injeta "GitHub" depois de "Logs"
+   - Abre/fecha painel flutuante (modal)
+   - Anti-duplicação de handler (iOS touch/click) + sem loop infinito pesado
 */
 (() => {
   "use strict";
 
-  if (window.RCF_ADMIN_GH && window.RCF_ADMIN_GH.__v26) return;
+  if (window.RCF_ADMIN_GH && window.RCF_ADMIN_GH.__v27) return;
 
   const UI_OPEN_KEY = "rcf:ghui:open";
   const LS_CFG_KEY  = "rcf:ghcfg";
@@ -47,16 +47,33 @@
     return safe;
   }
 
+  // ✅ Fix iOS: não forçar click() em touchend (isso duplica: touchend + click nativo)
+  // Mantém só auxílio de LABEL -> input e foco em inputs
   function enableClickFallback(container){
     if (!container) return;
+
+    container.addEventListener("click", (ev) => {
+      const t = ev.target;
+      if (!t) return;
+      if (t.tagName === "LABEL") {
+        const fid = t.getAttribute("for");
+        if (fid) {
+          const inp = document.getElementById(fid);
+          if (inp && typeof inp.focus === "function") inp.focus();
+        }
+      }
+    }, true);
+
     container.addEventListener("touchend", (ev) => {
       const t = ev.target;
       if (!t) return;
       const tag = (t.tagName || "").toLowerCase();
-      const isBtn = tag === "button";
+
+      // foco em inputs no iOS ajuda (sem duplicar ações)
       const isInput = tag === "input" || tag === "textarea" || tag === "select";
-      if (isBtn && typeof t.click === "function") t.click();
-      if (isInput && typeof t.focus === "function") t.focus();
+      if (isInput && typeof t.focus === "function") {
+        try { t.focus(); } catch {}
+      }
     }, { capture:true, passive:true });
   }
 
@@ -78,7 +95,7 @@
 
     // tenta pegar o pai que contém vários botões
     let p = logsBtn.parentElement;
-    for (let i = 0; i < 6 && p; i++){
+    for (let i = 0; i < 7 && p; i++){
       const btns = p.querySelectorAll("button, a");
       if (btns && btns.length >= 3) return p;
       p = p.parentElement;
@@ -116,7 +133,7 @@
       ">
         <div style="display:flex; align-items:center; gap:10px;">
           <div style="font-weight:900; font-size:16px; color:#eafff4;">GitHub (Sync)</div>
-          <button id="rcfGhClose" style="
+          <button id="rcfGhClose" type="button" style="
             margin-left:auto;
             padding:8px 12px;
             border-radius: 999px;
@@ -161,14 +178,14 @@
         </div>
 
         <div style="margin-top:12px; display:flex; gap:10px; flex-wrap:wrap;">
-          <button id="btnSaveCfg" style="padding:10px 12px; border-radius:999px; border:1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.08); color:#fff;">Salvar cfg</button>
-          <button id="btnTestToken" style="padding:10px 12px; border-radius:999px; border:1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.08); color:#fff;">Testar token</button>
-          <button id="btnPull" style="padding:10px 12px; border-radius:999px; border:1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.08); color:#fff;">Pull bundle</button>
+          <button id="btnSaveCfg" type="button" style="padding:10px 12px; border-radius:999px; border:1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.08); color:#fff;">Salvar cfg</button>
+          <button id="btnTestToken" type="button" style="padding:10px 12px; border-radius:999px; border:1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.08); color:#fff;">Testar token</button>
+          <button id="btnPull" type="button" style="padding:10px 12px; border-radius:999px; border:1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.08); color:#fff;">Pull bundle</button>
         </div>
 
         <div style="margin-top:10px; display:flex; gap:10px; flex-wrap:wrap;">
-          <button id="btnPushMother" style="padding:10px 12px; border-radius:999px; border:1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.08); color:#fff;">Push Mother Bundle</button>
-          <button id="btnMaeUpdate" style="padding:10px 12px; border-radius:999px; border:1px solid rgba(60,255,170,.25); background: rgba(60,255,170,.10); color:#eafff4;">MAE update</button>
+          <button id="btnPushMother" type="button" style="padding:10px 12px; border-radius:999px; border:1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.08); color:#fff;">Push Mother Bundle</button>
+          <button id="btnMaeUpdate" type="button" style="padding:10px 12px; border-radius:999px; border:1px solid rgba(60,255,170,.25); background: rgba(60,255,170,.10); color:#eafff4;">MAE update</button>
         </div>
 
         <pre id="ghOut" style="
@@ -221,6 +238,15 @@
     // preencher ao criar
     fillInputs(getCfg());
 
+    // ✅ Anti-duplo-clique / dupla ação (se algum navegador ainda duplicar)
+    let busy = false;
+    const lock = async (fn) => {
+      if (busy) return;
+      busy = true;
+      try { await fn(); }
+      finally { busy = false; }
+    };
+
     document.getElementById("btnSaveCfg").addEventListener("click", () => {
       const cfg = readInputs();
       saveCfg(cfg);
@@ -228,7 +254,7 @@
       log("ok", "OK: ghcfg saved");
     });
 
-    document.getElementById("btnTestToken").addEventListener("click", async () => {
+    document.getElementById("btnTestToken").addEventListener("click", () => lock(async () => {
       try {
         const cfg = readInputs();
         saveCfg(cfg);
@@ -239,11 +265,11 @@
         log("ok", "OK: token test ok");
       } catch (e) {
         setGHOut("ERR: " + (e?.message || e));
-        log("err", "ERR: token test fail");
+        log("err", "ERR: token test fail :: " + (e?.message || e));
       }
-    });
+    }));
 
-    document.getElementById("btnPull").addEventListener("click", async () => {
+    document.getElementById("btnPull").addEventListener("click", () => lock(async () => {
       try {
         const cfg = readInputs();
         saveCfg(cfg);
@@ -254,11 +280,11 @@
         log("ok", "OK: gh pull ok");
       } catch (e) {
         setGHOut("ERR: " + (e?.message || e));
-        log("err", "ERR: gh pull err");
+        log("err", "ERR: gh pull err :: " + (e?.message || e));
       }
-    });
+    }));
 
-    document.getElementById("btnPushMother").addEventListener("click", async () => {
+    document.getElementById("btnPushMother").addEventListener("click", () => lock(async () => {
       try {
         const cfg = readInputs();
         saveCfg(cfg);
@@ -269,11 +295,12 @@
         log("ok", "OK: GitHub: pushMotherBundle ok");
       } catch (e) {
         setGHOut("ERR: " + (e?.message || e));
-        log("err", "ERR: pushMotherBundle fail");
+        // ✅ não aparece mais "fail" junto com "ok"
+        log("err", "ERR: pushMotherBundle fail :: " + (e?.message || e));
       }
-    });
+    }));
 
-    document.getElementById("btnMaeUpdate").addEventListener("click", async () => {
+    document.getElementById("btnMaeUpdate").addEventListener("click", () => lock(async () => {
       try {
         setGHOut("MAE update…");
         if (!window.RCF_MAE?.updateFromGitHub) throw new Error("RCF_MAE.updateFromGitHub ausente");
@@ -287,9 +314,9 @@
         log("ok", "OK: mae update ok");
       } catch (e) {
         setGHOut("ERR: " + (e?.message || e));
-        log("err", "ERR: mae update err");
+        log("err", "ERR: mae update err :: " + (e?.message || e));
       }
-    });
+    }));
 
     // se tava aberto antes, abre de novo
     if (localStorage.getItem(UI_OPEN_KEY) === "1") openModal();
@@ -336,13 +363,14 @@
     btn.type = "button";
     btn.textContent = "GitHub";
 
-    // tenta reaproveitar a classe do Logs
     try {
       if (logsBtn.className) btn.className = logsBtn.className;
     } catch {}
 
+    // ✅ guarda para não duplicar listener se alguém reusar o elemento
+    btn.__rcfGhBound = true;
+
     btn.addEventListener("click", () => {
-      // toggle
       const m = document.getElementById("rcfGhModal");
       const isOpen = m && m.style.display !== "none";
       if (isOpen) closeModal();
@@ -350,41 +378,55 @@
     });
 
     // inserir depois de Logs
-    try {
-      logsBtn.insertAdjacentElement("afterend", btn);
-    } catch {
-      sub.appendChild(btn);
-    }
+    try { logsBtn.insertAdjacentElement("afterend", btn); }
+    catch { sub.appendChild(btn); }
 
     log("ok", "GitHub button injected ✅");
     return true;
   }
 
-  function boot(){
-    ensureModal();
+  // ✅ Em vez de loop eterno pesado, usa observer + alguns retries leves
+  let __started = false;
+  let __obs = null;
 
-    // tenta várias vezes (app.js pode recriar nav)
+  function startObserver(){
+    if (__obs) return;
+    __obs = new MutationObserver(() => {
+      try { ensureGitHubButton(); } catch {}
+    });
+    try { __obs.observe(document.body, { childList: true, subtree: true }); } catch {}
+  }
+
+  function lightRetry(){
     let tries = 0;
     const tick = () => {
       tries++;
-      ensureGitHubButton();
-      if (tries < 120) setTimeout(tick, 250);
+      try { ensureGitHubButton(); } catch {}
+      if (tries < 40) setTimeout(tick, 250); // ~10s
     };
     tick();
-
-    // repara sempre (se sumir, recoloca)
-    setInterval(() => {
-      ensureGitHubButton();
-    }, 900);
   }
 
-  window.RCF_ADMIN_GH = { __v26: true, boot, openModal, closeModal };
+  function boot(){
+    if (__started) return;
+    __started = true;
+
+    ensureModal();
+    startObserver();
+    lightRetry();
+
+    // tenta também quando URL muda (router/hash)
+    window.addEventListener("hashchange", () => { try { ensureGitHubButton(); } catch {} });
+    window.addEventListener("popstate",  () => { try { ensureGitHubButton(); } catch {} });
+  }
+
+  window.RCF_ADMIN_GH = { __v27: true, boot, openModal, closeModal };
 
   if (document.readyState === "loading") {
-    window.addEventListener("DOMContentLoaded", boot);
+    window.addEventListener("DOMContentLoaded", boot, { once:true });
   } else {
     boot();
   }
 
-  log("ok", "admin.github.js ready ✅ (v2.6)");
+  log("ok", "admin.github.js ready ✅ (v2.7)");
 })();
