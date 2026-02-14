@@ -41,6 +41,7 @@
   }
 
   function makeKeyUrl(path) {
+    // Guarda o override com uma URL absoluta (CacheStorage funciona melhor assim)
     const p = normPath(path);
     return new URL(p, self.location.origin).toString();
   }
@@ -120,31 +121,36 @@
     })());
   });
 
+  // ✅ responder overrides primeiro
   self.addEventListener("fetch", (event) => {
     const req = event.request;
     if (!req || req.method !== "GET") return;
 
     const url = new URL(req.url);
+
+    // só no mesmo origin
     if (url.origin !== self.location.origin) return;
 
     event.respondWith((async () => {
       try {
         const cache = await caches.open(OVERRIDE_CACHE);
 
-        // tenta pela chave normalizada primeiro
+        // tenta pela chave normalizada primeiro (mais consistente)
         const keyUrl = makeKeyUrl(url.pathname);
         let hit = await cache.match(keyUrl, { ignoreSearch: true });
         if (hit) return hit;
 
-        // tenta match direto
+        // tenta match direto (caso algum put tenha usado req)
         hit = await cache.match(req, { ignoreSearch: true });
         if (hit) return hit;
       } catch {}
 
+      // fallback: network normal
       return fetch(req);
     })());
   });
 
+  // ✅ RPC por postMessage (MessageChannel)
   self.addEventListener("message", (event) => {
     const msg = event.data || {};
     const port = event.ports && event.ports[0];
@@ -189,4 +195,5 @@
       }
     })();
   });
-})();
+
+})(); // ✅ fim do IIFE (SEM chaves sobrando)
