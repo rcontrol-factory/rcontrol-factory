@@ -19,6 +19,7 @@
     <div style="padding:14px;font-family:system-ui">Carregando…</div>
   </div>
 
+  <!-- RCF_BOOT_PANEL_START -->
   <!-- ✅ BootPanel (sempre visível) -->
   <div id="rcfBootPanel" style="
     position:fixed; left:12px; right:12px; bottom:12px;
@@ -42,6 +43,7 @@
     <pre id="rcfBootLog" style="margin:0; white-space:pre-wrap;">boot: init…</pre>
   </div>
 
+  <!-- RCF_BOOT_SCRIPT_START -->
   <script>
     (function () {
       const out = document.getElementById("rcfBootLog");
@@ -130,7 +132,6 @@
         }
 
         // ✅ SW (scope ./) — PADRÃO /app/
-        // IMPORTANTE: vamos manter o register APENAS AQUI (ou só no app.js), mas por enquanto pode ficar aqui.
         try {
           if ("serviceWorker" in navigator) {
             navigator.serviceWorker.register("./sw.js", { scope: "./" })
@@ -143,5 +144,8 @@
       boot();
     })();
   </script>
+  <!-- RCF_BOOT_SCRIPT_END -->
+  <!-- RCF_BOOT_PANEL_END -->
+
 </body>
 </html>
