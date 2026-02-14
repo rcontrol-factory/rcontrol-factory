@@ -1,16 +1,69 @@
-/* builderEngine.js — Builder SAFE (MVP)
+/* builderEngine.js — Builder SAFE (PADRÃO) v1.1b
    - cria patches FILE_WRITE sem aplicar direto
-   - preview + fila (patchQueue)
-   - apply chama applyPipeline (se existir)
+   - preview + fila (RCF_PATCH_QUEUE) (auto-cria se não existir)
+   - apply: DISPARA pipeline async e retorna texto síncrono (evita [object Promise])
+   - compat: usa RCF_ORGANIZER.analyze(code, filename)
 */
-
 (() => {
   "use strict";
 
+  if (window.RCF_BUILDER && window.RCF_BUILDER.__v11b) return;
+
   const STATE_KEY = "rcf:builderState:v1";
+  const QUEUE_KEY = "rcf:patchQueue:v1";
 
   function now() { return Date.now(); }
+  function id() { return "P" + Math.random().toString(16).slice(2) + "_" + Date.now().toString(36); }
 
+  function log(lvl, msg) {
+    try { window.RCF_LOGGER?.push?.(lvl, String(msg)); } catch {}
+    try { console.log("[BUILDER]", lvl, msg); } catch {}
+  }
+
+  // ---------------------------
+  // Patch Queue (auto-create)
+  // ---------------------------
+  function ensureQueue() {
+    if (window.RCF_PATCH_QUEUE && window.RCF_PATCH_QUEUE.__v1) return window.RCF_PATCH_QUEUE;
+
+    const safeParse = (s, fb) => { try { return JSON.parse(s); } catch { return fb; } };
+    const save = (arr) => { try { localStorage.setItem(QUEUE_KEY, JSON.stringify(arr || [])); } catch {} };
+    const load = () => safeParse(localStorage.getItem(QUEUE_KEY) || "[]", []);
+
+    const api = {
+      __v1: true,
+      read() { return load(); },
+      clear() { save([]); return true; },
+      peek() {
+        const q = load();
+        return q.length ? q[q.length - 1] : null;
+      },
+      pop() {
+        const q = load();
+        const p = q.pop() || null;
+        save(q);
+        return p;
+      },
+      enqueue(patch) {
+        const q = load();
+        const p = { ...patch };
+        if (!p.id) p.id = id();
+        if (!p.ts) p.ts = now();
+        q.push(p);
+        save(q);
+        return p;
+      },
+    };
+
+    window.RCF_PATCH_QUEUE = api;
+    return api;
+  }
+
+  const Q = ensureQueue();
+
+  // ---------------------------
+  // State
+  // ---------------------------
   function loadState() {
     try {
       const s = JSON.parse(localStorage.getItem(STATE_KEY) || "{}");
@@ -34,26 +87,43 @@
     } catch {}
   }
 
+  const st = loadState();
+
+  // ---------------------------
+  // Organizer integration
+  // ---------------------------
   function classifyIntent(file, content) {
-    // tenta usar organizerEngine real (se existir)
+    // ✅ prefer RCF_ORGANIZER.analyze(code, filename)
     try {
-      const org = window.RCF_ORGANIZER || window.organizerEngine;
-      if (org?.classify) return org.classify({ file, content });
-      if (org?.classifyCode) return org.classifyCode({ file, content });
+      const org = window.RCF_ORGANIZER;
+      if (org && typeof org.analyze === "function") {
+        const a = org.analyze(String(content || ""), String(file || ""));
+        // mapeia detectedType -> intent
+        const intent = a.detectedType || "misc";
+        return {
+          intent,
+          risk: a.risk || "LOW",
+          dest: a.destination || "",
+          reason: a.reason || "",
+        };
+      }
     } catch {}
 
-    // fallback simples
+    // fallback simples (não quebra)
     const f = (file || "").toLowerCase();
-    if (f.endsWith(".css")) return { intent: "style", risk: "LOW", dest: "/themes" };
-    if (f.includes("/screens/")) return { intent: "screen", risk: "MEDIUM", dest: "/screens" };
-    if (f.includes("/components/")) return { intent: "component", risk: "LOW", dest: "/components" };
-    if (f.includes("/engine/")) return { intent: "engine", risk: "MEDIUM", dest: "/engine" };
-    if (f.includes("/core/") || f.includes("/storage/")) return { intent: "service", risk: "HIGH", dest: "/core" };
-    if (f.endsWith("sw.js")) return { intent: "service", risk: "HIGH", dest: "/" };
-    if (f.endsWith(".js")) return { intent: "service", risk: "MEDIUM", dest: "/js" };
-    return { intent: "unknown", risk: "LOW", dest: "" };
+    if (f.endsWith(".css")) return { intent: "style", risk: "LOW", dest: "/themes", reason: "fallback ext=.css" };
+    if (f.includes("/screens/")) return { intent: "screen", risk: "MEDIUM", dest: "/screens", reason: "fallback path contains /screens/" };
+    if (f.includes("/components/")) return { intent: "component", risk: "LOW", dest: "/components", reason: "fallback path contains /components/" };
+    if (f.includes("/engine/")) return { intent: "engine", risk: "HIGH", dest: "/engine", reason: "fallback path contains /engine/" };
+    if (f.includes("/core/") || f.includes("/storage/")) return { intent: "service", risk: "HIGH", dest: "/core", reason: "fallback path contains /core/" };
+    if (f.endsWith("sw.js")) return { intent: "service", risk: "HIGH", dest: "/", reason: "fallback sw.js" };
+    if (f.endsWith(".js")) return { intent: "service", risk: "MEDIUM", dest: "/js", reason: "fallback ext=.js" };
+    return { intent: "misc", risk: "LOW", dest: "/misc", reason: "fallback misc" };
   }
 
+  // ---------------------------
+  // Diff preview (basic)
+  // ---------------------------
   function diffPreviewBasic(file, content) {
     const lines = String(content || "").split("\n");
     const head = lines.slice(0, 24).join("\n");
@@ -68,6 +138,13 @@
     ].join("\n");
   }
 
+  function out(ok, text, extra) {
+    return { ok: !!ok, text: String(text || ""), extra: extra || null, ts: now() };
+  }
+
+  // ---------------------------
+  // Commands
+  // ---------------------------
   function helpText() {
     return [
       "RCF Builder SAFE — comandos:",
@@ -83,19 +160,13 @@
       "  /end              (fecha o write e cria patch pendente)",
       "show                (mostra patch atual)",
       "preview             (mostra intenção/destino/risco + diffPreview)",
-      "apply               (tenta aplicar via applyPipeline; se não existir, só confirma)",
+      "apply               (dispara applyPipeline async; retorna texto imediato)",
       "discard             (remove o patch atual da fila)",
     ].join("\n");
   }
 
-  const st = loadState();
-
-  function out(ok, text, extra) {
-    return { ok: !!ok, text: String(text || ""), extra: extra || null, ts: now() };
-  }
-
   function status() {
-    const q = window.RCF_PATCH_QUEUE?.read?.() || [];
+    const q = Q.read() || [];
     return out(true, [
       "BUILDER STATUS:",
       `selectedApp: ${st.selectedApp || "(none)"}`,
@@ -106,7 +177,7 @@
   }
 
   function list() {
-    const q = window.RCF_PATCH_QUEUE?.read?.() || [];
+    const q = Q.read() || [];
     if (!q.length) return out(true, "Fila vazia.");
     const lines = q.map((p, i) => {
       return `${i + 1}) ${p.id} | ${p.kind} | ${p.risk} | ${p.intent} | ${p.file || "(sem file)"} | ${new Date(p.ts).toLocaleString()}`;
@@ -115,19 +186,19 @@
   }
 
   function show() {
-    const p = window.RCF_PATCH_QUEUE?.peek?.();
+    const p = Q.peek();
     if (!p) return out(false, "Nenhum patch pendente.");
     return out(true, JSON.stringify(p, null, 2), { patch: p });
   }
 
   function discard() {
-    const p = window.RCF_PATCH_QUEUE?.pop?.();
+    const p = Q.pop();
     if (!p) return out(false, "Nada pra descartar.");
     return out(true, `Descartado: ${p.id}`);
   }
 
   function clearQueue() {
-    window.RCF_PATCH_QUEUE?.clear?.();
+    Q.clear();
     return out(true, "Fila limpa.");
   }
 
@@ -144,37 +215,45 @@
   }
 
   function preview() {
-    const p = window.RCF_PATCH_QUEUE?.peek?.();
+    const p = Q.peek();
     if (!p) return out(false, "Nenhum patch pendente.");
     const lines = [
       "PREVIEW:",
+      `id: ${p.id}`,
       `kind: ${p.kind}`,
       `file: ${p.file}`,
       `intent: ${p.intent}`,
       `dest: ${p.dest}`,
       `risk: ${p.risk}`,
+      (p.reason ? `reason: ${p.reason}` : ""),
       "",
       p.diffPreview || "(sem diffPreview)",
-    ];
+    ].filter(Boolean);
     return out(true, lines.join("\n"), { patch: p });
   }
 
-  async function apply() {
-    const p = window.RCF_PATCH_QUEUE?.peek?.();
+  function apply() {
+    const p = Q.peek();
     if (!p) return out(false, "Nenhum patch pendente.");
+
     const pipeline = window.RCF_APPLY_PIPELINE || window.applyPipeline;
 
-    // se tiver pipeline real, usa; senão só confirma (safe)
-    if (pipeline?.apply) {
-      try {
-        const r = await pipeline.apply(p);
-        return out(true, `APPLY OK: ${p.id}\n${r?.text || ""}`, { result: r });
-      } catch (e) {
-        return out(false, `APPLY FAIL: ${p.id}\n${e?.message || e}`);
-      }
+    // ✅ SAFE: não bloqueia UI. Dispara async e retorna texto síncrono.
+    if (pipeline && typeof pipeline.apply === "function") {
+      (async () => {
+        try {
+          log("info", `apply start ${p.id}`);
+          const r = await pipeline.apply(p);
+          log("ok", `apply ok ${p.id} ${r?.text || ""}`.trim());
+        } catch (e) {
+          log("err", `apply fail ${p.id} :: ${e?.message || e}`);
+        }
+      })();
+
+      return out(true, `APPLY DISPARADO ✅: ${p.id}\n(veja Logs para resultado)`);
     }
 
-    return out(true, `Pipeline não encontrado. Patch ficou pendente na fila: ${p.id}`);
+    return out(true, `Pipeline não encontrado. Patch continua pendente: ${p.id}`);
   }
 
   function startWrite() {
@@ -191,18 +270,21 @@
 
     const info = classifyIntent(st.currentFile, content);
     const patch = {
+      id: id(),
+      ts: now(),
       kind: "FILE_WRITE",
       title: `Write ${st.currentFile}`,
       file: st.currentFile,
       content,
-      intent: info.intent || "unknown",
+      intent: info.intent || "misc",
       dest: info.dest || "",
       risk: info.risk || "LOW",
+      reason: info.reason || "",
       diffPreview: diffPreviewBasic(st.currentFile, content),
       meta: { selectedApp: st.selectedApp || null },
     };
 
-    const saved = window.RCF_PATCH_QUEUE?.enqueue?.(patch);
+    const saved = Q.enqueue(patch);
     return out(true, `Patch criado: ${saved?.id || "(ok)"}\nUse: preview / apply / discard`, { patch: saved });
   }
 
@@ -221,7 +303,6 @@
   }
 
   function run(line) {
-    // modo write (captura tudo)
     if (st.writeMode) return feedLine(line);
 
     const { cmd, args } = parse(line);
@@ -242,5 +323,7 @@
     return out(false, `Comando desconhecido: ${cmd}\nDigite: help`);
   }
 
-  window.RCF_BUILDER = { run, status, list, show, preview, apply };
+  window.RCF_BUILDER = { __v11b: true, run, status, list, show, preview, apply };
+
+  log("ok", "builderEngine.js carregado ✅ (v1.1b)");
 })();
