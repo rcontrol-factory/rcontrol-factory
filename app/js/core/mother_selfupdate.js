@@ -1,159 +1,196 @@
-/* RControl Factory — /app/js/core/mother_selfupdate.js (PADRÃO) — v1.3
-   - updateFromGitHub: puxa mother_bundle.json via RCF_GH_SYNC.pull e aplica no Overrides VFS
-   - clearOverrides: limpa overrides via VFS
-   - getLocalBundleText: retorna o último bundle puxado (memória ou localStorage)
-   - timeouts robustos (15000ms update, 6500ms clear)
-   - normaliza paths pra runtime (strip /app)
+/* RControl Factory — /app/js/core/mother_selfupdate.js (PADRÃO) — v1.2
+   - Update da "Mãe" via GitHub bundle (mother_bundle.json)
+   - Resolve Overrides API (RCF_VFS_OVERRIDES / RCF_VFS) + fallback clear via LIST+DEL
+   - Salva bundle local (para Push Mother Bundle funcionar)
 */
 (() => {
   "use strict";
 
-  if (window.RCF_MAE && window.RCF_MAE.__v13) return;
+  if (window.RCF_MAE && window.RCF_MAE.__v12) return;
 
-  const LS_BUNDLE_TEXT = "rcf:mother_bundle_text";
-  const UPDATE_TIMEOUT_MS = 15000;
-  const CLEAR_TIMEOUT_MS = 6500;
+  const VERSION = "v1.2";
+  const LS_LOCAL_BUNDLE = "rcf:mother_bundle_local_text";
 
   const log = (lvl, msg) => {
     try { window.RCF_LOGGER?.push?.(lvl, msg); } catch {}
     try { console.log("[MAE]", lvl, msg); } catch {}
   };
 
-  function withTimeout(promise, ms, label){
-    let t;
-    const to = new Promise((_, rej) => {
-      t = setTimeout(() => rej(new Error(`TIMEOUT ${ms}ms (${label})`)), ms);
-    });
-    return Promise.race([promise, to]).finally(() => clearTimeout(t));
+  function pickFn(obj, name) {
+    const fn = obj && obj[name];
+    return (typeof fn === "function") ? fn.bind(obj) : null;
   }
 
-  function safeParse(raw, fb){
-    try { return raw ? JSON.parse(raw) : fb; } catch { return fb; }
+  function getOverridesApi() {
+    // tenta várias opções (pra não depender de 1 nome só)
+    const a = window.RCF_VFS_OVERRIDES;
+    const b = window.RCF_VFS;
+
+    // preferir o mais completo
+    const cand = [a, b].filter(Boolean);
+
+    for (const api of cand) {
+      const put = pickFn(api, "put") || pickFn(api, "putOverride");
+      const clear = pickFn(api, "clearOverrides") || pickFn(api, "clear");
+      const list = pickFn(api, "listOverrides") || pickFn(api, "list");
+      const del  = pickFn(api, "delOverride") || pickFn(api, "del") || pickFn(api, "deleteOverride");
+      const norm = pickFn(api, "normPath");
+
+      if (put) {
+        return { api, put, clear, list, del, norm };
+      }
+    }
+
+    return null;
   }
 
-  function normPath(input){
-    let p = String(input || "").trim();
-    if (!p) return "/";
-    p = p.split("#")[0].split("?")[0].trim();
-    if (!p.startsWith("/")) p = "/" + p;
-    p = p.replace(/\/{2,}/g, "/");
+  async function fallbackClearUsingListDel(ovr) {
+    // fallback robusto: LIST + DEL
+    if (!ovr?.list || !ovr?.del) throw new Error("Overrides VFS sem clearOverrides() e sem LIST/DEL");
+    const r = await ovr.list();
+    const paths = r?.paths || r?.items || [];
+    let n = 0;
 
-    // compat repo -> runtime
-    if (p === "/app/index.html") p = "/index.html";
-    if (p.startsWith("/app/")) p = p.slice(4); // remove "/app"
-    if (!p.startsWith("/")) p = "/" + p;
-    return p;
+    for (const p of paths) {
+      try {
+        await ovr.del(p);
+        n++;
+      } catch {}
+    }
+    return { ok: true, mode: "fallback(list+del)", deleted: n, count: paths.length };
   }
 
-  function getCfg(){
-    return window.RCF_GH_SYNC?.loadConfig ? window.RCF_GH_SYNC.loadConfig() : {};
+  function parseBundleText(txt) {
+    let data;
+    try { data = JSON.parse(String(txt || "")); }
+    catch { throw new Error("bundle JSON inválido"); }
+
+    // aceitar vários formatos
+    // 1) { files: [ {path, content, contentType} ] }
+    if (Array.isArray(data?.files)) return data.files;
+
+    // 2) { files: { "app/index.html": "..." } } ou { files: {path:{content,contentType}}}
+    if (data?.files && typeof data.files === "object") {
+      const out = [];
+      for (const [k, v] of Object.entries(data.files)) {
+        if (typeof v === "string") out.push({ path: k, content: v });
+        else out.push({ path: k, content: v?.content ?? "", contentType: v?.contentType });
+      }
+      return out;
+    }
+
+    // 3) array direto
+    if (Array.isArray(data)) return data;
+
+    throw new Error("bundle sem 'files' (formato não reconhecido)");
   }
 
-  function hasOverrides(){
-    const v = window.RCF_VFS_OVERRIDES;
-    return !!(v && typeof v.put === "function" && typeof v.clearOverrides === "function");
+  function normalizeRepoPathToRuntime(p) {
+    // aceita "app/..." e transforma em "/..."
+    let x = String(p || "").trim();
+    x = x.replace(/^\/+/, "");
+    if (x.startsWith("app/")) x = x.slice(4);
+    return "/" + x;
   }
 
-  async function applyBundle(bundleObj, opts){
-    const vfs = window.RCF_VFS_OVERRIDES;
-    if (!vfs || typeof vfs.put !== "function") throw new Error("Overrides VFS sem put()");
+  async function getLocalBundleText() {
+    const t = localStorage.getItem(LS_LOCAL_BUNDLE);
+    return t && String(t).trim() ? String(t) : "";
+  }
 
-    // formato esperado: { files:[{path,content,contentType}] } OU array direto
-    const files = Array.isArray(bundleObj) ? bundleObj : (bundleObj?.files || []);
+  async function setLocalBundleText(txt) {
+    try { localStorage.setItem(LS_LOCAL_BUNDLE, String(txt || "")); } catch {}
+  }
+
+  async function clearOverrides() {
+    const ovr = getOverridesApi();
+    if (!ovr) throw new Error("Overrides VFS ausente");
+
+    // se tiver clearOverrides nativo, usa
+    if (ovr.clear) {
+      const r = await ovr.clear();
+      return r || { ok: true, mode: "clearOverrides()" };
+    }
+
+    // fallback
+    return await fallbackClearUsingListDel(ovr);
+  }
+
+  async function updateFromGitHub(opts = {}) {
+    const onProgress = typeof opts.onProgress === "function" ? opts.onProgress : null;
+
+    const ovr = getOverridesApi();
+    if (!ovr) throw new Error("Overrides VFS ausente");
+    if (!ovr.put) throw new Error("Overrides VFS sem put()");
+
+    // ✅ aqui a gente NÃO falha só porque clearOverrides não existe
+    // a gente usa fallback se precisar
+    const haveClear = !!ovr.clear || (!!ovr.list && !!ovr.del);
+
+    if (!haveClear) {
+      throw new Error("Overrides VFS incompleto");
+    }
+
+    if (!window.RCF_GH_SYNC?.pull) throw new Error("RCF_GH_SYNC.pull ausente");
+
+    log("ok", "update start");
+
+    const cfg = window.RCF_GH_SYNC?.loadConfig ? window.RCF_GH_SYNC.loadConfig() : null;
+    // pull do bundle (texto)
+    const bundleText = await window.RCF_GH_SYNC.pull(cfg || {});
+    await setLocalBundleText(bundleText);
+
+    const files = parseBundleText(bundleText);
     const total = files.length;
 
     let wrote = 0;
     let failed = 0;
 
-    for (let i = 0; i < files.length; i++){
+    for (let i = 0; i < files.length; i++) {
       const f = files[i] || {};
-      const path = normPath(f.path || f.file || f.name || "");
-      const content = (f.content ?? f.data ?? "");
-      const contentType = f.contentType || f.type || "";
+      const repoPath = String(f.path || f.file || "").trim();
+      const runtimePath = normalizeRepoPathToRuntime(repoPath);
+      const content = (f.content ?? f.text ?? "");
+      const contentType = f.contentType;
 
       try {
-        await vfs.put(path, content, contentType);
+        if (onProgress) onProgress({ step: "apply_progress", done: i, total });
+        await ovr.put(runtimePath, String(content ?? ""), contentType);
         wrote++;
-        opts?.onProgress?.({ step: "apply_progress", done: wrote + failed, total, path });
       } catch (e) {
         failed++;
-        log("err", `apply: FAIL ${path} :: ${e?.message || e}`);
-        opts?.onProgress?.({ step: "apply_progress", done: wrote + failed, total, path, err: String(e?.message || e) });
+        log("err", `apply fail ${runtimePath} :: ${e?.message || e}`);
       }
     }
 
-    opts?.onProgress?.({ step: "apply_done", done: wrote, failed, total });
-    return { ok: failed === 0, wrote, failed, total };
+    if (onProgress) onProgress({ step: "apply_done", done: wrote, total });
+
+    log("ok", "update done");
+    return { ok: true, wrote, failed, total };
   }
 
-  async function updateFromGitHub(opts){
-    return withTimeout((async () => {
-      if (!window.RCF_GH_SYNC?.pull) throw new Error("RCF_GH_SYNC.pull ausente");
-      if (!hasOverrides()) throw new Error("Overrides VFS incompleto");
-
-      log("ok", "update start");
-
-      const cfg = getCfg();
-      const bundleText = await window.RCF_GH_SYNC.pull(cfg);
-
-      // guarda pra pushMotherBundle funcionar
-      window.RCF_MAE.__lastBundleText = String(bundleText || "");
-      try { localStorage.setItem(LS_BUNDLE_TEXT, window.RCF_MAE.__lastBundleText); } catch {}
-
-      const bundleObj = safeParse(bundleText, null);
-      if (!bundleObj) throw new Error("Bundle puxado inválido (JSON parse falhou)");
-
-      const res = await applyBundle(bundleObj, opts);
-
-      log("ok", "update done");
-      return { ok: true, ...res };
-    })(), UPDATE_TIMEOUT_MS, "updateFromGitHub");
-  }
-
-  async function clearOverrides(){
-    return withTimeout((async () => {
-      const vfs = window.RCF_VFS_OVERRIDES;
-      if (!vfs || typeof vfs.clearOverrides !== "function") throw new Error("Overrides VFS sem clearOverrides()");
-      const r = await vfs.clearOverrides();
-      log("ok", "clearOverrides ok");
-      return { ok: true, ...r };
-    })(), CLEAR_TIMEOUT_MS, "RCF_OVERRIDE_CLEAR");
-  }
-
-  async function getLocalBundleText(){
-    // 1) memória
-    if (typeof window.RCF_MAE.__lastBundleText === "string" && window.RCF_MAE.__lastBundleText.length) {
-      return window.RCF_MAE.__lastBundleText;
-    }
-    // 2) storage
-    const raw = localStorage.getItem(LS_BUNDLE_TEXT);
-    if (raw && raw.length) return raw;
-
-    throw new Error("Bundle local indisponível (ainda não fez pull/update)");
-  }
-
-  function check(){
-    const cfg = getCfg();
-    const bt = (typeof window.RCF_MAE.__lastBundleText === "string") ? window.RCF_MAE.__lastBundleText : (localStorage.getItem(LS_BUNDLE_TEXT) || "");
-    return {
-      ok: true,
-      v: "v1.3",
-      motherRoot: "/app",
-      hasSync: !!window.RCF_GH_SYNC,
-      hasOverridesVFS: hasOverrides(),
-      bundleSize: (bt || "").length,
-      cfg: cfg || {}
-    };
-  }
-
-  window.RCF_MAE = {
-    __v13: true,
-    check,
-    updateFromGitHub,
+  const api = {
+    __v12: true,
+    VERSION,
+    status() {
+      const ovr = getOverridesApi();
+      return {
+        ok: true,
+        v: VERSION,
+        overrides_found: !!ovr,
+        has_put: !!ovr?.put,
+        has_clear: !!ovr?.clear,
+        has_list: !!ovr?.list,
+        has_del: !!ovr?.del,
+        sw_controller: !!navigator.serviceWorker?.controller,
+      };
+    },
     clearOverrides,
+    updateFromGitHub,
     getLocalBundleText,
-    __lastBundleText: window.RCF_MAE?.__lastBundleText || ""
+    setLocalBundleText,
   };
 
+  window.RCF_MAE = api;
   log("ok", "mother_selfupdate.js ready ✅");
 })();
