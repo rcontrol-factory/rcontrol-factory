@@ -1,155 +1,209 @@
-/* /app/js/core/vfs_overrides.js  (PADRÃO) — v2.0
-   - Wrapper robusto pro SW Overrides (PUT/CLEAR + LIST/DEL quando suportado)
-   - Timeout + retry/backoff (iPhone)
-   - Mantém compat: window.RCF_VFS_OVERRIDES.put/clear
-   - Acrescenta: listFiles/deleteFile (pra MAE.clearOverrides não quebrar)
+/* RControl Factory — /app/js/core/mother_selfupdate.js (PADRÃO) — v1.2
+   - Cria SEMPRE window.RCF_MAE (nunca "mae: absent")
+   - updateFromGitHub: puxa bundle via RCF_GH_SYNC.pull() e aplica via RCF_VFS_OVERRIDES.put()
+   - clearOverrides: tenta delete individual se existir listFiles/deleteFile; senão usa clear()
+   - Anti-timeout iOS: timeout por arquivo + retries + progresso
 */
 (() => {
   "use strict";
 
-  if (window.RCF_VFS_OVERRIDES && window.RCF_VFS_OVERRIDES.__v20) return;
+  // evita dupla carga
+  if (window.RCF_MAE && window.RCF_MAE.__v12) return;
 
-  const log = (lvl, msg, extra) => {
-    try { window.RCF_LOGGER?.push?.(lvl, String(msg)); } catch {}
-    try { console.log("[OVR]", lvl, msg, extra || ""); } catch {}
+  const log = (lvl, msg) => {
+    try { window.RCF_LOGGER?.push?.(lvl, msg); } catch {}
+    try { /* console.log("[MAE]", lvl, msg); */ } catch {}
   };
 
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-  function withTimeout(promise, ms, label) {
+  function head80(t){
+    return String(t || "").slice(0, 80).replace(/\s+/g, " ").trim();
+  }
+
+  function looksLikeJson(text){
+    const t = String(text || "").trim();
+    if (!t) return false;
+    if (t.startsWith("<!DOCTYPE") || t.startsWith("<html")) return false;
+    return t[0] === "{";
+  }
+
+  function parseBundle(text){
+    if (!looksLikeJson(text)) {
+      throw new Error(`bundle não é JSON (head="${head80(text)}")`);
+    }
+    let j;
+    try { j = JSON.parse(text); }
+    catch (e) { throw new Error("bundle JSON inválido: " + (e?.message || e)); }
+
+    const files = j?.files;
+    if (!files || typeof files !== "object" || Object.keys(files).length === 0) {
+      throw new Error("bundle sem files (ou vazio)");
+    }
+    return j;
+  }
+
+  function normalizePath(p){
+    let x = String(p || "").trim();
+    if (!x) return "";
+    x = x.split("#")[0].split("?")[0].trim();
+    if (!x.startsWith("/")) x = "/" + x;
+    x = x.replace(/\/{2,}/g, "/");
+
+    // repo pode ter /app/... → runtime é /
+    if (x.startsWith("/app/")) x = x.slice(4);
+    if (!x.startsWith("/")) x = "/" + x;
+    return x;
+  }
+
+  function pickOverrides(){
+    const o = window.RCF_VFS_OVERRIDES;
+    if (o && typeof o.put === "function") return o;
+    return null;
+  }
+
+  function withTimeout(promise, ms, label){
     let t;
     const timeout = new Promise((_, rej) => {
-      t = setTimeout(() => rej(new Error(`TIMEOUT ${ms}ms em ${label}`)), ms);
+      t = setTimeout(() => rej(new Error(`TIMEOUT ${ms}ms (${label})`)), ms);
     });
-    return Promise.race([promise, timeout]).finally(() => clearTimeout(t));
+    return Promise.race([Promise.resolve(promise), timeout]).finally(() => clearTimeout(t));
   }
 
-  async function getSW() {
-    // tenta scope raiz primeiro (compat iOS)
-    const reg =
-      (await navigator.serviceWorker?.getRegistration?.("/").catch(() => null)) ||
-      (await navigator.serviceWorker?.getRegistration?.("./").catch(() => null)) ||
-      null;
+  async function applyBundle(bundleObj, opts){
+    const onProgress = typeof opts?.onProgress === "function" ? opts.onProgress : null;
 
-    const sw = reg?.active || navigator.serviceWorker?.controller || null;
-    if (!sw) throw new Error("SW não controlando a página ainda. Recarregue 1x.");
-    return { sw, reg };
-  }
+    const files = bundleObj?.files || {};
+    const keys = Object.keys(files);
+    const total = keys.length;
 
-  async function post(msg, { timeoutMs = 6500, label = "post()", tries = 3 } = {}) {
-    let lastErr = null;
+    const vfs = pickOverrides();
+    if (!vfs) throw new Error("Overrides VFS ausente (RCF_VFS_OVERRIDES.put). Recarregue 1x.");
 
-    for (let a = 1; a <= tries; a++) {
-      try {
-        const { sw } = await getSW();
+    let wrote = 0, failed = 0;
 
-        const run = new Promise((resolve, reject) => {
-          const ch = new MessageChannel();
+    for (let i = 0; i < keys.length; i++){
+      const raw = keys[i];
+      const entry = files[raw];
 
-          ch.port1.onmessage = (ev) => {
-            const d = ev.data || {};
-            // convencões: *_ERR, ok, error
-            if (d.type && String(d.type).endsWith("_ERR")) {
-              reject(new Error(d.error || "ERR"));
-              return;
-            }
-            if (d.ok === false) {
-              reject(new Error(d.error || "ERR"));
-              return;
-            }
-            resolve(d);
-          };
+      // aceita {content, contentType} ou string direto
+      let content, contentType;
+      if (entry && typeof entry === "object" && ("content" in entry)) {
+        content = String(entry.content ?? "");
+        contentType = String(entry.contentType || "");
+      } else {
+        content = String(entry ?? "");
+        contentType = "";
+      }
 
-          // NOTE: o SW precisa responder via port2
-          sw.postMessage(msg, [ch.port2]);
-        });
+      const path = normalizePath(raw);
+      if (!path || path.endsWith("/")) continue;
 
-        return await withTimeout(Promise.resolve(run), timeoutMs, label);
-      } catch (e) {
-        lastErr = e;
-        // backoff curto (iOS)
-        await sleep(250 * a + 250);
+      onProgress && onProgress({ step:"apply_progress", done:i, total, path });
+
+      // retries curtinhos (iOS)
+      let ok = false;
+      let lastErr = null;
+      for (let a = 1; a <= 3; a++){
+        try{
+          await withTimeout(vfs.put(path, content, contentType), 6000, `put(${path})`);
+          wrote++;
+          ok = true;
+          lastErr = null;
+          break;
+        } catch (e){
+          lastErr = e;
+          await sleep(250 * a);
+        }
+      }
+
+      if (!ok){
+        failed++;
+        log("warn", `mae apply fail: ${path} -> ${String(lastErr?.message || lastErr)}`);
       }
     }
 
-    throw (lastErr || new Error("post failed"));
+    onProgress && onProgress({ step:"apply_done", done:wrote, total, failed });
+    return { wrote, failed, total };
   }
 
-  // -------- API --------
-  async function put(path, content, contentType) {
-    await post(
-      { type: "RCF_OVERRIDE_PUT", path, content, contentType },
-      { timeoutMs: 8000, label: "RCF_OVERRIDE_PUT", tries: 4 }
+  async function updateFromGitHub(opts){
+    const onProgress = typeof opts?.onProgress === "function" ? opts.onProgress : null;
+
+    log("ok", "update start");
+    onProgress && onProgress({ step:"start" });
+
+    if (!window.RCF_GH_SYNC?.pull) throw new Error("RCF_GH_SYNC.pull ausente");
+
+    // puxa bundle (texto)
+    const txt = await withTimeout(
+      window.RCF_GH_SYNC.pull(),
+      12000,
+      "gh_pull"
     );
-    return true;
+
+    const bundle = parseBundle(txt);
+
+    // aplica (com timeout global um pouco maior)
+    const res = await withTimeout(
+      applyBundle(bundle, { onProgress }),
+      20000,
+      "apply_bundle"
+    );
+
+    log("ok", "update done");
+    onProgress && onProgress({ step:"done", ...res });
+    return { ok:true, ...res };
   }
 
-  async function clear() {
-    // tenta CLEAR direto (mais rápido)
-    await post(
-      { type: "RCF_OVERRIDE_CLEAR" },
-      { timeoutMs: 12000, label: "RCF_OVERRIDE_CLEAR", tries: 4 }
-    );
-    return true;
-  }
+  async function clearOverrides(){
+    const vfs = pickOverrides();
+    if (!vfs) throw new Error("Overrides VFS ausente (RCF_VFS_OVERRIDES).");
 
-  // Opcional: LIST/DEL (se seu SW suportar; se não suportar, a MAE ainda pode usar clear())
-  async function listFiles() {
-    const d = await post(
-      { type: "RCF_OVERRIDE_LIST" },
-      { timeoutMs: 8000, label: "RCF_OVERRIDE_LIST", tries: 2 }
-    );
-
-    // aceitamos {files:[...]} ou {list:[...]} ou {items:[...]}
-    const arr = d.files || d.list || d.items || d.paths || null;
-    if (!Array.isArray(arr)) {
-      // se SW não suporta, não quebra com "undefined"
-      throw new Error("RCF_OVERRIDE_LIST não suportado pelo SW");
+    // se tiver list/del, faz granular (mais seguro)
+    if (typeof vfs.listFiles === "function" && typeof vfs.deleteFile === "function") {
+      const paths = await withTimeout(vfs.listFiles(), 6500, "listFiles()");
+      let del = 0;
+      for (const p of paths){
+        try{
+          const ok = await withTimeout(vfs.deleteFile(p), 3500, `deleteFile(${p})`);
+          if (ok) del++;
+        } catch {}
+      }
+      log("ok", "clearOverrides ok");
+      return { ok:true, deleted: del, mode:"list+del" };
     }
-    return arr.map((x) => String(x || "")).filter(Boolean);
-  }
 
-  async function deleteFile(path) {
-    await post(
-      { type: "RCF_OVERRIDE_DEL", path },
-      { timeoutMs: 8000, label: "RCF_OVERRIDE_DEL", tries: 3 }
-    );
-    return true;
-  }
-
-  // compat aliases
-  const api = {
-    __v20: true,
-
-    put,
-    write: put,
-
-    clear,
-    clearAll: clear,
-
-    listFiles,
-    deleteFile,
-    del: deleteFile,
-
-    // util: info pra logs/diagnostics
-    async info() {
-      const { reg } = await getSW().catch(() => ({ reg: null }));
-      return {
-        ok: true,
-        v: "v2.0",
-        scope: String(reg?.scope || "/"),
-        base: String(location?.origin || "")
-      };
+    // fallback universal
+    if (typeof vfs.clear === "function") {
+      await withTimeout(vfs.clear(), 8000, "clear()");
+      log("ok", "clearOverrides ok");
+      return { ok:true, mode:"clear()" };
     }
+
+    throw new Error("clearOverrides: sem clear/listFiles/deleteFile");
+  }
+
+  function check(){
+    const hasSync = !!window.RCF_GH_SYNC;
+    const hasOverridesVFS = !!pickOverrides();
+    return {
+      ok: true,
+      v: "v1.2",
+      motherRoot: "/app",
+      hasSync,
+      hasOverridesVFS
+    };
+  }
+
+  // ✅ EXPORTA SEMPRE (mesmo se algo falhar depois)
+  window.RCF_MAE = {
+    __v12: true,
+    check,
+    updateFromGitHub,
+    clearOverrides
   };
 
-  window.RCF_VFS_OVERRIDES = api;
-
-  // log de boot
-  try {
-    const scope = "(unknown)";
-    log("ok", "vfs_overrides ready ✅", `scope=${scope} base=${location?.origin || ""}`);
-  } catch {
-    log("ok", "vfs_overrides ready ✅");
-  }
+  // log de vida (se der erro depois, pelo menos aparece)
+  log("ok", "mother_selfupdate.js ready ✅");
 })();
