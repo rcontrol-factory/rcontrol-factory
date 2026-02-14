@@ -13,6 +13,10 @@
    - ✅ PATCH: SW register usa ./sw.js + scope ./ (Pages/subpath safe)
    - ✅ PATCH: fetch do bundle resolve com baseURI (subpath safe)
    - ✅ PATCH: mother_bundle suporta files como ARRAY [{path,content}] e como OBJETO {"/p":"content"}
+
+   PATCHES APLICADOS NESTA VERSÃO:
+   - (P1) safeInit: NÃO registra SW de novo (evita duplicidade com index.html); usa swCheckAutoFix()
+   - (P2) scanFactoryFiles: runtime vfs chain NÃO usa window.RCF_VFS_OVERRIDES (isso é RPC, não FS)
 */
 
 (() => {
@@ -898,7 +902,6 @@
         Logger.write("sw:", "serviceWorker não suportado");
         return { ok: false, msg: "SW não suportado" };
       }
-      // ✅ PATCH: relativo + scope relativo (Pages/subpath safe)
       const reg = await navigator.serviceWorker.register("./sw.js", { scope: "./" });
       Logger.write("sw register:", "ok");
       return { ok: true, msg: "SW registrado ✅", reg };
@@ -1214,7 +1217,6 @@
     const path = cfg && cfg.path ? String(cfg.path) : "";
     if (!path) return null;
 
-    // ✅ PATCH: resolve com baseURI (subpath safe)
     const url = new URL(path, document.baseURI).toString();
 
     try {
@@ -1261,8 +1263,6 @@
 
   // =========================================================
   // ✅ CP1 — Scan em cascata REAL (A -> B -> C)
-  //   Regra: A com files=0 => FALHA => cai pro B, depois C.
-  //   PATCH: A não “mente” quando só existem overrides.
   // =========================================================
   async function scanFactoryFiles() {
     const index = {
@@ -1288,10 +1288,12 @@
       }
     } catch {}
 
-    // A) runtime vfs
-    const vfs = (window.RCF_VFS || window.RCF_FS || window.RCF_VFS_OVERRIDES || window.RCF_FILES || window.RCF_STORE) || null;
+    // RCF_RANGE:START SCAN_RUNTIME_VFS_CHAIN
+    // A) runtime vfs (NÃO usar RCF_VFS_OVERRIDES aqui — isso é RPC, não FS)
+    const vfs = (window.RCF_VFS || window.RCF_FS || window.RCF_FILES || window.RCF_STORE) || null;
+    // RCF_RANGE:END SCAN_RUNTIME_VFS_CHAIN
+
     if (vfs) {
-      // ✅ PATCH: mede quantos foram adicionados PELO runtime VFS (sem contar overrides)
       const baseLen = index.files.length;
 
       const list = await vfsListAll(vfs);
@@ -1335,11 +1337,9 @@
       let parsed = null;
       try { parsed = JSON.parse(bundleText); } catch { parsed = null; }
 
-      // ✅ SUPORTE: files como ARRAY [{path,content}] OU OBJETO MAPA {"/p":"content"}
       let entries = [];
 
       if (parsed && Array.isArray(parsed.files)) {
-        // formato ARRAY
         entries = parsed.files
           .map(it => {
             const rawPath = it && (it.path || it.file || it.name);
@@ -1348,7 +1348,6 @@
           })
           .filter(([p]) => !!p);
       } else {
-        // formato OBJETO
         const filesObj =
           (parsed && parsed.files && typeof parsed.files === "object")
             ? parsed.files
@@ -1409,7 +1408,6 @@
 
   // =========================================================
   // ✅ CP2 — Target map garante >=2
-  //   PATCH: fallback prioriza /index.html (bundle real)
   // =========================================================
   function generateTargetMap(fileIndex) {
     const idx = fileIndex || Storage.get("RCF_FILE_INDEX", null);
@@ -1463,7 +1461,6 @@
       if (uniq.length >= 800) break;
     }
 
-    // ✅ PATCH fallback: tenta /index.html primeiro
     if (uniq.length < 2) {
       const fallbackPaths = ["/index.html", "/app/index.html"];
       for (const fp of fallbackPaths) {
@@ -1503,7 +1500,6 @@
     return { ok: true, map: out };
   }
 
-  // ✅ CP3 helper: preenche dropdown e auto-select
   function populateTargetsDropdown(autoSelect = false) {
     const sel = $("#injTarget");
     if (!sel) return;
@@ -1555,7 +1551,7 @@
     const ov = await OverridesVFS.readFile(p);
     if (ov != null) return String(ov);
 
-    const vfs = (window.RCF_VFS || window.RCF_FS || window.RCF_VFS_OVERRIDES || window.RCF_FILES || window.RCF_STORE) || null;
+    const vfs = (window.RCF_VFS || window.RCF_FS || window.RCF_FILES || window.RCF_STORE) || null;
     if (vfs) {
       const txt = await vfsRead(vfs, p);
       return (txt == null) ? "" : String(txt);
@@ -1566,7 +1562,6 @@
       try {
         const parsed = JSON.parse(bundleText);
 
-        // ✅ formato ARRAY: parsed.files = [{path, content}]
         if (parsed && Array.isArray(parsed.files)) {
           const hit = parsed.files.find(it => normalizePath(it?.path || it?.file || it?.name) === p);
           if (hit) {
@@ -1577,7 +1572,6 @@
           }
         }
 
-        // ✅ formato OBJETO: { "/path": "..." } ou { "/path": {content:""} }
         const filesObj = (parsed && parsed.files && typeof parsed.files === "object") ? parsed.files : parsed;
         const v = filesObj && filesObj[p];
         if (v && typeof v === "object" && "content" in v) return String(v.content ?? "");
@@ -1589,7 +1583,6 @@
       return document.documentElement ? document.documentElement.outerHTML : "";
     }
 
-    // fallback: tenta fetch direto
     if (p === "/app/index.html" || p === "/app/styles.css" || p === "/app/app.js" || p === "/index.html" || p === "/styles.css" || p === "/app.js") {
       try {
         const res = await fetch(p, { cache: "no-store" });
@@ -1603,7 +1596,7 @@
   async function writeTextToInventoryPath(path, newText) {
     const p = normalizePath(path);
 
-    const vfs = (window.RCF_VFS || window.RCF_FS || window.RCF_VFS_OVERRIDES || window.RCF_FILES || window.RCF_STORE) || null;
+    const vfs = (window.RCF_VFS || window.RCF_FS || window.RCF_FILES || window.RCF_STORE) || null;
     if (vfs) {
       try {
         if (typeof vfs.writeFile === "function") { await vfs.writeFile(p, String(newText ?? "")); return { ok: true, mode: "vfs.writeFile" }; }
@@ -2071,8 +2064,12 @@
 
       installGuardsOnce();
 
-      const r = await swRegister();
-      if (!r.ok) Logger.write("warn:", r.msg);
+      // RCF_RANGE:START SAFEINIT_SW_AUTOFIX
+      // ✅ P1: NÃO registrar SW duplicado aqui (index.html já registra).
+      // Apenas checar e auto-fixar se necessário.
+      const swr = await swCheckAutoFix();
+      if (!swr.ok) Logger.write("sw warn:", swr.status, swr.detail, swr.err ? ("err=" + swr.err) : "");
+      // RCF_RANGE:END SAFEINIT_SW_AUTOFIX
 
       Logger.write("RCF app.js init ok — mode:", State.cfg.mode);
       safeSetStatus("OK ✅");
