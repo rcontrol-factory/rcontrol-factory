@@ -1,9 +1,10 @@
 /* =========================================================
-  RControl Factory — core/ui_bindings.js (LOGS FIX v1.2)
+  RControl Factory — core/ui_bindings.js (LOGS FIX v1.2) — PATCH DIAG v1.2.1
   - Liga UI (Agent/Admin/Diag/Logs/Tools) ao core
   - iOS-safe: click + touchend (evita double fire)
   - Logs: lê de múltiplas fontes + múltiplas keys no localStorage
   - Logs: escreve no elemento certo (pre/textarea) mesmo se ID variar
+  - DIAG: chama installAll() + runStabilityCheck() automaticamente (evita FAIL falso)
 ========================================================= */
 
 (function () {
@@ -184,15 +185,42 @@
     return rep;
   }
 
-  // ---------- DIAG report ----------
-  async function buildDiagReport() {
+  // ---------- DIAG report (PATCH) ----------
+  async function runStabilityAndGetText() {
     const D = window.RCF_DIAGNOSTICS;
-    if (D && typeof D.buildReport === "function") return await D.buildReport();
-    if (D && typeof D.run === "function") return await D.run();
 
+    // ✅ novo padrão: installAll 1x e roda runStabilityCheck
+    if (D && typeof D.installAll === "function" && typeof D.runStabilityCheck === "function") {
+      try {
+        // instala uma vez (evita FAIL falso e mantém installCount)
+        D.installAll();
+      } catch {}
+
+      try {
+        const r = await D.runStabilityCheck();
+        return safeText(r && (r.text || r.reportText || r.summaryText || "")) || "(sem texto do relatório)";
+      } catch (e) {
+        return "ERRO: runStabilityCheck falhou: " + safeText(e && e.message ? e.message : e);
+      }
+    }
+
+    // compat legacy (se existir)
+    if (D && typeof D.buildReport === "function") {
+      try { return await D.buildReport(); } catch (e) {
+        return "ERRO: buildReport falhou: " + safeText(e && e.message ? e.message : e);
+      }
+    }
+    if (D && typeof D.run === "function") {
+      try { return await D.run(); } catch (e) {
+        return "ERRO: diag.run falhou: " + safeText(e && e.message ? e.message : e);
+      }
+    }
+
+    // fallback simples
     const info = [];
     info.push("DIAG (fallback) ✅");
     info.push("—");
+    info.push("RCF_DIAGNOSTICS: " + (!!window.RCF_DIAGNOSTICS));
     info.push("RCF_COMMANDS: " + (!!window.RCF_COMMANDS));
     info.push("RCF_PATCHSET: " + (!!window.RCF_PATCHSET));
     info.push("RCF_LOGGER: " + (!!window.RCF_LOGGER));
@@ -201,6 +229,11 @@
     info.push("navigator.onLine: " + (typeof navigator !== "undefined" ? navigator.onLine : "n/a"));
     info.push("ua: " + (typeof navigator !== "undefined" ? navigator.userAgent : "n/a"));
     return info.join("\n");
+  }
+
+  async function buildDiagReport() {
+    // mantém nome antigo (usado em outros lugares), mas agora aponta pro V7.1
+    return await runStabilityAndGetText();
   }
 
   // ---------- bindings ----------
@@ -258,14 +291,26 @@
     const btnRun = $("btnDiagRun");
     const btnClear = $("btnDiagClear");
 
-    if (btnRun) {
-      bindTap(btnRun, async () => {
-        const rep = await buildDiagReport();
-        if (out) setBoxText(out, rep);
-      });
-    }
+    const run = async () => {
+      setTopStatus("Diagnostics: rodando...");
+      const rep = await buildDiagReport();
+      if (out) setBoxText(out, rep);
+      setTopStatus("Diagnostics: pronto ✅");
+      setTimeout(() => setTopStatus("OK ✅"), 900);
+    };
 
-    if (btnClear) bindTap(btnClear, () => { if (out) setBoxText(out, "Pronto."); });
+    if (btnRun) bindTap(btnRun, run);
+
+    if (btnClear) bindTap(btnClear, () => {
+      if (out) setBoxText(out, "Pronto.");
+      setTopStatus("OK ✅");
+    });
+
+    // ✅ auto-run ao entrar na view diagnostics (evita FAIL falso de primeira)
+    $$('[data-view="diagnostics"]').forEach(b => bindTap(b, () => setTimeout(run, 60)));
+    // fallback: qualquer botão com texto "Diagnostics"
+    $$("button").filter(b => (b.textContent || "").trim().toLowerCase() === "diagnostics")
+      .forEach(b => bindTap(b, () => setTimeout(run, 60)));
   }
 
   function bindLogsViewAndTools() {
@@ -339,7 +384,7 @@
     bindDiagnosticsView();
     bindLogsViewAndTools();
 
-    loggerPush("log", "core/ui_bindings.js carregado ✅ (LOGS FIX v1.2)");
+    loggerPush("log", "core/ui_bindings.js carregado ✅ (LOGS FIX v1.2.1 + DIAG AUTOINSTALL)");
   }
 
   if (document.readyState === "loading") {
