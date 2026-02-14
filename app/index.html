@@ -20,7 +20,7 @@
   </div>
 
   <!-- RCF_BOOT_PANEL_START -->
-  <!-- ✅ BootPanel (sempre visível) -->
+  <!-- ✅ BootPanel (não bloqueia clique global) -->
   <div id="rcfBootPanel" style="
     position:fixed; left:12px; right:12px; bottom:12px;
     z-index:999999; padding:12px; border-radius:14px;
@@ -28,25 +28,34 @@
     border:1px solid rgba(255,255,255,.10);
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
     font-size:12px; line-height:1.35;
-    max-height:36vh; overflow:auto;">
+    max-height:36vh; overflow:auto;
+    pointer-events:none;">
+    
     <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px;">
       <div style="font-weight:800;">RCF BOOT</div>
+
       <button id="rcfReloadBtn" style="
         margin-left:auto; padding:6px 10px; border-radius:999px;
         border:1px solid rgba(255,255,255,.15);
-        background:rgba(255,255,255,.08); color:#fff;">Reload</button>
+        background:rgba(255,255,255,.08); color:#fff;
+        pointer-events:auto;">Reload</button>
+
       <button id="rcfHideBtn" style="
         padding:6px 10px; border-radius:999px;
         border:1px solid rgba(255,255,255,.15);
-        background:rgba(255,255,255,.08); color:#fff;">Hide</button>
+        background:rgba(255,255,255,.08); color:#fff;
+        pointer-events:auto;">Hide</button>
     </div>
+
     <pre id="rcfBootLog" style="margin:0; white-space:pre-wrap;">boot: init…</pre>
   </div>
+  <!-- RCF_BOOT_PANEL_END -->
 
   <!-- RCF_BOOT_SCRIPT_START -->
   <script>
     (function () {
       const out = document.getElementById("rcfBootLog");
+
       function p(line){
         try {
           out.textContent += "\n" + line;
@@ -72,7 +81,7 @@
         }
       };
 
-      // pega erros que travam em “Carregando…”
+      // captura erros globais
       window.addEventListener("error", (e) => {
         const m = (e && (e.message || e.error?.message)) || "Erro desconhecido";
         const src = e && e.filename ? (" @ " + e.filename + ":" + (e.lineno||0) + ":" + (e.colno||0)) : "";
@@ -102,8 +111,6 @@
         window.RCF_LOGGER.push("BOOT", "index boot: starting…");
         window.RCF_LOGGER.push("BOOT", "base href = " + document.baseURI);
 
-        // ✅ ordem mínima (antes do app.js)
-        // ✅ vfs_shim entra DEPOIS do vfs_overrides (porque ele “ponteia”)
         const modules = [
           "./js/core/logger.js",
           "./js/core/storage.js",
@@ -123,7 +130,6 @@
           }
         }
 
-        // app principal
         try {
           await loadScript("./app.js");
           window.RCF_LOGGER.push("BOOT", "app.js loaded ✅ ./app.js");
@@ -131,7 +137,6 @@
           window.RCF_LOGGER.push("ERR", "app.js missing/failed ❌ ./app.js :: " + (e.message||e));
         }
 
-        // ✅ SW (scope ./) — PADRÃO /app/
         try {
           if ("serviceWorker" in navigator) {
             navigator.serviceWorker.register("./sw.js", { scope: "./" })
@@ -145,7 +150,6 @@
     })();
   </script>
   <!-- RCF_BOOT_SCRIPT_END -->
-  <!-- RCF_BOOT_PANEL_END -->
 
 </body>
 </html>
