@@ -1,22 +1,87 @@
-/* RControl Factory — /app/js/core/vfs_overrides.js (PADRÃO) — v1.1
-   - Canal seguro com SW (MessageChannel)
-   - post() com timeout + retry (iOS safe)
-   - API: put(path, content, contentType) / clear()
+/* RControl Factory — /app/js/core/vfs_overrides.js (PADRÃO) — v1.3
+   - FIX iOS: descobre o root real via new URL("./sw.js", document.baseURI)
+   - Garante scope "/app/" quando o app roda em /app/ (Pages/Cache confuso)
+   - getRegistration() + fallback getRegistrations()
+   - postMessage com timeout + retry (iOS)
+   - API: put(path, content, contentType) + clear()
 */
 (() => {
   "use strict";
 
-  const DEFAULT_TIMEOUT_MS = 6500; // compat com logs antigos
-  const RETRIES = 2;              // total tries = 1 + RETRIES
+  const SW_TIMEOUT_MS = 6500;
+  const SW_TRIES = 2;
 
   function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
 
-  async function getSW() {
-    // tenta pegar registration do scope raiz
-    const reg = await navigator.serviceWorker?.getRegistration?.("/");
-    const sw = reg?.active || navigator.serviceWorker?.controller;
-    if (!sw) throw new Error("SW não controlando a página ainda.");
-    return sw;
+  function log(lvl, msg){
+    try { window.RCF_LOGGER?.push?.(lvl, msg); } catch {}
+    try { console.log("[VFS_OVR]", lvl, msg); } catch {}
+  }
+
+  function deriveAppRoot(){
+    // 🔒 Fonte de verdade: "./sw.js" relativo ao baseURI (seu SW fica em /app/sw.js)
+    try {
+      const u = new URL("./sw.js", document.baseURI);
+      const p = String(u.pathname || "");
+      if (p.endsWith("/sw.js")) {
+        const root = p.slice(0, -"/sw.js".length) || "/";
+        return root.endsWith("/") ? root : (root + "/");
+      }
+    } catch {}
+
+    // fallback 1: tenta baseURI por /app/
+    try {
+      const b = new URL(document.baseURI);
+      if ((b.pathname || "").includes("/app/")) return "/app/";
+    } catch {}
+
+    // fallback 2: pathname
+    if (location.pathname.startsWith("/app/") || location.pathname === "/app") return "/app/";
+
+    return "/";
+  }
+
+  const APP_ROOT = deriveAppRoot(); // esperado: "/app/"
+  log("ok", `vfs_overrides ready ✅ scope=${APP_ROOT} base=${String(document.baseURI || "")}`);
+
+  async function getActiveSW(){
+    if (!("serviceWorker" in navigator)) return null;
+
+    // 1) se já controlando, usa controller
+    const ctrl = navigator.serviceWorker.controller;
+    if (ctrl) return ctrl;
+
+    // 2) registration do cliente (sem arg)
+    try {
+      const reg = await navigator.serviceWorker.getRegistration();
+      const sw = reg?.active || reg?.waiting || reg?.installing;
+      if (sw) return sw;
+    } catch {}
+
+    // 3) registration do root detectado (/app/)
+    try {
+      const reg = await navigator.serviceWorker.getRegistration(APP_ROOT);
+      const sw = reg?.active || reg?.waiting || reg?.installing;
+      if (sw) return sw;
+    } catch {}
+
+    // 4) procura nas registrations pela que casa com scope
+    try {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      if (regs && regs.length) {
+        const wantedPrefix = location.origin + APP_ROOT;
+        let best = null;
+        for (const r of regs) {
+          const s = String(r?.scope || "");
+          if (wantedPrefix && s.startsWith(wantedPrefix)) best = r;
+        }
+        const pick = best || regs[0];
+        const sw = pick?.active || pick?.waiting || pick?.installing;
+        if (sw) return sw;
+      }
+    } catch {}
+
+    return null;
   }
 
   function withTimeout(promise, ms, label){
@@ -27,8 +92,9 @@
     return Promise.race([promise, timeout]).finally(() => clearTimeout(t));
   }
 
-  async function postOnce(msg, timeoutMs) {
-    const sw = await getSW();
+  async function postOnce(msg){
+    const sw = await getActiveSW();
+    if (!sw) throw new Error("SW não controlando a página ainda.");
 
     return await withTimeout(new Promise((resolve, reject) => {
       const ch = new MessageChannel();
@@ -37,24 +103,22 @@
         if (d.type?.endsWith("_ERR")) reject(new Error(d.error || "ERR"));
         else resolve(d);
       };
-
       try {
         sw.postMessage(msg, [ch.port2]);
       } catch (e) {
         reject(e);
       }
-    }), timeoutMs || DEFAULT_TIMEOUT_MS, msg?.type || "post()");
+    }), SW_TIMEOUT_MS, msg?.type || "postMessage");
   }
 
-  async function post(msg, timeoutMs) {
+  async function post(msg){
     let lastErr = null;
-    for (let i = 0; i <= RETRIES; i++){
+    for (let i = 1; i <= SW_TRIES; i++){
       try {
-        // pequeno backoff (iOS)
-        if (i) await sleep(250 * i);
-        return await postOnce(msg, timeoutMs);
+        return await postOnce(msg);
       } catch (e) {
         lastErr = e;
+        await sleep(250 * i);
       }
     }
     throw lastErr || new Error("post failed");
@@ -62,20 +126,14 @@
 
   const api = {
     async put(path, content, contentType) {
-      await post({ type: "RCF_OVERRIDE_PUT", path, content, contentType }, 8000);
+      await post({ type: "RCF_OVERRIDE_PUT", path, content, contentType });
       return true;
     },
     async clear() {
-      // clear pode ser mais pesado — deixa um pouco mais de tempo
-      await post({ type: "RCF_OVERRIDE_CLEAR" }, 12000);
+      await post({ type: "RCF_OVERRIDE_CLEAR" });
       return true;
     }
   };
 
   window.RCF_VFS_OVERRIDES = api;
-
-  // log opcional (se logger existir)
-  try {
-    window.RCF_LOGGER?.push?.("ok", "OK: vfs_overrides ready ✅ scope=/");
-  } catch {}
 })();
