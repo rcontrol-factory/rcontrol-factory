@@ -1,267 +1,191 @@
-/* RControl Factory — /app/js/core/github_sync.js (PADRÃO) — v2.3
-   - GitHub Contents API: GET/PUT file
-   - Storage: rcf:ghcfg
-   - pull(cfg): retorna STRING do bundle JSON válido (ou lança erro)
-   - push(cfg, content?): se content não vier, gera bundle “mãe” via fetch local
-   - ✅ Path default CORRETO: "app/import/mother_bundle.json"
-   - ✅ Local bundle fetch: new URL('import/mother_bundle.json', document.baseURI)
-   - ✅ Logs claros + validação forte do bundle
-   - ✅ Nunca salva token no bundle
+/* RControl Factory — /app/js/core/github_sync.js (PADRÃO) — v2.4
+   - Centraliza GitHub API (pull/push/test)
+   - Evita logs duplicados (guard)
+   - pushMotherBundle robusto (retorna ok/throw correto)
+   - save/load cfg em rcf:ghcfg
 */
 (() => {
   "use strict";
 
-  const LS_KEY = "rcf:ghcfg";
+  if (window.RCF_GH_SYNC && window.RCF_GH_SYNC.__v24) return;
 
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  const nowISO = () => new Date().toISOString();
+  const LS_CFG_KEY = "rcf:ghcfg";
+  const API_BASE = "https://api.github.com";
 
-  function log(msg)  { try { window.RCF_LOGGER?.push?.("info", msg); } catch {} }
-  function warn(msg) { try { window.RCF_LOGGER?.push?.("warn", msg); } catch {} }
-  function err(msg)  { try { window.RCF_LOGGER?.push?.("err", msg); } catch {} }
+  const log = (lvl, msg) => {
+    try { window.RCF_LOGGER?.push?.(lvl, msg); } catch {}
+    try { console.log("[GH]", lvl, msg); } catch {}
+  };
 
-  function safeParse(raw, fallback) {
-    try { return raw ? JSON.parse(raw) : fallback; } catch { return fallback; }
+  function safeParse(raw, fb){
+    try { return raw ? JSON.parse(raw) : fb; } catch { return fb; }
   }
 
-  function loadConfig() {
-    return safeParse(localStorage.getItem(LS_KEY), {}) || {};
+  function normalizePath(p){
+    let x = String(p || "").trim();
+    if (!x) return "app/import/mother_bundle.json";
+    x = x.replace(/^\/+/, "");
+    // compat: se usuário colocou import/..., grava como app/import/...
+    if (x.startsWith("import/")) x = "app/" + x;
+    return x;
   }
 
-  function saveConfig(cfg) {
+  function loadConfig(){
+    const c = safeParse(localStorage.getItem(LS_CFG_KEY), {}) || {};
+    return {
+      owner: String(c.owner || "").trim(),
+      repo: String(c.repo || "").trim(),
+      branch: String(c.branch || "main").trim(),
+      path: normalizePath(c.path || "app/import/mother_bundle.json"),
+      token: String(c.token || "empty").trim(),
+    };
+  }
+
+  function saveConfig(cfg){
     const safe = {
       owner: String(cfg.owner || "").trim(),
       repo: String(cfg.repo || "").trim(),
       branch: String(cfg.branch || "main").trim(),
-      // ✅ default correto dentro de /app
-      path: String(cfg.path || "app/import/mother_bundle.json").trim(),
-      token: String(cfg.token || "").trim(),
+      path: normalizePath(cfg.path || "app/import/mother_bundle.json"),
+      token: String(cfg.token || "empty").trim(),
     };
-    localStorage.setItem(LS_KEY, JSON.stringify(safe));
+    localStorage.setItem(LS_CFG_KEY, JSON.stringify(safe));
+    log("ok", "OK: ghcfg saved");
     return safe;
   }
 
-  function requireCfg(cfg, { requireToken = true } = {}) {
-    const c = (cfg && Object.keys(cfg).length) ? cfg : loadConfig();
-
-    if (!c.owner) throw new Error("Falta owner");
-    if (!c.repo) throw new Error("Falta repo");
-    if (!c.branch) throw new Error("Falta branch");
-    if (!c.path) throw new Error("Falta path");
-
-    if (requireToken && !c.token) throw new Error("Falta token (PAT)");
-
-    return {
-      owner: String(c.owner).trim(),
-      repo: String(c.repo).trim(),
-      branch: String(c.branch || "main").trim(),
-      path: String(c.path || "app/import/mother_bundle.json").trim(),
-      token: String(c.token || "").trim(),
-    };
-  }
-
-  function apiUrl(c) {
-    // GitHub Contents API usa path sem / inicial
-    const path = String(c.path || "").replace(/^\/+/, "");
-    return `https://api.github.com/repos/${encodeURIComponent(c.owner)}/${encodeURIComponent(c.repo)}/contents/${path}?ref=${encodeURIComponent(c.branch)}`;
-  }
-
-  function headers(c) {
-    return {
+  function headers(cfg){
+    const h = {
       "Accept": "application/vnd.github+json",
-      "Authorization": `Bearer ${c.token}`,
-      "X-GitHub-Api-Version": "2022-11-28",
     };
+    const t = String(cfg.token || "").trim();
+    if (t && t !== "empty") h["Authorization"] = "token " + t;
+    return h;
   }
 
-  function b64encode(str) {
-    return btoa(unescape(encodeURIComponent(String(str ?? ""))));
-  }
-  function b64decode(b64) {
-    return decodeURIComponent(escape(atob(String(b64 || ""))));
-  }
+  async function ghFetch(url, cfg, opts){
+    const res = await fetch(url, {
+      method: opts?.method || "GET",
+      headers: { ...headers(cfg), ...(opts?.headers || {}) },
+      body: opts?.body,
+    });
 
-  function head80(t) {
-    return String(t || "").slice(0, 80).replace(/\s+/g, " ").trim();
-  }
-
-  function looksLikeJson(text) {
-    const t = String(text || "").trim();
-    if (!t) return false;
-    if (t.startsWith("<!DOCTYPE") || t.startsWith("<html")) return false;
-    return t[0] === "{";
-  }
-
-  function assertBundleJson(text) {
-    if (!looksLikeJson(text)) {
-      throw new Error(`bundle não é JSON (head="${head80(text)}")`);
-    }
-    let j;
-    try { j = JSON.parse(text); }
-    catch (e) {
-      throw new Error(`JSON inválido (${e?.message || e}) head="${head80(text)}"`);
-    }
-    const files = j?.files || null;
-    if (!files || typeof files !== "object" || Object.keys(files).length === 0) {
-      throw new Error(`JSON sem "files" (ou vazio) head="${head80(text)}"`);
-    }
-    return true;
-  }
-
-  async function getFile(c) {
-    const url = apiUrl(c);
-    const res = await fetch(url, { headers: headers(c) });
-
-    if (res.status === 404) return { exists: false, url };
+    // GitHub manda json em erro; tenta ler
+    let text = "";
+    try { text = await res.text(); } catch {}
 
     if (!res.ok) {
-      const t = await res.text().catch(() => "");
-      throw new Error(`GitHub GET falhou: ${res.status} ${head80(t)} url=${url}`);
+      let errMsg = `HTTP ${res.status}`;
+      try {
+        const j = JSON.parse(text);
+        if (j?.message) errMsg += `: ${j.message}`;
+      } catch {}
+      const e = new Error(errMsg);
+      e.status = res.status;
+      e.body = text;
+      throw e;
     }
 
-    const j = await res.json();
-    if (!j || j.type !== "file") throw new Error("Resposta inesperada do GitHub (não é file)");
-
-    const decoded = b64decode(String(j.content || "").replace(/\n/g, ""));
-    return { exists: true, sha: j.sha, content: decoded, url };
+    return text;
   }
 
-  async function putFile(c, content, sha) {
-    const url = apiUrl(c);
+  function contentUrl(cfg){
+    if (!cfg.owner || !cfg.repo) throw new Error("ghcfg incompleto (owner/repo)");
+    const path = normalizePath(cfg.path);
+    const branch = encodeURIComponent(cfg.branch || "main");
+    return `${API_BASE}/repos/${encodeURIComponent(cfg.owner)}/${encodeURIComponent(cfg.repo)}/contents/${path}?ref=${branch}`;
+  }
+
+  async function test(cfgIn){
+    const cfg = saveConfig(cfgIn || loadConfig());
+    const url = `${API_BASE}/user`;
+    await ghFetch(url, cfg, { method: "GET" });
+    return "OK: token test ok";
+  }
+
+  async function pull(cfgIn){
+    const cfg = saveConfig(cfgIn || loadConfig());
+    const url = contentUrl(cfg);
+
+    log("info", `GitHub: pull iniciando... path=${normalizePath(cfg.path)}`);
+
+    const txt = await ghFetch(url, cfg, { method: "GET" });
+    const j = safeParse(txt, null);
+    if (!j || !j.content) throw new Error("Resposta inválida do GitHub (sem content)");
+
+    // content vem base64
+    const b64 = String(j.content || "").replace(/\n/g, "");
+    let decoded = "";
+    try { decoded = atob(b64); } catch { throw new Error("Falha ao decodificar base64"); }
+
+    // valida JSON do bundle
+    try { JSON.parse(decoded); } catch { throw new Error("Bundle puxado não é JSON válido"); }
+
+    log("info", `GitHub: pull ok (bundle JSON válido). url=${url}`);
+    return decoded;
+  }
+
+  async function getShaIfExists(cfg){
+    try {
+      const url = contentUrl(cfg);
+      const txt = await ghFetch(url, cfg, { method: "GET" });
+      const j = safeParse(txt, null);
+      return j?.sha || null;
+    } catch (e) {
+      // 404: não existe ainda
+      if (e && e.status === 404) return null;
+      throw e;
+    }
+  }
+
+  async function push(cfgIn, contentStr){
+    const cfg = saveConfig(cfgIn || loadConfig());
+    const path = normalizePath(cfg.path);
+    const branch = cfg.branch || "main";
+
+    log("info", `GitHub: push iniciando... path=${path}`);
+
+    const sha = await getShaIfExists(cfg);
+    const url = `${API_BASE}/repos/${encodeURIComponent(cfg.owner)}/${encodeURIComponent(cfg.repo)}/contents/${path}`;
+
     const body = {
-      message: `RControl Factory sync ${nowISO()}`,
-      content: b64encode(content),
-      branch: c.branch,
+      message: `rcf: update ${path}`,
+      content: btoa(unescape(encodeURIComponent(String(contentStr ?? "")))), // utf8 safe
+      branch,
     };
     if (sha) body.sha = sha;
 
-    const res = await fetch(url, {
+    await ghFetch(url, cfg, {
       method: "PUT",
-      headers: { ...headers(c), "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
 
-    if (!res.ok) {
-      const t = await res.text().catch(() => "");
-      throw new Error(`GitHub PUT falhou: ${res.status} ${head80(t)} url=${url}`);
+    log("info", "GitHub: push ok.");
+    return { ok: true };
+  }
+
+  async function pushMotherBundle(cfgIn){
+    const cfg = saveConfig(cfgIn || loadConfig());
+    if (!window.RCF_MAE?.getLocalBundleText) {
+      throw new Error("RCF_MAE.getLocalBundleText ausente");
     }
-    return res.json();
-  }
+    const bundleTxt = await window.RCF_MAE.getLocalBundleText();
+    if (!bundleTxt) throw new Error("Bundle local vazio");
 
-  async function test(cfg) {
-    const c = requireCfg(cfg, { requireToken: true });
-    await sleep(100);
-    const res = await fetch(`https://api.github.com/user`, { headers: headers(c) });
-    if (!res.ok) throw new Error("Token inválido ou sem permissão");
-    return "OK: token válido.";
-  }
-
-  // -----------------------------
-  // Bundle Builder (Mãe)
-  // -----------------------------
-  function guessType(path) {
-    const p = String(path || "");
-    if (p.endsWith(".js")) return "application/javascript; charset=utf-8";
-    if (p.endsWith(".css")) return "text/css; charset=utf-8";
-    if (p.endsWith(".html")) return "text/html; charset=utf-8";
-    if (p.endsWith(".json")) return "application/json; charset=utf-8";
-    return "text/plain; charset=utf-8";
-  }
-
-  async function fetchText(pathOrUrl) {
-    const res = await fetch(pathOrUrl, { cache: "no-store" });
-    if (!res.ok) throw new Error(`Falhou fetch ${pathOrUrl}: ${res.status}`);
-    return await res.text();
-  }
-
-  // ✅ lista “mãe” (paths relativos ao ROOT do site, mas a Mãe normaliza pra /app)
-  const DEFAULT_MOTHER_FILES = [
-    "/index.html",
-    "/styles.css",
-    "/app.js",
-    "/manifest.json",
-    "/sw.js",
-    "/js/core/vfs_overrides.js",
-    "/js/core/github_sync.js",
-    "/js/core/mother_selfupdate.js",
-  ];
-
-  async function buildMotherBundle(fileList = DEFAULT_MOTHER_FILES) {
-    const files = {};
-    for (const path of fileList) {
-      const content = await fetchText(path);
-      files[path] = { content, contentType: guessType(path) };
-    }
-    return JSON.stringify({ files }, null, 2);
-  }
-
-  async function pushMotherBundle(cfg, fileList) {
-    const bundleText = await buildMotherBundle(fileList);
-    return await push(cfg, bundleText);
-  }
-
-  // -----------------------------
-  // ✅ Local bundle fetch (SEM GitHub)
-  // -----------------------------
-  async function pullLocalBundleFromPath(localPath = "import/mother_bundle.json") {
-    // baseURI vem do <base href="./"> e aponta pra /app/
-    const u = new URL(String(localPath || "import/mother_bundle.json"), document.baseURI);
-    log(`GitHubSync: pullLocal url=${u.toString()}`);
-    const txt = await fetchText(u.toString());
-    assertBundleJson(txt);
-    return txt;
-  }
-
-  // -----------------------------
-  // Public API (pull / push)
-  // -----------------------------
-  async function pull(cfg) {
-    const c = requireCfg(cfg, { requireToken: true });
-
-    log(`GitHub: pull iniciando... path=${c.path}`);
-    const f = await getFile(c);
-
-    if (!f.exists) {
-      throw new Error(`Bundle não existe no repo (404): ${c.path}`);
-    }
-
-    assertBundleJson(f.content);
-
-    log(`GitHub: pull ok (bundle JSON válido). url=${f.url}`);
-    return f.content;
-  }
-
-  async function push(cfg, content) {
-    const c = requireCfg(cfg, { requireToken: true });
-
-    let payload = content;
-    if (payload == null) {
-      warn("GitHub: push sem content → gerando mother bundle automaticamente...");
-      payload = await buildMotherBundle();
-    }
-
-    // valida antes de enviar
-    assertBundleJson(payload);
-
-    log(`GitHub: push iniciando... path=${c.path}`);
-    const f = await getFile(c);
-    const sha = f.exists ? f.sha : undefined;
-    await putFile(c, payload, sha);
-    log("GitHub: push ok.");
-    return "OK: enviado pro GitHub.";
+    await push(cfg, bundleTxt);
+    return { ok: true };
   }
 
   window.RCF_GH_SYNC = {
-    __v: "v2.3",
-    saveConfig,
+    __v24: true,
     loadConfig,
+    saveConfig,
     test,
     pull,
     push,
-    buildMotherBundle,
     pushMotherBundle,
-    pullLocalBundleFromPath,
   };
 
-  log("github_sync.js loaded (v2.3)");
+  log("info", "github_sync.js loaded (v2.4)");
 })();
