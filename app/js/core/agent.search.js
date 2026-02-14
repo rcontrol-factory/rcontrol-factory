@@ -40,10 +40,9 @@
     // tenta chaves que já aparecem no seu sistema
     const candidates = [
       "rcf:mother_bundle",              // app.js (Storage.setRaw("mother_bundle"...))
-      "rcf:mother_bundle_local",        // mae v2.2b (normalizado)
-      "rcf:mother_bundle_raw",          // mae v2.2b (raw)
+      "rcf:mother_bundle_local",        // mae (algumas variações antigas)
+      "rcf:mother_bundle_raw",
       "rcf:mother_bundle_json",
-      "rcf:mother_bundle",
       "RCF_MOTHER_BUNDLE"
     ];
 
@@ -58,14 +57,38 @@
 
   function getBundleFilesMap() {
     const txt = getBundleTextAny();
-    if (!txt) return { ok:false, files:{} };
+    if (!txt) return { ok: false, files: {} };
 
     const j = safeParse(txt, null);
-    if (!j || typeof j !== "object") return { ok:false, files:{} };
+    if (!j || typeof j !== "object") return { ok: false, files: {} };
 
-    // aceita {files:{}} OU objeto direto
-    const filesObj = (j.files && typeof j.files === "object") ? j.files : j;
     const out = {};
+
+    // ✅ aceita {files:[{path,content}]} (ARRAY)
+    if (Array.isArray(j.files)) {
+      for (const it of j.files) {
+        const rawPath = it && (it.path || it.file || it.name);
+        if (!rawPath) continue;
+        const p = normPath(rawPath);
+        if (!p) continue;
+
+        let content = "";
+        if (it && typeof it === "object") {
+          if ("content" in it) content = String(it.content ?? "");
+          else if ("text" in it) content = String(it.text ?? "");
+          else if ("data" in it) content = String(it.data ?? "");
+          else content = "";
+        } else {
+          content = String(it ?? "");
+        }
+
+        out[p] = content;
+      }
+      return { ok: true, files: out };
+    }
+
+    // ✅ aceita {files:{"/p":"..."}} OU objeto direto {"/p":"..."}
+    const filesObj = (j.files && typeof j.files === "object") ? j.files : j;
     for (const [k, v] of Object.entries(filesObj || {})) {
       const p = normPath(k);
       if (!p) continue;
@@ -76,7 +99,8 @@
 
       out[p] = content;
     }
-    return { ok:true, files: out };
+
+    return { ok: true, files: out };
   }
 
   async function buildInventory() {
@@ -115,7 +139,7 @@
       const i = s.indexOf(needle, at);
       if (i < 0) break;
 
-      // calcula linha
+      // calcula linha/col
       const pre = s.slice(0, i);
       const line = pre.split("\n").length;
       const col = i - (pre.lastIndexOf("\n") + 1);
@@ -135,7 +159,7 @@
 
   async function cmdFind(q) {
     const query = String(q || "").trim();
-    if (!query) return { ok:false, text:"Use: find <texto>" };
+    if (!query) return { ok: false, text: "Use: find <texto>" };
 
     const inv = await buildInventory();
     const out = [];
@@ -147,7 +171,7 @@
       }
     }
 
-    if (!out.length) return { ok:true, text:`(nada encontrado para "${query}")` };
+    if (!out.length) return { ok: true, text: `(nada encontrado para "${query}")` };
 
     const lines = [];
     lines.push(`FOUND: "${query}"`);
@@ -156,12 +180,12 @@
         lines.push(`- ${item.path}  (line ${h.line}, col ${h.col})`);
       }
     }
-    return { ok:true, text: lines.join("\n"), matches: out };
+    return { ok: true, text: lines.join("\n"), matches: out };
   }
 
   async function cmdWhere(q) {
     const query = String(q || "").trim();
-    if (!query) return { ok:false, text:"Use: where <texto>" };
+    if (!query) return { ok: false, text: "Use: where <texto>" };
 
     const inv = await buildInventory();
     const out = [];
@@ -179,25 +203,25 @@
       }
     }
 
-    if (!out.length) return { ok:true, text:`(nada encontrado para "${query}")` };
+    if (!out.length) return { ok: true, text: `(nada encontrado para "${query}")` };
 
     const lines = [];
     lines.push(`WHERE: "${query}"`);
     for (const m of out) {
       lines.push(`\n=== ${m.path} @ line ${m.line}, col ${m.col} ===\n${m.snippet}`);
     }
-    return { ok:true, text: lines.join("\n"), matches: out };
+    return { ok: true, text: lines.join("\n"), matches: out };
   }
 
   async function cmdPaths(q) {
     const query = String(q || "").trim().toLowerCase();
-    if (!query) return { ok:false, text:"Use: paths <texto>" };
+    if (!query) return { ok: false, text: "Use: paths <texto>" };
 
     const inv = await buildInventory();
     const paths = Object.keys(inv).filter(p => p.toLowerCase().includes(query)).slice(0, 60);
-    if (!paths.length) return { ok:true, text:`(nenhum path bateu "${query}")` };
+    if (!paths.length) return { ok: true, text: `(nenhum path bateu "${query}")` };
 
-    return { ok:true, text: paths.map(p => "- " + p).join("\n"), paths };
+    return { ok: true, text: paths.map(p => "- " + p).join("\n"), paths };
   }
 
   function help() {
