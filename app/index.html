@@ -12,120 +12,125 @@
   <link rel="manifest" href="./manifest.json" />
   <link rel="stylesheet" href="./styles.css" />
 
-  <!-- BootPanel UI (minimizado por padrão) -->
   <style>
-    /* ===== RCF BOOT PANEL (min) ===== */
-    #rcfBootWrap{
-      position:fixed;
-      left:12px;
-      bottom:12px;
-      z-index:999999;
-      pointer-events:auto;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-    }
-    #rcfBootMini{
-      display:flex;
-      align-items:center;
-      gap:8px;
-      padding:10px 12px;
-      border-radius:999px;
-      background:rgba(0,0,0,.55);
-      color:#d7fbe2;
-      border:1px solid rgba(255,255,255,.10);
-      backdrop-filter: blur(8px);
-      -webkit-backdrop-filter: blur(8px);
-      box-shadow: 0 8px 24px rgba(0,0,0,.35);
-      user-select:none;
-      -webkit-user-select:none;
-    }
-    #rcfBootDot{
-      width:10px;height:10px;border-radius:999px;
-      background:#22c55e;
-      box-shadow:0 0 0 3px rgba(34,197,94,.18);
-    }
-    #rcfBootMiniBtn{
-      border:0;
-      background:transparent;
-      color:inherit;
-      font-weight:800;
-      font-size:12px;
-      padding:0;
-      margin:0;
-      cursor:pointer;
-    }
+    /* =========================
+      RCF Boot UI (min)
+      - Não aumenta altura da página
+      - Pill (ícone) sempre discreto
+      - Painel abre em overlay (bottom sheet)
+    ========================== */
 
-    #rcfBootPanel{
-      display:none; /* começa fechado */
-      margin-top:10px;
-      width:min(680px, calc(100vw - 24px));
-      padding:12px;
-      border-radius:14px;
-      background:rgba(0,0,0,.55);
-      color:#d7fbe2;
-      border:1px solid rgba(255,255,255,.10);
+    #rcfBootPill {
+      position: fixed;
+      left: 12px;
+      bottom: 12px;
+      z-index: 999999;
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 14px;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,.14);
+      background: rgba(10,14,24,.72);
+      color: #e5f5ee;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      font-size: 13px;
+      font-weight: 700;
+      box-shadow: 0 10px 30px rgba(0,0,0,.35);
       backdrop-filter: blur(10px);
       -webkit-backdrop-filter: blur(10px);
-      box-shadow: 0 12px 34px rgba(0,0,0,.45);
-    }
-    #rcfBootPanelTop{
-      display:flex;
-      gap:8px;
-      align-items:center;
-      margin-bottom:8px;
-    }
-    #rcfBootPanelTitle{
-      font-weight:900;
-      letter-spacing:.2px;
-    }
-    .rcfBootBtn{
-      padding:6px 10px;
-      border-radius:999px;
-      border:1px solid rgba(255,255,255,.15);
-      background:rgba(255,255,255,.08);
-      color:#fff;
-      font-weight:800;
-      font-size:12px;
-    }
-    #rcfBootLog{
-      margin:0;
-      white-space:pre-wrap;
-      max-height:22vh;           /* ✅ não estica a página */
-      overflow:auto;
-      -webkit-overflow-scrolling:touch;
-      background:rgba(255,255,255,.05);
-      border-radius:12px;
-      padding:10px;
+      user-select: none;
+      -webkit-user-select: none;
+      cursor: pointer;
+      touch-action: manipulation;
     }
 
-    /* ===== Admin/Injector LOG: compactação (não deixa “tela gigante”) ===== */
-    .rcfCompactLogBox{
-      max-height:22vh !important;
-      overflow:auto !important;
-      -webkit-overflow-scrolling:touch !important;
-      white-space:pre-wrap !important;
-      word-break:break-word !important;
-      contain:content !important;
+    #rcfBootDot {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: #22c55e; /* ok */
+      box-shadow: 0 0 0 3px rgba(34,197,94,.14);
+      flex: 0 0 auto;
     }
-    .rcfCompactHide{
-      display:none !important;
+
+    #rcfBootPill small {
+      opacity: .7;
+      font-weight: 800;
+      letter-spacing: .2px;
     }
-    .rcfCompactToggleRow{
-      display:flex;
-      justify-content:flex-end;
-      margin-top:6px;
-      margin-bottom:8px;
+
+    /* overlay panel */
+    #rcfBootOverlay {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 1000000;
+      display: none;
+      padding: 10px 12px 12px;
+      pointer-events: none; /* liga só no card */
     }
-    .rcfCompactToggleBtn{
-      padding:6px 10px;
-      border-radius:999px;
-      border:1px solid rgba(255,255,255,.15);
-      background:rgba(255,255,255,.08);
-      color:#fff;
-      font-weight:800;
-      font-size:12px;
+
+    #rcfBootCard {
+      pointer-events: auto;
+      margin: 0 auto;
+      max-width: 980px;
+      border-radius: 16px;
+      border: 1px solid rgba(255,255,255,.12);
+      background: rgba(0,0,0,.62);
+      color: #d7fbe2;
+      box-shadow: 0 18px 60px rgba(0,0,0,.55);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      overflow: hidden;
+    }
+
+    #rcfBootHead {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      padding: 10px 12px;
+      border-bottom: 1px solid rgba(255,255,255,.10);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 12px;
+    }
+
+    #rcfBootTitle {
+      font-weight: 900;
+      letter-spacing: .3px;
+    }
+
+    .rcfBootBtn {
+      padding: 7px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,.15);
+      background: rgba(255,255,255,.08);
+      color: #fff;
+      font-weight: 800;
+      font-size: 12px;
+      touch-action: manipulation;
+    }
+
+    #rcfBootBody {
+      padding: 10px 12px 12px;
+    }
+
+    #rcfBootLog {
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 12px;
+      line-height: 1.35;
+      max-height: 34vh;        /* ✅ não deixa virar “tela gigante” */
+      overflow: auto;
+      -webkit-overflow-scrolling: touch;
+      contain: content;
     }
   </style>
 </head>
+
 <body>
   <noscript>Ative o JavaScript para usar o app.</noscript>
 
@@ -133,89 +138,165 @@
     <div style="padding:14px;font-family:system-ui">Carregando…</div>
   </div>
 
-  <!-- ==============================
-       RCF BOOT WRAP (MIN + PANEL)
-       ============================== -->
-  <div id="rcfBootWrap">
-    <!-- MINI (ícone) -->
-    <div id="rcfBootMini" title="Abrir Boot Panel">
-      <div id="rcfBootDot"></div>
-      <button id="rcfBootMiniBtn" type="button">RCF</button>
-      <div style="opacity:.75;font-weight:700;font-size:12px">(boot)</div>
-    </div>
+  <!-- =========================================================
+    RCF BOOT UI (MIN)
+    - Pill sempre visível (pequeno)
+    - Painel abre/fecha em overlay
+  ========================================================== -->
+  <div id="rcfBootPill" aria-label="RCF Boot" title="Abrir BOOT">
+    <span id="rcfBootDot"></span>
+    <span>RCF <small>(boot)</small></span>
+  </div>
 
-    <!-- PANEL (expandido) -->
-    <div id="rcfBootPanel">
-      <div id="rcfBootPanelTop">
-        <div id="rcfBootPanelTitle">RCF BOOT</div>
+  <div id="rcfBootOverlay" aria-hidden="true">
+    <div id="rcfBootCard">
+      <div id="rcfBootHead">
+        <div id="rcfBootTitle">RCF BOOT</div>
 
-        <button id="rcfExpandBtn" class="rcfBootBtn" type="button" style="margin-left:auto;">Expand</button>
-        <button id="rcfCopyBtn" class="rcfBootBtn" type="button">Copy</button>
-        <button id="rcfReloadBtn" class="rcfBootBtn" type="button">Reload</button>
-        <button id="rcfMinBtn" class="rcfBootBtn" type="button">Min</button>
-        <button id="rcfHideBtn" class="rcfBootBtn" type="button">Hide</button>
+        <button class="rcfBootBtn" id="rcfBootExpandBtn" style="margin-left:auto;">Expand</button>
+        <button class="rcfBootBtn" id="rcfBootCopyBtn">Copy</button>
+        <button class="rcfBootBtn" id="rcfBootReloadBtn">Reload</button>
+        <button class="rcfBootBtn" id="rcfBootHideBtn">Hide</button>
       </div>
 
-      <pre id="rcfBootLog">boot: init…</pre>
+      <div id="rcfBootBody">
+        <pre id="rcfBootLog">boot: init…</pre>
+      </div>
     </div>
   </div>
 
-  <!-- ==============================
-       RCF BOOT SCRIPT
-       ============================== -->
+  <!-- =========================================================
+    RCF BOOT SCRIPT
+  ========================================================== -->
   <script>
     (function () {
-      const wrap = document.getElementById("rcfBootWrap");
-      const mini = document.getElementById("rcfBootMini");
-      const panel = document.getElementById("rcfBootPanel");
+      const pill = document.getElementById("rcfBootPill");
+      const dot  = document.getElementById("rcfBootDot");
+      const overlay = document.getElementById("rcfBootOverlay");
       const out = document.getElementById("rcfBootLog");
 
-      let expanded = false;
+      const btnExpand = document.getElementById("rcfBootExpandBtn");
+      const btnCopy   = document.getElementById("rcfBootCopyBtn");
+      const btnReload = document.getElementById("rcfBootReloadBtn");
+      const btnHide   = document.getElementById("rcfBootHideBtn");
 
-      function bootLog(line){
+      // ---------- logs buffer (pra não crescer infinito) ----------
+      const MAX_LINES = 140;
+      const lines = [];
+
+      function safeStr(x){
+        try { return typeof x === "string" ? x : JSON.stringify(x); }
+        catch { return String(x); }
+      }
+
+      function render(){
         try {
-          out.textContent += "\n" + line;
+          out.textContent = lines.join("\n");
           out.scrollTop = out.scrollHeight;
         } catch {}
       }
 
-      function showPanel(){
-        try { panel.style.display = "block"; } catch {}
-      }
-      function hidePanel(){
-        try { panel.style.display = "none"; } catch {}
-      }
-      function hideAll(){
-        try { wrap.style.display = "none"; } catch {}
+      function bootLog(line){
+        const s = String(line || "");
+        lines.push(s);
+        while (lines.length > MAX_LINES) lines.shift();
+        render();
       }
 
-      function toggleExpand(){
-        // Expand aqui só muda altura do LOG (mais alto/baixo) sem esticar a página
-        expanded = !expanded;
-        try { out.style.maxHeight = expanded ? "46vh" : "22vh"; } catch {}
-        try { document.getElementById("rcfExpandBtn").textContent = expanded ? "Compact" : "Expand"; } catch {}
+      // ---------- UI open/close ----------
+      let opened = false;
+      let expanded = false;
+
+      function openPanel(){
+        opened = true;
+        overlay.style.display = "block";
+        overlay.setAttribute("aria-hidden", "false");
       }
+
+      function closePanel(){
+        opened = false;
+        overlay.style.display = "none";
+        overlay.setAttribute("aria-hidden", "true");
+      }
+
+      function togglePanel(){
+        if (opened) closePanel();
+        else openPanel();
+      }
+
+      // pill tap
+      const TAP_GUARD_MS = 450;
+      let _lastTap = 0;
+      function bindTap(el, fn){
+        if (!el) return;
+        const h = (e) => {
+          const now = Date.now();
+          if (now - _lastTap < TAP_GUARD_MS) {
+            try { e.preventDefault(); e.stopPropagation(); } catch {}
+            return;
+          }
+          _lastTap = now;
+          try { e.preventDefault(); e.stopPropagation(); } catch {}
+          try { fn(e); } catch {}
+        };
+        el.addEventListener("click", h, { passive:false, capture:true });
+        el.addEventListener("touchend", h, { passive:false, capture:true });
+      }
+
+      bindTap(pill, togglePanel);
 
       // botões
-      try {
-        mini.addEventListener("click", () => showPanel(), { passive:true });
-        document.getElementById("rcfMinBtn").onclick = () => hidePanel();
-        document.getElementById("rcfHideBtn").onclick = () => hideAll();
-        document.getElementById("rcfReloadBtn").onclick = () => location.reload();
-        document.getElementById("rcfExpandBtn").onclick = () => toggleExpand();
-        document.getElementById("rcfCopyBtn").onclick = async () => {
-          try {
-            const txt = (out && out.textContent) ? out.textContent : "";
-            await navigator.clipboard.writeText(txt);
-            bootLog("BOOT: copied ✅");
-          } catch {
-            bootLog("BOOT: copy blocked (iOS) ❌");
-          }
-        };
-      } catch {}
+      bindTap(btnReload, () => location.reload());
+      bindTap(btnHide, () => closePanel());
 
-      // BootPanel logger (não substitui RCF_LOGGER real)
-      bootLog("boot: panel ready (min mode)");
+      bindTap(btnExpand, () => {
+        // expand = aumenta altura do log (sem explodir a tela)
+        expanded = !expanded;
+        try {
+          out.style.maxHeight = expanded ? "58vh" : "34vh";
+          btnExpand.textContent = expanded ? "Min" : "Expand";
+        } catch {}
+      });
+
+      bindTap(btnCopy, async () => {
+        const txt = lines.join("\n");
+        let ok = false;
+        try {
+          if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+            await navigator.clipboard.writeText(txt);
+            ok = true;
+          }
+        } catch {}
+        bootLog(ok ? "OK: boot log copiado ✅" : "WARN: iOS bloqueou clipboard (copie manual no painel)");
+      });
+
+      // fecha tocando fora do card (opcional)
+      overlay.addEventListener("click", (e) => {
+        try {
+          if (e.target === overlay) closePanel();
+        } catch {}
+      }, { passive:true });
+
+      // ---------- logger mínimo (não substitui o logger real) ----------
+      // Só espelha no boot UI. O logger.js real continua sendo o oficial.
+      bootLog("boot: panel ready (min)");
+
+      // captura erros globais (pra não ficar “tela branca” sem log)
+      window.addEventListener("error", (e) => {
+        const m = (e && (e.message || e.error?.message)) || "Erro desconhecido";
+        const src = e && e.filename ? (" @ " + e.filename + ":" + (e.lineno||0) + ":" + (e.colno||0)) : "";
+        bootLog("ERR: GLOBAL_ERROR: " + m + src);
+        try { if (e && e.error && e.error.stack) bootLog("ERR: STACK: " + e.error.stack); } catch {}
+        try { dot.style.background = "#ef4444"; } catch {}
+      });
+
+      window.addEventListener("unhandledrejection", (e) => {
+        const r = e ? e.reason : null;
+        const m = (r && r.message) ? r.message : String(r || "Promise rejection");
+        bootLog("ERR: UNHANDLED_REJECTION: " + m);
+        try { if (r && r.stack) bootLog("ERR: STACK: " + r.stack); } catch {}
+        try { dot.style.background = "#ef4444"; } catch {}
+      });
 
       function loadScript(src){
         return new Promise((resolve, reject) => {
@@ -226,79 +307,6 @@
           s.onerror = () => reject(new Error("load failed: " + src));
           document.head.appendChild(s);
         });
-      }
-
-      // ✅ Compacta o "Log:" da tela Admin/Injector (não deixa a página esticar)
-      function installAdminLogCompactor(){
-        const already = "__rcf_admin_log_compactor__";
-        if (window[already]) return;
-        window[already] = true;
-
-        function tryCompact(){
-          try {
-            const viewAdmin =
-              document.getElementById("view-admin") ||
-              document.querySelector("[data-view='admin']") ||
-              document.querySelector("[data-view=\"admin\"]");
-
-            if (!viewAdmin) return;
-
-            // procura "Log:" e o bloco abaixo (pre/textarea/div)
-            const labels = Array.from(viewAdmin.querySelectorAll("*"))
-              .filter(el => (el.childElementCount === 0) && (String(el.textContent||"").trim().toLowerCase() === "log:"));
-
-            for (const lab of labels) {
-              // tenta achar o próximo bloco “grande”
-              let box = lab.nextElementSibling;
-              if (!box) continue;
-
-              // se não for um container útil, tenta procurar um pre/textarea logo abaixo
-              const tag = (box.tagName||"").toUpperCase();
-              if (tag !== "PRE" && tag !== "TEXTAREA" && tag !== "DIV") {
-                const found = lab.parentElement ? lab.parentElement.querySelector("pre,textarea,div") : null;
-                if (found) box = found;
-              }
-
-              if (!box) continue;
-
-              // evita duplicar
-              if (box.dataset && box.dataset.rcfCompacted === "1") continue;
-              if (box.dataset) box.dataset.rcfCompacted = "1";
-
-              box.classList.add("rcfCompactLogBox");
-
-              // cria toggle “Mostrar/Ocultar”
-              const row = document.createElement("div");
-              row.className = "rcfCompactToggleRow";
-
-              const btn = document.createElement("button");
-              btn.type = "button";
-              btn.className = "rcfCompactToggleBtn";
-              btn.textContent = "Ocultar log";
-
-              btn.onclick = () => {
-                const hidden = box.classList.toggle("rcfCompactHide");
-                btn.textContent = hidden ? "Mostrar log" : "Ocultar log";
-              };
-
-              row.appendChild(btn);
-
-              // insere o botão logo depois do label Log:
-              try {
-                lab.parentElement.insertBefore(row, box);
-              } catch {
-                try { box.parentElement.insertBefore(row, box); } catch {}
-              }
-            }
-          } catch {}
-        }
-
-        // roda já e observa mudanças
-        tryCompact();
-        try {
-          const obs = new MutationObserver(() => tryCompact());
-          obs.observe(document.documentElement, { childList:true, subtree:true });
-        } catch {}
       }
 
       async function boot(){
@@ -313,23 +321,19 @@
           "./js/core/vfs_overrides.js",
           "./js/core/vfs_shim.js",
           "./js/core/mother_selfupdate.js",
-
           "./js/core/errors.js",
           "./js/core/risk.js",
           "./js/core/snapshot.js",
           "./js/core/selfheal.js",
           "./js/core/ui_safety.js",
-
           "./js/core/ui_compact_outputs.js",
           "./js/core/ui_bindings.js",
           "./js/core/diagnostics.js",
-
           "./js/core/publish_queue.js",
           "./js/core/preview_runner.js",
           "./js/core/policy.js",
           "./js/core/settings_cleanup.js",
           "./js/core/injector.js",
-
           "./js/admin.github.js"
         ];
 
@@ -344,9 +348,6 @@
           }
         }
 
-        // ✅ instala compactador do Log do Admin/Injector
-        installAdminLogCompactor();
-
         try {
           await loadScript("./app.js");
           try { window.RCF_LOGGER?.push?.("BOOT", "app.js loaded ✅ ./app.js"); } catch {}
@@ -354,6 +355,7 @@
         } catch (e) {
           try { window.RCF_LOGGER?.push?.("ERR", "app.js missing/failed ❌ ./app.js :: " + (e.message||e)); } catch {}
           bootLog("ERR: app.js missing/failed ❌ ./app.js :: " + (e.message||e));
+          try { dot.style.background = "#ef4444"; } catch {}
         }
 
         try {
@@ -369,6 +371,10 @@
               });
           }
         } catch {}
+
+        // ✅ se tudo carregou ok, deixa o pill discreto e o painel fechado
+        // (não some com ele — só não atrapalha a tela)
+        closePanel();
       }
 
       boot();
