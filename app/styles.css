@@ -387,3 +387,114 @@ input[type="checkbox"]{
   border-color: rgba(22,199,132,.45);
 }
 .switch input:checked + .slider::after{ transform: translateX(18px); }
+/* RCF — Floating Boot Panel (minimized by default) */
+:root{
+  --rcf-fab-h: 42px;
+  --rcf-panel-w: min(520px, calc(100vw - 24px));
+  --rcf-panel-h: min(55vh, 520px);
+  --rcf-z: 99999;
+}
+
+#rcfBootFab{
+  position: fixed;
+  left: 12px;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
+  height: var(--rcf-fab-h);
+  padding: 0 12px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(10, 18, 24, 0.88);
+  border: 1px solid rgba(255,255,255,0.10);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  color: rgba(255,255,255,0.92);
+  z-index: var(--rcf-z);
+  user-select: none;
+}
+
+#rcfBootFab .dot{
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #2bdc7b;
+  box-shadow: 0 0 0 2px rgba(43,220,123,0.18);
+}
+
+#rcfBootFab .txt{
+  font-size: 13px;
+  letter-spacing: 0.2px;
+  opacity: 0.95;
+}
+
+#rcfBootPanel{
+  position: fixed;
+  left: 12px;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 62px);
+  width: var(--rcf-panel-w);
+  height: var(--rcf-panel-h);
+  max-height: calc(100vh - 120px);
+  border-radius: 14px;
+  background: rgba(8, 12, 18, 0.92);
+  border: 1px solid rgba(255,255,255,0.10);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 14px 40px rgba(0,0,0,0.45);
+  overflow: hidden;
+  z-index: var(--rcf-z);
+  display: none; /* default fechado */
+}
+
+#rcfBootPanel.open{ display: block; }
+
+#rcfBootPanel .hdr{
+  display:flex;
+  align-items:center;
+  justify-content: space-between;
+  padding: 10px 10px 8px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+
+#rcfBootPanel .hdr .title{
+  font-size: 13px;
+  opacity: 0.92;
+}
+
+#rcfBootPanel .hdr .btns{
+  display:flex;
+  gap: 8px;
+}
+
+#rcfBootPanel .hdr button{
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(255,255,255,0.06);
+  color: rgba(255,255,255,0.92);
+}
+
+#rcfBootPanel .body{
+  height: calc(100% - 48px);
+  overflow: auto;
+  padding: 10px 12px 14px 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: rgba(255,255,255,0.88);
+}
+
+/* IMPORTANT: mata o "Log:" gigante dentro de telas (Admin etc.) */
+.rcf-inline-log,
+[data-rcf-inline-log],
+#adminLogBox,
+#admin .log,
+.view-admin .log,
+.view-admin .rcf-log,
+.view-admin [data-log],
+.view-admin pre.log {
+  display: none !important;
+}
