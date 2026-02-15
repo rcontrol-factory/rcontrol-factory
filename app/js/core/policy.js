@@ -1,27 +1,25 @@
 /* =========================================================
-  RControl Factory — policy.js (FULL) v2.1
-  - Regras de aplicação de bundles/overrides ("Mãe")
-  - Modos: FREE | CONDITIONAL | BLOCKED
-  - Default recomendado:
-      CONDITIONAL: /app/app.js , /app/index.html
-      BLOCKED: /sw.js, /manifest.json, /index.html (raiz), etc
-      FREE: /app/js/* , /core/ui_* , /core/diagnostics.js , /core/logger.js ...
-  - Normaliza paths e protege contra paths maliciosos
+  RControl Factory — policy.js (FULL) v2.1b
+  - Ajuste pro padrão /app/*
 ========================================================= */
-
 (function () {
   "use strict";
 
   const DEFAULT_POLICY = {
-    version: "2.1",
+    version: "2.1b",
     updatedAt: new Date().toISOString(),
 
-    // IMPORTANTÍSSIMO: regras avaliadas em ordem (primeiro match ganha)
+    // regras avaliadas em ordem (primeiro match ganha)
     rules: [
-      // ---------- BLOCKED (nunca via bundle) ----------
+      // ---------- BLOCKED (nunca via bundle/override) ----------
       { mode: "BLOCKED", match: "/sw.js" },
+      { mode: "BLOCKED", match: "/app/sw.js" },
+
       { mode: "BLOCKED", match: "/manifest.json" },
-      { mode: "BLOCKED", match: "/index.html" }, // raiz do site (se existir)
+      { mode: "BLOCKED", match: "/app/manifest.json" },
+
+      // raiz antiga (se alguém tentar)
+      { mode: "BLOCKED", match: "/index.html" },
 
       // ---------- CONDITIONAL (pede confirmação) ----------
       { mode: "CONDITIONAL", match: "/app/app.js" },
@@ -29,10 +27,9 @@
 
       // ---------- FREE (auto) ----------
       { mode: "FREE", prefix: "/app/js/" },
-      { mode: "FREE", prefix: "/core/" }, // permite core em geral (ui_*, diagnostics, logger...)
+      { mode: "FREE", prefix: "/app/js/core/" },
     ],
 
-    // fallback se não bater em nada
     fallbackMode: "CONDITIONAL"
   };
 
@@ -48,7 +45,6 @@
     // bloqueia URL externa (não é path)
     if (/^https?:\/\//i.test(s)) return null;
 
-    // garante começar com "/"
     if (!s.startsWith("/")) s = "/" + s;
 
     // remove query/hash
@@ -69,19 +65,10 @@
   function ruleMatches(rule, path) {
     if (!rule || !path) return false;
 
-    if (rule.match) {
-      return path === rule.match;
-    }
-    if (rule.prefix) {
-      return path.startsWith(rule.prefix);
-    }
+    if (rule.match) return path === rule.match;
+    if (rule.prefix) return path.startsWith(rule.prefix);
     if (rule.regex) {
-      try {
-        const re = new RegExp(rule.regex);
-        return re.test(path);
-      } catch {
-        return false;
-      }
+      try { return new RegExp(rule.regex).test(path); } catch { return false; }
     }
     return false;
   }
@@ -102,16 +89,16 @@
   }
 
   function classify(path) {
-    const p = loadPolicy();
+    const pol = loadPolicy();
     const n = normPath(path);
     if (!n) return { ok: false, path: null, mode: "BLOCKED", reason: "Path inválido (URL externa ou '..')." };
 
-    for (const r of (p.rules || [])) {
+    for (const r of (pol.rules || [])) {
       if (ruleMatches(r, n)) {
         return { ok: true, path: n, mode: r.mode || "CONDITIONAL", rule: r };
       }
     }
-    return { ok: true, path: n, mode: p.fallbackMode || "CONDITIONAL", rule: null };
+    return { ok: true, path: n, mode: pol.fallbackMode || "CONDITIONAL", rule: null };
   }
 
   function explainMode(mode) {
@@ -120,7 +107,6 @@
     return "BLOQUEADO (nunca aplica)";
   }
 
-  // API pública
   window.RCF_POLICY = {
     key: KEY,
     DEFAULT_POLICY,
@@ -131,8 +117,5 @@
     explainMode,
   };
 
-  // garante policy salva 1x
-  if (!localStorage.getItem(KEY)) {
-    savePolicy(DEFAULT_POLICY);
-  }
+  if (!localStorage.getItem(KEY)) savePolicy(DEFAULT_POLICY);
 })();
