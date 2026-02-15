@@ -3,7 +3,7 @@
    - Mantém tudo do seu V8.0
    - Remove status-pill do topo (sem quebrar safeSetStatus)
    - Adiciona FAB (bolinha) + mini painel de ações
-   - PATCH: Status Manager (auto-clear / anti "grudar")
+   - PATCH EXTRA: Status Manager + Toast auto-clear (anti "grudar")
    =========================== */
 
 (() => {
@@ -40,62 +40,84 @@
   const textContentSafe = (el, txt) => { try { el.textContent = txt; } catch {} };
 
   // =========================================================
-  // STATUS MANAGER (auto-clear, anti "grudar")
+  // STATUS MANAGER (auto-clear, anti "grudar" + toast discreto)
   // =========================================================
   const Status = (() => {
     let tmr = null;
     let current = "OK ✅";
     let lockUntil = 0;
 
-    function _pickStatusEl() {
+    function _apply(text) {
+      current = String(text || "");
+
+      // status discreto no Tools Drawer
       try {
-        // se existir mais de um #statusText (topo + drawer), pega sempre o ÚLTIMO
-        const els = document.querySelectorAll("#statusText");
-        if (!els || !els.length) return null;
-        return els[els.length - 1];
-      } catch {
-        return null;
-      }
+        const el = document.querySelector("#statusText");
+        if (el) el.textContent = current;
+      } catch {}
+
+      // status no painel do FAB
+      try {
+        const fab = document.querySelector("#fabStatus");
+        if (fab) fab.textContent = current;
+      } catch {}
+    }
+
+    function _toast(text, ttl) {
+      try {
+        const box = document.querySelector("#rcfToast");
+        if (!box) return;
+
+        const msg = String(text || "").trim();
+        if (!msg || msg === "OK ✅") {
+          box.classList.remove("show");
+          box.textContent = "";
+          return;
+        }
+
+        box.textContent = msg;
+        box.classList.add("show");
+
+        setTimeout(() => {
+          try { box.classList.remove("show"); } catch {}
+        }, Math.max(800, ttl || 3500));
+      } catch {}
     }
 
     function set(text, opts = {}) {
       const now = Date.now();
       const {
-        ttl = 900,
-        sticky = false,
-        minGap = 120,
+        ttl = 3500,     // 3-5s padrão
+        sticky = false, // se true, NÃO volta pro OK sozinho
+        minGap = 120,   // anti spam / anti flicker
+        toast = true    // mostra toast discreto
       } = opts || {};
 
       if (now < lockUntil) return;
       lockUntil = now + minGap;
 
-      current = String(text || "");
-      try {
-        const el = _pickStatusEl();
-        if (el) el.textContent = current;
-      } catch {}
+      _apply(text);
+
+      // toast só quando não for OK
+      if (toast) _toast(text, ttl);
 
       if (tmr) { try { clearTimeout(tmr); } catch {} tmr = null; }
 
       if (!sticky) {
         tmr = setTimeout(() => {
-          current = "OK ✅";
-          try {
-            const el = _pickStatusEl();
-            if (el) el.textContent = current;
-          } catch {}
+          _apply("OK ✅");
+          _toast("OK ✅", 0);
         }, Math.max(250, ttl));
       }
     }
 
-    function ok() { set("OK ✅", { ttl: 0, sticky: true }); }
+    function ok() { set("OK ✅", { ttl: 0, sticky: true, toast: false }); }
 
-    return { set, ok };
+    return { set, ok, get: () => current };
   })();
 
   function safeSetStatus(txt) {
-    // sempre volta pra OK sozinho, sem grudar
-    Status.set(txt, { ttl: 900, sticky: false });
+    Status.set(txt, { ttl: 3500, sticky: false, toast: true });
   }
 
   function sleep(ms) { return new Promise(res => setTimeout(res, ms)); }
@@ -447,6 +469,33 @@
   flex: 1 1 auto !important;
 }
 
+/* Toast discreto (topo esquerdo) */
+#rcfToast{
+  position:fixed !important;
+  left: 12px !important;
+  top: 10px !important;
+  padding: 8px 10px !important;
+  border-radius: 999px !important;
+  border: 1px solid rgba(255,255,255,.14) !important;
+  background: rgba(8,12,18,.72) !important;
+  color:#fff !important;
+  font-size: 12px !important;
+  font-weight: 800 !important;
+  opacity: 0 !important;
+  transform: translateY(-6px) !important;
+  transition: opacity .22s ease, transform .22s ease !important;
+  z-index: 99999 !important;
+  pointer-events:none !important;
+  max-width: 80vw !important;
+  white-space:nowrap !important;
+  overflow:hidden !important;
+  text-overflow:ellipsis !important;
+}
+#rcfToast.show{
+  opacity: 1 !important;
+  transform: translateY(0) !important;
+}
+
 @media (max-width: 520px){
   #rcfRoot .brand .title{ font-size: 17px !important; }
   #rcfRoot .brand .subtitle{ font-size: 11px !important; }
@@ -785,6 +834,9 @@
           </div>
         </div>
 
+        <!-- PATCH: Toast discreto (aparece 3-5s e some) -->
+        <div id="rcfToast" aria-live="polite"></div>
+
       </div>
     `;
   }
@@ -832,7 +884,7 @@
 
   function syncFabStatusText() {
     try {
-      const st = Array.from(document.querySelectorAll("#statusText")).slice(-1)[0]?.textContent || "";
+      const st = $("#statusText")?.textContent || "";
       const fab = $("#fabStatus");
       if (fab) fab.textContent = String(st || "OK ✅");
     } catch {}
@@ -997,9 +1049,7 @@
 
   /* ==========
      STOP AQUI — PARTE 1/3
-     A PRÓXIMA PARTE COMEÇA EM:  // =========================================================
-                                // PIN
-     ========== */  // =========================================================
+     A PRÓXIMA PARTE COMEÇA EM:  // =========================================================                           
   // PIN
   // =========================================================
   const Pin = {
