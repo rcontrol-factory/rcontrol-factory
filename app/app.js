@@ -3,6 +3,7 @@
    - Mantém tudo do seu V8.0
    - Remove status-pill do topo (sem quebrar safeSetStatus)
    - Adiciona FAB (bolinha) + mini painel de ações
+   - PATCH: Status Manager (auto-clear / anti "grudar")
    =========================== */
 
 (() => {
@@ -38,13 +39,63 @@
   const uiMsg = (sel, text) => { const el = $(sel); if (el) el.textContent = String(text ?? ""); };
   const textContentSafe = (el, txt) => { try { el.textContent = txt; } catch {} };
 
+  // =========================================================
+  // STATUS MANAGER (auto-clear, anti "grudar")
+  // =========================================================
+  const Status = (() => {
+    let tmr = null;
+    let current = "OK ✅";
+    let lockUntil = 0;
+
+    function _pickStatusEl() {
+      try {
+        // se existir mais de um #statusText (topo + drawer), pega sempre o ÚLTIMO
+        const els = document.querySelectorAll("#statusText");
+        if (!els || !els.length) return null;
+        return els[els.length - 1];
+      } catch {
+        return null;
+      }
+    }
+
+    function set(text, opts = {}) {
+      const now = Date.now();
+      const {
+        ttl = 900,
+        sticky = false,
+        minGap = 120,
+      } = opts || {};
+
+      if (now < lockUntil) return;
+      lockUntil = now + minGap;
+
+      current = String(text || "");
+      try {
+        const el = _pickStatusEl();
+        if (el) el.textContent = current;
+      } catch {}
+
+      if (tmr) { try { clearTimeout(tmr); } catch {} tmr = null; }
+
+      if (!sticky) {
+        tmr = setTimeout(() => {
+          current = "OK ✅";
+          try {
+            const el = _pickStatusEl();
+            if (el) el.textContent = current;
+          } catch {}
+        }, Math.max(250, ttl));
+      }
+    }
+
+    function ok() { set("OK ✅", { ttl: 0, sticky: true }); }
+
+    return { set, ok };
+  })();
+
   function safeSetStatus(txt) {
-    try {
-      // PATCH: statusText não fica mais na pill do topo.
-      // Agora existe "statusText" no Tools Drawer (mais discreto) e opcional no painel do FAB.
-      const el = $("#statusText");
-      if (el) el.textContent = String(txt || "");
-    } catch {}
+    // sempre volta pra OK sozinho, sem grudar
+    Status.set(txt, { ttl: 900, sticky: false });
   }
 
   function sleep(ms) { return new Promise(res => setTimeout(res, ms)); }
@@ -781,7 +832,7 @@
 
   function syncFabStatusText() {
     try {
-      const st = $("#statusText")?.textContent || "";
+      const st = Array.from(document.querySelectorAll("#statusText")).slice(-1)[0]?.textContent || "";
       const fab = $("#fabStatus");
       if (fab) fab.textContent = String(st || "OK ✅");
     } catch {}
