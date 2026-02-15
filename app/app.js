@@ -3,7 +3,7 @@
    - Mantém tudo do seu V8.0
    - Remove status-pill do topo (sem quebrar safeSetStatus)
    - Adiciona FAB (bolinha) + mini painel de ações
-   - PATCH EXTRA: Status Manager + Toast auto-clear (anti "grudar")
+   - PATCH EXTRA: Status Manager + Toast (auto-clear, anti "grudar")
    =========================== */
 
 (() => {
@@ -38,6 +38,8 @@
   const escapeAttr = (s) => escapeHtml(s).replace(/'/g, "&#39;");
   const uiMsg = (sel, text) => { const el = $(sel); if (el) el.textContent = String(text ?? ""); };
   const textContentSafe = (el, txt) => { try { el.textContent = txt; } catch {} };
+
+  function sleep(ms) { return new Promise(res => setTimeout(res, ms)); }
 
   // =========================================================
   // STATUS MANAGER (auto-clear, anti "grudar" + toast discreto)
@@ -87,18 +89,16 @@
     function set(text, opts = {}) {
       const now = Date.now();
       const {
-        ttl = 3500,     // 3-5s padrão
-        sticky = false, // se true, NÃO volta pro OK sozinho
-        minGap = 120,   // anti spam / anti flicker
-        toast = true    // mostra toast discreto
+        ttl = 3500,
+        sticky = false,
+        minGap = 120,
+        toast = true
       } = opts || {};
 
       if (now < lockUntil) return;
       lockUntil = now + minGap;
 
       _apply(text);
-
-      // toast só quando não for OK
       if (toast) _toast(text, ttl);
 
       if (tmr) { try { clearTimeout(tmr); } catch {} tmr = null; }
@@ -119,8 +119,6 @@
   function safeSetStatus(txt) {
     Status.set(txt, { ttl: 3500, sticky: false, toast: true });
   }
-
-  function sleep(ms) { return new Promise(res => setTimeout(res, ms)); }
 
   // =========================================================
   // CORE: Storage
@@ -469,7 +467,7 @@
   flex: 1 1 auto !important;
 }
 
-/* Toast discreto (topo esquerdo) */
+/* Toast discreto (aparece e some sozinho) */
 #rcfToast{
   position:fixed !important;
   left: 12px !important;
@@ -834,7 +832,7 @@
           </div>
         </div>
 
-        <!-- PATCH: Toast discreto (aparece 3-5s e some) -->
+        <!-- PATCH: Toast (aparece 3–5s e some) -->
         <div id="rcfToast" aria-live="polite"></div>
 
       </div>
@@ -1049,7 +1047,10 @@
 
   /* ==========
      STOP AQUI — PARTE 1/3
-     A PRÓXIMA PARTE COMEÇA EM:  // =========================================================                           
+     A PRÓXIMA PARTE COMEÇA EM:  // =========================================================
+                                // PIN
+     ========== */
+})(); // =========================================================                           
   // PIN
   // =========================================================
   const Pin = {
