@@ -2087,3 +2087,130 @@
   }
 
 })();
+/* RCF — Floating Boot Panel Controller (SAFE) */
+(function(){
+  try{
+    if (window.__RCF_BOOT_PANEL__) return;
+    window.__RCF_BOOT_PANEL__ = true;
+
+    const LS_KEY = "rcf:bootpanel:open";
+
+    function el(tag, attrs={}, html=""){
+      const e = document.createElement(tag);
+      Object.entries(attrs).forEach(([k,v])=>{
+        if(k==="class") e.className = v;
+        else if(k==="style") e.setAttribute("style", v);
+        else e.setAttribute(k, v);
+      });
+      if (html) e.innerHTML = html;
+      return e;
+    }
+
+    // --- UI: FAB
+    const fab = el("div", { id:"rcfBootFab" });
+    fab.innerHTML = `<span class="dot"></span><span class="txt">RCF (boot)</span>`;
+    document.body.appendChild(fab);
+
+    // --- UI: PANEL
+    const panel = el("div", { id:"rcfBootPanel" });
+    panel.innerHTML = `
+      <div class="hdr">
+        <div class="title">RCF • BOOT / LOGS</div>
+        <div class="btns">
+          <button type="button" data-act="copy">Copy</button>
+          <button type="button" data-act="reload">Reload</button>
+          <button type="button" data-act="hide">Hide</button>
+        </div>
+      </div>
+      <div class="body" id="rcfBootBody"></div>
+    `;
+    document.body.appendChild(panel);
+
+    const body = panel.querySelector("#rcfBootBody");
+
+    function setOpen(v){
+      panel.classList.toggle("open", !!v);
+      localStorage.setItem(LS_KEY, v ? "1" : "0");
+    }
+
+    // default: fechado (minimizadinho)
+    setOpen(localStorage.getItem(LS_KEY) === "1");
+
+    fab.addEventListener("click", ()=> setOpen(!panel.classList.contains("open")));
+
+    panel.addEventListener("click", (ev)=>{
+      const b = ev.target.closest("button[data-act]");
+      if(!b) return;
+      const act = b.getAttribute("data-act");
+      if(act==="hide") setOpen(false);
+      if(act==="reload") location.reload();
+      if(act==="copy"){
+        const t = body.innerText || "";
+        try{
+          navigator.clipboard.writeText(t);
+        }catch(_e){
+          // fallback iOS
+          const ta = el("textarea", {style:"position:fixed;left:-9999px;top:-9999px;"});
+          ta.value = t;
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand("copy");
+          ta.remove();
+        }
+      }
+    });
+
+    // --- LOG PIPE: captura logs e manda pro painel
+    const MAX_LINES = 250;
+    const origLog = console.log;
+    const origWarn = console.warn;
+    const origErr = console.error;
+
+    function addLine(prefix, args){
+      const line = `${prefix} ${args.map(a=>{
+        try{
+          if (typeof a === "string") return a;
+          return JSON.stringify(a);
+        }catch(_e){
+          return String(a);
+        }
+      }).join(" ")}`.trim();
+
+      // evita lixo de encoding gigante
+      if (line.includes("Ãƒ") || line.includes("Â")) {
+        // se vier "mojibake", a gente só não joga isso pro UI pra não destruir a tela
+        // (fica no console original se precisar)
+      } else {
+        body.textContent += (body.textContent ? "\n" : "") + line;
+
+        // corta linhas antigas
+        const lines = body.textContent.split("\n");
+        if (lines.length > MAX_LINES) {
+          body.textContent = lines.slice(lines.length - MAX_LINES).join("\n");
+        }
+
+        // auto-scroll só se painel estiver aberto
+        if (panel.classList.contains("open")) {
+          body.scrollTop = body.scrollHeight;
+        }
+      }
+    }
+
+    console.log = function(...args){ try{ addLine("LOG:", args); }catch(_e){} return origLog.apply(console, args); };
+    console.warn = function(...args){ try{ addLine("WARN:", args); }catch(_e){} return origWarn.apply(console, args); };
+    console.error = function(...args){ try{ addLine("ERR:", args); }catch(_e){} return origErr.apply(console, args); };
+
+    // --- mata qualquer "Log:" inline que esteja sendo injetado na UI
+    function killInlineLogs(){
+      const bad = document.querySelectorAll(
+        ".rcf-inline-log,[data-rcf-inline-log],#adminLogBox,.view-admin .log,.view-admin [data-log],.view-admin pre.log"
+      );
+      bad.forEach(n=>{ n.style.display="none"; });
+    }
+    setInterval(killInlineLogs, 800);
+
+  }catch(e){
+    // nunca derruba o app
+    console.warn("RCF boot panel failed:", e);
+  }
+})();
