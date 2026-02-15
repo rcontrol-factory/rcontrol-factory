@@ -1,28 +1,28 @@
-/* RControl Factory — app.js (V7.3 PADRÃO) — V7.2 + ENGINE init + comando AGENTE: build
-   - ✅ Mantém TODA a lógica V7.2 (scan/targets/inject/mãe/etc)
-   - ✅ UI Compact REAL via CSS injetado aqui
-   - ✅ NÃO cria “boot panel” aqui (index.html cuida disso)
-   - ✅ ENGINE: init no safeInit()
-   - ✅ AGENTE: comando "build" instalado (usa window.RCF_ENGINE)
-   - ✅ VOLTOU: bolinha flutuante (FAB) com card de atalhos + status
-   - ✅ REMOVE: status-pill no topo (pra não ficar aquela “barra”/avisinho lá em cima)
+/* RControl Factory — /app/app.js — V8.0 PADRÃO (reestruturado)
+   - Core organizado por módulos internos (sem mudar “o que faz”, só “como está montado”)
+   - Fix real do erro do Safari: comando build fica dentro do Agent.route (sem variável out fantasma)
+   - Mantém: UI + Storage + Logger + Stability + Apps/Editor + Fase A (Scan/Targets/Injector SAFE)
+   - Mantém: SW tools + PIN + Diagnostics + Engine init hook
 */
 
 (() => {
   "use strict";
 
-  // -----------------------------
+  // =========================================================
   // BOOT LOCK (evita double init)
-  // -----------------------------
+  // =========================================================
   if (window.__RCF_BOOTED__) return;
   window.__RCF_BOOTED__ = true;
 
-  // -----------------------------
-  // Utils
-  // -----------------------------
+  // =========================================================
+  // CORE: Utils
+  // =========================================================
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
   const nowISO = () => new Date().toISOString();
+
+  const safeJsonParse = (s, fallback) => { try { return JSON.parse(s); } catch { return fallback; } };
+  const safeJsonStringify = (obj) => { try { return JSON.stringify(obj); } catch { return String(obj); } };
 
   const slugify = (str) => {
     return String(str || "")
@@ -33,198 +33,23 @@
       .replace(/^-+|-+$/g, "");
   };
 
-  const safeJsonParse = (s, fallback) => { try { return JSON.parse(s); } catch { return fallback; } };
-  const safeJsonStringify = (obj) => { try { return JSON.stringify(obj); } catch { return String(obj); } };
-
   const escapeHtml = (s) => String(s).replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
   const escapeAttr = (s) => escapeHtml(s).replace(/'/g, "&#39;");
-
   const uiMsg = (sel, text) => { const el = $(sel); if (el) el.textContent = String(text ?? ""); };
   const textContentSafe = (el, txt) => { try { el.textContent = txt; } catch {} };
 
   function safeSetStatus(txt) {
     try {
-      // topo (se existir)
       const el = $("#statusText");
       if (el) el.textContent = String(txt || "");
     } catch {}
-
-    // FAB status
-    try {
-      const fabStatus = $("#rcfFabStatus");
-      if (fabStatus) fabStatus.textContent = String(txt || "");
-    } catch {}
   }
 
-  // -----------------------------
-  // ✅ UI COMPACT (iPhone)
-  // -----------------------------
-  const UI = {
-    brandTitle: "RCF",
-    brandSubtitle: "Factory interna • PWA • Offline-first",
-    compactEnabled: true
-  };
+  function sleep(ms) { return new Promise(res => setTimeout(res, ms)); }
 
-  function injectCompactCSSOnce() {
-    try {
-      if (!UI.compactEnabled) return;
-      if (document.getElementById("rcfCompactCss")) return;
-
-      const css = `
-/* ========= RCF COMPACT PATCH (mobile-first) ========= */
-:root { --rcf-compact: 1; }
-
-/* topo mais baixo */
-#rcfRoot .topbar{ padding: 8px 10px !important; }
-#rcfRoot .brand{ gap: 10px !important; }
-#rcfRoot .brand .title{ font-size: 18px !important; line-height: 1.15 !important; letter-spacing:.2px; }
-#rcfRoot .brand .subtitle{ font-size: 12px !important; opacity:.82 !important; }
-
-/* ✅ some com a barra/“pill” de status lá em cima (você pediu tirar o que tá circulado) */
-#rcfRoot #statusPill{ display:none !important; }
-
-/* abas: 1 linha com scroll horizontal (economiza tela) */
-#rcfRoot .tabs{
-  display:flex !important;
-  gap: 8px !important;
-  overflow-x: auto !important;
-  overflow-y: hidden !important;
-  -webkit-overflow-scrolling: touch !important;
-  padding: 6px 0 2px !important;
-  margin-top: 8px !important;
-  scrollbar-width: none !important;
-}
-#rcfRoot .tabs::-webkit-scrollbar{ display:none !important; }
-#rcfRoot .tabs .tab{
-  flex: 0 0 auto !important;
-  min-width: 96px !important;
-  padding: 10px 12px !important;
-  font-size: 13px !important;
-  border-radius: 999px !important;
-}
-
-/* cards: menos padding/margem */
-#rcfRoot .container{ padding-top: 10px !important; }
-#rcfRoot .card{ padding: 12px !important; border-radius: 14px !important; }
-#rcfRoot .card h1{ font-size: 24px !important; margin: 0 0 10px !important; }
-#rcfRoot .card h2{ font-size: 18px !important; margin: 10px 0 8px !important; }
-
-/* rows: menos altura */
-#rcfRoot .row{ gap: 10px !important; }
-#rcfRoot .btn{ padding: 10px 12px !important; font-size: 13px !important; border-radius: 999px !important; }
-#rcfRoot .btn.small{ padding: 8px 10px !important; font-size: 12px !important; }
-#rcfRoot input, #rcfRoot select, #rcfRoot textarea{ font-size: 14px !important; }
-
-/* PRE/LOGS: não pode dominar a tela */
-#rcfRoot pre.mono{ max-height: 24vh !important; overflow:auto !important; -webkit-overflow-scrolling: touch !important; }
-#rcfRoot pre.mono.small{ max-height: 20vh !important; }
-#rcfRoot #logsBox, #rcfRoot #logsOut, #rcfRoot #logsViewBox, #rcfRoot #injLog{
-  max-height: 22vh !important; overflow:auto !important; -webkit-overflow-scrolling: touch !important;
-}
-
-/* injector: textarea e preview mais compactos */
-#rcfRoot #injPayload{ max-height: 22vh !important; }
-#rcfRoot #diffOut{ max-height: 20vh !important; }
-
-/* tools drawer: não “gigante” */
-#rcfRoot .tools .tools-body pre{ max-height: 28vh !important; }
-
-/* ✅ FAB (bolinha) */
-#rcfFabWrap{
-  position: fixed;
-  right: 14px;
-  bottom: 14px;
-  z-index: 99999;
-  display:flex;
-  flex-direction:column;
-  align-items:flex-end;
-  gap: 10px;
-  pointer-events:none;
-}
-#rcfFab, #rcfFabCard{
-  pointer-events:auto;
-}
-#rcfFab{
-  width: 54px;
-  height: 54px;
-  border-radius: 999px;
-  border: 1px solid rgba(255,255,255,.14);
-  background: rgba(16,24,39,.72);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  color: #fff;
-  font-weight: 900;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  box-shadow: 0 10px 25px rgba(0,0,0,.45);
-}
-#rcfFabCard{
-  width: min(320px, 86vw);
-  border-radius: 16px;
-  border: 1px solid rgba(255,255,255,.12);
-  background: rgba(10,14,22,.82);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  color:#fff;
-  padding: 12px;
-  box-shadow: 0 10px 30px rgba(0,0,0,.55);
-  display:none;
-}
-#rcfFabCard.open{ display:block; }
-#rcfFabCard .fabHead{
-  display:flex; align-items:center; justify-content:space-between; gap:10px;
-  margin-bottom: 8px;
-}
-#rcfFabCard .fabTitle{ font-weight:900; }
-#rcfFabCard .fabStatus{
-  font-size:12px; opacity:.88;
-  padding: 4px 10px;
-  border-radius: 999px;
-  border: 1px solid rgba(255,255,255,.12);
-}
-#rcfFabCard .fabBtns{
-  display:flex;
-  flex-wrap:wrap;
-  gap:8px;
-  margin-top:10px;
-}
-#rcfFabCard .fabBtn{
-  padding: 10px 12px;
-  border-radius: 999px;
-  border: 1px solid rgba(255,255,255,.12);
-  background: rgba(255,255,255,.06);
-  color:#fff;
-  font-weight: 800;
-  font-size: 12px;
-}
-#rcfFabCard .fabBtn.ok{ background: rgba(45,212,191,.18); border-color: rgba(45,212,191,.32); }
-#rcfFabCard .fabBtn.danger{ background: rgba(239,68,68,.16); border-color: rgba(239,68,68,.3); }
-#rcfFabCard .fabHint{ font-size:12px; opacity:.78; margin-top:8px; line-height:1.3; }
-
-/* iPhone: reduz ainda mais */
-@media (max-width: 520px){
-  #rcfRoot .brand .title{ font-size: 17px !important; }
-  #rcfRoot .brand .subtitle{ font-size: 11px !important; }
-  #rcfRoot .tabs .tab{ min-width: 90px !important; padding: 9px 11px !important; }
-  #rcfRoot .card{ padding: 10px !important; }
-  #rcfRoot pre.mono{ max-height: 20vh !important; }
-}
-/* ========= /RCF COMPACT PATCH ========= */
-      `.trim();
-
-      const st = document.createElement("style");
-      st.id = "rcfCompactCss";
-      st.textContent = css;
-      document.head.appendChild(st);
-
-      try { window.RCF_LOGGER?.push?.("OK", "ui_compact: injected ✅"); } catch {}
-    } catch {}
-  }
-
-  // -----------------------------
-  // Storage
-  // -----------------------------
+  // =========================================================
+  // CORE: Storage
+  // =========================================================
   const Storage = {
     prefix: "rcf:",
     get(key, fallback) {
@@ -253,9 +78,9 @@
     del(key) { try { localStorage.removeItem(this.prefix + key); } catch {} }
   };
 
-  // -----------------------------
-  // Logger
-  // -----------------------------
+  // =========================================================
+  // CORE: Logger
+  // =========================================================
   const Logger = {
     bufKey: "logs",
     max: 900,
@@ -269,7 +94,6 @@
       const boxView = $("#logsViewBox");
       if (boxView) boxView.textContent = txt;
 
-      // Admin injector outputs
       const injLog = $("#injLog");
       if (injLog) injLog.textContent = txt.slice(-8000);
     },
@@ -293,6 +117,7 @@
     getAll() { return Storage.get(this.bufKey, []); }
   };
 
+  // Globais compatíveis
   window.RCF_LOGGER = window.RCF_LOGGER || {
     push(level, msg) { Logger.write(String(level || "log") + ":", msg); },
     clear() { Logger.clear(); },
@@ -300,9 +125,9 @@
     dump() { return Logger.getAll().join("\n"); }
   };
 
-  // -----------------------------
-  // STABILITY CORE — Global Error Guard + Fallback UI
-  // -----------------------------
+  // =========================================================
+  // CORE: Stability (anti tela branca)
+  // =========================================================
   const Stability = (() => {
     let installed = false;
     let originalConsoleError = null;
@@ -391,16 +216,15 @@
     return { install, showErrorScreen };
   })();
 
-  // -----------------------------
-  // Touch / Tap bind (iOS safe) — ✅ FIX DUPLO
-  // -----------------------------
+  // =========================================================
+  // CORE: iOS tap binder (anti duplo clique)
+  // =========================================================
   function bindTap(el, fn) {
     if (!el) return;
     if (el.__rcf_bound__) return;
     el.__rcf_bound__ = true;
 
     let last = 0;
-
     const handler = (ev) => {
       const t = Date.now();
       if ((t - last) < 350) return;
@@ -421,17 +245,16 @@
       el.style.webkitTapHighlightColor = "transparent";
     } catch {}
 
-    if (window.PointerEvent) {
-      el.addEventListener("pointerup", handler, { passive: false });
-    } else {
+    if (window.PointerEvent) el.addEventListener("pointerup", handler, { passive: false });
+    else {
       el.addEventListener("touchend", handler, { passive: false });
       el.addEventListener("click", handler, { passive: false });
     }
   }
 
-  // -----------------------------
-  // State
-  // -----------------------------
+  // =========================================================
+  // STATE
+  // =========================================================
   const State = {
     cfg: Storage.get("cfg", { mode: "safe", autoApplySafe: true, writeMode: "modal" }),
     apps: Storage.get("apps", []),
@@ -446,16 +269,95 @@
     Storage.set("pending", State.pending);
   }
 
-  // ✅ expõe RCF.state ANTES do init
+  // Globals compat
   window.RCF = window.RCF || {};
   window.RCF.state = State;
   window.RCF.log = (...a) => Logger.write(...a);
 
   // =========================================================
-  // ✅ Overrides VFS (localStorage)
+  // UI: Compact CSS
+  // =========================================================
+  const UI = {
+    brandTitle: "RCF",
+    brandSubtitle: "Factory interna • PWA • Offline-first",
+    compactEnabled: true
+  };
+
+  function injectCompactCSSOnce() {
+    try {
+      if (!UI.compactEnabled) return;
+      if (document.getElementById("rcfCompactCss")) return;
+
+      const css = `
+:root { --rcf-compact: 1; }
+
+#rcfRoot .topbar{ padding: 8px 10px !important; }
+#rcfRoot .brand{ gap: 10px !important; }
+#rcfRoot .brand .title{ font-size: 18px !important; line-height: 1.15 !important; letter-spacing:.2px; }
+#rcfRoot .brand .subtitle{ font-size: 12px !important; opacity:.82 !important; }
+#rcfRoot .status-pill{ transform: scale(.92); transform-origin: right center; }
+
+#rcfRoot .tabs{
+  display:flex !important;
+  gap: 8px !important;
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
+  -webkit-overflow-scrolling: touch !important;
+  padding: 6px 0 2px !important;
+  margin-top: 8px !important;
+  scrollbar-width: none !important;
+}
+#rcfRoot .tabs::-webkit-scrollbar{ display:none !important; }
+#rcfRoot .tabs .tab{
+  flex: 0 0 auto !important;
+  min-width: 96px !important;
+  padding: 10px 12px !important;
+  font-size: 13px !important;
+  border-radius: 999px !important;
+}
+
+#rcfRoot .container{ padding-top: 10px !important; }
+#rcfRoot .card{ padding: 12px !important; border-radius: 14px !important; }
+#rcfRoot .card h1{ font-size: 24px !important; margin: 0 0 10px !important; }
+#rcfRoot .card h2{ font-size: 18px !important; margin: 10px 0 8px !important; }
+
+#rcfRoot .row{ gap: 10px !important; }
+#rcfRoot .btn{ padding: 10px 12px !important; font-size: 13px !important; border-radius: 999px !important; }
+#rcfRoot .btn.small{ padding: 8px 10px !important; font-size: 12px !important; }
+#rcfRoot input, #rcfRoot select, #rcfRoot textarea{ font-size: 14px !important; }
+
+#rcfRoot pre.mono{ max-height: 24vh !important; overflow:auto !important; -webkit-overflow-scrolling: touch !important; }
+#rcfRoot pre.mono.small{ max-height: 20vh !important; }
+#rcfRoot #logsBox, #rcfRoot #logsOut, #rcfRoot #logsViewBox, #rcfRoot #injLog{
+  max-height: 22vh !important; overflow:auto !important; -webkit-overflow-scrolling: touch !important;
+}
+#rcfRoot #injPayload{ max-height: 22vh !important; }
+#rcfRoot #diffOut{ max-height: 20vh !important; }
+#rcfRoot .tools .tools-body pre{ max-height: 28vh !important; }
+
+@media (max-width: 520px){
+  #rcfRoot .brand .title{ font-size: 17px !important; }
+  #rcfRoot .brand .subtitle{ font-size: 11px !important; }
+  #rcfRoot .tabs .tab{ min-width: 90px !important; padding: 9px 11px !important; }
+  #rcfRoot .card{ padding: 10px !important; }
+  #rcfRoot pre.mono{ max-height: 20vh !important; }
+}
+      `.trim();
+
+      const st = document.createElement("style");
+      st.id = "rcfCompactCss";
+      st.textContent = css;
+      document.head.appendChild(st);
+
+      try { window.RCF_LOGGER?.push?.("OK", "ui_compact: injected ✅"); } catch {}
+    } catch {}
+  }
+
+  // =========================================================
+  // VFS Overrides (localStorage)
   // =========================================================
   const OverridesVFS = (() => {
-    const KEY = "RCF_OVERRIDES_MAP"; // { "/path": "content" }
+    const KEY = "RCF_OVERRIDES_MAP";
     const getMap = () => Storage.get(KEY, {});
     const setMap = (m) => Storage.set(KEY, m || {});
 
@@ -468,17 +370,12 @@
       return x;
     };
 
-    function list() {
-      const m = getMap();
-      return Object.keys(m || {}).sort();
-    }
-
+    function list() { return Object.keys(getMap() || {}).sort(); }
     function read(path) {
       const p = norm(path);
       const m = getMap();
       return (m && p in m) ? String(m[p] ?? "") : null;
     }
-
     function write(path, content) {
       const p = norm(path);
       const m = getMap();
@@ -486,15 +383,10 @@
       setMap(m);
       return true;
     }
-
     function del(path) {
       const p = norm(path);
       const m = getMap();
-      if (m && p in m) {
-        delete m[p];
-        setMap(m);
-        return true;
-      }
+      if (m && p in m) { delete m[p]; setMap(m); return true; }
       return false;
     }
 
@@ -509,9 +401,9 @@
 
   window.RCF_OVERRIDES_VFS = OverridesVFS;
 
-  // -----------------------------
-  // UI Shell
-  // -----------------------------
+  // =========================================================
+  // UI Shell + Views
+  // =========================================================
   function renderShell() {
     const root = $("#app");
     if (!root) return;
@@ -620,9 +512,9 @@
             <p class="hint">Comandos naturais + patchset (fase atual: comandos básicos).</p>
 
             <div class="row cmd">
-              <input id="agentCmd" placeholder='Ex: create "Meu App" meu-app' />
+              <input id="agentCmd" placeholder='Ex: create "Meu App" meu-app | scan | targets | inj apply | build "Meu App" agenda' />
               <button class="btn ok" id="btnAgentRun" type="button">Executar</button>
-              <button class="btn ghost" id="btnAgentClear" type="button">Ajuda</button>
+              <button class="btn ghost" id="btnAgentHelp" type="button">Ajuda</button>
             </div>
 
             <pre class="mono" id="agentOut">Pronto.</pre>
@@ -656,8 +548,7 @@
           <section class="view card" id="view-diagnostics">
             <h1>Diagnostics</h1>
             <div class="row">
-              <button class="btn ok" id="btnDiagRun" type="button">Rodar V7 Stability Check</button>
-              <button class="btn ghost" id="btnDiagInstall" type="button">Instalar Guards</button>
+              <button class="btn ok" id="btnDiagRun" type="button">Rodar V8 Stability Check</button>
               <button class="btn ghost" id="btnDiagScan" type="button">Scan overlays</button>
               <button class="btn ghost" id="btnDiagTests" type="button">Run micro-tests</button>
               <button class="btn danger" id="btnDiagClear" type="button">Limpar</button>
@@ -670,7 +561,7 @@
             <div class="row">
               <button class="btn ghost" id="btnLogsRefresh2" type="button">Atualizar</button>
               <button class="btn ok" id="btnCopyLogs" type="button">Copiar</button>
-              <button class="btn danger" id="btnClearLogs" type="button">Limpar</button>
+              <button class="btn danger" id="btnClearLogs2" type="button">Limpar</button>
             </div>
             <pre class="mono small" id="logsViewBox">Pronto.</pre>
           </section>
@@ -685,7 +576,6 @@
 
             <pre class="mono" id="adminOut">Pronto.</pre>
 
-            <!-- ✅ PADRÃO: Painel GitHub vem do /app/js/admin.github.js -->
             <div class="card" id="admin-maint">
               <h2>MAINTENANCE • Self-Update (Mãe)</h2>
               <div class="row">
@@ -760,44 +650,14 @@
           </div>
         </div>
 
-        <!-- ✅ BOLINHA (FAB) + CARDZINHO (onde você marcou a seta) -->
-        <div id="rcfFabWrap">
-          <div id="rcfFabCard">
-            <div class="fabHead">
-              <div class="fabTitle">RCF • Atalhos</div>
-              <div class="fabStatus" id="rcfFabStatus">OK ✅</div>
-            </div>
-            <div class="fabBtns">
-              <button class="fabBtn ok" id="fabOpenTools" type="button">⚙️ Tools</button>
-              <button class="fabBtn" id="fabOpenAdmin" type="button">🛠️ Admin</button>
-              <button class="fabBtn" id="fabOpenAgent" type="button">🤖 Agente</button>
-              <button class="fabBtn" id="fabOpenLogs" type="button">📜 Logs</button>
-              <button class="fabBtn" id="fabScan" type="button">🔎 Scan</button>
-              <button class="fabBtn" id="fabTargets" type="button">🧭 Targets</button>
-              <button class="fabBtn danger" id="fabClose" type="button">Fechar</button>
-            </div>
-            <div class="fabHint">
-              Dica: se algo travar, use <b>Logs</b> e <b>Admin</b> aqui sem ficar voltando no topo.
-            </div>
-          </div>
-
-          <button id="rcfFab" type="button" aria-label="RCF Quick">
-            RCF
-          </button>
-        </div>
-
       </div>
     `;
   }
 
-  // -----------------------------
-  // Views
-  // -----------------------------
   function refreshLogsViews() { Logger._mirrorUI(Logger.getAll()); }
 
   function setView(name) {
     if (!name) return;
-
     State.active.view = name;
     saveAll();
 
@@ -811,7 +671,6 @@
     $$(`[data-view="${name}"]`).forEach(b => b.classList.add("active"));
 
     if (name === "logs" || name === "settings" || name === "admin") refreshLogsViews();
-
     Logger.write("view:", name);
   }
 
@@ -822,9 +681,9 @@
     else d.classList.remove("open");
   }
 
-  // -----------------------------
+  // =========================================================
   // Apps / Editor
-  // -----------------------------
+  // =========================================================
   function getActiveApp() {
     if (!State.active.appSlug) return null;
     return State.apps.find(a => a.slug === State.active.appSlug) || null;
@@ -861,15 +720,11 @@
       box.appendChild(row);
     });
 
-    $$('[data-act="select"]', box).forEach(btn => {
-      bindTap(btn, () => setActiveApp(btn.getAttribute("data-slug")));
-    });
-    $$('[data-act="edit"]', box).forEach(btn => {
-      bindTap(btn, () => {
-        setActiveApp(btn.getAttribute("data-slug"));
-        setView("editor");
-      });
-    });
+    $$('[data-act="select"]', box).forEach(btn => bindTap(btn, () => setActiveApp(btn.getAttribute("data-slug"))));
+    $$('[data-act="edit"]', box).forEach(btn => bindTap(btn, () => {
+      setActiveApp(btn.getAttribute("data-slug"));
+      setView("editor");
+    }));
   }
 
   function renderFilesList() {
@@ -922,6 +777,8 @@
   function setActiveApp(slug) {
     const app = State.apps.find(a => a.slug === slug);
     if (!app) return false;
+
+    ensureAppFiles(app);
 
     State.active.appSlug = slug;
     State.active.file = State.active.file || Object.keys(app.files || {})[0] || null;
@@ -981,340 +838,9 @@
     Logger.write("file saved:", app.slug, fname);
   }
 
-  // -----------------------------
-  // Agent (V2) — CLI do Injector + Scan/Targets + Find/Peek + BUILD (ENGINE)
-  // -----------------------------
-  const Agent = {
-    _mem: {
-      inj: { mode: "INSERT", targetId: "", payload: "" }
-    },
-
-    help() {
-      return [
-        "AGENT HELP (V2)",
-        "",
-        "Base:",
-        "- help",
-        "- list",
-        "- show",
-        "- create NOME [SLUG]",
-        "- select SLUG",
-        "- open dashboard|newapp|editor|generator|agent|settings|admin|logs|diagnostics",
-        "",
-        "ENGINE (criar filho via spec):",
-        "- build \\"Nome do App\\" [mods...]",
-        "  Ex: build \\"Agenda\\" calendar todo",
-        "",
-        "FASE A (Admin):",
-        "- scan                 -> CP1 Scan & Index",
-        "- targets              -> CP2 Generate Target Map",
-        "- dropdown             -> CP3 Refresh dropdown",
-        "- paths                -> lista paths do index",
-        "",
-        "Buscar / checar:",
-        "- find TEXTO           -> procura TEXTO nos arquivos indexados (rápido, limitado)",
-        "- peek /caminho        -> mostra início do arquivo",
-        "",
-        "Injector (CLI SAFE):",
-        "- inj mode INSERT|REPLACE|DELETE",
-        "- inj target PARTE_DO_ID   (seleciona primeiro target que contém o texto)",
-        "- inj payload <<<   (cole multiline)   >>>",
-        "- inj preview",
-        "- inj apply",
-        "- inj rollback"
-      ].join("\n");
-    },
-
-    list() {
-      if (!State.apps.length) return "(vazio)";
-      return State.apps.map(a => `${a.slug} — ${a.name}`).join("\n");
-    },
-
-    show() {
-      const app = getActiveApp();
-      const idx = Storage.get("RCF_FILE_INDEX", null);
-      const map = Storage.get("RCF_TARGET_MAP", null);
-      const cIdx = idx?.meta?.count ?? 0;
-      const cTg = map?.meta?.count ?? 0;
-
-      return [
-        `mode: ${State.cfg.mode}`,
-        `apps: ${State.apps.length}`,
-        `active app: ${app ? `${app.name} (${app.slug})` : "-"}`,
-        `active file: ${State.active.file || "-"}`,
-        `view: ${State.active.view}`,
-        `index: files=${cIdx} source=${idx?.meta?.source || "-"}`,
-        `targets: count=${cTg}`
-      ].join("\n");
-    },
-
-    _out(text) {
-      const out = $("#agentOut");
-      if (out) out.textContent = String(text ?? "");
-    },
-
-    _setCmdUI(mode, targetId, payload) {
-      // mantém UI do injector sincronizada com o CLI
-      const m = $("#injMode");
-      const t = $("#injTarget");
-      const p = $("#injPayload");
-      if (m && mode) m.value = mode;
-      if (t && targetId) t.value = targetId;
-      if (p && payload != null) p.value = payload;
-    },
-
-    _pickTargetByContains(part) {
-      const map = Storage.get("RCF_TARGET_MAP", null);
-      const targets = map && Array.isArray(map.targets) ? map.targets : [];
-      const q = String(part || "").trim().toLowerCase();
-      if (!q) return null;
-      return targets.find(x => String(x.targetId || "").toLowerCase().includes(q)) || null;
-    },
-
-    async _scan() {
-      const idx = await scanFactoryFiles();
-      return `✅ Scan OK\nsource=${idx.meta.source}\nfiles=${idx.meta.count}\nscannedAt=${idx.meta.scannedAt}`;
-    },
-
-    _targets() {
-      const idx = Storage.get("RCF_FILE_INDEX", null);
-      const r = generateTargetMap(idx);
-      if (!r.ok) return `❌ ${r.err || "falhou gerar map"}`;
-      return `✅ Target Map OK\ncount=${r.map.meta.count}\nsource=${r.map.meta.source}\ncreatedAt=${r.map.meta.createdAt}`;
-    },
-
-    _paths() {
-      const idx = Storage.get("RCF_FILE_INDEX", null);
-      const files = idx && Array.isArray(idx.files) ? idx.files : [];
-      if (!files.length) return "⚠️ Sem index. Rode: scan";
-      return files.slice(0, 120).map(f => f.path).join("\n") + (files.length > 120 ? `\n... (${files.length - 120} mais)` : "");
-    },
-
-    async _peek(path) {
-      const p = normalizePath(path);
-      const txt = await readTextFromInventoryPath(p);
-      const head = String(txt || "").slice(0, 1200);
-      return `PEEK ${p}\nlen=${(txt || "").length}\n\n${head}${(txt || "").length > 1200 ? "\n\n...(truncado)" : ""}`;
-    },
-
-    async _find(q) {
-      const idx = Storage.get("RCF_FILE_INDEX", null);
-      const files = idx && Array.isArray(idx.files) ? idx.files : [];
-      if (!files.length) return "⚠️ Sem index. Rode: scan";
-
-      const needle = String(q || "").trim();
-      if (!needle) return "⚠️ Use: find TEXTO";
-
-      const needleLow = needle.toLowerCase();
-      const hits = [];
-      // limite pra não travar iPhone:
-      const LIMIT_FILES = 45;
-
-      for (const f of files.slice(0, LIMIT_FILES)) {
-        const p = f.path;
-        const txt = await readTextFromInventoryPath(p);
-        const pos = String(txt || "").toLowerCase().indexOf(needleLow);
-        if (pos >= 0) {
-          const start = Math.max(0, pos - 80);
-          const end = Math.min((txt || "").length, pos + needle.length + 120);
-          const snippet = (txt || "").slice(start, end).replace(/\n/g, "⏎");
-          hits.push(`- ${p} @${pos}\n  ...${snippet}...`);
-        }
-        if (hits.length >= 8) break;
-      }
-
-      if (!hits.length) return `❌ Não achei "${needle}" (busca limitada a ${LIMIT_FILES} arquivos, 8 hits max).`;
-      return `✅ HITS para "${needle}"\n` + hits.join("\n\n");
-    },
-
-    async route(cmdRaw) {
-      const cmd = String(cmdRaw || "").trim();
-      if (!cmd) return this._out("Comando vazio. Use: help");
-
-      const lower = cmd.toLowerCase();
-
-      // base
-      if (lower === "help") return this._out(this.help());
-      if (lower === "list") return this._out(this.list());
-      if (lower === "show") return this._out(this.show());
-
-      // open view
-      if (lower.startsWith("open ")) {
-        const target = lower.replace("open ", "").trim();
-        const map = {
-          dashboard: "dashboard",
-          newapp: "newapp",
-          "new app": "newapp",
-          editor: "editor",
-          generator: "generator",
-          agent: "agent",
-          settings: "settings",
-          admin: "admin",
-          logs: "logs",
-          diagnostics: "diagnostics",
-          diag: "diagnostics"
-        };
-        const v = map[target] || target;
-        setView(v);
-        return this._out(`OK. view=${v}`);
-      }
-
-      // create/select
-      if (lower.startsWith("create ")) {
-        const rest = cmd.replace(/^create\s+/i, "").trim();
-        const qm = rest.match(/^"([^"]+)"\s*([a-z0-9-]+)?/i);
-        let name = "", slug = "";
-        if (qm) { name = qm[1].trim(); slug = (qm[2] || "").trim(); }
-        else { name = rest; }
-        const r = createApp(name, slug);
-        return this._out(r.msg);
-      }
-
-      if (lower.startsWith("select ")) {
-        const slug = slugify(cmd.replace(/^select\s+/i, "").trim());
-        const ok = setActiveApp(slug);
-        return this._out(ok ? `OK. selecionado: ${slug}` : `Falhou: ${slug}`);
-      }
-
-      // ✅ BUILD (ENGINE) — FIXADO (agora dentro do route)
-      if (lower.startsWith("build ")) {
-        const rest = cmd.replace(/^build\s+/i, "").trim();
-        const qm = rest.match(/^"([^"]+)"\s*(.*)$/);
-
-        const name = qm ? qm[1].trim() : rest;
-        const modsPart = qm ? (qm[2] || "").trim() : "";
-
-        const mods = modsPart
-          .replace(/^with\s+/i, "")
-          .split(/[,\s]+/g)
-          .map(s => s.trim())
-          .filter(Boolean);
-
-        const ENG = window.RCF_ENGINE;
-
-        if (!ENG || typeof ENG.createSpec !== "function" || typeof ENG.createAppFromSpec !== "function") {
-          return this._out("❌ ENGINE não carregou. Verifique se os scripts /js/engine/*.js estão no index.html.");
-        }
-
-        const r1 = ENG.createSpec({ name, modules: mods });
-        if (!r1 || !r1.ok) {
-          return this._out("❌ " + (r1?.err || "spec falhou"));
-        }
-
-        const r2 = ENG.createAppFromSpec(r1.spec);
-        if (r2?.ok) {
-          try { renderAppsList(); } catch {}
-          try { setActiveApp(r2.app.slug); } catch {}
-          return this._out(`✅ BUILD OK: ${r2.app.slug}`);
-        }
-
-        return this._out(`❌ BUILD FAIL: ${r2?.err || ""}`);
-      }
-
-      // FASE A
-      if (lower === "scan") {
-        safeSetStatus("Scan…");
-        try {
-          const r = await this._scan();
-          safeSetStatus("OK ✅");
-          return this._out(r);
-        } catch (e) {
-          safeSetStatus("ERRO ❌");
-          return this._out("❌ scan falhou: " + (e?.message || e));
-        }
-      }
-
-      if (lower === "targets") {
-        try {
-          const r = this._targets();
-          return this._out(r);
-        } catch (e) {
-          return this._out("❌ targets falhou: " + (e?.message || e));
-        }
-      }
-
-      if (lower === "dropdown") {
-        try {
-          populateTargetsDropdown(true);
-          return this._out("✅ Dropdown atualizado.");
-        } catch (e) {
-          return this._out("❌ dropdown falhou: " + (e?.message || e));
-        }
-      }
-
-      if (lower === "paths") {
-        return this._out(this._paths());
-      }
-
-      if (lower.startsWith("peek ")) {
-        const p = cmd.replace(/^peek\s+/i, "").trim();
-        return this._out(await this._peek(p));
-      }
-
-      if (lower.startsWith("find ")) {
-        const q = cmd.replace(/^find\s+/i, "").trim();
-        return this._out(await this._find(q));
-      }
-
-      // Injector CLI
-      if (lower.startsWith("inj mode ")) {
-        const mode = cmd.replace(/^inj\s+mode\s+/i, "").trim().toUpperCase();
-        if (!["INSERT","REPLACE","DELETE"].includes(mode)) return this._out("⚠️ modos: INSERT | REPLACE | DELETE");
-        this._mem.inj.mode = mode;
-        this._setCmdUI(mode, null, null);
-        return this._out(`✅ inj mode=${mode}`);
-      }
-
-      if (lower.startsWith("inj target ")) {
-        const part = cmd.replace(/^inj\s+target\s+/i, "").trim();
-        const t = this._pickTargetByContains(part);
-        if (!t) return this._out("❌ Não achei target contendo: " + part + "\nUse: targets (gera map) ou dropdown");
-        this._mem.inj.targetId = t.targetId;
-        this._setCmdUI(null, t.targetId, null);
-        return this._out(`✅ inj target=${t.targetId}\npath=${t.path}\nkind=${t.kind}`);
-      }
-
-      if (lower.startsWith("inj payload")) {
-        // formato:
-        // inj payload <<<
-        // ...texto...
-        // >>>
-        const m = cmdRaw.match(/inj\s+payload\s*<<<([\s\S]*?)>>>/i);
-        if (!m) return this._out("⚠️ Use:\ninj payload <<<\nSEU TEXTO AQUI\n>>>");
-        const payload = m[1].replace(/^\n+|\n+$/g, "");
-        this._mem.inj.payload = payload;
-        this._setCmdUI(null, null, payload);
-        return this._out(`✅ payload set (len=${payload.length})`);
-      }
-
-      if (lower === "inj preview") {
-        this._setCmdUI(this._mem.inj.mode, this._mem.inj.targetId, this._mem.inj.payload);
-        const r = await injectorPreview();
-        return this._out(r.ok ? "✅ preview ok (veja Diff no Admin)" : ("❌ " + (r.err || "preview falhou")));
-      }
-
-      if (lower === "inj apply") {
-        this._setCmdUI(this._mem.inj.mode, this._mem.inj.targetId, this._mem.inj.payload);
-        safeSetStatus("Apply…");
-        const r = await injectorApplySafe();
-        safeSetStatus("OK ✅");
-        return this._out(r.ok ? "✅ APPLY OK (SAFE)" : ("❌ APPLY FAIL" + (r.rolledBack ? " (rollback feito)" : "")));
-      }
-
-      if (lower === "inj rollback") {
-        safeSetStatus("Rollback…");
-        const r = await injectorRollback();
-        safeSetStatus("OK ✅");
-        return this._out(r.ok ? "✅ rollback ok" : "❌ rollback falhou");
-      }
-
-      return this._out("Comando não reconhecido. Use: help");
-    }
-  };
-
-  // -----------------------------
+  // =========================================================
   // PIN
-  // -----------------------------
+  // =========================================================
   const Pin = {
     key: "admin_pin",
     get() { return Storage.get(this.key, ""); },
@@ -1322,9 +848,9 @@
     clear() { Storage.del(this.key); }
   };
 
-  // -----------------------------
+  // =========================================================
   // SW helpers (safe)
-  // -----------------------------
+  // =========================================================
   async function swRegister() {
     try {
       if (!("serviceWorker" in navigator)) {
@@ -1403,7 +929,7 @@
       out.err = String(e?.message || e);
     }
 
-    await new Promise(res => setTimeout(res, 350));
+    await sleep(350);
 
     reg = await tryGet();
     if (reg) {
@@ -1422,9 +948,9 @@
     return out;
   }
 
-  // -----------------------------
-  // Overlay scanner (embutido)
-  // -----------------------------
+  // =========================================================
+  // Diagnostics: overlay + microtests + css token
+  // =========================================================
   function scanOverlays() {
     const suspects = [];
     const vw = Math.max(document.documentElement.clientWidth, window.innerWidth || 0);
@@ -1466,9 +992,6 @@
     return { ok: true, suspects };
   }
 
-  // -----------------------------
-  // Micro-tests (embutido)
-  // -----------------------------
   function runMicroTests() {
     const results = [];
     const push = (name, pass, info = "") => results.push({ name, pass: !!pass, info: String(info || "") });
@@ -1489,9 +1012,6 @@
     return { ok: passCount === results.length, pass: passCount, total: results.length, results };
   }
 
-  // -----------------------------
-  // CSS token check
-  // -----------------------------
   function cssLoadedCheck() {
     try {
       const token = getComputedStyle(document.documentElement)
@@ -1505,23 +1025,7 @@
     }
   }
 
-  // -----------------------------
-  // Guards flags
-  // -----------------------------
-  const ModuleFlags = { diagnosticsInstalled: false, guardsInstalled: false };
-
-  function installGuardsOnce() {
-    if (ModuleFlags.guardsInstalled) return true;
-    ModuleFlags.guardsInstalled = true;
-    Logger.write("ok:", "GlobalErrorGuard instalado ✅");
-    Logger.write("ok:", "ClickGuard instalado ✅");
-    return true;
-  }
-
-  // -----------------------------
-  // Stability report
-  // -----------------------------
-  async function runV7StabilityCheck() {
+  async function runV8StabilityCheck() {
     const lines = [];
     const failList = [];
     let pass = 0, fail = 0;
@@ -1536,16 +1040,9 @@
     const css = cssLoadedCheck();
     add(css.ok, "[CSS] CSS_TOKEN", `token: "${css.token}"`);
 
-    add(true, "[MODULES] CORE_ONCE", "ok");
-    add(ModuleFlags.guardsInstalled, "[MODULES] GUARDS_ONCE", ModuleFlags.guardsInstalled ? "ok" : "não instalado");
-
     const swr = await swCheckAutoFix();
-    if (swr.ok) {
-      add(true, "[SW] SW_REGISTERED", swr.detail || "registrado");
-    } else {
-      lines.push(`WARN: [SW] SW_REGISTERED — ${swr.detail || swr.status}${swr.err ? " | err=" + swr.err : ""}`);
-      Logger.write("sw warn:", swr.status, swr.detail, swr.err ? ("err=" + swr.err) : "");
-    }
+    if (swr.ok) add(true, "[SW] SW_REGISTERED", swr.detail || "registrado");
+    else lines.push(`WARN: [SW] SW_REGISTERED — ${swr.detail || swr.status}${swr.err ? " | err=" + swr.err : ""}`);
 
     const overlay = scanOverlays();
     add(overlay.ok, "[CLICK] OVERLAY_SCANNER", overlay.ok ? "ok" : "erro");
@@ -1558,7 +1055,7 @@
     window.RCF_STABLE = stable;
 
     lines.unshift("=========================================================");
-    lines.unshift("RCF — V7 STABILITY CHECK (REPORT)");
+    lines.unshift("RCF — V8 STABILITY CHECK (REPORT)");
     lines.push("=========================================================");
     lines.push(`PASS: ${pass} | FAIL: ${fail}`);
     lines.push(`RCF_STABLE: ${stable ? "TRUE ✅" : "FALSE ❌"}`);
@@ -1573,12 +1070,12 @@
 
     const report = lines.join("\n");
     uiMsg("#diagOut", report);
-    Logger.write("V7 check:", stable ? "PASS ✅" : "FAIL ❌", `${pass}/${pass + fail}`);
+    Logger.write("V8 check:", stable ? "PASS ✅" : "FAIL ❌", `${pass}/${pass + fail}`);
     return { stable, pass, fail, report, overlay, microtests: mt, css, sw: swr };
   }
 
   // =========================================================
-  // ✅ FASE A — REAL SCAN / TARGET MAP / INJECT SAFE
+  // FASE A — Scan / Targets / Injector SAFE
   // =========================================================
   function simpleHash(str) {
     let h = 2166136261;
@@ -1641,23 +1138,6 @@
     return x;
   }
 
-  async function tryFetchLocalBundleFromCfg() {
-    const cfg = Storage.get("ghcfg", null);
-    const path = cfg && cfg.path ? String(cfg.path) : "";
-    if (!path) return null;
-
-    const url = new URL(path, document.baseURI).toString();
-
-    try {
-      const res = await fetch(url, { cache: "no-store" });
-      if (!res.ok) return null;
-      const txt = await res.text();
-      return txt || null;
-    } catch {
-      return null;
-    }
-  }
-
   async function vfsListAll(vfs) {
     if (!vfs) return [];
     try {
@@ -1682,6 +1162,22 @@
     return null;
   }
 
+  async function tryFetchLocalBundleFromCfg() {
+    const cfg = Storage.get("ghcfg", null);
+    const path = cfg && cfg.path ? String(cfg.path) : "";
+    if (!path) return null;
+
+    const url = new URL(path, document.baseURI).toString();
+    try {
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) return null;
+      const txt = await res.text();
+      return txt || null;
+    } catch {
+      return null;
+    }
+  }
+
   function getLocalMotherBundleText() {
     const raw = Storage.getRaw("mother_bundle", "");
     if (raw && raw.trim().startsWith("{")) return raw;
@@ -1690,16 +1186,10 @@
     return "";
   }
 
-  // =========================================================
-  // ✅ CP1 — Scan em cascata REAL (A -> B -> C)
-  // =========================================================
   async function scanFactoryFiles() {
-    const index = {
-      meta: { scannedAt: nowISO(), source: "", count: 0 },
-      files: []
-    };
+    const index = { meta: { scannedAt: nowISO(), source: "", count: 0 }, files: [] };
 
-    // 0) sempre indexa overrides (não define source por isso)
+    // 0) overrides sempre entram
     try {
       const olist = await OverridesVFS.listFiles();
       for (const p0 of (olist || []).slice(0, 800)) {
@@ -1707,8 +1197,7 @@
         const txt = String((await OverridesVFS.readFile(p)) ?? "");
         const type = guessType(p);
         index.files.push({
-          path: p,
-          type,
+          path: p, type,
           size: txt.length,
           hash: simpleHash(txt),
           markers: detectMarkers(txt),
@@ -1717,14 +1206,10 @@
       }
     } catch {}
 
-    // RCF_RANGE:START SCAN_RUNTIME_VFS_CHAIN
-    // A) runtime vfs (NÃO usar RCF_VFS_OVERRIDES aqui — isso é RPC, não FS)
+    // A) runtime vfs
     const vfs = (window.RCF_VFS || window.RCF_FS || window.RCF_FILES || window.RCF_STORE) || null;
-    // RCF_RANGE:END SCAN_RUNTIME_VFS_CHAIN
-
     if (vfs) {
       const baseLen = index.files.length;
-
       const list = await vfsListAll(vfs);
       const paths = (list || []).map(p => normalizePath(p)).filter(Boolean).slice(0, 1200);
 
@@ -1732,21 +1217,17 @@
         const content = await vfsRead(vfs, p);
         const txt = (content == null) ? "" : String(content);
         const type = guessType(p);
-        const markers = detectMarkers(txt);
-        const anchors = getAnchorsForContent(type, txt);
         index.files.push({
-          path: p,
-          type,
+          path: p, type,
           size: txt.length,
           hash: simpleHash(txt),
-          markers,
-          anchors
+          markers: detectMarkers(txt),
+          anchors: getAnchorsForContent(type, txt)
         });
       }
 
-      const addedByRuntimeVfs = index.files.length - baseLen;
-
-      if (addedByRuntimeVfs > 0) {
+      const added = index.files.length - baseLen;
+      if (added > 0) {
         index.meta.source = "A:runtime_vfs";
         index.meta.count = index.files.length;
         Storage.set("RCF_FILE_INDEX", index);
@@ -1767,7 +1248,6 @@
       try { parsed = JSON.parse(bundleText); } catch { parsed = null; }
 
       let entries = [];
-
       if (parsed && Array.isArray(parsed.files)) {
         entries = parsed.files
           .map(it => {
@@ -1790,25 +1270,19 @@
           (rawVal && typeof rawVal === "object" && "content" in rawVal)
             ? String(rawVal.content ?? "")
             : String(rawVal ?? "");
-
         const type = guessType(p);
-        const markers = detectMarkers(txt);
-        const anchors = getAnchorsForContent(type, txt);
-
         index.files.push({
-          path: p,
-          type,
+          path: p, type,
           size: txt.length,
           hash: simpleHash(txt),
-          markers,
-          anchors
+          markers: detectMarkers(txt),
+          anchors: getAnchorsForContent(type, txt)
         });
       }
 
       index.meta.count = index.files.length;
       Storage.set("RCF_FILE_INDEX", index);
       Storage.setRaw("mother_bundle", bundleText);
-
       Logger.write("scan:", index.meta.source, "files=" + index.meta.count);
       return index;
     }
@@ -1817,16 +1291,13 @@
     Logger.write("scan fallback -> DOM anchors");
     index.meta.source = "C:dom_anchors_only";
     const html = document.documentElement ? document.documentElement.outerHTML : "";
-    const markers = detectMarkers(html);
-    const anchors = getAnchorsForContent("html", html);
-
     index.files.push({
       path: "/runtime/document.html",
       type: "html",
       size: html.length,
       hash: simpleHash(html),
-      markers,
-      anchors
+      markers: detectMarkers(html),
+      anchors: getAnchorsForContent("html", html)
     });
 
     index.meta.count = index.files.length;
@@ -1835,17 +1306,11 @@
     return index;
   }
 
-  // =========================================================
-  // ✅ CP2 — Target map garante >=2
-  // =========================================================
   function generateTargetMap(fileIndex) {
     const idx = fileIndex || Storage.get("RCF_FILE_INDEX", null);
-    if (!idx || !Array.isArray(idx.files)) {
-      return { ok: false, err: "RCF_FILE_INDEX ausente. Rode Scan & Index primeiro." };
-    }
+    if (!idx || !Array.isArray(idx.files)) return { ok: false, err: "RCF_FILE_INDEX ausente. Rode Scan & Index primeiro." };
 
     const targets = [];
-
     for (const f of idx.files) {
       const path = String(f.path || "");
       const markers = Array.isArray(f.markers) ? f.markers : [];
@@ -1893,35 +1358,13 @@
     if (uniq.length < 2) {
       const fallbackPaths = ["/index.html", "/app/index.html"];
       for (const fp of fallbackPaths) {
-        uniq.push({
-          targetId: `${fp}::HEAD_END`,
-          path: fp,
-          kind: "ANCHOR",
-          offset: 0,
-          anchorId: "HEAD_END",
-          supportedModes: ["INSERT","REPLACE","DELETE"],
-          defaultRisk: "low",
-          note: "FORCED_FALLBACK_HEAD_END"
-        });
-        uniq.push({
-          targetId: `${fp}::BODY_END`,
-          path: fp,
-          kind: "ANCHOR",
-          offset: 0,
-          anchorId: "BODY_END",
-          supportedModes: ["INSERT","REPLACE","DELETE"],
-          defaultRisk: "medium",
-          note: "FORCED_FALLBACK_BODY_END"
-        });
+        uniq.push({ targetId: `${fp}::HEAD_END`, path: fp, kind: "ANCHOR", offset: 0, anchorId: "HEAD_END", supportedModes: ["INSERT","REPLACE","DELETE"], defaultRisk: "low", note: "FORCED_FALLBACK_HEAD_END" });
+        uniq.push({ targetId: `${fp}::BODY_END`, path: fp, kind: "ANCHOR", offset: 0, anchorId: "BODY_END", supportedModes: ["INSERT","REPLACE","DELETE"], defaultRisk: "medium", note: "FORCED_FALLBACK_BODY_END" });
         if (uniq.length >= 2) break;
       }
     }
 
-    const out = {
-      meta: { createdAt: nowISO(), count: uniq.length, source: (idx.meta && idx.meta.source) || "" },
-      targets: uniq
-    };
-
+    const out = { meta: { createdAt: nowISO(), count: uniq.length, source: (idx.meta && idx.meta.source) || "" }, targets: uniq };
     Storage.set("RCF_TARGET_MAP", out);
     Logger.write("targets:", "count=" + out.meta.count, "source=" + out.meta.source);
 
@@ -2008,9 +1451,7 @@
       } catch {}
     }
 
-    if (p === "/runtime/document.html") {
-      return document.documentElement ? document.documentElement.outerHTML : "";
-    }
+    if (p === "/runtime/document.html") return document.documentElement ? document.documentElement.outerHTML : "";
 
     if (p === "/app/index.html" || p === "/app/styles.css" || p === "/app/app.js" || p === "/index.html" || p === "/styles.css" || p === "/app.js") {
       try {
@@ -2157,12 +1598,319 @@
     return { ok: true };
   }
 
-  // -----------------------------
+  // =========================================================
+  // Agent V8 (inclui build corretamente)
+  // =========================================================
+  const Agent = {
+    _mem: { inj: { mode: "INSERT", targetId: "", payload: "" } },
+
+    _out(text) {
+      const out = $("#agentOut");
+      if (out) out.textContent = String(text ?? "");
+    },
+
+    help() {
+      return [
+        "AGENT HELP (V8)",
+        "",
+        "Base:",
+        "- help",
+        "- list",
+        "- show",
+        "- create NOME [SLUG]        (ex: create \"Meu App\" meu-app)",
+        "- select SLUG",
+        "- open dashboard|newapp|editor|generator|agent|settings|admin|logs|diagnostics",
+        "",
+        "FASE A (Admin):",
+        "- scan                 -> CP1 Scan & Index",
+        "- targets              -> CP2 Generate Target Map",
+        "- dropdown             -> CP3 Refresh dropdown",
+        "- paths                -> lista paths do index",
+        "",
+        "Buscar / checar:",
+        "- find TEXTO           -> procura TEXTO nos arquivos indexados (limitado p/ iPhone)",
+        "- peek /caminho        -> mostra início do arquivo",
+        "",
+        "Injector (CLI SAFE):",
+        "- inj mode INSERT|REPLACE|DELETE",
+        "- inj target PARTE_DO_ID",
+        "- inj payload <<<  (multiline)  >>>",
+        "- inj preview",
+        "- inj apply",
+        "- inj rollback",
+        "",
+        "ENGINE (Reflect-style):",
+        "- build \"Nome do App\" [mods...]   (ex: build \"Agenda\" agenda calculator)"
+      ].join("\n");
+    },
+
+    list() {
+      if (!State.apps.length) return "(vazio)";
+      return State.apps.map(a => `${a.slug} — ${a.name}`).join("\n");
+    },
+
+    show() {
+      const app = getActiveApp();
+      const idx = Storage.get("RCF_FILE_INDEX", null);
+      const map = Storage.get("RCF_TARGET_MAP", null);
+      const cIdx = idx?.meta?.count ?? 0;
+      const cTg = map?.meta?.count ?? 0;
+
+      return [
+        `mode: ${State.cfg.mode}`,
+        `apps: ${State.apps.length}`,
+        `active app: ${app ? `${app.name} (${app.slug})` : "-"}`,
+        `active file: ${State.active.file || "-"}`,
+        `view: ${State.active.view}`,
+        `index: files=${cIdx} source=${idx?.meta?.source || "-"}`,
+        `targets: count=${cTg}`
+      ].join("\n");
+    },
+
+    _setCmdUI(mode, targetId, payload) {
+      const m = $("#injMode");
+      const t = $("#injTarget");
+      const p = $("#injPayload");
+      if (m && mode) m.value = mode;
+      if (t && targetId) t.value = targetId;
+      if (p && payload != null) p.value = payload;
+    },
+
+    _pickTargetByContains(part) {
+      const map = Storage.get("RCF_TARGET_MAP", null);
+      const targets = map && Array.isArray(map.targets) ? map.targets : [];
+      const q = String(part || "").trim().toLowerCase();
+      if (!q) return null;
+      return targets.find(x => String(x.targetId || "").toLowerCase().includes(q)) || null;
+    },
+
+    async _scan() {
+      const idx = await scanFactoryFiles();
+      return `✅ Scan OK\nsource=${idx.meta.source}\nfiles=${idx.meta.count}\nscannedAt=${idx.meta.scannedAt}`;
+    },
+
+    _targets() {
+      const idx = Storage.get("RCF_FILE_INDEX", null);
+      const r = generateTargetMap(idx);
+      if (!r.ok) return `❌ ${r.err || "falhou gerar map"}`;
+      return `✅ Target Map OK\ncount=${r.map.meta.count}\nsource=${r.map.meta.source}\ncreatedAt=${r.map.meta.createdAt}`;
+    },
+
+    _paths() {
+      const idx = Storage.get("RCF_FILE_INDEX", null);
+      const files = idx && Array.isArray(idx.files) ? idx.files : [];
+      if (!files.length) return "⚠️ Sem index. Rode: scan";
+      return files.slice(0, 120).map(f => f.path).join("\n") + (files.length > 120 ? `\n... (${files.length - 120} mais)` : "");
+    },
+
+    async _peek(path) {
+      const p = normalizePath(path);
+      const txt = await readTextFromInventoryPath(p);
+      const head = String(txt || "").slice(0, 1200);
+      return `PEEK ${p}\nlen=${(txt || "").length}\n\n${head}${(txt || "").length > 1200 ? "\n\n...(truncado)" : ""}`;
+    },
+
+    async _find(q) {
+      const idx = Storage.get("RCF_FILE_INDEX", null);
+      const files = idx && Array.isArray(idx.files) ? idx.files : [];
+      if (!files.length) return "⚠️ Sem index. Rode: scan";
+
+      const needle = String(q || "").trim();
+      if (!needle) return "⚠️ Use: find TEXTO";
+
+      const needleLow = needle.toLowerCase();
+      const hits = [];
+      const LIMIT_FILES = 45;
+
+      for (const f of files.slice(0, LIMIT_FILES)) {
+        const p = f.path;
+        const txt = await readTextFromInventoryPath(p);
+        const pos = String(txt || "").toLowerCase().indexOf(needleLow);
+        if (pos >= 0) {
+          const start = Math.max(0, pos - 80);
+          const end = Math.min((txt || "").length, pos + needle.length + 120);
+          const snippet = (txt || "").slice(start, end).replace(/\n/g, "⏎");
+          hits.push(`- ${p} @${pos}\n  ...${snippet}...`);
+        }
+        if (hits.length >= 8) break;
+      }
+
+      if (!hits.length) return `❌ Não achei "${needle}" (busca limitada a ${LIMIT_FILES} arquivos, 8 hits max).`;
+      return `✅ HITS para "${needle}"\n` + hits.join("\n\n");
+    },
+
+    async route(cmdRaw) {
+      const cmd = String(cmdRaw || "").trim();
+      if (!cmd) return this._out("Comando vazio. Use: help");
+      const lower = cmd.toLowerCase();
+
+      // base
+      if (lower === "help") return this._out(this.help());
+      if (lower === "list") return this._out(this.list());
+      if (lower === "show") return this._out(this.show());
+
+      // open view
+      if (lower.startsWith("open ")) {
+        const target = lower.replace("open ", "").trim();
+        const map = {
+          dashboard: "dashboard",
+          newapp: "newapp",
+          "new app": "newapp",
+          editor: "editor",
+          generator: "generator",
+          agent: "agent",
+          settings: "settings",
+          admin: "admin",
+          logs: "logs",
+          diagnostics: "diagnostics",
+          diag: "diagnostics"
+        };
+        const v = map[target] || target;
+        setView(v);
+        return this._out(`OK. view=${v}`);
+      }
+
+      // create/select
+      if (lower.startsWith("create ")) {
+        const rest = cmd.replace(/^create\s+/i, "").trim();
+        const qm = rest.match(/^"([^"]+)"\s*([a-z0-9-]+)?/i);
+        let name = "", slug = "";
+        if (qm) { name = qm[1].trim(); slug = (qm[2] || "").trim(); }
+        else { name = rest; }
+        const r = createApp(name, slug);
+        return this._out(r.msg);
+      }
+
+      if (lower.startsWith("select ")) {
+        const slug = slugify(cmd.replace(/^select\s+/i, "").trim());
+        const ok = setActiveApp(slug);
+        return this._out(ok ? `OK. selecionado: ${slug}` : `Falhou: ${slug}`);
+      }
+
+      // FASE A
+      if (lower === "scan") {
+        safeSetStatus("Scan…");
+        try {
+          const r = await this._scan();
+          safeSetStatus("OK ✅");
+          return this._out(r);
+        } catch (e) {
+          safeSetStatus("ERRO ❌");
+          return this._out("❌ scan falhou: " + (e?.message || e));
+        }
+      }
+
+      if (lower === "targets") {
+        try { return this._out(this._targets()); }
+        catch (e) { return this._out("❌ targets falhou: " + (e?.message || e)); }
+      }
+
+      if (lower === "dropdown") {
+        try { populateTargetsDropdown(true); return this._out("✅ Dropdown atualizado."); }
+        catch (e) { return this._out("❌ dropdown falhou: " + (e?.message || e)); }
+      }
+
+      if (lower === "paths") return this._out(this._paths());
+
+      if (lower.startsWith("peek ")) {
+        const p = cmd.replace(/^peek\s+/i, "").trim();
+        return this._out(await this._peek(p));
+      }
+
+      if (lower.startsWith("find ")) {
+        const q = cmd.replace(/^find\s+/i, "").trim();
+        return this._out(await this._find(q));
+      }
+
+      // Injector CLI
+      if (lower.startsWith("inj mode ")) {
+        const mode = cmd.replace(/^inj\s+mode\s+/i, "").trim().toUpperCase();
+        if (!["INSERT","REPLACE","DELETE"].includes(mode)) return this._out("⚠️ modos: INSERT | REPLACE | DELETE");
+        this._mem.inj.mode = mode;
+        this._setCmdUI(mode, null, null);
+        return this._out(`✅ inj mode=${mode}`);
+      }
+
+      if (lower.startsWith("inj target ")) {
+        const part = cmd.replace(/^inj\s+target\s+/i, "").trim();
+        const t = this._pickTargetByContains(part);
+        if (!t) return this._out("❌ Não achei target contendo: " + part + "\nUse: targets (gera map) ou dropdown");
+        this._mem.inj.targetId = t.targetId;
+        this._setCmdUI(null, t.targetId, null);
+        return this._out(`✅ inj target=${t.targetId}\npath=${t.path}\nkind=${t.kind}`);
+      }
+
+      if (lower.startsWith("inj payload")) {
+        const m = cmdRaw.match(/inj\s+payload\s*<<<([\s\S]*?)>>>/i);
+        if (!m) return this._out("⚠️ Use:\ninj payload <<<\nSEU TEXTO AQUI\n>>>");
+        const payload = m[1].replace(/^\n+|\n+$/g, "");
+        this._mem.inj.payload = payload;
+        this._setCmdUI(null, null, payload);
+        return this._out(`✅ payload set (len=${payload.length})`);
+      }
+
+      if (lower === "inj preview") {
+        this._setCmdUI(this._mem.inj.mode, this._mem.inj.targetId, this._mem.inj.payload);
+        const r = await injectorPreview();
+        return this._out(r.ok ? "✅ preview ok (veja Diff no Admin)" : ("❌ " + (r.err || "preview falhou")));
+      }
+
+      if (lower === "inj apply") {
+        this._setCmdUI(this._mem.inj.mode, this._mem.inj.targetId, this._mem.inj.payload);
+        safeSetStatus("Apply…");
+        const r = await injectorApplySafe();
+        safeSetStatus("OK ✅");
+        return this._out(r.ok ? "✅ APPLY OK (SAFE)" : ("❌ APPLY FAIL" + (r.rolledBack ? " (rollback feito)" : "")));
+      }
+
+      if (lower === "inj rollback") {
+        safeSetStatus("Rollback…");
+        const r = await injectorRollback();
+        safeSetStatus("OK ✅");
+        return this._out(r.ok ? "✅ rollback ok" : "❌ rollback falhou");
+      }
+
+      // ✅ ENGINE build (AGORA CERTO, dentro do route)
+      if (lower.startsWith("build ")) {
+        const rest = cmd.replace(/^build\s+/i, "").trim();
+        const qm = rest.match(/^"([^"]+)"\s*(.*)$/);
+
+        const name = qm ? qm[1].trim() : rest;
+        const modsPart = qm ? (qm[2] || "").trim() : "";
+
+        const mods = modsPart
+          .replace(/^with\s+/i, "")
+          .split(/[,\s]+/g)
+          .map(s => s.trim())
+          .filter(Boolean);
+
+        const ENG = window.RCF_ENGINE;
+
+        if (!ENG || typeof ENG.createSpec !== "function" || typeof ENG.createAppFromSpec !== "function") {
+          return this._out("❌ ENGINE não carregou. Verifique se os scripts /js/engine/*.js estão no index.html.");
+        }
+
+        const r1 = ENG.createSpec({ name, modules: mods });
+        if (!r1 || !r1.ok) return this._out("❌ " + (r1?.err || "spec falhou"));
+
+        const r2 = ENG.createAppFromSpec(r1.spec);
+        if (r2?.ok) {
+          try { renderAppsList(); } catch {}
+          try { setActiveApp(r2.app.slug); } catch {}
+          return this._out(`✅ BUILD OK: ${r2.app.slug}`);
+        }
+        return this._out(`❌ BUILD FAIL: ${r2?.err || ""}`);
+      }
+
+      return this._out("Comando não reconhecido. Use: help");
+    }
+  };
+
+  // =========================================================
   // Bind UI
-  // -----------------------------
+  // =========================================================
   function bindUI() {
     $$("[data-view]").forEach(btn => bindTap(btn, () => setView(btn.getAttribute("data-view"))));
-
     bindTap($("#btnOpenTools"), () => openTools(true));
     bindTap($("#btnCloseTools"), () => openTools(false));
 
@@ -2209,7 +1957,7 @@
     bindTap($("#btnGenPreview"), () => uiMsg("#genOut", "Preview (stub)."));
 
     bindTap($("#btnAgentRun"), () => Agent.route($("#agentCmd")?.value || ""));
-    bindTap($("#btnAgentClear"), () => uiMsg("#agentOut", Agent.help()));
+    bindTap($("#btnAgentHelp"), () => uiMsg("#agentOut", Agent.help()));
 
     const doLogsRefresh = () => {
       refreshLogsViews();
@@ -2234,7 +1982,7 @@
     bindTap($("#btnLogsCopy"), doLogsCopy);
 
     bindTap($("#btnLogsRefresh2"), doLogsRefresh);
-    bindTap($("#btnClearLogs"), doLogsClear);
+    bindTap($("#btnClearLogs2"), doLogsClear);
     bindTap($("#btnCopyLogs"), doLogsCopy);
 
     bindTap($("#btnDrawerLogsRefresh"), doLogsRefresh);
@@ -2263,37 +2011,18 @@
     // Diagnostics actions
     bindTap($("#btnDiagRun"), async () => {
       safeSetStatus("Diag…");
-      await runV7StabilityCheck();
+      await runV8StabilityCheck();
       setTimeout(() => safeSetStatus("OK ✅"), 700);
     });
 
-    bindTap($("#btnDiagInstall"), () => {
-      try {
-        installGuardsOnce();
-        ModuleFlags.diagnosticsInstalled = true;
-        uiMsg("#diagOut", "✅ installAll OK");
-        Logger.write("ok:", "Diagnostics: installAll ✅");
-      } catch (e) {
-        uiMsg("#diagOut", "❌ " + (e?.message || e));
-      }
-    });
-
     bindTap($("#btnDiagScan"), () => {
-      try {
-        const r = scanOverlays();
-        uiMsg("#diagOut", JSON.stringify(r, null, 2));
-      } catch (e) {
-        uiMsg("#diagOut", "❌ " + (e?.message || e));
-      }
+      try { uiMsg("#diagOut", JSON.stringify(scanOverlays(), null, 2)); }
+      catch (e) { uiMsg("#diagOut", "❌ " + (e?.message || e)); }
     });
 
     bindTap($("#btnDiagTests"), () => {
-      try {
-        const r = runMicroTests();
-        uiMsg("#diagOut", JSON.stringify(r, null, 2));
-      } catch (e) {
-        uiMsg("#diagOut", "❌ " + (e?.message || e));
-      }
+      try { uiMsg("#diagOut", JSON.stringify(runMicroTests(), null, 2)); }
+      catch (e) { uiMsg("#diagOut", "❌ " + (e?.message || e)); }
     });
 
     bindTap($("#btnDiagClear"), () => uiMsg("#diagOut", "Pronto."));
@@ -2322,7 +2051,7 @@
       uiMsg("#adminOut", "✅ Zerado (safe). Logs limpos.");
     });
 
-    // Mãe buttons
+    // Mãe
     bindTap($("#btnMaeLoad"), async () => {
       const MAE = window.RCF_MOTHER || window.RCF_MAE;
       if (!MAE) {
@@ -2342,7 +2071,6 @@
       Logger.write("mae check:", safeJsonStringify(s));
     });
 
-    // ✅ FIX: trava reentrada + timeout
     let maeUpdateLock = false;
     bindTap($("#btnMaeUpdate"), async () => {
       const MAE = window.RCF_MOTHER || window.RCF_MAE;
@@ -2393,7 +2121,7 @@
       }
     });
 
-    // ✅ FASE A
+    // FASE A buttons
     bindTap($("#btnScanIndex"), async () => {
       safeSetStatus("Scan…");
       try {
@@ -2410,29 +2138,14 @@
     bindTap($("#btnGenTargets"), () => {
       const idx = Storage.get("RCF_FILE_INDEX", null);
       const r = generateTargetMap(idx);
-      if (!r.ok) {
-        uiMsg("#scanOut", "❌ " + (r.err || "falhou gerar map"));
-        return;
-      }
+      if (!r.ok) return uiMsg("#scanOut", "❌ " + (r.err || "falhou gerar map"));
       uiMsg("#scanOut", `✅ Target Map OK\ncount=${r.map.meta.count}\nsource=${r.map.meta.source}\ncreatedAt=${r.map.meta.createdAt}`);
-      Logger.write("CP2 targets:", "count=" + r.map.meta.count);
-
-      try {
-        populateTargetsDropdown(true);
-        Logger.write("CP3 ui:", "dropdown updated", "auto-selected=" + String($("#injTarget")?.value || ""));
-      } catch {}
-
-      const sel = $("#injTarget");
-      if (sel && !String(sel.value || "").trim()) {
-        const first = Array.from(sel.options).find(o => (o.value || "").trim());
-        if (first) sel.value = first.value;
-      }
+      try { populateTargetsDropdown(true); } catch {}
     });
 
     bindTap($("#btnRefreshTargets"), () => {
       populateTargetsDropdown(true);
       uiMsg("#scanOut", "Dropdown atualizado ✅");
-      Logger.write("CP3 ui:", "dropdown refresh", "selected=" + String($("#injTarget")?.value || ""));
     });
 
     bindTap($("#btnPreviewDiff"), async () => {
@@ -2443,7 +2156,7 @@
     bindTap($("#btnApplyInject"), async () => {
       safeSetStatus("Apply…");
       const ok = await injectorApplySafe();
-      Logger.write("CP3 apply:", ok && ok.ok ? "OK" : "FAIL", "target=" + String($("#injTarget")?.value || ""));
+      Logger.write("apply:", ok && ok.ok ? "OK" : "FAIL", "target=" + String($("#injTarget")?.value || ""));
       setTimeout(() => safeSetStatus("OK ✅"), 900);
     });
 
@@ -2452,51 +2165,11 @@
       await injectorRollback();
       setTimeout(() => safeSetStatus("OK ✅"), 900);
     });
-
-    // ✅ FAB (bolinha) binds
-    const fab = $("#rcfFab");
-    const card = $("#rcfFabCard");
-    const close = $("#fabClose");
-    const toggle = () => {
-      if (!card) return;
-      card.classList.toggle("open");
-    };
-
-    bindTap(fab, toggle);
-    bindTap(close, () => { card && card.classList.remove("open"); });
-
-    bindTap($("#fabOpenTools"), () => { openTools(true); card && card.classList.remove("open"); });
-    bindTap($("#fabOpenAdmin"), () => { setView("admin"); card && card.classList.remove("open"); });
-    bindTap($("#fabOpenAgent"), () => { setView("agent"); card && card.classList.remove("open"); });
-    bindTap($("#fabOpenLogs"), () => { setView("logs"); card && card.classList.remove("open"); });
-
-    bindTap($("#fabScan"), async () => {
-      setView("admin");
-      safeSetStatus("Scan…");
-      try {
-        const idx = await scanFactoryFiles();
-        uiMsg("#scanOut", `✅ Scan OK\nsource=${idx.meta.source}\nfiles=${idx.meta.count}\nscannedAt=${idx.meta.scannedAt}`);
-        Logger.write("CP1 scan:", `source=${idx.meta.source}`, `files=${idx.meta.count}`);
-        safeSetStatus("OK ✅");
-      } catch (e) {
-        uiMsg("#scanOut", "❌ Scan falhou: " + (e?.message || e));
-        safeSetStatus("ERRO ❌");
-      }
-      card && card.classList.remove("open");
-    });
-
-    bindTap($("#fabTargets"), () => {
-      setView("admin");
-      const idx = Storage.get("RCF_FILE_INDEX", null);
-      const r = generateTargetMap(idx);
-      uiMsg("#scanOut", r.ok ? `✅ Target Map OK\ncount=${r.map.meta.count}\nsource=${r.map.meta.source}\ncreatedAt=${r.map.meta.createdAt}` : ("❌ " + (r.err || "")));
-      card && card.classList.remove("open");
-    });
   }
 
-  // -----------------------------
+  // =========================================================
   // Boot hydrate
-  // -----------------------------
+  // =========================================================
   function hydrateUIFromState() {
     refreshLogsViews();
     renderAppsList();
@@ -2518,28 +2191,27 @@
     populateTargetsDropdown(true);
   }
 
+  // =========================================================
+  // SAFE INIT
+  // =========================================================
   async function safeInit() {
     try {
       Stability.install();
-
-      // ✅ injeta compact CSS antes de render
       injectCompactCSSOnce();
 
       renderShell();
       bindUI();
       hydrateUIFromState();
 
-      installGuardsOnce();
-
-      // ✅ ENGINE init (não mexe em UI)
+      // Engine hook (não quebra se não existir)
       try { window.RCF_ENGINE?.init?.({ State, Storage, Logger }); Logger.write("engine:", "init ok ✅"); }
       catch (e) { Logger.write("engine init err:", e?.message || e); }
 
-      // ✅ P1: NÃO registrar SW duplicado aqui (index.html já registra).
+      // não força SW duplicado (mas tenta auto-fix)
       const swr = await swCheckAutoFix();
       if (!swr.ok) Logger.write("sw warn:", swr.status, swr.detail, swr.err ? ("err=" + swr.err) : "");
 
-      Logger.write("RCF app.js init ok — mode:", State.cfg.mode);
+      Logger.write("RCF V8 init ok — mode:", State.cfg.mode);
       safeSetStatus("OK ✅");
     } catch (e) {
       const msg = (e?.message || e);
