@@ -1,3 +1,4 @@
+/* === RCF_RANGE_START file:/app/js/core/diagnostics.js === */
 /* RCF — /app/js/core/diagnostics.js (V7.1 STABILITY CHECK) — PADRÃO
    Patch mínimo:
    - Não dar FAIL falso no CLICK CHECK (depende da view atual)
@@ -154,7 +155,10 @@
 
     try {
       const keys = await caches.keys();
-      items.push(ok("SW_CACHE_KEYS", `keys=${keys.length} [${keys.join(", ").slice(0, 120)}${keys.join(", ").length > 120 ? "..." : ""}]`));
+      items.push(ok(
+        "SW_CACHE_KEYS",
+        `keys=${keys.length} [${keys.join(", ").slice(0, 120)}${keys.join(", ").length > 120 ? "..." : ""}]`
+      ));
     } catch (e) {
       items.push(warn("SW_CACHE_KEYS", e?.message || String(e)));
     }
@@ -342,3 +346,4 @@
 
   log("ok", "core/diagnostics.js ready ✅ (v7.1)");
 })();
+/* === RCF_RANGE_END file:/app/js/core/diagnostics.js === */
