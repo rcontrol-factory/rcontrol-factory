@@ -690,3 +690,16 @@ input[type="checkbox"]{
 .view-logs #logsViewBox{
   display:block !important;
 }
+body::before{
+  content:"CSS NOVO CARREGOU ✅";
+  position: fixed;
+  top: 6px;
+  left: 6px;
+  z-index: 99999999;
+  background: rgba(0,0,0,.7);
+  border: 1px solid rgba(255,255,255,.2);
+  color: #fff;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font: 12px/1.2 system-ui;
+}
