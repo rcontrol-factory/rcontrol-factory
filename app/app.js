@@ -1,22 +1,9 @@
-/* RControl Factory — app.js (V7.1 + FASE A REAL SCAN/TARGET/INJECT + PADRÃO: admin.github.js separado)
-   - ✅ PADRÃO: GitHub Admin UI fica em /app/js/admin.github.js (remove duplicidade do card GitHub no app.js)
-   - ✅ FIX: window.RCF.state BEFORE init (timing)
-   - ✅ FASE A: scanFactoryFiles + generateTargetMap + injectorEngine (SAFE)
-   - Inventory REAL: A (VFS runtime) -> B (mother_bundle local) -> C (DOM anchors only)
-   - ✅ FIX: SW stability vira AUTO-FIX + WARN (não derruba RCF_STABLE por timing)
-   - ✅ FIX: Injector funciona sem VFS runtime via Overrides VFS (localStorage)
-   - ✅ FIX CRÍTICO iOS: bindTap NÃO dispara 2x
-   - ✅ FIX: trava reentrada do Update From GitHub (evita TIMEOUT em put(/index.html))
-   - ✅ FIX CP1/CP2/CP3: scan em cascata real (A->B->C), target map garante >=2, dropdown atualiza + auto-select
-   - ✅ PATCH: Scan A não “mente” quando só existem overrides
-   - ✅ PATCH: fallback de targets usa /index.html primeiro (bundle real)
-   - ✅ PATCH: SW register usa ./sw.js + scope ./ (Pages/subpath safe)
-   - ✅ PATCH: fetch do bundle resolve com baseURI (subpath safe)
-   - ✅ PATCH: mother_bundle suporta files como ARRAY [{path,content}] e como OBJETO {"/p":"content"}
-
-   PATCHES APLICADOS NESTA VERSÃO:
-   - (P1) safeInit: NÃO registra SW de novo (evita duplicidade com index.html); usa swCheckAutoFix()
-   - (P2) scanFactoryFiles: runtime vfs chain NÃO usa window.RCF_VFS_OVERRIDES (isso é RPC, não FS)
+/* RControl Factory — app.js (V7.2 PADRÃO) — UI COMPACT iPhone + Header/Abas menores + SEM “boot panel” duplicado
+   - ✅ Mantém TODA a lógica V7.1 (scan/targets/inject/mãe/etc)
+   - ✅ UI Compact REAL via CSS injetado aqui (não depende do styles.css / cache)
+   - ✅ Topo mais baixo + abas em 1 linha com scroll (economiza tela)
+   - ✅ Pre/Logs/Textareas com altura máxima (não “engole” a tela)
+   - ✅ NÃO cria “boot panel” aqui (deixa o pill/boot do index.html que você curte)
 */
 
 (() => {
@@ -57,6 +44,97 @@
     try {
       const el = $("#statusText");
       if (el) el.textContent = String(txt || "");
+    } catch {}
+  }
+
+  // -----------------------------
+  // ✅ UI COMPACT (iPhone) — força layout menor independente do styles.css
+  // -----------------------------
+  const UI = {
+    brandTitle: "RCF", // ✅ aqui você escolhe: "RCF" / "Factory" / "RCFactory"
+    brandSubtitle: "Factory interna • PWA • Offline-first",
+    compactEnabled: true
+  };
+
+  function injectCompactCSSOnce() {
+    try {
+      if (!UI.compactEnabled) return;
+      if (document.getElementById("rcfCompactCss")) return;
+
+      const css = `
+/* ========= RCF COMPACT PATCH (mobile-first) ========= */
+:root { --rcf-compact: 1; }
+
+/* topo mais baixo */
+#rcfRoot .topbar{ padding: 8px 10px !important; }
+#rcfRoot .brand{ gap: 10px !important; }
+#rcfRoot .brand .title{ font-size: 18px !important; line-height: 1.15 !important; letter-spacing:.2px; }
+#rcfRoot .brand .subtitle{ font-size: 12px !important; opacity:.82 !important; }
+#rcfRoot .status-pill{ transform: scale(.92); transform-origin: right center; }
+
+/* abas: 1 linha com scroll horizontal (economiza tela) */
+#rcfRoot .tabs{
+  display:flex !important;
+  gap: 8px !important;
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
+  -webkit-overflow-scrolling: touch !important;
+  padding: 6px 0 2px !important;
+  margin-top: 8px !important;
+  scrollbar-width: none !important;
+}
+#rcfRoot .tabs::-webkit-scrollbar{ display:none !important; }
+#rcfRoot .tabs .tab{
+  flex: 0 0 auto !important;
+  min-width: 96px !important;
+  padding: 10px 12px !important;
+  font-size: 13px !important;
+  border-radius: 999px !important;
+}
+
+/* cards: menos padding/margem */
+#rcfRoot .container{ padding-top: 10px !important; }
+#rcfRoot .card{ padding: 12px !important; border-radius: 14px !important; }
+#rcfRoot .card h1{ font-size: 24px !important; margin: 0 0 10px !important; }
+#rcfRoot .card h2{ font-size: 18px !important; margin: 10px 0 8px !important; }
+
+/* rows: menos altura */
+#rcfRoot .row{ gap: 10px !important; }
+#rcfRoot .btn{ padding: 10px 12px !important; font-size: 13px !important; border-radius: 999px !important; }
+#rcfRoot .btn.small{ padding: 8px 10px !important; font-size: 12px !important; }
+#rcfRoot input, #rcfRoot select, #rcfRoot textarea{ font-size: 14px !important; }
+
+/* PRE/LOGS: não pode dominar a tela */
+#rcfRoot pre.mono{ max-height: 24vh !important; overflow:auto !important; -webkit-overflow-scrolling: touch !important; }
+#rcfRoot pre.mono.small{ max-height: 20vh !important; }
+#rcfRoot #logsBox, #rcfRoot #logsOut, #rcfRoot #logsViewBox, #rcfRoot #injLog{
+  max-height: 22vh !important; overflow:auto !important; -webkit-overflow-scrolling: touch !important;
+}
+
+/* injector: textarea e preview mais compactos */
+#rcfRoot #injPayload{ max-height: 22vh !important; }
+#rcfRoot #diffOut{ max-height: 20vh !important; }
+
+/* tools drawer: não “gigante” */
+#rcfRoot .tools .tools-body pre{ max-height: 28vh !important; }
+
+/* iPhone: reduz ainda mais */
+@media (max-width: 520px){
+  #rcfRoot .brand .title{ font-size: 17px !important; }
+  #rcfRoot .brand .subtitle{ font-size: 11px !important; }
+  #rcfRoot .tabs .tab{ min-width: 90px !important; padding: 9px 11px !important; }
+  #rcfRoot .card{ padding: 10px !important; }
+  #rcfRoot pre.mono{ max-height: 20vh !important; }
+}
+/* ========= /RCF COMPACT PATCH ========= */
+      `.trim();
+
+      const st = document.createElement("style");
+      st.id = "rcfCompactCss";
+      st.textContent = css;
+      document.head.appendChild(st);
+
+      try { window.RCF_LOGGER?.push?.("OK", "ui_compact: injected ✅"); } catch {}
     } catch {}
   }
 
@@ -234,14 +312,14 @@
   // -----------------------------
   function bindTap(el, fn) {
     if (!el) return;
-    if (el.__rcf_bound__) return;         // ✅ evita bind duplicado
+    if (el.__rcf_bound__) return;
     el.__rcf_bound__ = true;
 
     let last = 0;
 
     const handler = (ev) => {
       const t = Date.now();
-      if ((t - last) < 350) return;        // ✅ dedupe PARA QUALQUER EVENTO
+      if ((t - last) < 350) return;
       last = t;
 
       try {
@@ -259,7 +337,6 @@
       el.style.webkitTapHighlightColor = "transparent";
     } catch {}
 
-    // ✅ iOS: se PointerEvent existe, usa SÓ pointerup (não adiciona touchend junto)
     if (window.PointerEvent) {
       el.addEventListener("pointerup", handler, { passive: false });
     } else {
@@ -285,7 +362,7 @@
     Storage.set("pending", State.pending);
   }
 
-  // ✅ expõe RCF.state ANTES do init (corrige timing)
+  // ✅ expõe RCF.state ANTES do init
   window.RCF = window.RCF || {};
   window.RCF.state = State;
   window.RCF.log = (...a) => Logger.write(...a);
@@ -362,17 +439,17 @@
           <div class="brand">
             <div class="dot"></div>
             <div class="brand-text">
-              <div class="title">RControl Factory</div>
-              <div class="subtitle">Factory interna • PWA • Offline-first</div>
+              <div class="title">${escapeHtml(UI.brandTitle)}</div>
+              <div class="subtitle">${escapeHtml(UI.brandSubtitle)}</div>
             </div>
             <div class="spacer"></div>
-            <button class="btn small" id="btnOpenTools" type="button">⚙️</button>
+            <button class="btn small" id="btnOpenTools" type="button" aria-label="Ferramentas">⚙️</button>
             <div class="status-pill" id="statusPill" style="margin-left:10px">
               <span class="ok" id="statusText">OK ✅</span>
             </div>
           </div>
 
-          <nav class="tabs">
+          <nav class="tabs" aria-label="Navegação">
             <button class="tab" data-view="dashboard" type="button">Dashboard</button>
             <button class="tab" data-view="newapp" type="button">New App</button>
             <button class="tab" data-view="editor" type="button">Editor</button>
@@ -1683,12 +1760,6 @@
       return { ok: false };
     }
 
-    if (!pre.t || !pre.t.targetId) {
-      uiMsg("#diffOut", "❌ target inválido");
-      Logger.write("apply:", "FAIL target inválido");
-      return { ok: false };
-    }
-
     InjectState.lastSnapshot = {
       path: pre.t.path,
       oldText: pre.oldText,
@@ -2058,18 +2129,19 @@
   async function safeInit() {
     try {
       Stability.install();
+
+      // ✅ injeta compact CSS antes de render
+      injectCompactCSSOnce();
+
       renderShell();
       bindUI();
       hydrateUIFromState();
 
       installGuardsOnce();
 
-      // RCF_RANGE:START SAFEINIT_SW_AUTOFIX
       // ✅ P1: NÃO registrar SW duplicado aqui (index.html já registra).
-      // Apenas checar e auto-fixar se necessário.
       const swr = await swCheckAutoFix();
       if (!swr.ok) Logger.write("sw warn:", swr.status, swr.detail, swr.err ? ("err=" + swr.err) : "");
-      // RCF_RANGE:END SAFEINIT_SW_AUTOFIX
 
       Logger.write("RCF app.js init ok — mode:", State.cfg.mode);
       safeSetStatus("OK ✅");
@@ -2086,131 +2158,4 @@
     safeInit();
   }
 
-})();
-/* RCF — Floating Boot Panel Controller (SAFE) */
-(function(){
-  try{
-    if (window.__RCF_BOOT_PANEL__) return;
-    window.__RCF_BOOT_PANEL__ = true;
-
-    const LS_KEY = "rcf:bootpanel:open";
-
-    function el(tag, attrs={}, html=""){
-      const e = document.createElement(tag);
-      Object.entries(attrs).forEach(([k,v])=>{
-        if(k==="class") e.className = v;
-        else if(k==="style") e.setAttribute("style", v);
-        else e.setAttribute(k, v);
-      });
-      if (html) e.innerHTML = html;
-      return e;
-    }
-
-    // --- UI: FAB
-    const fab = el("div", { id:"rcfBootFab" });
-    fab.innerHTML = `<span class="dot"></span><span class="txt">RCF (boot)</span>`;
-    document.body.appendChild(fab);
-
-    // --- UI: PANEL
-    const panel = el("div", { id:"rcfBootPanel" });
-    panel.innerHTML = `
-      <div class="hdr">
-        <div class="title">RCF • BOOT / LOGS</div>
-        <div class="btns">
-          <button type="button" data-act="copy">Copy</button>
-          <button type="button" data-act="reload">Reload</button>
-          <button type="button" data-act="hide">Hide</button>
-        </div>
-      </div>
-      <div class="body" id="rcfBootBody"></div>
-    `;
-    document.body.appendChild(panel);
-
-    const body = panel.querySelector("#rcfBootBody");
-
-    function setOpen(v){
-      panel.classList.toggle("open", !!v);
-      localStorage.setItem(LS_KEY, v ? "1" : "0");
-    }
-
-    // default: fechado (minimizadinho)
-    setOpen(localStorage.getItem(LS_KEY) === "1");
-
-    fab.addEventListener("click", ()=> setOpen(!panel.classList.contains("open")));
-
-    panel.addEventListener("click", (ev)=>{
-      const b = ev.target.closest("button[data-act]");
-      if(!b) return;
-      const act = b.getAttribute("data-act");
-      if(act==="hide") setOpen(false);
-      if(act==="reload") location.reload();
-      if(act==="copy"){
-        const t = body.innerText || "";
-        try{
-          navigator.clipboard.writeText(t);
-        }catch(_e){
-          // fallback iOS
-          const ta = el("textarea", {style:"position:fixed;left:-9999px;top:-9999px;"});
-          ta.value = t;
-          document.body.appendChild(ta);
-          ta.select();
-          document.execCommand("copy");
-          ta.remove();
-        }
-      }
-    });
-
-    // --- LOG PIPE: captura logs e manda pro painel
-    const MAX_LINES = 250;
-    const origLog = console.log;
-    const origWarn = console.warn;
-    const origErr = console.error;
-
-    function addLine(prefix, args){
-      const line = `${prefix} ${args.map(a=>{
-        try{
-          if (typeof a === "string") return a;
-          return JSON.stringify(a);
-        }catch(_e){
-          return String(a);
-        }
-      }).join(" ")}`.trim();
-
-      // evita lixo de encoding gigante
-      if (line.includes("Ãƒ") || line.includes("Â")) {
-        // se vier "mojibake", a gente só não joga isso pro UI pra não destruir a tela
-        // (fica no console original se precisar)
-      } else {
-        body.textContent += (body.textContent ? "\n" : "") + line;
-
-        // corta linhas antigas
-        const lines = body.textContent.split("\n");
-        if (lines.length > MAX_LINES) {
-          body.textContent = lines.slice(lines.length - MAX_LINES).join("\n");
-        }
-
-        // auto-scroll só se painel estiver aberto
-        if (panel.classList.contains("open")) {
-          body.scrollTop = body.scrollHeight;
-        }
-      }
-    }
-
-    console.log = function(...args){ try{ addLine("LOG:", args); }catch(_e){} return origLog.apply(console, args); };
-    console.warn = function(...args){ try{ addLine("WARN:", args); }catch(_e){} return origWarn.apply(console, args); };
-    console.error = function(...args){ try{ addLine("ERR:", args); }catch(_e){} return origErr.apply(console, args); };
-
-    // --- mata qualquer "Log:" inline que esteja sendo injetado na UI
-    function killInlineLogs(){
-      const bad = document.querySelectorAll(
-        ".rcf-inline-log,[data-rcf-inline-log],#adminLogBox,.view-admin .log,.view-admin [data-log],.view-admin pre.log"
-      );
-      bad.forEach(n=>{ n.style.display="none"; });
-    }
-    setInterval(killInlineLogs, 800);
-
-  }catch(e){
-    // nunca derruba o app
-    console.warn("RCF boot panel failed:", e);
-  }
 })();
