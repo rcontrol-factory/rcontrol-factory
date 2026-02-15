@@ -1,3 +1,4 @@
+/* === RCF_RANGE_START file:/app/js/core/commands.js === */
 /* core/commands.js
    RControl Factory — Command Router (Replit-like)
    - foco: Factory primeiro (UI + comandos + patch pipeline)
@@ -27,7 +28,7 @@
   function setStatus(text, ok = true) {
     // tenta usar status pill se existir, senão só loga
     try {
-      const el = $("#statusPillText") || $("#statusText") || $(".status-pill .ok");
+      const el = $("#statusText") || $("#statusPillText") || $(".status-pill .ok");
       if (el) el.textContent = text;
       const pill = $(".status-pill");
       if (pill) {
@@ -37,9 +38,10 @@
   }
 
   function logLine(line) {
+    // ✅ usa o logger do teu runtime (app.js expõe window.RCF_LOGGER)
     try {
-      if (window.Logger && typeof window.Logger.log === "function") {
-        window.Logger.log(line);
+      if (window.RCF_LOGGER && typeof window.RCF_LOGGER.push === "function") {
+        window.RCF_LOGGER.push("info", String(line));
         return;
       }
     } catch {}
@@ -520,3 +522,4 @@ Atalhos:
   setStatus("OK ✅", true);
 
 })();
+/* === RCF_RANGE_END file:/app/js/core/commands.js === */
