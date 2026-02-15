@@ -1,38 +1,59 @@
 /* =========================================================
-  RControl Factory — app/js/core/storage.js (V2 FULL)
-  - Sem "export" (compatível com <script> normal)
-  - localStorage wrapper + IndexedDB KV simples
+  RControl Factory — app/js/core/storage.js (V2.1 SAFE)
+  - localStorage wrapper
+  - IndexedDB KV simples (com fallback automático)
   - Prefixo padrão: rcf:
-  - ✅ adiciona: put/getAsync (IDB) para bundle_local e afins
+  - iOS/Safari robusto
 ========================================================= */
 (function () {
   "use strict";
 
   const PREFIX = "rcf:";
 
-  // ----------------------------
-  // IndexedDB KV (simples)
-  // ----------------------------
   const IDB_DB   = "RCF_DB";
   const IDB_VER  = 1;
   const IDB_STORE = "kv";
 
+  let __IDB_DB__ = null;
+  let __IDB_OPENING__ = null;
+
+  function log(level, msg) {
+    try { window.RCF_LOGGER?.push?.(level, msg); } catch {}
+  }
+
+  // --------------------------------------------------------
+  // IDB OPEN (singleton + safe)
+  // --------------------------------------------------------
   function idbOpen() {
-    return new Promise((resolve, reject) => {
+    if (__IDB_DB__) return Promise.resolve(__IDB_DB__);
+    if (__IDB_OPENING__) return __IDB_OPENING__;
+
+    __IDB_OPENING__ = new Promise((resolve, reject) => {
       try {
         const req = indexedDB.open(IDB_DB, IDB_VER);
+
         req.onupgradeneeded = () => {
           const db = req.result;
           if (!db.objectStoreNames.contains(IDB_STORE)) {
             db.createObjectStore(IDB_STORE);
           }
         };
-        req.onsuccess = () => resolve(req.result);
-        req.onerror = () => reject(req.error || new Error("IDB open failed"));
+
+        req.onsuccess = () => {
+          __IDB_DB__ = req.result;
+          resolve(__IDB_DB__);
+        };
+
+        req.onerror = () => {
+          reject(req.error || new Error("IDB open failed"));
+        };
+
       } catch (e) {
         reject(e);
       }
     });
+
+    return __IDB_OPENING__;
   }
 
   async function idbGet(key) {
@@ -43,7 +64,7 @@
         const st = tx.objectStore(IDB_STORE);
         const rq = st.get(key);
         rq.onsuccess = () => resolve(rq.result);
-        rq.onerror = () => reject(rq.error || new Error("IDB get failed"));
+        rq.onerror = () => reject(rq.error);
       } catch (e) {
         reject(e);
       }
@@ -58,7 +79,7 @@
         const st = tx.objectStore(IDB_STORE);
         const rq = st.put(val, key);
         rq.onsuccess = () => resolve(true);
-        rq.onerror = () => reject(rq.error || new Error("IDB put failed"));
+        rq.onerror = () => reject(rq.error);
       } catch (e) {
         reject(e);
       }
@@ -73,14 +94,19 @@
         const st = tx.objectStore(IDB_STORE);
         const rq = st.delete(key);
         rq.onsuccess = () => resolve(true);
-        rq.onerror = () => reject(rq.error || new Error("IDB del failed"));
+        rq.onerror = () => reject(rq.error);
       } catch (e) {
         reject(e);
       }
     });
   }
 
+  // --------------------------------------------------------
+  // STORAGE API
+  // --------------------------------------------------------
+
   const Storage = {
+
     prefix: PREFIX,
 
     get(key, fallback) {
@@ -96,7 +122,9 @@
     set(key, value) {
       try {
         localStorage.setItem(this.prefix + key, JSON.stringify(value));
-      } catch {}
+      } catch (e) {
+        log("warn", "localStorage.set fail: " + e?.message);
+      }
     },
 
     del(key) {
@@ -113,44 +141,65 @@
     },
 
     rawSet(fullKey, value) {
-      try { localStorage.setItem(fullKey, String(value)); } catch {}
+      try { localStorage.setItem(fullKey, String(value)); }
+      catch {}
     },
 
-    // ✅ API esperada pelo self-update (persistência "bundle_local")
-    // put/getAsync/delAsync gravam no IndexedDB (KV)
+    // ----------------------------------------------------
+    // Async KV (IDB com fallback automático)
+    // ----------------------------------------------------
+
     async put(key, value) {
+      const fullKey = this.prefix + key;
+
       try {
-        const fullKey = this.prefix + key;
         await idbPut(fullKey, value);
-        // meta simples pra debug
-        this.rawSet(this.prefix + key + ":meta", Date.now());
         return true;
-      } catch {
-        return false;
+      } catch (e) {
+        log("warn", "IDB put falhou, fallback localStorage");
+        try {
+          localStorage.setItem(fullKey, JSON.stringify(value));
+          return true;
+        } catch {
+          return false;
+        }
       }
     },
 
     async getAsync(key, fallback) {
+      const fullKey = this.prefix + key;
+
       try {
-        const fullKey = this.prefix + key;
         const v = await idbGet(fullKey);
-        return v == null ? fallback : v;
+        if (v == null) throw new Error("IDB null");
+        return v;
       } catch {
-        return fallback;
+        try {
+          const v = localStorage.getItem(fullKey);
+          return v == null ? fallback : JSON.parse(v);
+        } catch {
+          return fallback;
+        }
       }
     },
 
     async delAsync(key) {
+      const fullKey = this.prefix + key;
+
       try {
-        const fullKey = this.prefix + key;
         await idbDel(fullKey);
-        try { localStorage.removeItem(this.prefix + key + ":meta"); } catch {}
         return true;
       } catch {
-        return false;
+        try {
+          localStorage.removeItem(fullKey);
+          return true;
+        } catch {
+          return false;
+        }
       }
     }
   };
 
   window.RCF_STORAGE = Storage;
+
 })();
