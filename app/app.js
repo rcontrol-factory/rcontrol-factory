@@ -1,9 +1,9 @@
-/* RControl Factory — /app/app.js — V8.0 PADRÃO (reestruturado)
-   - Core organizado por módulos internos (sem mudar “o que faz”, só “como está montado”)
-   - Fix real do erro do Safari: comando build fica dentro do Agent.route (sem variável out fantasma)
-   - Mantém: UI + Storage + Logger + Stability + Apps/Editor + Fase A (Scan/Targets/Injector SAFE)
-   - Mantém: SW tools + PIN + Diagnostics + Engine init hook
-*/
+/* ===========================
+   RControl Factory — /app/app.js — V8.0 PADRÃO (PATCH MINIMO: FAB + remove status-pill)
+   - Mantém tudo do seu V8.0
+   - Remove status-pill do topo (sem quebrar safeSetStatus)
+   - Adiciona FAB (bolinha) + mini painel de ações
+   =========================== */
 
 (() => {
   "use strict";
@@ -40,6 +40,8 @@
 
   function safeSetStatus(txt) {
     try {
+      // PATCH: statusText não fica mais na pill do topo.
+      // Agora existe "statusText" no Tools Drawer (mais discreto) e opcional no painel do FAB.
       const el = $("#statusText");
       if (el) el.textContent = String(txt || "");
     } catch {}
@@ -295,7 +297,9 @@
 #rcfRoot .brand{ gap: 10px !important; }
 #rcfRoot .brand .title{ font-size: 18px !important; line-height: 1.15 !important; letter-spacing:.2px; }
 #rcfRoot .brand .subtitle{ font-size: 12px !important; opacity:.82 !important; }
-#rcfRoot .status-pill{ transform: scale(.92); transform-origin: right center; }
+
+/* PATCH: remover pill do topo (sem remover a função safeSetStatus) */
+#rcfRoot .status-pill{ display:none !important; }
 
 #rcfRoot .tabs{
   display:flex !important;
@@ -334,6 +338,63 @@
 #rcfRoot #injPayload{ max-height: 22vh !important; }
 #rcfRoot #diffOut{ max-height: 20vh !important; }
 #rcfRoot .tools .tools-body pre{ max-height: 28vh !important; }
+
+/* PATCH: FAB (bolinha) + painel */
+#rcfFab{
+  position:fixed !important;
+  right: 14px !important;
+  bottom: 14px !important;
+  width: 54px !important;
+  height: 54px !important;
+  border-radius: 999px !important;
+  border: 1px solid rgba(255,255,255,.16) !important;
+  background: rgba(20,28,44,.92) !important;
+  color: #fff !important;
+  font-size: 20px !important;
+  font-weight: 900 !important;
+  box-shadow: 0 10px 30px rgba(0,0,0,.35) !important;
+  z-index: 9999 !important;
+}
+
+#rcfFabPanel{
+  position:fixed !important;
+  right: 14px !important;
+  bottom: 78px !important;
+  width: 220px !important;
+  border-radius: 14px !important;
+  border: 1px solid rgba(255,255,255,.12) !important;
+  background: rgba(12,16,26,.96) !important;
+  color:#fff !important;
+  padding: 10px !important;
+  z-index: 9999 !important;
+  display:none !important;
+}
+#rcfFabPanel.open{ display:block !important; }
+
+#rcfFabPanel .fab-title{
+  font-weight:900 !important;
+  margin-bottom:8px !important;
+  display:flex !important;
+  align-items:center !important;
+  justify-content:space-between !important;
+  gap:10px !important;
+}
+#rcfFabPanel .fab-status{
+  font-size:12px !important;
+  opacity:.85 !important;
+  white-space:nowrap !important;
+  max-width: 120px !important;
+  overflow:hidden !important;
+  text-overflow:ellipsis !important;
+}
+#rcfFabPanel .fab-row{
+  display:flex !important;
+  gap:8px !important;
+  flex-wrap:wrap !important;
+}
+#rcfFabPanel .fab-row .btn{
+  flex: 1 1 auto !important;
+}
 
 @media (max-width: 520px){
   #rcfRoot .brand .title{ font-size: 17px !important; }
@@ -420,6 +481,8 @@
             </div>
             <div class="spacer"></div>
             <button class="btn small" id="btnOpenTools" type="button" aria-label="Ferramentas">⚙️</button>
+
+            <!-- PATCH: pill removida do topo (o CSS esconde e o statusText existe em outro lugar) -->
             <div class="status-pill" id="statusPill" style="margin-left:10px">
               <span class="ok" id="statusText">OK ✅</span>
             </div>
@@ -631,6 +694,10 @@
         <div class="tools" id="toolsDrawer">
           <div class="tools-head">
             <div style="font-weight:800">Ferramentas</div>
+
+            <!-- PATCH: status aqui (discreto) -->
+            <div id="statusText" style="margin-left:auto;margin-right:10px;opacity:.85;font-size:12px;white-space:nowrap">OK ✅</div>
+
             <button class="btn small" id="btnCloseTools" type="button">Fechar</button>
           </div>
           <div class="tools-body">
@@ -647,6 +714,23 @@
             </div>
 
             <pre class="mono small" id="logsBox">Pronto.</pre>
+          </div>
+        </div>
+
+        <!-- PATCH: FAB + painel -->
+        <button id="rcfFab" type="button" aria-label="Ações rápidas">⚡</button>
+        <div id="rcfFabPanel" role="dialog" aria-label="Ações rápidas">
+          <div class="fab-title">
+            <div>RCF</div>
+            <div class="fab-status" id="fabStatus">OK ✅</div>
+          </div>
+          <div class="fab-row">
+            <button class="btn ghost" id="btnFabTools" type="button">Ferramentas</button>
+            <button class="btn ghost" id="btnFabAdmin" type="button">Admin</button>
+          </div>
+          <div class="fab-row" style="margin-top:8px">
+            <button class="btn ghost" id="btnFabLogs" type="button">Logs</button>
+            <button class="btn danger" id="btnFabClose" type="button">Fechar</button>
           </div>
         </div>
 
@@ -679,6 +763,28 @@
     if (!d) return;
     if (open) d.classList.add("open");
     else d.classList.remove("open");
+  }
+
+  // PATCH: FAB open/close
+  function openFabPanel(open) {
+    const p = $("#rcfFabPanel");
+    if (!p) return;
+    if (open) p.classList.add("open");
+    else p.classList.remove("open");
+  }
+
+  function toggleFabPanel() {
+    const p = $("#rcfFabPanel");
+    if (!p) return;
+    p.classList.toggle("open");
+  }
+
+  function syncFabStatusText() {
+    try {
+      const st = $("#statusText")?.textContent || "";
+      const fab = $("#fabStatus");
+      if (fab) fab.textContent = String(st || "OK ✅");
+    } catch {}
   }
 
   // =========================================================
@@ -838,7 +944,11 @@
     Logger.write("file saved:", app.slug, fname);
   }
 
-  // =========================================================
+  /* ==========
+     STOP AQUI — PARTE 1/3
+     A PRÓXIMA PARTE COMEÇA EM:  // =========================================================
+                                // PIN
+     ========== */  // =========================================================
   // PIN
   // =========================================================
   const Pin = {
@@ -1074,7 +1184,11 @@
     return { stable, pass, fail, report, overlay, microtests: mt, css, sw: swr };
   }
 
-  // =========================================================
+  /* ==========
+     STOP AQUI — PARTE 2/3
+     A PRÓXIMA PARTE COMEÇA EM:  // =========================================================
+                                // FASE A — Scan / Targets / Injector SAFE
+     ========== */  // =========================================================
   // FASE A — Scan / Targets / Injector SAFE
   // =========================================================
   function simpleHash(str) {
@@ -1790,12 +1904,15 @@
       // FASE A
       if (lower === "scan") {
         safeSetStatus("Scan…");
+        syncFabStatusText();
         try {
           const r = await this._scan();
           safeSetStatus("OK ✅");
+          syncFabStatusText();
           return this._out(r);
         } catch (e) {
           safeSetStatus("ERRO ❌");
+          syncFabStatusText();
           return this._out("❌ scan falhou: " + (e?.message || e));
         }
       }
@@ -1858,15 +1975,19 @@
       if (lower === "inj apply") {
         this._setCmdUI(this._mem.inj.mode, this._mem.inj.targetId, this._mem.inj.payload);
         safeSetStatus("Apply…");
+        syncFabStatusText();
         const r = await injectorApplySafe();
         safeSetStatus("OK ✅");
+        syncFabStatusText();
         return this._out(r.ok ? "✅ APPLY OK (SAFE)" : ("❌ APPLY FAIL" + (r.rolledBack ? " (rollback feito)" : "")));
       }
 
       if (lower === "inj rollback") {
         safeSetStatus("Rollback…");
+        syncFabStatusText();
         const r = await injectorRollback();
         safeSetStatus("OK ✅");
+        syncFabStatusText();
         return this._out(r.ok ? "✅ rollback ok" : "❌ rollback falhou");
       }
 
@@ -1911,8 +2032,27 @@
   // =========================================================
   function bindUI() {
     $$("[data-view]").forEach(btn => bindTap(btn, () => setView(btn.getAttribute("data-view"))));
-    bindTap($("#btnOpenTools"), () => openTools(true));
+    bindTap($("#btnOpenTools"), () => { openTools(true); openFabPanel(false); });
     bindTap($("#btnCloseTools"), () => openTools(false));
+
+    // PATCH: FAB
+    bindTap($("#rcfFab"), () => { toggleFabPanel(); syncFabStatusText(); });
+    bindTap($("#btnFabClose"), () => openFabPanel(false));
+    bindTap($("#btnFabTools"), () => { openFabPanel(false); openTools(true); });
+    bindTap($("#btnFabAdmin"), () => { openFabPanel(false); setView("admin"); });
+    bindTap($("#btnFabLogs"), () => { openFabPanel(false); setView("logs"); });
+
+    // fecha painel se tocar fora
+    document.addEventListener("pointerdown", (ev) => {
+      try {
+        const p = $("#rcfFabPanel");
+        if (!p || !p.classList.contains("open")) return;
+        const fab = $("#rcfFab");
+        const t = ev.target;
+        if (p.contains(t) || (fab && fab.contains(t))) return;
+        openFabPanel(false);
+      } catch {}
+    }, { passive: true });
 
     bindTap($("#btnCreateNewApp"), () => setView("newapp"));
     bindTap($("#btnOpenEditor"), () => setView("editor"));
@@ -1921,7 +2061,8 @@
       const payload = JSON.stringify({ apps: State.apps, cfg: State.cfg, active: State.active }, null, 2);
       try { navigator.clipboard.writeText(payload); } catch {}
       safeSetStatus("Backup copiado ✅");
-      setTimeout(() => safeSetStatus("OK ✅"), 800);
+      syncFabStatusText();
+      setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 800);
       Logger.write("backup copied");
     });
 
@@ -1939,6 +2080,7 @@
       uiMsg("#newAppOut", r.msg);
       if (r.ok) { setView("editor"); safeSetStatus("OK ✅"); }
       else safeSetStatus("ERRO ❌");
+      syncFabStatusText();
     });
 
     bindTap($("#btnSaveFile"), () => saveFile());
@@ -1962,19 +2104,22 @@
     const doLogsRefresh = () => {
       refreshLogsViews();
       safeSetStatus("Logs ✅");
-      setTimeout(() => safeSetStatus("OK ✅"), 600);
+      syncFabStatusText();
+      setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 600);
     };
     const doLogsClear = () => {
       Logger.clear();
       doLogsRefresh();
       safeSetStatus("Logs limpos ✅");
-      setTimeout(() => safeSetStatus("OK ✅"), 600);
+      syncFabStatusText();
+      setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 600);
     };
     const doLogsCopy = async () => {
       const txt = Logger.getAll().join("\n");
       try { await navigator.clipboard.writeText(txt); } catch {}
       safeSetStatus("Logs copiados ✅");
-      setTimeout(() => safeSetStatus("OK ✅"), 800);
+      syncFabStatusText();
+      setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 800);
     };
 
     bindTap($("#btnLogsRefresh"), doLogsRefresh);
@@ -1993,26 +2138,30 @@
     bindTap($("#btnSwUnregister"), async () => {
       const r = await swUnregisterAll();
       safeSetStatus(r.ok ? `SW unreg: ${r.count} ✅` : "SW unreg ❌");
-      setTimeout(() => safeSetStatus("OK ✅"), 900);
+      syncFabStatusText();
+      setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 900);
     });
 
     bindTap($("#btnSwClearCache"), async () => {
       const r = await swClearCaches();
       safeSetStatus(r.ok ? `Cache: ${r.count} ✅` : "Cache ❌");
-      setTimeout(() => safeSetStatus("OK ✅"), 900);
+      syncFabStatusText();
+      setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 900);
     });
 
     bindTap($("#btnSwRegister"), async () => {
       const r = await swRegister();
       safeSetStatus(r.ok ? "SW ✅" : "SW ❌");
-      setTimeout(() => safeSetStatus("OK ✅"), 900);
+      syncFabStatusText();
+      setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 900);
     });
 
     // Diagnostics actions
     bindTap($("#btnDiagRun"), async () => {
       safeSetStatus("Diag…");
+      syncFabStatusText();
       await runV8StabilityCheck();
-      setTimeout(() => safeSetStatus("OK ✅"), 700);
+      setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 700);
     });
 
     bindTap($("#btnDiagScan"), () => {
@@ -2047,7 +2196,8 @@
     bindTap($("#btnAdminZero"), () => {
       Logger.clear();
       safeSetStatus("Zerado ✅");
-      setTimeout(() => safeSetStatus("OK ✅"), 800);
+      syncFabStatusText();
+      setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 800);
       uiMsg("#adminOut", "✅ Zerado (safe). Logs limpos.");
     });
 
@@ -2124,6 +2274,7 @@
     // FASE A buttons
     bindTap($("#btnScanIndex"), async () => {
       safeSetStatus("Scan…");
+      syncFabStatusText();
       try {
         const idx = await scanFactoryFiles();
         uiMsg("#scanOut", `✅ Scan OK\nsource=${idx.meta.source}\nfiles=${idx.meta.count}\nscannedAt=${idx.meta.scannedAt}`);
@@ -2132,7 +2283,7 @@
         uiMsg("#scanOut", "❌ Scan falhou: " + (e?.message || e));
         Logger.write("scan err:", e?.message || e);
       }
-      setTimeout(() => safeSetStatus("OK ✅"), 700);
+      setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 700);
     });
 
     bindTap($("#btnGenTargets"), () => {
@@ -2155,15 +2306,17 @@
 
     bindTap($("#btnApplyInject"), async () => {
       safeSetStatus("Apply…");
+      syncFabStatusText();
       const ok = await injectorApplySafe();
       Logger.write("apply:", ok && ok.ok ? "OK" : "FAIL", "target=" + String($("#injTarget")?.value || ""));
-      setTimeout(() => safeSetStatus("OK ✅"), 900);
+      setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 900);
     });
 
     bindTap($("#btnRollbackInject"), async () => {
       safeSetStatus("Rollback…");
+      syncFabStatusText();
       await injectorRollback();
-      setTimeout(() => safeSetStatus("OK ✅"), 900);
+      setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 900);
     });
   }
 
@@ -2189,6 +2342,9 @@
     if (pin) uiMsg("#pinOut", "PIN definido ✅");
 
     populateTargetsDropdown(true);
+
+    // PATCH
+    syncFabStatusText();
   }
 
   // =========================================================
@@ -2213,6 +2369,7 @@
 
       Logger.write("RCF V8 init ok — mode:", State.cfg.mode);
       safeSetStatus("OK ✅");
+      syncFabStatusText();
     } catch (e) {
       const msg = (e?.message || e);
       Logger.write("FATAL init:", msg);
