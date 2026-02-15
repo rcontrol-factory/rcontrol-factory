@@ -1,15 +1,12 @@
-/* RControl Factory — /app/js/core/mother_selfupdate.js (PADRÃO) — v2.2b
-   PATCH MÍNIMO:
-   - Compat total: salva bundle normalizado em múltiplas chaves (scan antigo não fica files=0)
-   - getMotherBundleLocal() único: lê qualquer chave e normaliza {files:[...]}
-   - Apply/Clear: prefere RCF_VFS_OVERRIDES, fallback RCF_VFS
-   - Mantém getLocalBundleText()/status() (usado no pushMotherBundle)
-   - NÃO mexe no SW
+/* RControl Factory — /app/js/core/mother_selfupdate.js (PADRÃO) — v2.2c
+   PATCH MÍNIMO (sobre v2.2b):
+   - Alias clearOverrides() -> clear() (compat com app.js que chama clearOverrides)
+   - Mantém tudo do v2.2b (compat chaves, normalize, apply/clear via overrides)
 */
 (() => {
   "use strict";
 
-  if (window.RCF_MAE && window.RCF_MAE.__v22b) return;
+  if (window.RCF_MAE && window.RCF_MAE.__v22c) return;
 
   // ✅ chaves padrão + compat antigas
   const LS_BUNDLE_KEY       = "rcf:mother_bundle_local";     // padrão: SEMPRE normalizado {version,ts,files:[...]}
@@ -334,10 +331,16 @@
     throw new Error("Overrides VFS sem clear/clearOverrides()");
   }
 
+  // ✅ alias de compat (seu app.js chama clearOverrides)
+  async function clearOverrides(){
+    return clear();
+  }
+
   window.RCF_MAE = {
-    __v22b: true,
+    __v22c: true,
     updateFromGitHub,
     clear,
+    clearOverrides, // ✅ compat
     status,
     getLocalBundleText,
     // ✅ exposto pra CP1/scan usar (se precisar)
