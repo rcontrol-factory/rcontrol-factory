@@ -6,105 +6,14 @@
   <title>RCF</title>
   <meta name="theme-color" content="#0b1020" />
 
-  <!-- ✅ importante: base relativo pra funcionar em / e em subpath -->
+  <!-- PADRÃO: base relativo (Pages/subpath safe) -->
   <base href="./" />
 
   <link rel="manifest" href="./manifest.json" />
   <link rel="stylesheet" href="./styles.css" />
 
-  <style>
-    /* =========================================================
-      RCF UI PATCH (ROOT /index.html)
-      Objetivo:
-      - parar overflow lateral
-      - compactar topo (nome grande / subtitle)
-      - esconder qualquer boot-panel flutuante (index/app.js)
-      - dar mais área útil pra trabalho no iPhone
-    ========================================================== */
-
-    :root{
-      --rcf-safe-top: env(safe-area-inset-top, 0px);
-      --rcf-safe-bottom: env(safe-area-inset-bottom, 0px);
-      --rcf-safe-left: env(safe-area-inset-left, 0px);
-      --rcf-safe-right: env(safe-area-inset-right, 0px);
-    }
-
-    html, body{
-      width:100%;
-      max-width:100%;
-      overflow-x:hidden !important;
-    }
-    *, *::before, *::after{
-      box-sizing:border-box;
-      max-width:100%;
-    }
-
-    /* garante que os containers não “estiquem” pro lado */
-    #rcfRoot, .container, .views, .view, .card{
-      width:100%;
-      max-width:100%;
-    }
-
-    /* inputs/areas sempre contidos */
-    textarea, input, select, pre{
-      max-width:100%;
-      width:100%;
-    }
-
-    /* ====== header com safe-area ====== */
-    .topbar{
-      padding-top: calc(10px + var(--rcf-safe-top));
-      padding-left: calc(10px + var(--rcf-safe-left));
-      padding-right: calc(10px + var(--rcf-safe-right));
-    }
-
-    /* ====== título menor / sem subtitle ====== */
-    .brand .title{
-      font-size: 16px !important;
-      font-weight: 900 !important;
-      letter-spacing: .2px;
-    }
-    .brand .subtitle{
-      display:none !important;
-    }
-
-    /* troca visual do nome sem mexer no JS (só “apelido”) */
-    .brand .title::after{
-      content:" (RCF)";
-      opacity:.75;
-      font-weight:800;
-    }
-
-    /* ====== tabs em grid no iPhone (melhor uso de espaço) ====== */
-    .tabs{
-      display:flex;
-      flex-wrap:wrap;
-      gap:10px;
-      justify-content:center;
-      width:100%;
-    }
-    .tabs .tab{
-      flex: 1 1 46%;
-      max-width: 48%;
-      padding: 12px 10px !important;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-
-    /* ====== mata QUALQUER boot UI flutuante (index + app.js) ====== */
-    #rcfBootPill, #rcfBootOverlay,
-    #rcfBootFab, #rcfBootPanel{
-      display:none !important;
-    }
-
-    /* logs/outputs: não deixar card estourar a tela */
-    #logsViewBox, #logsOut, #logsBox, #injLog{
-      max-height: 42vh;
-      overflow:auto;
-      -webkit-overflow-scrolling: touch;
-    }
-  </style>
+  <!-- (Opcional) ajuda a ver que o index novo entrou -->
+  <meta name="rcf-index" content="vCLEAN-1" />
 </head>
 
 <body>
@@ -115,16 +24,14 @@
   </div>
 
   <!-- =========================================================
-    BOOT LOADER (sem UI na tela)
-    - carrega módulos em ordem
-    - loga no console e no RCF_LOGGER se existir
-    - registra SW com scope ./ (Pages/subpath safe)
+    BOOT LOADER (CLEAN)
+    - NÃO cria UI/overlay (isso fica no app.js)
+    - NÃO captura logs (logger.js oficial manda pro Storage/UI)
+    - Evita SW register duplicado
   ========================================================== -->
   <script>
-    (function(){
-      function safePush(level, msg){
-        try { window.RCF_LOGGER && window.RCF_LOGGER.push && window.RCF_LOGGER.push(level, msg); } catch(_e){}
-      }
+    (function () {
+      function log(){ try { console.log.apply(console, ["[RCF/index]"].concat([].slice.call(arguments))); } catch(e){} }
 
       function loadScript(src){
         return new Promise((resolve, reject) => {
@@ -138,74 +45,67 @@
       }
 
       async function boot(){
-        try{
-          safePush("BOOT", "index boot: starting…");
-          console.log("BOOT: index boot: starting…");
-          console.log("BOOT: base href =", document.baseURI);
+        log("BOOT: starting… base=", document.baseURI);
 
-          const modules = [
-            "./js/core/logger.js",
-            "./js/core/stability_guard.js",
-            "./js/core/storage.js",
-            "./js/core/github_sync.js",
-            "./js/core/vfs_overrides.js",
-            "./js/core/vfs_shim.js",
-            "./js/core/mother_selfupdate.js",
-            "./js/core/errors.js",
-            "./js/core/risk.js",
-            "./js/core/snapshot.js",
-            "./js/core/selfheal.js",
-            "./js/core/ui_safety.js",
-            "./js/core/ui_compact_outputs.js",
-            "./js/core/ui_bindings.js",
-            "./js/core/diagnostics.js",
-            "./js/core/publish_queue.js",
-            "./js/core/preview_runner.js",
-            "./js/core/policy.js",
-            "./js/core/settings_cleanup.js",
-            "./js/core/injector.js",
-            "./js/admin.github.js"
-          ];
+        const modules = [
+          "./js/core/logger.js",
+          "./js/core/stability_guard.js",
+          "./js/core/storage.js",
+          "./js/core/github_sync.js",
+          "./js/core/vfs_overrides.js",
+          "./js/core/vfs_shim.js",
+          "./js/core/mother_selfupdate.js",
+          "./js/core/errors.js",
+          "./js/core/risk.js",
+          "./js/core/snapshot.js",
+          "./js/core/selfheal.js",
+          "./js/core/ui_safety.js",
+          "./js/core/ui_compact_outputs.js",
+          "./js/core/ui_bindings.js",
+          "./js/core/diagnostics.js",
+          "./js/core/publish_queue.js",
+          "./js/core/preview_runner.js",
+          "./js/core/policy.js",
+          "./js/core/settings_cleanup.js",
+          "./js/core/injector.js",
+          "./js/admin.github.js"
+        ];
 
-          for (const src of modules){
-            try{
-              await loadScript(src);
-              safePush("BOOT", "module loaded ✅ " + src);
-              console.log("BOOT: module loaded ✅", src);
-            }catch(e){
-              safePush("WARN", "module missing/failed ❌ " + src + " :: " + (e.message||e));
-              console.warn("WARN: module missing/failed ❌", src, e && (e.message||e));
-            }
+        for (const src of modules) {
+          try {
+            await loadScript(src);
+            try { window.RCF_LOGGER?.push?.("BOOT", "module loaded ✅ " + src); } catch {}
+            log("module loaded ✅", src);
+          } catch (e) {
+            try { window.RCF_LOGGER?.push?.("WARN", "module missing/failed ❌ " + src + " :: " + (e.message||e)); } catch {}
+            log("module missing/failed ❌", src, (e.message||e));
           }
-
-          try{
-            await loadScript("./app.js");
-            safePush("BOOT", "app.js loaded ✅ ./app.js");
-            console.log("BOOT: app.js loaded ✅ ./app.js");
-          }catch(e){
-            safePush("ERR", "app.js missing/failed ❌ ./app.js :: " + (e.message||e));
-            console.error("ERR: app.js missing/failed ❌ ./app.js ::", e && (e.message||e));
-          }
-
-          // SW register (mantém)
-          try{
-            if ("serviceWorker" in navigator){
-              navigator.serviceWorker.register("./sw.js", { scope: "./" })
-                .then(() => {
-                  safePush("BOOT", "sw register: ok (scope ./)");
-                  console.log("BOOT: sw register: ok (scope ./)");
-                })
-                .catch((e) => {
-                  safePush("WARN", "sw register: fail/ignored :: " + (e && (e.message||e)));
-                  console.warn("WARN: sw register fail/ignored ::", e && (e.message||e));
-                });
-            }
-          }catch(_e){}
-
-        }catch(e){
-          safePush("ERR", "index boot fatal :: " + (e && (e.message||e)));
-          console.error("ERR: index boot fatal ::", e && (e.message||e));
         }
+
+        try {
+          await loadScript("./app.js");
+          try { window.RCF_LOGGER?.push?.("BOOT", "app.js loaded ✅ ./app.js"); } catch {}
+          log("app.js loaded ✅");
+        } catch (e) {
+          try { window.RCF_LOGGER?.push?.("ERR", "app.js missing/failed ❌ ./app.js :: " + (e.message||e)); } catch {}
+          log("app.js missing/failed ❌", (e.message||e));
+        }
+
+        // SW register (guard contra duplicidade)
+        try {
+          if (!window.__RCF_SW_REGISTERED__ && "serviceWorker" in navigator) {
+            window.__RCF_SW_REGISTERED__ = true;
+            navigator.serviceWorker.register("./sw.js", { scope: "./" })
+              .then(() => {
+                try { window.RCF_LOGGER?.push?.("BOOT", "sw register: ok (scope ./)"); } catch {}
+                log("sw register ok");
+              })
+              .catch((e) => {
+                try { window.RCF_LOGGER?.push?.("WARN", "sw register: fail/ignored :: " + (e?.message||e)); } catch {}
+                log("sw register fail/ignored:", (e?.message||e));
+              });
+          }
+        } catch {}
       }
 
       boot();
