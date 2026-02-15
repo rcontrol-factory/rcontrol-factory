@@ -2424,3 +2424,10 @@ if (document.readyState === "loading") {
    (fecha o IIFE lá no final do app.js)
    ========== */
 })();
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", () => { safeInit(); }, { passive: true });
+} else {
+  safeInit();
+}
+
+})();
