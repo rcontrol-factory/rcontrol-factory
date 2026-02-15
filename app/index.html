@@ -30,7 +30,7 @@
     font-size:12px; line-height:1.35;
     max-height:36vh; overflow:auto;
     pointer-events:none;">
-    
+
     <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px;">
       <div style="font-weight:800;">RCF BOOT</div>
 
@@ -56,7 +56,7 @@
     (function () {
       const out = document.getElementById("rcfBootLog");
 
-      function p(line){
+      function bootLog(line){
         try {
           out.textContent += "\n" + line;
           out.scrollTop = out.scrollHeight;
@@ -72,29 +72,8 @@
         };
       } catch {}
 
-      // logger global (não sobrescreve se logger.js já criar)
-      window.RCF_LOGGER = window.RCF_LOGGER || {
-        push(level, msg){
-          const line = "[" + level + "] " + msg;
-          p(line);
-          try { console.log(line); } catch {}
-        }
-      };
-
-      // captura erros globais
-      window.addEventListener("error", (e) => {
-        const m = (e && (e.message || e.error?.message)) || "Erro desconhecido";
-        const src = e && e.filename ? (" @ " + e.filename + ":" + (e.lineno||0) + ":" + (e.colno||0)) : "";
-        window.RCF_LOGGER.push("ERR", "GLOBAL_ERROR: " + m + src);
-        try { if (e && e.error && e.error.stack) window.RCF_LOGGER.push("ERR", "STACK: " + e.error.stack); } catch {}
-      });
-
-      window.addEventListener("unhandledrejection", (e) => {
-        const r = e ? e.reason : null;
-        const m = (r && r.message) ? r.message : String(r || "Promise rejection");
-        window.RCF_LOGGER.push("ERR", "UNHANDLED_REJECTION: " + m);
-        try { if (r && r.stack) window.RCF_LOGGER.push("ERR", "STACK: " + r.stack); } catch {}
-      });
+      // BootPanel logger (não substitui RCF_LOGGER real)
+      bootLog("boot: panel ready");
 
       function loadScript(src){
         return new Promise((resolve, reject) => {
@@ -108,11 +87,12 @@
       }
 
       async function boot(){
-        window.RCF_LOGGER.push("BOOT", "index boot: starting…");
-        window.RCF_LOGGER.push("BOOT", "base href = " + document.baseURI);
+        bootLog("BOOT: index boot: starting…");
+        bootLog("BOOT: base href = " + document.baseURI);
 
         const modules = [
           "./js/core/logger.js",
+          "./js/core/stability_guard.js",
           "./js/core/storage.js",
           "./js/core/github_sync.js",
           "./js/core/vfs_overrides.js",
@@ -124,24 +104,34 @@
         for (const src of modules) {
           try {
             await loadScript(src);
-            window.RCF_LOGGER.push("BOOT", "module loaded ✅ " + src);
+            try { window.RCF_LOGGER?.push?.("BOOT", "module loaded ✅ " + src); } catch {}
+            bootLog("BOOT: module loaded ✅ " + src);
           } catch (e) {
-            window.RCF_LOGGER.push("WARN", "module missing/failed ❌ " + src + " :: " + (e.message||e));
+            try { window.RCF_LOGGER?.push?.("WARN", "module missing/failed ❌ " + src + " :: " + (e.message||e)); } catch {}
+            bootLog("WARN: module missing/failed ❌ " + src + " :: " + (e.message||e));
           }
         }
 
         try {
           await loadScript("./app.js");
-          window.RCF_LOGGER.push("BOOT", "app.js loaded ✅ ./app.js");
+          try { window.RCF_LOGGER?.push?.("BOOT", "app.js loaded ✅ ./app.js"); } catch {}
+          bootLog("BOOT: app.js loaded ✅ ./app.js");
         } catch (e) {
-          window.RCF_LOGGER.push("ERR", "app.js missing/failed ❌ ./app.js :: " + (e.message||e));
+          try { window.RCF_LOGGER?.push?.("ERR", "app.js missing/failed ❌ ./app.js :: " + (e.message||e)); } catch {}
+          bootLog("ERR: app.js missing/failed ❌ ./app.js :: " + (e.message||e));
         }
 
         try {
           if ("serviceWorker" in navigator) {
             navigator.serviceWorker.register("./sw.js", { scope: "./" })
-              .then(() => window.RCF_LOGGER.push("BOOT", "sw register: ok (scope ./)"))
-              .catch((e) => window.RCF_LOGGER.push("WARN", "sw register: fail/ignored :: " + (e?.message||e)));
+              .then(() => {
+                try { window.RCF_LOGGER?.push?.("BOOT", "sw register: ok (scope ./)"); } catch {}
+                bootLog("BOOT: sw register: ok (scope ./)");
+              })
+              .catch((e) => {
+                try { window.RCF_LOGGER?.push?.("WARN", "sw register: fail/ignored :: " + (e?.message||e)); } catch {}
+                bootLog("WARN: sw register: fail/ignored :: " + (e?.message||e));
+              });
           }
         } catch {}
       }
