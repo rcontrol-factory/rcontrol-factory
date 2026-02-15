@@ -476,3 +476,50 @@ input[type="checkbox"]{
 .view-admin pre.log {
   display: none !important;
 }
+/* =========================================================
+   RCF — FIX DEFINITIVO TABS (iPhone)
+   cola no FINAL do styles.css
+   ========================================================= */
+
+@media (max-width: 520px){
+
+  /* força virar GRID (mata qualquer flex antigo) */
+  .topbar .tabs{
+    display: grid !important;
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+    gap: 10px !important;
+    width: 100% !important;
+    padding: 12px 10px 10px !important;
+    justify-content: initial !important;
+    align-items: stretch !important;
+    overflow: visible !important; /* mata scroll antigo */
+  }
+
+  /* cada botão vira “pílula” compacta (NÃO barra 100%) */
+  .topbar .tabs .tab{
+    width: auto !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+
+    padding: 11px 10px !important;
+    min-height: 40px !important;
+    font-size: 13px !important;
+
+    /* mata qualquer flex antigo */
+    flex: none !important;
+  }
+
+  /* Settings vira barra longa */
+  .topbar .tabs .tab[data-view="settings"]{
+    grid-column: 1 / -1 !important;
+  }
+}
+
+/* segurança extra: se algum CSS antigo botou tab como block/100% */
+.topbar .tabs .tab{
+  box-sizing: border-box !important;
+}
