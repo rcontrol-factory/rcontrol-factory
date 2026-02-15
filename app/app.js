@@ -536,7 +536,6 @@
         </header>
 
         <main class="container views" id="views">
-
           <section class="view card hero" id="view-dashboard">
             <h1>Dashboard</h1>
             <p>Central do projeto. Selecione um app e comece a editar.</p>
@@ -722,7 +721,6 @@
               <pre class="mono small" id="injLog">Pronto.</pre>
             </div>
           </section>
-
         </main>
 
         <div class="tools" id="toolsDrawer">
@@ -767,7 +765,6 @@
             <button class="btn danger" id="btnFabClose" type="button">Fechar</button>
           </div>
         </div>
-
       </div>
     `;
   }
@@ -983,248 +980,243 @@
      A PRÓXIMA PARTE COMEÇA EM:  // =========================================================
                                 // PIN
      ========== */
-})();
-// =========================================================
-// PIN
-// =========================================================
-const Pin = {
-  key: "admin_pin",
-  get() { return Storage.get(this.key, ""); },
-  set(pin) { Storage.set(this.key, String(pin || "")); },
-  clear() { Storage.del(this.key); }
-};
 
-// =========================================================
-// SW helpers (safe)
-// =========================================================
-async function swRegister() {
-  try {
-    if (!("serviceWorker" in navigator)) {
-      Logger.write("sw:", "serviceWorker não suportado");
-      return { ok: false, msg: "SW não suportado" };
-    }
-    const reg = await navigator.serviceWorker.register("./sw.js", { scope: "./" });
-    Logger.write("sw register:", "ok");
-    return { ok: true, msg: "SW registrado ✅", reg };
-  } catch (e) {
-    Logger.write("sw register fail:", (e?.message || e));
-    return { ok: false, msg: "Falhou registrar SW: " + (e?.message || e) };
-  }
-}
+  // =========================================================
+  // PIN
+  // =========================================================
+  const Pin = {
+    key: "admin_pin",
+    get() { return Storage.get(this.key, ""); },
+    set(pin) { Storage.set(this.key, String(pin || "")); },
+    clear() { Storage.del(this.key); }
+  };
 
-async function swUnregisterAll() {
-  try {
-    if (!("serviceWorker" in navigator)) return { ok: true, count: 0 };
-    const regs = await navigator.serviceWorker.getRegistrations();
-    let n = 0;
-    for (const r of regs) { try { if (await r.unregister()) n++; } catch {} }
-    Logger.write("sw unregister:", n, "ok");
-    return { ok: true, count: n };
-  } catch (e) {
-    Logger.write("sw unregister err:", e?.message || e);
-    return { ok: false, count: 0, err: e?.message || e };
-  }
-}
-
-async function swClearCaches() {
-  try {
-    const keys = await caches.keys();
-    await Promise.all(keys.map(k => caches.delete(k)));
-    Logger.write("cache clear:", keys.length, "caches");
-    return { ok: true, count: keys.length };
-  } catch (e) {
-    Logger.write("cache clear err:", e?.message || e);
-    return { ok: false, count: 0, err: e?.message || e };
-  }
-}
-
-async function swCheckAutoFix() {
-  const out = { ok: false, status: "missing", detail: "", attempts: 0, err: "" };
-
-  if (!("serviceWorker" in navigator)) {
-    out.status = "unsupported";
-    out.detail = "serviceWorker não suportado neste browser";
-    return out;
-  }
-
-  const tryGet = async () => {
+  // =========================================================
+  // SW helpers (safe)
+  // =========================================================
+  async function swRegister() {
     try {
-      const a = await navigator.serviceWorker.getRegistration("./");
-      if (a) return a;
-      const b = await navigator.serviceWorker.getRegistration();
-      return b || null;
+      if (!("serviceWorker" in navigator)) {
+        Logger.write("sw:", "serviceWorker não suportado");
+        return { ok: false, msg: "SW não suportado" };
+      }
+      const reg = await navigator.serviceWorker.register("./sw.js", { scope: "./" });
+      Logger.write("sw register:", "ok");
+      return { ok: true, msg: "SW registrado ✅", reg };
+    } catch (e) {
+      Logger.write("sw register fail:", (e?.message || e));
+      return { ok: false, msg: "Falhou registrar SW: " + (e?.message || e) };
+    }
+  }
+
+  async function swUnregisterAll() {
+    try {
+      if (!("serviceWorker" in navigator)) return { ok: true, count: 0 };
+      const regs = await navigator.serviceWorker.getRegistrations();
+      let n = 0;
+      for (const r of regs) { try { if (await r.unregister()) n++; } catch {} }
+      Logger.write("sw unregister:", n, "ok");
+      return { ok: true, count: n };
+    } catch (e) {
+      Logger.write("sw unregister err:", e?.message || e);
+      return { ok: false, count: 0, err: e?.message || e };
+    }
+  }
+
+  async function swClearCaches() {
+    try {
+      const keys = await caches.keys();
+      await Promise.all(keys.map(k => caches.delete(k)));
+      Logger.write("cache clear:", keys.length, "caches");
+      return { ok: true, count: keys.length };
+    } catch (e) {
+      Logger.write("cache clear err:", e?.message || e);
+      return { ok: false, count: 0, err: e?.message || e };
+    }
+  }
+
+  async function swCheckAutoFix() {
+    const out = { ok: false, status: "missing", detail: "", attempts: 0, err: "" };
+
+    if (!("serviceWorker" in navigator)) {
+      out.status = "unsupported";
+      out.detail = "serviceWorker não suportado neste browser";
+      return out;
+    }
+
+    const tryGet = async () => {
+      try {
+        const a = await navigator.serviceWorker.getRegistration("./");
+        if (a) return a;
+        const b = await navigator.serviceWorker.getRegistration();
+        return b || null;
+      } catch (e) {
+        out.err = String(e?.message || e);
+        return null;
+      }
+    };
+
+    let reg = await tryGet();
+    if (reg) {
+      out.ok = true;
+      out.status = "registered";
+      out.detail = "já estava registrado";
+      return out;
+    }
+
+    out.attempts++;
+    try {
+      const r = await swRegister();
+      out.detail = r?.msg || "tentou registrar";
     } catch (e) {
       out.err = String(e?.message || e);
-      return null;
     }
-  };
 
-  let reg = await tryGet();
-  if (reg) {
-    out.ok = true;
-    out.status = "registered";
-    out.detail = "já estava registrado";
+    await sleep(350);
+
+    reg = await tryGet();
+    if (reg) {
+      out.ok = true;
+      out.status = "registered";
+      out.detail = "registrou após auto-fix";
+      return out;
+    }
+
+    out.status = "missing";
+    out.detail =
+      (location.protocol !== "https:" && location.hostname !== "localhost")
+        ? "SW exige HTTPS (ou localhost)."
+        : "sw.js não registrou (pode ser path/scope/privacidade).";
+
     return out;
   }
 
-  out.attempts++;
-  try {
-    const r = await swRegister();
-    out.detail = r?.msg || "tentou registrar";
-  } catch (e) {
-    out.err = String(e?.message || e);
+  // =========================================================
+  // Diagnostics: overlay + microtests + css token
+  // =========================================================
+  function scanOverlays() {
+    const suspects = [];
+    const vw = Math.max(document.documentElement.clientWidth, window.innerWidth || 0);
+    const vh = Math.max(document.documentElement.clientHeight, window.innerHeight || 0);
+
+    const all = $$("body *");
+    for (const el of all) {
+      try {
+        const cs = getComputedStyle(el);
+        if (!cs) continue;
+        if (cs.pointerEvents === "none") continue;
+
+        const pos = cs.position;
+        if (pos !== "fixed" && pos !== "absolute") continue;
+
+        const zi = parseInt(cs.zIndex || "0", 10);
+        if (!Number.isFinite(zi)) continue;
+        if (zi < 50) continue;
+
+        const r = el.getBoundingClientRect();
+        const area = Math.max(0, r.width) * Math.max(0, r.height);
+        if (area < (vw * vh * 0.10)) continue;
+
+        const touches = (r.right > 0 && r.bottom > 0 && r.left < vw && r.top < vh);
+        if (!touches) continue;
+
+        suspects.push({
+          tag: el.tagName.toLowerCase(),
+          id: el.id || "",
+          cls: (el.className && String(el.className).slice(0, 80)) || "",
+          z: zi,
+          pe: cs.pointerEvents,
+          pos,
+          rect: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }
+        });
+      } catch {}
+      if (suspects.length >= 8) break;
+    }
+    return { ok: true, suspects };
   }
 
-  await sleep(350);
+  function runMicroTests() {
+    const results = [];
+    const push = (name, pass, info = "") => results.push({ name, pass: !!pass, info: String(info || "") });
 
-  reg = await tryGet();
-  if (reg) {
-    out.ok = true;
-    out.status = "registered";
-    out.detail = "registrou após auto-fix";
-    return out;
+    try { push("TEST_RENDER", !!$("#rcfRoot") && !!$("#views"), !!$("#rcfRoot") ? "UI root ok" : "UI root missing"); }
+    catch (e) { push("TEST_RENDER", false, e?.message || e); }
+
+    try { push("TEST_IMPORTS", !!window.RCF_LOGGER && !!window.RCF && !!window.RCF.state, "globals"); }
+    catch (e) { push("TEST_IMPORTS", false, e?.message || e); }
+
+    try { push("TEST_STATE_INIT", !!State && Array.isArray(State.apps) && !!State.active && typeof State.cfg === "object", "state"); }
+    catch (e) { push("TEST_STATE_INIT", false, e?.message || e); }
+
+    try { push("TEST_EVENT_BIND", !!$("#btnOpenTools") && !!$("#btnAgentRun") && !!$("#btnSaveFile"), "buttons"); }
+    catch (e) { push("TEST_EVENT_BIND", false, e?.message || e); }
+
+    const passCount = results.filter(r => r.pass).length;
+    return { ok: passCount === results.length, pass: passCount, total: results.length, results };
   }
 
-  out.status = "missing";
-  out.detail =
-    (location.protocol !== "https:" && location.hostname !== "localhost")
-      ? "SW exige HTTPS (ou localhost)."
-      : "sw.js não registrou (pode ser path/scope/privacidade).";
-
-  return out;
-}
-
-// =========================================================
-// Diagnostics: overlay + microtests + css token
-// =========================================================
-function scanOverlays() {
-  const suspects = [];
-  const vw = Math.max(document.documentElement.clientWidth, window.innerWidth || 0);
-  const vh = Math.max(document.documentElement.clientHeight, window.innerHeight || 0);
-
-  const all = $$("body *");
-  for (const el of all) {
+  function cssLoadedCheck() {
     try {
-      const cs = getComputedStyle(el);
-      if (!cs) continue;
-      if (cs.pointerEvents === "none") continue;
-
-      const pos = cs.position;
-      if (pos !== "fixed" && pos !== "absolute") continue;
-
-      const zi = parseInt(cs.zIndex || "0", 10);
-      if (!Number.isFinite(zi)) continue;
-      if (zi < 50) continue;
-
-      const r = el.getBoundingClientRect();
-      const area = Math.max(0, r.width) * Math.max(0, r.height);
-      if (area < (vw * vh * 0.10)) continue;
-
-      const touches = (r.right > 0 && r.bottom > 0 && r.left < vw && r.top < vh);
-      if (!touches) continue;
-
-      suspects.push({
-        tag: el.tagName.toLowerCase(),
-        id: el.id || "",
-        cls: (el.className && String(el.className).slice(0, 80)) || "",
-        z: zi,
-        pe: cs.pointerEvents,
-        pos,
-        rect: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }
-      });
-    } catch {}
-    if (suspects.length >= 8) break;
-  }
-  return { ok: true, suspects };
-}
-
-function runMicroTests() {
-  const results = [];
-  const push = (name, pass, info = "") => results.push({ name, pass: !!pass, info: String(info || "") });
-
-  try { push("TEST_RENDER", !!$("#rcfRoot") && !!$("#views"), !!$("#rcfRoot") ? "UI root ok" : "UI root missing"); }
-  catch (e) { push("TEST_RENDER", false, e?.message || e); }
-
-  try { push("TEST_IMPORTS", !!window.RCF_LOGGER && !!window.RCF && !!window.RCF.state, "globals"); }
-  catch (e) { push("TEST_IMPORTS", false, e?.message || e); }
-
-  try { push("TEST_STATE_INIT", !!State && Array.isArray(State.apps) && !!State.active && typeof State.cfg === "object", "state"); }
-  catch (e) { push("TEST_STATE_INIT", false, e?.message || e); }
-
-  try { push("TEST_EVENT_BIND", !!$("#btnOpenTools") && !!$("#btnAgentRun") && !!$("#btnSaveFile"), "buttons"); }
-  catch (e) { push("TEST_EVENT_BIND", false, e?.message || e); }
-
-  const passCount = results.filter(r => r.pass).length;
-  return { ok: passCount === results.length, pass: passCount, total: results.length, results };
-}
-
-function cssLoadedCheck() {
-  try {
-    const token = getComputedStyle(document.documentElement)
-      .getPropertyValue("--rcf-css-token")
-      .trim()
-      .replace(/^["']|["']$/g, "");
-    const ok = !!token && token.toLowerCase() !== "(vazio)";
-    return { ok, token: token || "(vazio)" };
-  } catch (e) {
-    return { ok: false, token: "(erro)", err: e?.message || e };
-  }
-}
-
-async function runV8StabilityCheck() {
-  const lines = [];
-  const failList = [];
-  let pass = 0, fail = 0;
-
-  const add = (ok, label, detail) => {
-    if (ok) { pass++; lines.push(`PASS: ${label}${detail ? " — " + detail : ""}`); }
-    else { fail++; const t = `FAIL: ${label}${detail ? " — " + detail : ""}`; lines.push(t); failList.push(label + (detail ? `: ${detail}` : "")); }
-  };
-
-  add(!!window.__RCF_BOOTED__, "[BOOT] __RCF_BOOTED__", window.__RCF_BOOTED__ ? "lock ativo" : "lock ausente");
-
-  const css = cssLoadedCheck();
-  add(css.ok, "[CSS] CSS_TOKEN", `token: "${css.token}"`);
-
-  const swr = await swCheckAutoFix();
-  if (swr.ok) add(true, "[SW] SW_REGISTERED", swr.detail || "registrado");
-  else lines.push(`WARN: [SW] SW_REGISTERED — ${swr.detail || swr.status}${swr.err ? " | err=" + swr.err : ""}`);
-
-  const overlay = scanOverlays();
-  add(overlay.ok, "[CLICK] OVERLAY_SCANNER", overlay.ok ? "ok" : "erro");
-  add((overlay.suspects || []).length === 0, "[CLICK] OVERLAY_BLOCK", (overlay.suspects || []).length ? `suspects=${overlay.suspects.length}` : "nenhum");
-
-  const mt = runMicroTests();
-  add(mt.ok, "[MICROTEST] ALL", `${mt.pass}/${mt.total}`);
-
-  const stable = (fail === 0);
-  window.RCF_STABLE = stable;
-
-  lines.unshift("=========================================================");
-  lines.unshift("RCF — V8 STABILITY CHECK (REPORT)");
-  lines.push("=========================================================");
-  lines.push(`PASS: ${pass} | FAIL: ${fail}`);
-  lines.push(`RCF_STABLE: ${stable ? "TRUE ✅" : "FALSE ❌"}`);
-  lines.push("");
-
-  if (!stable) {
-    lines.push("FAIL LIST:");
-    for (const f of failList) lines.push(`- ${f}`);
-  } else {
-    lines.push("STATUS: RCF_STABLE = TRUE ✅");
+      const token = getComputedStyle(document.documentElement)
+        .getPropertyValue("--rcf-css-token")
+        .trim()
+        .replace(/^["']|["']$/g, "");
+      const ok = !!token && token.toLowerCase() !== "(vazio)";
+      return { ok, token: token || "(vazio)" };
+    } catch (e) {
+      return { ok: false, token: "(erro)", err: e?.message || e };
+    }
   }
 
-  const report = lines.join("\n");
-  uiMsg("#diagOut", report);
-  Logger.write("V8 check:", stable ? "PASS ✅" : "FAIL ❌", `${pass}/${pass + fail}`);
-  return { stable, pass, fail, report, overlay, microtests: mt, css, sw: swr };
-}
+  async function runV8StabilityCheck() {
+    const lines = [];
+    const failList = [];
+    let pass = 0, fail = 0;
 
-/* ==========
-   STOP AQUI — PARTE 2/3
-   A PRÓXIMA PARTE COMEÇA EM:  // =========================================================
-                                // FASE A — Scan / Targets / Injector SAFE
-   ========== */// =========================================================
+    const add = (ok, label, detail) => {
+      if (ok) { pass++; lines.push(`PASS: ${label}${detail ? " — " + detail : ""}`); }
+      else { fail++; const t = `FAIL: ${label}${detail ? " — " + detail : ""}`; lines.push(t); failList.push(label + (detail ? `: ${detail}` : "")); }
+    };
+
+    add(!!window.__RCF_BOOTED__, "[BOOT] __RCF_BOOTED__", window.__RCF_BOOTED__ ? "lock ativo" : "lock ausente");
+
+    const css = cssLoadedCheck();
+    add(css.ok, "[CSS] CSS_TOKEN", `token: "${css.token}"`);
+
+    const swr = await swCheckAutoFix();
+    if (swr.ok) add(true, "[SW] SW_REGISTERED", swr.detail || "registrado");
+    else lines.push(`WARN: [SW] SW_REGISTERED — ${swr.detail || swr.status}${swr.err ? " | err=" + swr.err : ""}`);
+
+    const overlay = scanOverlays();
+    add(overlay.ok, "[CLICK] OVERLAY_SCANNER", overlay.ok ? "ok" : "erro");
+    add((overlay.suspects || []).length === 0, "[CLICK] OVERLAY_BLOCK", (overlay.suspects || []).length ? `suspects=${overlay.suspects.length}` : "nenhum");
+
+    const mt = runMicroTests();
+    add(mt.ok, "[MICROTEST] ALL", `${mt.pass}/${mt.total}`);
+
+    const stable = (fail === 0);
+    window.RCF_STABLE = stable;
+
+    lines.unshift("=========================================================");
+    lines.unshift("RCF — V8 STABILITY CHECK (REPORT)");
+    lines.push("=========================================================");
+    lines.push(`PASS: ${pass} | FAIL: ${fail}`);
+    lines.push(`RCF_STABLE: ${stable ? "TRUE ✅" : "FALSE ❌"}`);
+    lines.push("");
+
+    if (!stable) {
+      lines.push("FAIL LIST:");
+      for (const f of failList) lines.push(`- ${f}`);
+    } else {
+      lines.push("STATUS: RCF_STABLE = TRUE ✅");
+    }
+
+    const report = lines.join("\n");
+    uiMsg("#diagOut", report);
+    Logger.write("V8 check:", stable ? "PASS ✅" : "FAIL ❌", `${pass}/${pass + fail}`);
+    return { stable, pass, fail, report, overlay, microtests: mt, css, sw: swr };
+  }
+// =========================================================
 // FASE A — Scan / Targets / Injector SAFE
 // =========================================================
 function simpleHash(str) {
@@ -2027,7 +2019,7 @@ const Agent = {
       return this._out(r.ok ? "✅ rollback ok" : "❌ rollback falhou");
     }
 
-    // ✅ ENGINE build (AGORA CERTO, dentro do route)
+    // ✅ ENGINE build
     if (lower.startsWith("build ")) {
       const rest = cmd.replace(/^build\s+/i, "").trim();
       const qm = rest.match(/^"([^"]+)"\s*(.*)$/);
@@ -2413,15 +2405,14 @@ async function safeInit() {
   }
 }
 
-if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", () => { safeInit(); }, { passive: true });
-} else {
-  safeInit();
-}
+// ✅ (FIX) SAFE INIT só 1x (removido duplicado)
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", () => { safeInit(); }, { passive: true });
 } else {
   safeInit();
 }
 
+// =========================================================
+// FECHA IIFE (único fechamento do arquivo)
+// =========================================================
 })();
