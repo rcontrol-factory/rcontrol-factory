@@ -588,3 +588,109 @@ select {
   width: 100%;
   min-width: 0;
 }
+/* =========================================================
+   RCF — UI COMPACT PATCH (cola no FINAL do styles.css)
+   Objetivo: cards menores + header menor + mais área útil
+========================================================= */
+
+:root{
+  --rcf-gap: 10px;
+  --rcf-pad: 10px;
+  --rcf-radius: 14px;
+}
+
+/* ---------- HEADER / TOPBAR: mais baixo ---------- */
+.topbar{ padding: 10px 10px 6px !important; }
+.brand{ gap: 10px !important; }
+.brand .title{ font-size: 16px !important; line-height: 1.1 !important; }
+.brand .subtitle{ font-size: 11px !important; opacity: .75 !important; }
+.status-pill{ transform: scale(.95) !important; }
+
+/* ---------- TABS: mais compactas (sem “telão” em cima) ---------- */
+.tabs{
+  gap: 8px !important;
+  padding: 8px 10px 10px !important;
+  flex-wrap: wrap !important;
+}
+
+.tabs .tab{
+  padding: 10px 12px !important;
+  border-radius: 999px !important;
+  font-size: 13px !important;
+  line-height: 1 !important;
+  min-height: 38px !important;
+}
+
+/* Se tiver “tab grande demais” */
+.tab{ min-height: 38px !important; }
+
+/* ---------- CONTAINER: mais área útil ---------- */
+.container{
+  padding: 10px !important;
+}
+
+.views{
+  gap: 10px !important;
+}
+
+/* ---------- CARDS: MENOS ALTURA / MENOS PADDING ---------- */
+.card{
+  padding: 12px !important;
+  border-radius: var(--rcf-radius) !important;
+  margin: 0 !important;
+}
+
+.view.card{
+  padding: 12px !important;
+}
+
+/* Títulos de seção menores */
+.card h1{ font-size: 26px !important; margin: 0 0 10px !important; }
+.card h2{ font-size: 18px !important; margin: 10px 0 8px !important; }
+.card h3{ font-size: 16px !important; margin: 10px 0 8px !important; }
+
+.hint{ margin: 6px 0 !important; }
+
+/* Rows menos gordas */
+.row{ gap: 10px !important; margin: 8px 0 !important; flex-wrap: wrap !important; }
+
+/* Botões menores (principalmente no Admin) */
+.btn{
+  padding: 10px 12px !important;
+  min-height: 38px !important;
+  border-radius: 999px !important;
+  font-size: 13px !important;
+}
+
+/* Textareas/inputs menos altos */
+input, textarea, select{
+  font-size: 14px !important;
+}
+
+/* Pre/logs: não “empurrar” a tela */
+pre.mono{
+  padding: 10px !important;
+  border-radius: 12px !important;
+}
+pre.mono.small{
+  max-height: 220px !important;
+  overflow: auto !important;
+  -webkit-overflow-scrolling: touch !important;
+}
+
+/* ---------- BOOT “BOLHAZINHA” / PILL: garantir visível e discreta ---------- */
+#rcfBootPill, #rcfBootFab{
+  position: fixed !important;
+  left: 12px !important;
+  bottom: 12px !important;
+  z-index: 9999999 !important;
+  opacity: 0.92 !important;
+  transform: scale(.95) !important;
+}
+
+#rcfBootOverlay, #rcfBootPanel{
+  z-index: 10000000 !important;
+}
+
+/* Não deixar a bolha sumir atrás de drawer/cards */
+.tools.open{ z-index: 9000000 !important; }
