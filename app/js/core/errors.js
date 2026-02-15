@@ -1,8 +1,7 @@
 /* =========================================================
-  RControl Factory — /app/js/core/errors.js (PADRÃO) — v1.0
-  - Catálogo de erros + helpers
-  - Não depende de Editor
-  - iOS-safe / não quebra se faltar Logger
+  RControl Factory — /app/js/core/errors.js (FULL) — v1.0 (PADRÃO)
+  - Error helpers (normalize + report)
+  - Integra com RCF_LOGGER + RCF_STABILITY (se existir)
   API: window.RCF_ERRORS
 ========================================================= */
 (() => {
@@ -10,95 +9,52 @@
 
   if (window.RCF_ERRORS && window.RCF_ERRORS.__v10) return;
 
-  function log(level, msg, obj) {
-    try {
-      const txt = obj !== undefined ? `${msg} ${JSON.stringify(obj)}` : String(msg);
-      window.RCF_LOGGER?.push?.(level, txt);
-    } catch {}
-    try { console.log("[RCF_ERRORS]", level, msg, obj ?? ""); } catch {}
+  function safeStr(x){
+    try { return typeof x === "string" ? x : JSON.stringify(x); }
+    catch { return String(x); }
   }
 
-  // Catálogo (você pode ir adicionando)
-  const CODES = {
-    UNKNOWN: "UNKNOWN",
-    STORAGE_FULL: "STORAGE_FULL",
-    JSON_PARSE: "JSON_PARSE",
-    VFS_MISSING: "VFS_MISSING",
-    VFS_PUT_FAIL: "VFS_PUT_FAIL",
-    GH_CFG_MISSING: "GH_CFG_MISSING",
-    GH_PULL_FAIL: "GH_PULL_FAIL",
-    GH_PUSH_FAIL: "GH_PUSH_FAIL",
-    POLICY_BLOCKED: "POLICY_BLOCKED",
-    PATCH_MISMATCH: "PATCH_MISMATCH",
-    SW_UNAVAILABLE: "SW_UNAVAILABLE",
-  };
-
-  function make(code, message, meta) {
-    const e = new Error(String(message || "Erro"));
-    e.code = String(code || CODES.UNKNOWN);
-    if (meta !== undefined) e.meta = meta;
-    return e;
+  function normalize(errLike){
+    const e = errLike || {};
+    const msg = safeStr(e.message || e.msg || e);
+    const stack = safeStr(e.stack || "");
+    const name = safeStr(e.name || "Error");
+    return { name, message: msg, stack };
   }
 
-  function wrap(err, code, message, meta) {
-    const src = err instanceof Error ? err : new Error(String(err || "Erro"));
-    const e = make(code || src.code || CODES.UNKNOWN, message || src.message, meta ?? src.meta);
-    // encadeia, mas sem depender de "cause" (compat)
-    try { e.cause = src; } catch {}
-    // preserva stack se possível
-    try { if (src.stack && !e.stack) e.stack = src.stack; } catch {}
-    return e;
+  function pushLog(level, msg, obj){
+    const line = obj ? (msg + " " + safeStr(obj)) : msg;
+    try { window.RCF_LOGGER?.push?.(level, line); } catch {}
+    try { console.log("[RCF_ERRORS]", level, line); } catch {}
   }
 
-  function toPublic(err) {
-    const e = err || {};
-    return {
-      ok: false,
-      code: String(e.code || CODES.UNKNOWN),
-      message: String(e.message || "Erro"),
-      meta: e.meta ?? null,
+  function report(kind, errLike, meta){
+    const n = normalize(errLike);
+    const payload = {
+      kind: String(kind || "error"),
+      ts: new Date().toISOString(),
+      message: n.message,
+      name: n.name,
+      stack: n.stack,
+      meta: meta || null,
+      href: location.href,
+      ua: navigator.userAgent
     };
-  }
 
-  function guard(fn, fallbackValue) {
+    pushLog("err", `${payload.kind}: ${payload.message}`, meta || null);
+
+    // se tiver stability_guard, grava fatal e/ou mostra tela
     try {
-      const r = fn();
-      return r;
-    } catch (e) {
-      log("err", "guard() captured", { code: e?.code, msg: e?.message });
-      return fallbackValue;
-    }
+      // se o guard existir, ele já escuta eventos globais; aqui é “manual report”
+      if (window.RCF_STABILITY && typeof window.RCF_STABILITY.showLastFatal === "function") {
+        // não força tela; só mantém registro via localStorage (quando guard estiver ativo)
+        localStorage.setItem("rcf:fatal:last", JSON.stringify(payload));
+      }
+    } catch {}
+
+    return payload;
   }
 
-  async function guardAsync(fn, fallbackValue) {
-    try {
-      return await fn();
-    } catch (e) {
-      log("err", "guardAsync() captured", { code: e?.code, msg: e?.message });
-      return fallbackValue;
-    }
-  }
-
-  // helper comum: detecta storage full (QuotaExceededError)
-  function isStorageFullError(e) {
-    const msg = String(e?.message || e || "").toLowerCase();
-    return (
-      e?.name === "QuotaExceededError" ||
-      msg.includes("quota") ||
-      msg.includes("storage") && msg.includes("exceed")
-    );
-  }
-
-  window.RCF_ERRORS = {
-    __v10: true,
-    CODES,
-    make,
-    wrap,
-    toPublic,
-    guard,
-    guardAsync,
-    isStorageFullError,
-  };
-
-  log("ok", "core/errors.js ready ✅ (v1.0)");
+  window.RCF_ERRORS = { __v10:true, normalize, report };
+  pushLog("ok", "core/errors.js ready ✅ (v1.0)");
 })();
