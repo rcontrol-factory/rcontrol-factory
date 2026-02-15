@@ -1285,7 +1285,7 @@
     Logger.write("V8 check:", stable ? "PASS ✅" : "FAIL ❌", `${pass}/${pass + fail}`);
     return { stable, pass, fail, report, overlay, microtests: mt, css, sw: swr };
   }
-
+})();
   /* ==========
      STOP AQUI — PARTE 2/3
      A PRÓXIMA PARTE COMEÇA EM:  // =========================================================
