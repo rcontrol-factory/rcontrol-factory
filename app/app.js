@@ -1,9 +1,9 @@
-/* RControl Factory — app.js (V7.2 PADRÃO) — UI COMPACT iPhone + Header/Abas menores + SEM “boot panel” duplicado
-   - ✅ Mantém TODA a lógica V7.1 (scan/targets/inject/mãe/etc)
-   - ✅ UI Compact REAL via CSS injetado aqui (não depende do styles.css / cache)
-   - ✅ Topo mais baixo + abas em 1 linha com scroll (economiza tela)
-   - ✅ Pre/Logs/Textareas com altura máxima (não “engole” a tela)
-   - ✅ NÃO cria “boot panel” aqui (deixa o pill/boot do index.html que você curte)
+/* RControl Factory — app.js (V7.3 PADRÃO) — V7.2 + ENGINE init + comando AGENTE: build
+   - ✅ Mantém TODA a lógica V7.2 (scan/targets/inject/mãe/etc)
+   - ✅ UI Compact REAL via CSS injetado aqui
+   - ✅ NÃO cria “boot panel” aqui (index.html cuida disso)
+   - ✅ ENGINE: init no safeInit()
+   - ✅ AGENTE: comando "build" instalado (usa window.RCF_ENGINE)
 */
 
 (() => {
@@ -48,10 +48,10 @@
   }
 
   // -----------------------------
-  // ✅ UI COMPACT (iPhone) — força layout menor independente do styles.css
+  // ✅ UI COMPACT (iPhone)
   // -----------------------------
   const UI = {
-    brandTitle: "RCF", // ✅ aqui você escolhe: "RCF" / "Factory" / "RCFactory"
+    brandTitle: "RCF",
     brandSubtitle: "Factory interna • PWA • Offline-first",
     compactEnabled: true
   };
@@ -886,7 +886,10 @@
         "- create \"NOME COM ESPAÇO\" [SLUG]",
         "- select SLUG",
         "- open dashboard | open newapp | open editor | open generator | open agent | open settings | open admin | open logs | open diagnostics",
-        "- show"
+        "- show",
+        "",
+        "ENGINE:",
+        "- build \"NOME\" [mod1 mod2 ...]   (ex: build \"Meu App\" agenda calculator)"
       ].join("\n");
     },
 
@@ -953,6 +956,44 @@
         const slug = slugify(cmd.replace(/^select\s+/i, "").trim());
         const ok = setActiveApp(slug);
         out && (out.textContent = ok ? `OK. selecionado: ${slug}` : `Falhou: ${slug}`);
+        return;
+      }
+
+      // ✅ NOVO: build (ENGINE)
+      // Ex: build "Meu App" agenda calculator
+      if (lower.startsWith("build ")) {
+        const rest = cmd.replace(/^build\s+/i, "").trim();
+        const qm = rest.match(/^"([^"]+)"\s*(.*)$/);
+
+        const name = qm ? qm[1].trim() : rest;
+        const modsPart = qm ? (qm[2] || "").trim() : "";
+
+        const mods = modsPart
+          .replace(/^with\s+/i, "")
+          .split(/[,\s]+/g)
+          .map(s => s.trim())
+          .filter(Boolean);
+
+        const ENG = window.RCF_ENGINE;
+
+        if (!ENG || typeof ENG.createSpec !== "function" || typeof ENG.createAppFromSpec !== "function") {
+          out && (out.textContent = "❌ ENGINE não carregou. Verifique se os 4 scripts /js/engine/*.js estão no index.html.");
+          return;
+        }
+
+        const r1 = ENG.createSpec({ name, modules: mods });
+        if (!r1 || !r1.ok) {
+          out && (out.textContent = "❌ " + (r1?.err || "spec falhou"));
+          return;
+        }
+
+        const r2 = ENG.createAppFromSpec(r1.spec);
+        out && (out.textContent = r2?.ok ? `✅ BUILD OK: ${r2.app.slug}` : `❌ BUILD FAIL: ${r2?.err || ""}`);
+
+        // Atualiza listas (se existirem)
+        try { renderAppsList(); } catch {}
+        try { if (r2?.ok) setActiveApp(r2.app.slug); } catch {}
+
         return;
       }
 
@@ -2138,6 +2179,10 @@
       hydrateUIFromState();
 
       installGuardsOnce();
+
+      // ✅ ENGINE init (não mexe em UI)
+      try { window.RCF_ENGINE?.init?.({ State, Storage, Logger }); Logger.write("engine:", "init ok ✅"); }
+      catch (e) { Logger.write("engine init err:", e?.message || e); }
 
       // ✅ P1: NÃO registrar SW duplicado aqui (index.html já registra).
       const swr = await swCheckAutoFix();
