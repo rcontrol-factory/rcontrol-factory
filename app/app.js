@@ -871,93 +871,298 @@
     Logger.write("file saved:", app.slug, fname);
   }
 
-  // -----------------------------
-  // Agent
-  // -----------------------------
-  const Agent = {
-    help() {
-      return [
-        "AGENT HELP",
-        "",
-        "Comandos:",
-        "- help",
-        "- list",
-        "- create NOME [SLUG]",
-        "- create \"NOME COM ESPAÇO\" [SLUG]",
-        "- select SLUG",
-        "- open dashboard | open newapp | open editor | open generator | open agent | open settings | open admin | open logs | open diagnostics",
-        "- show",
-        "",
-        "ENGINE:",
-        "- build \"NOME\" [mod1 mod2 ...]   (ex: build \"Meu App\" agenda calculator)"
-      ].join("\n");
-    },
+// -----------------------------
+// Agent (V2) — CLI do Injector + Scan/Targets + Find/Peek
+// -----------------------------
+const Agent = {
+  _mem: {
+    inj: { mode: "INSERT", targetId: "", payload: "" }
+  },
 
-    list() {
-      if (!State.apps.length) return "(vazio)";
-      return State.apps.map(a => `${a.slug} — ${a.name}`).join("\n");
-    },
+  help() {
+    return [
+      "AGENT HELP (V2)",
+      "",
+      "Base:",
+      "- help",
+      "- list",
+      "- show",
+      "- create NOME [SLUG]",
+      "- select SLUG",
+      "- open dashboard|newapp|editor|generator|agent|settings|admin|logs|diagnostics",
+      "",
+      "FASE A (Admin):",
+      "- scan                 -> CP1 Scan & Index",
+      "- targets              -> CP2 Generate Target Map",
+      "- dropdown             -> CP3 Refresh dropdown",
+      "- paths                -> lista paths do index",
+      "",
+      "Buscar / checar:",
+      "- find TEXTO           -> procura TEXTO nos arquivos indexados (rápido, limitado)",
+      "- peek /caminho        -> mostra início do arquivo",
+      "",
+      "Injector (CLI SAFE):",
+      "- inj mode INSERT|REPLACE|DELETE",
+      "- inj target PARTE_DO_ID   (seleciona primeiro target que contém o texto)",
+      "- inj payload <<<   (cole multiline)   >>>",
+      "- inj preview",
+      "- inj apply",
+      "- inj rollback"
+    ].join("\n");
+  },
 
-    show() {
-      const app = getActiveApp();
-      return [
-        `mode: ${State.cfg.mode}`,
-        `apps: ${State.apps.length}`,
-        `active app: ${app ? `${app.name} (${app.slug})` : "-"}`,
-        `active file: ${State.active.file || "-"}`,
-        `view: ${State.active.view}`
-      ].join("\n");
-    },
+  list() {
+    if (!State.apps.length) return "(vazio)";
+    return State.apps.map(a => `${a.slug} — ${a.name}`).join("\n");
+  },
 
-    route(cmdRaw) {
-      const cmd = String(cmdRaw || "").trim();
-      const out = $("#agentOut");
-      if (!cmd) { out && (out.textContent = "Comando vazio."); return; }
+  show() {
+    const app = getActiveApp();
+    const idx = Storage.get("RCF_FILE_INDEX", null);
+    const map = Storage.get("RCF_TARGET_MAP", null);
+    const cIdx = idx?.meta?.count ?? 0;
+    const cTg = map?.meta?.count ?? 0;
 
-      const lower = cmd.toLowerCase();
+    return [
+      `mode: ${State.cfg.mode}`,
+      `apps: ${State.apps.length}`,
+      `active app: ${app ? `${app.name} (${app.slug})` : "-"}`,
+      `active file: ${State.active.file || "-"}`,
+      `view: ${State.active.view}`,
+      `index: files=${cIdx} source=${idx?.meta?.source || "-"}`,
+      `targets: count=${cTg}`
+    ].join("\n");
+  },
 
-      if (lower === "help") { out && (out.textContent = this.help()); return; }
-      if (lower === "list") { out && (out.textContent = this.list()); return; }
-      if (lower === "show") { out && (out.textContent = this.show()); return; }
+  _out(text) {
+    const out = $("#agentOut");
+    if (out) out.textContent = String(text ?? "");
+  },
 
-      if (lower.startsWith("open ")) {
-        const target = lower.replace("open ", "").trim();
-        const map = {
-          dashboard: "dashboard",
-          newapp: "newapp",
-          "new app": "newapp",
-          editor: "editor",
-          generator: "generator",
-          agent: "agent",
-          settings: "settings",
-          admin: "admin",
-          logs: "logs",
-          diagnostics: "diagnostics",
-          diag: "diagnostics"
-        };
-        const v = map[target] || target;
-        setView(v);
-        out && (out.textContent = `OK. view=${v}`);
-        return;
+  _setCmdUI(mode, targetId, payload) {
+    // mantém UI do injector sincronizada com o CLI
+    const m = $("#injMode");
+    const t = $("#injTarget");
+    const p = $("#injPayload");
+    if (m && mode) m.value = mode;
+    if (t && targetId) t.value = targetId;
+    if (p && payload != null) p.value = payload;
+  },
+
+  _pickTargetByContains(part) {
+    const map = Storage.get("RCF_TARGET_MAP", null);
+    const targets = map && Array.isArray(map.targets) ? map.targets : [];
+    const q = String(part || "").trim().toLowerCase();
+    if (!q) return null;
+    return targets.find(x => String(x.targetId || "").toLowerCase().includes(q)) || null;
+  },
+
+  async _scan() {
+    const idx = await scanFactoryFiles();
+    return `✅ Scan OK\nsource=${idx.meta.source}\nfiles=${idx.meta.count}\nscannedAt=${idx.meta.scannedAt}`;
+  },
+
+  _targets() {
+    const idx = Storage.get("RCF_FILE_INDEX", null);
+    const r = generateTargetMap(idx);
+    if (!r.ok) return `❌ ${r.err || "falhou gerar map"}`;
+    return `✅ Target Map OK\ncount=${r.map.meta.count}\nsource=${r.map.meta.source}\ncreatedAt=${r.map.meta.createdAt}`;
+  },
+
+  _paths() {
+    const idx = Storage.get("RCF_FILE_INDEX", null);
+    const files = idx && Array.isArray(idx.files) ? idx.files : [];
+    if (!files.length) return "⚠️ Sem index. Rode: scan";
+    return files.slice(0, 120).map(f => f.path).join("\n") + (files.length > 120 ? `\n... (${files.length - 120} mais)` : "");
+  },
+
+  async _peek(path) {
+    const p = normalizePath(path);
+    const txt = await readTextFromInventoryPath(p);
+    const head = String(txt || "").slice(0, 1200);
+    return `PEEK ${p}\nlen=${(txt || "").length}\n\n${head}${(txt || "").length > 1200 ? "\n\n...(truncado)" : ""}`;
+  },
+
+  async _find(q) {
+    const idx = Storage.get("RCF_FILE_INDEX", null);
+    const files = idx && Array.isArray(idx.files) ? idx.files : [];
+    if (!files.length) return "⚠️ Sem index. Rode: scan";
+
+    const needle = String(q || "").trim();
+    if (!needle) return "⚠️ Use: find TEXTO";
+
+    const needleLow = needle.toLowerCase();
+    const hits = [];
+    // limite pra não travar iPhone:
+    const LIMIT_FILES = 45;
+
+    for (const f of files.slice(0, LIMIT_FILES)) {
+      const p = f.path;
+      const txt = await readTextFromInventoryPath(p);
+      const pos = String(txt || "").toLowerCase().indexOf(needleLow);
+      if (pos >= 0) {
+        const start = Math.max(0, pos - 80);
+        const end = Math.min((txt || "").length, pos + needle.length + 120);
+        const snippet = (txt || "").slice(start, end).replace(/\n/g, "⏎");
+        hits.push(`- ${p} @${pos}\n  ...${snippet}...`);
       }
+      if (hits.length >= 8) break;
+    }
 
-      if (lower.startsWith("create ")) {
-        const rest = cmd.replace(/^create\s+/i, "").trim();
-        const qm = rest.match(/^"([^"]+)"\s*([a-z0-9-]+)?/i);
-        let name = "", slug = "";
-        if (qm) { name = qm[1].trim(); slug = (qm[2] || "").trim(); }
-        else { name = rest; }
-        const r = createApp(name, slug);
-        out && (out.textContent = r.msg);
-        return;
-      }
+    if (!hits.length) return `❌ Não achei "${needle}" (busca limitada a ${LIMIT_FILES} arquivos, 8 hits max).`;
+    return `✅ HITS para "${needle}"\n` + hits.join("\n\n");
+  },
 
-      if (lower.startsWith("select ")) {
-        const slug = slugify(cmd.replace(/^select\s+/i, "").trim());
-        const ok = setActiveApp(slug);
-        out && (out.textContent = ok ? `OK. selecionado: ${slug}` : `Falhou: ${slug}`);
-        return;
+  async route(cmdRaw) {
+    const cmd = String(cmdRaw || "").trim();
+    if (!cmd) return this._out("Comando vazio. Use: help");
+
+    const lower = cmd.toLowerCase();
+
+    // base
+    if (lower === "help") return this._out(this.help());
+    if (lower === "list") return this._out(this.list());
+    if (lower === "show") return this._out(this.show());
+
+    // open view
+    if (lower.startsWith("open ")) {
+      const target = lower.replace("open ", "").trim();
+      const map = {
+        dashboard: "dashboard",
+        newapp: "newapp",
+        "new app": "newapp",
+        editor: "editor",
+        generator: "generator",
+        agent: "agent",
+        settings: "settings",
+        admin: "admin",
+        logs: "logs",
+        diagnostics: "diagnostics",
+        diag: "diagnostics"
+      };
+      const v = map[target] || target;
+      setView(v);
+      return this._out(`OK. view=${v}`);
+    }
+
+    // create/select
+    if (lower.startsWith("create ")) {
+      const rest = cmd.replace(/^create\s+/i, "").trim();
+      const qm = rest.match(/^"([^"]+)"\s*([a-z0-9-]+)?/i);
+      let name = "", slug = "";
+      if (qm) { name = qm[1].trim(); slug = (qm[2] || "").trim(); }
+      else { name = rest; }
+      const r = createApp(name, slug);
+      return this._out(r.msg);
+    }
+
+    if (lower.startsWith("select ")) {
+      const slug = slugify(cmd.replace(/^select\s+/i, "").trim());
+      const ok = setActiveApp(slug);
+      return this._out(ok ? `OK. selecionado: ${slug}` : `Falhou: ${slug}`);
+    }
+
+    // FASE A
+    if (lower === "scan") {
+      safeSetStatus("Scan…");
+      try {
+        const r = await this._scan();
+        safeSetStatus("OK ✅");
+        return this._out(r);
+      } catch (e) {
+        safeSetStatus("ERRO ❌");
+        return this._out("❌ scan falhou: " + (e?.message || e));
       }
+    }
+
+    if (lower === "targets") {
+      try {
+        const r = this._targets();
+        return this._out(r);
+      } catch (e) {
+        return this._out("❌ targets falhou: " + (e?.message || e));
+      }
+    }
+
+    if (lower === "dropdown") {
+      try {
+        populateTargetsDropdown(true);
+        return this._out("✅ Dropdown atualizado.");
+      } catch (e) {
+        return this._out("❌ dropdown falhou: " + (e?.message || e));
+      }
+    }
+
+    if (lower === "paths") {
+      return this._out(this._paths());
+    }
+
+    if (lower.startsWith("peek ")) {
+      const p = cmd.replace(/^peek\s+/i, "").trim();
+      return this._out(await this._peek(p));
+    }
+
+    if (lower.startsWith("find ")) {
+      const q = cmd.replace(/^find\s+/i, "").trim();
+      return this._out(await this._find(q));
+    }
+
+    // Injector CLI
+    if (lower.startsWith("inj mode ")) {
+      const mode = cmd.replace(/^inj\s+mode\s+/i, "").trim().toUpperCase();
+      if (!["INSERT","REPLACE","DELETE"].includes(mode)) return this._out("⚠️ modos: INSERT | REPLACE | DELETE");
+      this._mem.inj.mode = mode;
+      this._setCmdUI(mode, null, null);
+      return this._out(`✅ inj mode=${mode}`);
+    }
+
+    if (lower.startsWith("inj target ")) {
+      const part = cmd.replace(/^inj\s+target\s+/i, "").trim();
+      const t = this._pickTargetByContains(part);
+      if (!t) return this._out("❌ Não achei target contendo: " + part + "\nUse: targets (gera map) ou dropdown");
+      this._mem.inj.targetId = t.targetId;
+      this._setCmdUI(null, t.targetId, null);
+      return this._out(`✅ inj target=${t.targetId}\npath=${t.path}\nkind=${t.kind}`);
+    }
+
+    if (lower.startsWith("inj payload")) {
+      // formato:
+      // inj payload <<<
+      // ...texto...
+      // >>>
+      const m = cmdRaw.match(/inj\s+payload\s*<<<([\s\S]*?)>>>/i);
+      if (!m) return this._out("⚠️ Use:\ninj payload <<<\nSEU TEXTO AQUI\n>>>");
+      const payload = m[1].replace(/^\n+|\n+$/g, "");
+      this._mem.inj.payload = payload;
+      this._setCmdUI(null, null, payload);
+      return this._out(`✅ payload set (len=${payload.length})`);
+    }
+
+    if (lower === "inj preview") {
+      // garante UI preenchida
+      this._setCmdUI(this._mem.inj.mode, this._mem.inj.targetId, this._mem.inj.payload);
+      const r = await injectorPreview();
+      return this._out(r.ok ? "✅ preview ok (veja Diff no Admin)" : ("❌ " + (r.err || "preview falhou")));
+    }
+
+    if (lower === "inj apply") {
+      this._setCmdUI(this._mem.inj.mode, this._mem.inj.targetId, this._mem.inj.payload);
+      safeSetStatus("Apply…");
+      const r = await injectorApplySafe();
+      safeSetStatus("OK ✅");
+      return this._out(r.ok ? "✅ APPLY OK (SAFE)" : ("❌ APPLY FAIL" + (r.rolledBack ? " (rollback feito)" : "")));
+    }
+
+    if (lower === "inj rollback") {
+      safeSetStatus("Rollback…");
+      const r = await injectorRollback();
+      safeSetStatus("OK ✅");
+      return this._out(r.ok ? "✅ rollback ok" : "❌ rollback falhou");
+    }
+
+    return this._out("Comando não reconhecido. Use: help");
+  }
+};
 
       // ✅ NOVO: build (ENGINE)
       // Ex: build "Meu App" agenda calculator
