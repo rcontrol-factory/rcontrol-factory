@@ -10,12 +10,10 @@
   <base href="./" />
 
   <link rel="manifest" href="./manifest.json" />
-
-  <!-- ✅ CACHE-BUSTER: força baixar o styles.css novo -->
-  <link rel="stylesheet" href="./styles.css?v=20260215-0248" />
+  <link rel="stylesheet" href="./styles.css" />
 
   <!-- (Opcional) ajuda a ver que o index novo entrou -->
-  <meta name="rcf-index" content="vCLEAN-2" />
+  <meta name="rcf-index" content="vCLEAN-1+ENGINE" />
 </head>
 
 <body>
@@ -70,6 +68,13 @@
           "./js/core/policy.js",
           "./js/core/settings_cleanup.js",
           "./js/core/injector.js",
+
+          /* ✅ ENGINE (NOVO) */
+          "./js/engine/template_registry.js",
+          "./js/engine/module_registry.js",
+          "./js/engine/builder.js",
+          "./js/engine/engine.js",
+
           "./js/admin.github.js"
         ];
 
