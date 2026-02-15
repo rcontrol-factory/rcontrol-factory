@@ -3,130 +3,106 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>RControl Factory</title>
+  <title>RCF</title>
   <meta name="theme-color" content="#0b1020" />
 
-  <!-- ✅ importante: base relativo pra funcionar em /app/ -->
+  <!-- ✅ importante: base relativo pra funcionar em / e em subpath -->
   <base href="./" />
 
   <link rel="manifest" href="./manifest.json" />
   <link rel="stylesheet" href="./styles.css" />
 
   <style>
-    /* =========================
-      RCF Boot UI (min)
-      - Não aumenta altura da página
-      - Pill (ícone) sempre discreto
-      - Painel abre em overlay (bottom sheet)
-    ========================== */
+    /* =========================================================
+      RCF UI PATCH (ROOT /index.html)
+      Objetivo:
+      - parar overflow lateral
+      - compactar topo (nome grande / subtitle)
+      - esconder qualquer boot-panel flutuante (index/app.js)
+      - dar mais área útil pra trabalho no iPhone
+    ========================================================== */
 
-    #rcfBootPill {
-      position: fixed;
-      left: 12px;
-      bottom: 12px;
-      z-index: 999999;
-      display: inline-flex;
-      align-items: center;
-      gap: 10px;
-      padding: 10px 14px;
-      border-radius: 999px;
-      border: 1px solid rgba(255,255,255,.14);
-      background: rgba(10,14,24,.72);
-      color: #e5f5ee;
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-      font-size: 13px;
-      font-weight: 700;
-      box-shadow: 0 10px 30px rgba(0,0,0,.35);
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
-      user-select: none;
-      -webkit-user-select: none;
-      cursor: pointer;
-      touch-action: manipulation;
+    :root{
+      --rcf-safe-top: env(safe-area-inset-top, 0px);
+      --rcf-safe-bottom: env(safe-area-inset-bottom, 0px);
+      --rcf-safe-left: env(safe-area-inset-left, 0px);
+      --rcf-safe-right: env(safe-area-inset-right, 0px);
     }
 
-    #rcfBootDot {
-      width: 10px;
-      height: 10px;
-      border-radius: 999px;
-      background: #22c55e; /* ok */
-      box-shadow: 0 0 0 3px rgba(34,197,94,.14);
-      flex: 0 0 auto;
+    html, body{
+      width:100%;
+      max-width:100%;
+      overflow-x:hidden !important;
+    }
+    *, *::before, *::after{
+      box-sizing:border-box;
+      max-width:100%;
     }
 
-    #rcfBootPill small {
-      opacity: .7;
-      font-weight: 800;
+    /* garante que os containers não “estiquem” pro lado */
+    #rcfRoot, .container, .views, .view, .card{
+      width:100%;
+      max-width:100%;
+    }
+
+    /* inputs/areas sempre contidos */
+    textarea, input, select, pre{
+      max-width:100%;
+      width:100%;
+    }
+
+    /* ====== header com safe-area ====== */
+    .topbar{
+      padding-top: calc(10px + var(--rcf-safe-top));
+      padding-left: calc(10px + var(--rcf-safe-left));
+      padding-right: calc(10px + var(--rcf-safe-right));
+    }
+
+    /* ====== título menor / sem subtitle ====== */
+    .brand .title{
+      font-size: 16px !important;
+      font-weight: 900 !important;
       letter-spacing: .2px;
     }
-
-    /* overlay panel */
-    #rcfBootOverlay {
-      position: fixed;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      z-index: 1000000;
-      display: none;
-      padding: 10px 12px 12px;
-      pointer-events: none; /* liga só no card */
+    .brand .subtitle{
+      display:none !important;
     }
 
-    #rcfBootCard {
-      pointer-events: auto;
-      margin: 0 auto;
-      max-width: 980px;
-      border-radius: 16px;
-      border: 1px solid rgba(255,255,255,.12);
-      background: rgba(0,0,0,.62);
-      color: #d7fbe2;
-      box-shadow: 0 18px 60px rgba(0,0,0,.55);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
+    /* troca visual do nome sem mexer no JS (só “apelido”) */
+    .brand .title::after{
+      content:" (RCF)";
+      opacity:.75;
+      font-weight:800;
+    }
+
+    /* ====== tabs em grid no iPhone (melhor uso de espaço) ====== */
+    .tabs{
+      display:flex;
+      flex-wrap:wrap;
+      gap:10px;
+      justify-content:center;
+      width:100%;
+    }
+    .tabs .tab{
+      flex: 1 1 46%;
+      max-width: 48%;
+      padding: 12px 10px !important;
+      white-space: nowrap;
       overflow: hidden;
+      text-overflow: ellipsis;
     }
 
-    #rcfBootHead {
-      display: flex;
-      gap: 10px;
-      align-items: center;
-      padding: 10px 12px;
-      border-bottom: 1px solid rgba(255,255,255,.10);
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-      font-size: 12px;
+    /* ====== mata QUALQUER boot UI flutuante (index + app.js) ====== */
+    #rcfBootPill, #rcfBootOverlay,
+    #rcfBootFab, #rcfBootPanel{
+      display:none !important;
     }
 
-    #rcfBootTitle {
-      font-weight: 900;
-      letter-spacing: .3px;
-    }
-
-    .rcfBootBtn {
-      padding: 7px 10px;
-      border-radius: 999px;
-      border: 1px solid rgba(255,255,255,.15);
-      background: rgba(255,255,255,.08);
-      color: #fff;
-      font-weight: 800;
-      font-size: 12px;
-      touch-action: manipulation;
-    }
-
-    #rcfBootBody {
-      padding: 10px 12px 12px;
-    }
-
-    #rcfBootLog {
-      margin: 0;
-      white-space: pre-wrap;
-      word-break: break-word;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-      font-size: 12px;
-      line-height: 1.35;
-      max-height: 34vh;        /* ✅ não deixa virar “tela gigante” */
-      overflow: auto;
+    /* logs/outputs: não deixar card estourar a tela */
+    #logsViewBox, #logsOut, #logsBox, #injLog{
+      max-height: 42vh;
+      overflow:auto;
       -webkit-overflow-scrolling: touch;
-      contain: content;
     }
   </style>
 </head>
@@ -139,164 +115,16 @@
   </div>
 
   <!-- =========================================================
-    RCF BOOT UI (MIN)
-    - Pill sempre visível (pequeno)
-    - Painel abre/fecha em overlay
-  ========================================================== -->
-  <div id="rcfBootPill" aria-label="RCF Boot" title="Abrir BOOT">
-    <span id="rcfBootDot"></span>
-    <span>RCF <small>(boot)</small></span>
-  </div>
-
-  <div id="rcfBootOverlay" aria-hidden="true">
-    <div id="rcfBootCard">
-      <div id="rcfBootHead">
-        <div id="rcfBootTitle">RCF BOOT</div>
-
-        <button class="rcfBootBtn" id="rcfBootExpandBtn" style="margin-left:auto;">Expand</button>
-        <button class="rcfBootBtn" id="rcfBootCopyBtn">Copy</button>
-        <button class="rcfBootBtn" id="rcfBootReloadBtn">Reload</button>
-        <button class="rcfBootBtn" id="rcfBootHideBtn">Hide</button>
-      </div>
-
-      <div id="rcfBootBody">
-        <pre id="rcfBootLog">boot: init…</pre>
-      </div>
-    </div>
-  </div>
-
-  <!-- =========================================================
-    RCF BOOT SCRIPT
+    BOOT LOADER (sem UI na tela)
+    - carrega módulos em ordem
+    - loga no console e no RCF_LOGGER se existir
+    - registra SW com scope ./ (Pages/subpath safe)
   ========================================================== -->
   <script>
-    (function () {
-      const pill = document.getElementById("rcfBootPill");
-      const dot  = document.getElementById("rcfBootDot");
-      const overlay = document.getElementById("rcfBootOverlay");
-      const out = document.getElementById("rcfBootLog");
-
-      const btnExpand = document.getElementById("rcfBootExpandBtn");
-      const btnCopy   = document.getElementById("rcfBootCopyBtn");
-      const btnReload = document.getElementById("rcfBootReloadBtn");
-      const btnHide   = document.getElementById("rcfBootHideBtn");
-
-      // ---------- logs buffer (pra não crescer infinito) ----------
-      const MAX_LINES = 140;
-      const lines = [];
-
-      function safeStr(x){
-        try { return typeof x === "string" ? x : JSON.stringify(x); }
-        catch { return String(x); }
+    (function(){
+      function safePush(level, msg){
+        try { window.RCF_LOGGER && window.RCF_LOGGER.push && window.RCF_LOGGER.push(level, msg); } catch(_e){}
       }
-
-      function render(){
-        try {
-          out.textContent = lines.join("\n");
-          out.scrollTop = out.scrollHeight;
-        } catch {}
-      }
-
-      function bootLog(line){
-        const s = String(line || "");
-        lines.push(s);
-        while (lines.length > MAX_LINES) lines.shift();
-        render();
-      }
-
-      // ---------- UI open/close ----------
-      let opened = false;
-      let expanded = false;
-
-      function openPanel(){
-        opened = true;
-        overlay.style.display = "block";
-        overlay.setAttribute("aria-hidden", "false");
-      }
-
-      function closePanel(){
-        opened = false;
-        overlay.style.display = "none";
-        overlay.setAttribute("aria-hidden", "true");
-      }
-
-      function togglePanel(){
-        if (opened) closePanel();
-        else openPanel();
-      }
-
-      // pill tap
-      const TAP_GUARD_MS = 450;
-      let _lastTap = 0;
-      function bindTap(el, fn){
-        if (!el) return;
-        const h = (e) => {
-          const now = Date.now();
-          if (now - _lastTap < TAP_GUARD_MS) {
-            try { e.preventDefault(); e.stopPropagation(); } catch {}
-            return;
-          }
-          _lastTap = now;
-          try { e.preventDefault(); e.stopPropagation(); } catch {}
-          try { fn(e); } catch {}
-        };
-        el.addEventListener("click", h, { passive:false, capture:true });
-        el.addEventListener("touchend", h, { passive:false, capture:true });
-      }
-
-      bindTap(pill, togglePanel);
-
-      // botões
-      bindTap(btnReload, () => location.reload());
-      bindTap(btnHide, () => closePanel());
-
-      bindTap(btnExpand, () => {
-        // expand = aumenta altura do log (sem explodir a tela)
-        expanded = !expanded;
-        try {
-          out.style.maxHeight = expanded ? "58vh" : "34vh";
-          btnExpand.textContent = expanded ? "Min" : "Expand";
-        } catch {}
-      });
-
-      bindTap(btnCopy, async () => {
-        const txt = lines.join("\n");
-        let ok = false;
-        try {
-          if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
-            await navigator.clipboard.writeText(txt);
-            ok = true;
-          }
-        } catch {}
-        bootLog(ok ? "OK: boot log copiado ✅" : "WARN: iOS bloqueou clipboard (copie manual no painel)");
-      });
-
-      // fecha tocando fora do card (opcional)
-      overlay.addEventListener("click", (e) => {
-        try {
-          if (e.target === overlay) closePanel();
-        } catch {}
-      }, { passive:true });
-
-      // ---------- logger mínimo (não substitui o logger real) ----------
-      // Só espelha no boot UI. O logger.js real continua sendo o oficial.
-      bootLog("boot: panel ready (min)");
-
-      // captura erros globais (pra não ficar “tela branca” sem log)
-      window.addEventListener("error", (e) => {
-        const m = (e && (e.message || e.error?.message)) || "Erro desconhecido";
-        const src = e && e.filename ? (" @ " + e.filename + ":" + (e.lineno||0) + ":" + (e.colno||0)) : "";
-        bootLog("ERR: GLOBAL_ERROR: " + m + src);
-        try { if (e && e.error && e.error.stack) bootLog("ERR: STACK: " + e.error.stack); } catch {}
-        try { dot.style.background = "#ef4444"; } catch {}
-      });
-
-      window.addEventListener("unhandledrejection", (e) => {
-        const r = e ? e.reason : null;
-        const m = (r && r.message) ? r.message : String(r || "Promise rejection");
-        bootLog("ERR: UNHANDLED_REJECTION: " + m);
-        try { if (r && r.stack) bootLog("ERR: STACK: " + r.stack); } catch {}
-        try { dot.style.background = "#ef4444"; } catch {}
-      });
 
       function loadScript(src){
         return new Promise((resolve, reject) => {
@@ -310,71 +138,74 @@
       }
 
       async function boot(){
-        bootLog("BOOT: index boot: starting…");
-        bootLog("BOOT: base href = " + document.baseURI);
+        try{
+          safePush("BOOT", "index boot: starting…");
+          console.log("BOOT: index boot: starting…");
+          console.log("BOOT: base href =", document.baseURI);
 
-        const modules = [
-          "./js/core/logger.js",
-          "./js/core/stability_guard.js",
-          "./js/core/storage.js",
-          "./js/core/github_sync.js",
-          "./js/core/vfs_overrides.js",
-          "./js/core/vfs_shim.js",
-          "./js/core/mother_selfupdate.js",
-          "./js/core/errors.js",
-          "./js/core/risk.js",
-          "./js/core/snapshot.js",
-          "./js/core/selfheal.js",
-          "./js/core/ui_safety.js",
-          "./js/core/ui_compact_outputs.js",
-          "./js/core/ui_bindings.js",
-          "./js/core/diagnostics.js",
-          "./js/core/publish_queue.js",
-          "./js/core/preview_runner.js",
-          "./js/core/policy.js",
-          "./js/core/settings_cleanup.js",
-          "./js/core/injector.js",
-          "./js/admin.github.js"
-        ];
+          const modules = [
+            "./js/core/logger.js",
+            "./js/core/stability_guard.js",
+            "./js/core/storage.js",
+            "./js/core/github_sync.js",
+            "./js/core/vfs_overrides.js",
+            "./js/core/vfs_shim.js",
+            "./js/core/mother_selfupdate.js",
+            "./js/core/errors.js",
+            "./js/core/risk.js",
+            "./js/core/snapshot.js",
+            "./js/core/selfheal.js",
+            "./js/core/ui_safety.js",
+            "./js/core/ui_compact_outputs.js",
+            "./js/core/ui_bindings.js",
+            "./js/core/diagnostics.js",
+            "./js/core/publish_queue.js",
+            "./js/core/preview_runner.js",
+            "./js/core/policy.js",
+            "./js/core/settings_cleanup.js",
+            "./js/core/injector.js",
+            "./js/admin.github.js"
+          ];
 
-        for (const src of modules) {
-          try {
-            await loadScript(src);
-            try { window.RCF_LOGGER?.push?.("BOOT", "module loaded ✅ " + src); } catch {}
-            bootLog("BOOT: module loaded ✅ " + src);
-          } catch (e) {
-            try { window.RCF_LOGGER?.push?.("WARN", "module missing/failed ❌ " + src + " :: " + (e.message||e)); } catch {}
-            bootLog("WARN: module missing/failed ❌ " + src + " :: " + (e.message||e));
+          for (const src of modules){
+            try{
+              await loadScript(src);
+              safePush("BOOT", "module loaded ✅ " + src);
+              console.log("BOOT: module loaded ✅", src);
+            }catch(e){
+              safePush("WARN", "module missing/failed ❌ " + src + " :: " + (e.message||e));
+              console.warn("WARN: module missing/failed ❌", src, e && (e.message||e));
+            }
           }
-        }
 
-        try {
-          await loadScript("./app.js");
-          try { window.RCF_LOGGER?.push?.("BOOT", "app.js loaded ✅ ./app.js"); } catch {}
-          bootLog("BOOT: app.js loaded ✅ ./app.js");
-        } catch (e) {
-          try { window.RCF_LOGGER?.push?.("ERR", "app.js missing/failed ❌ ./app.js :: " + (e.message||e)); } catch {}
-          bootLog("ERR: app.js missing/failed ❌ ./app.js :: " + (e.message||e));
-          try { dot.style.background = "#ef4444"; } catch {}
-        }
-
-        try {
-          if ("serviceWorker" in navigator) {
-            navigator.serviceWorker.register("./sw.js", { scope: "./" })
-              .then(() => {
-                try { window.RCF_LOGGER?.push?.("BOOT", "sw register: ok (scope ./)"); } catch {}
-                bootLog("BOOT: sw register: ok (scope ./)");
-              })
-              .catch((e) => {
-                try { window.RCF_LOGGER?.push?.("WARN", "sw register: fail/ignored :: " + (e?.message||e)); } catch {}
-                bootLog("WARN: sw register: fail/ignored :: " + (e?.message||e));
-              });
+          try{
+            await loadScript("./app.js");
+            safePush("BOOT", "app.js loaded ✅ ./app.js");
+            console.log("BOOT: app.js loaded ✅ ./app.js");
+          }catch(e){
+            safePush("ERR", "app.js missing/failed ❌ ./app.js :: " + (e.message||e));
+            console.error("ERR: app.js missing/failed ❌ ./app.js ::", e && (e.message||e));
           }
-        } catch {}
 
-        // ✅ se tudo carregou ok, deixa o pill discreto e o painel fechado
-        // (não some com ele — só não atrapalha a tela)
-        closePanel();
+          // SW register (mantém)
+          try{
+            if ("serviceWorker" in navigator){
+              navigator.serviceWorker.register("./sw.js", { scope: "./" })
+                .then(() => {
+                  safePush("BOOT", "sw register: ok (scope ./)");
+                  console.log("BOOT: sw register: ok (scope ./)");
+                })
+                .catch((e) => {
+                  safePush("WARN", "sw register: fail/ignored :: " + (e && (e.message||e)));
+                  console.warn("WARN: sw register fail/ignored ::", e && (e.message||e));
+                });
+            }
+          }catch(_e){}
+
+        }catch(e){
+          safePush("ERR", "index boot fatal :: " + (e && (e.message||e)));
+          console.error("ERR: index boot fatal ::", e && (e.message||e));
+        }
       }
 
       boot();
