@@ -690,16 +690,37 @@ input[type="checkbox"]{
 .view-logs #logsViewBox{
   display:block !important;
 }
+/* =========================================================
+   FIX: badge "CSS NOVO CARREGOU" não ficar travado na tela
+   Cole no FINAL do styles.css
+   ========================================================= */
+
 body::before{
-  content:"CSS NOVO CARREGOU ✅";
-  position: fixed;
-  top: 6px;
-  left: 6px;
-  z-index: 99999999;
-  background: rgba(0,0,0,.7);
-  border: 1px solid rgba(255,255,255,.2);
-  color: #fff;
-  padding: 6px 10px;
-  border-radius: 999px;
-  font: 12px/1.2 system-ui;
+  content:"CSS NOVO CARREGOU ✅" !important;
+  position: fixed !important;
+  top: 6px !important;
+  left: 6px !important;
+  z-index: 99999999 !important;
+  background: rgba(0,0,0,.72) !important;
+  border: 1px solid rgba(255,255,255,.20) !important;
+  color: #fff !important;
+  padding: 6px 10px !important;
+  border-radius: 999px !important;
+  font: 12px/1.2 system-ui !important;
+
+  /* ✅ não trava clique */
+  pointer-events: none !important;
+
+  /* ✅ some sozinho */
+  opacity: 0 !important;
+  transform: translateY(-6px) scale(.98) !important;
+  animation: rcfCssToast 2.4s ease-in-out 1 !important;
+}
+
+/* anima: entra -> fica -> sai */
+@keyframes rcfCssToast{
+  0%   { opacity: 0; transform: translateY(-6px) scale(.98); }
+  10%  { opacity: 1; transform: translateY(0) scale(1); }
+  70%  { opacity: 1; transform: translateY(0) scale(1); }
+  100% { opacity: 0; transform: translateY(-6px) scale(.98); }
 }
