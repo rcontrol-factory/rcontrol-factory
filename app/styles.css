@@ -580,3 +580,113 @@ input[type="checkbox"]{
     order: 999 !important;
   }
 }
+/* =========================================================
+   RCF — FINAL UI OVERRIDE (REF STYLE)
+   Objetivo: header compacto + tabs em 2 linhas (pills)
+   + Settings como barra (igual sua referência)
+   COLE NO FINAL do styles.css
+========================================================= */
+
+/* 1) TOPBAR mais “clean” e estável */
+.topbar{
+  padding: 10px 12px 12px !important;
+  overflow: hidden !important;
+}
+.brand{
+  padding: 10px 4px 8px !important;
+}
+.brand-text .title{
+  font-size: 18px !important;
+  font-weight: 900 !important;
+}
+.brand-text .subtitle{
+  font-size: 12px !important;
+  opacity: .72 !important;
+}
+
+/* 2) TABS: força layout em GRID (2 linhas tipo referência) */
+.tabs{
+  display: grid !important;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  gap: 10px !important;
+  padding: 10px 4px 8px !important;
+  align-items: center !important;
+  justify-items: stretch !important;
+
+  /* mata overrides antigos */
+  flex-wrap: unset !important;
+  overflow: visible !important;
+}
+
+/* botão/tab padrão */
+.tab{
+  width: 100% !important;
+  min-width: 0 !important;
+  padding: 12px 12px !important;
+  border-radius: 999px !important;
+  font-size: 14px !important;
+  line-height: 1 !important;
+  text-align: center !important;
+  white-space: nowrap !important;
+}
+
+/* 3) “Settings” vira barra (span total) — tenta pegar por vários atributos */
+.tab.settings,
+.tab[data-view="settings"],
+.tab[data-tab="settings"],
+.tab[data-route="settings"],
+.tab[data-id="settings"],
+.tab[aria-controls="settings"],
+.tab[href="#settings"]{
+  grid-column: 1 / -1 !important;
+  opacity: .95 !important;
+}
+
+/* 4) Responsivo iPhone: 2 colunas (não vira lista gigante) */
+@media (max-width: 430px){
+  .tabs{
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+  /* settings continua barra */
+  .tab.settings,
+  .tab[data-view="settings"],
+  .tab[data-tab="settings"],
+  .tab[data-route="settings"],
+  .tab[data-id="settings"],
+  .tab[aria-controls="settings"],
+  .tab[href="#settings"]{
+    grid-column: 1 / -1 !important;
+  }
+}
+
+/* 5) Container/cards — sem exagero (mantém bonito igual referência) */
+.container{
+  margin: 12px auto 110px !important;
+  padding: 0 12px !important;
+}
+.card{
+  padding: 16px !important;
+  margin-bottom: 14px !important;
+}
+
+/* 6) LOG: mata log “inline” dentro de Admin/Settings/etc
+      MAS NÃO mata a VIEW de Logs */
+#adminLogBox,
+#admin .log,
+.view-admin .log,
+.view-admin pre.log,
+.view-settings .log,
+.view-settings pre.log,
+.view-agent .log,
+.view-agent pre.log,
+.view-diagnostics .log,
+.view-diagnostics pre.log{
+  display: none !important;
+}
+
+/* garante que a área oficial de logs continua aparecendo */
+.view-logs #logsOut,
+.view-logs #logsBox,
+.view-logs #logsViewBox{
+  display:block !important;
+}
