@@ -1,80 +1,104 @@
-/* === RCF_RANGE_START file:/app/js/core/errors.js === */
-/* RCF — core/errors.js (Error Orchestrator v1.0)
-   Centraliza tratamento de erros da Factory.
-   API: window.RCF_ERRORS
-*/
-
+/* =========================================================
+  RControl Factory — /app/js/core/errors.js (PADRÃO) — v1.0
+  - Catálogo de erros + helpers
+  - Não depende de Editor
+  - iOS-safe / não quebra se faltar Logger
+  API: window.RCF_ERRORS
+========================================================= */
 (() => {
   "use strict";
 
   if (window.RCF_ERRORS && window.RCF_ERRORS.__v10) return;
 
-  const now = () => new Date().toISOString();
-
-  function log(level, msg, extra) {
+  function log(level, msg, obj) {
     try {
-      window.RCF_LOGGER?.push?.(level, msg + (extra ? " :: " + JSON.stringify(extra) : ""));
+      const txt = obj !== undefined ? `${msg} ${JSON.stringify(obj)}` : String(msg);
+      window.RCF_LOGGER?.push?.(level, txt);
     } catch {}
-    try {
-      console[level === "err" ? "error" : "log"]("[RCF_ERROR]", level, msg, extra || "");
-    } catch {}
+    try { console.log("[RCF_ERRORS]", level, msg, obj ?? ""); } catch {}
   }
 
-  function fatal(message, details) {
-    const payload = {
-      type: "FATAL",
-      message: String(message || "Erro fatal"),
-      details: details || null,
-      ts: now()
-    };
+  // Catálogo (você pode ir adicionando)
+  const CODES = {
+    UNKNOWN: "UNKNOWN",
+    STORAGE_FULL: "STORAGE_FULL",
+    JSON_PARSE: "JSON_PARSE",
+    VFS_MISSING: "VFS_MISSING",
+    VFS_PUT_FAIL: "VFS_PUT_FAIL",
+    GH_CFG_MISSING: "GH_CFG_MISSING",
+    GH_PULL_FAIL: "GH_PULL_FAIL",
+    GH_PUSH_FAIL: "GH_PUSH_FAIL",
+    POLICY_BLOCKED: "POLICY_BLOCKED",
+    PATCH_MISMATCH: "PATCH_MISMATCH",
+    SW_UNAVAILABLE: "SW_UNAVAILABLE",
+  };
 
-    log("err", payload.message, payload.details);
-
-    try {
-      window.RCF_STABLE = false;
-    } catch {}
-
-    // tenta acionar fallback visual se existir
-    try {
-      if (window.Stability?.showErrorScreen) {
-        window.Stability.showErrorScreen(payload.message, JSON.stringify(payload.details || {}, null, 2));
-      }
-    } catch {}
-
-    return payload;
+  function make(code, message, meta) {
+    const e = new Error(String(message || "Erro"));
+    e.code = String(code || CODES.UNKNOWN);
+    if (meta !== undefined) e.meta = meta;
+    return e;
   }
 
-  function error(message, details) {
-    const payload = {
-      type: "ERROR",
-      message: String(message || "Erro"),
-      details: details || null,
-      ts: now()
-    };
-
-    log("err", payload.message, payload.details);
-    return payload;
+  function wrap(err, code, message, meta) {
+    const src = err instanceof Error ? err : new Error(String(err || "Erro"));
+    const e = make(code || src.code || CODES.UNKNOWN, message || src.message, meta ?? src.meta);
+    // encadeia, mas sem depender de "cause" (compat)
+    try { e.cause = src; } catch {}
+    // preserva stack se possível
+    try { if (src.stack && !e.stack) e.stack = src.stack; } catch {}
+    return e;
   }
 
-  function warn(message, details) {
-    const payload = {
-      type: "WARN",
-      message: String(message || "Aviso"),
-      details: details || null,
-      ts: now()
+  function toPublic(err) {
+    const e = err || {};
+    return {
+      ok: false,
+      code: String(e.code || CODES.UNKNOWN),
+      message: String(e.message || "Erro"),
+      meta: e.meta ?? null,
     };
+  }
 
-    log("warn", payload.message, payload.details);
-    return payload;
+  function guard(fn, fallbackValue) {
+    try {
+      const r = fn();
+      return r;
+    } catch (e) {
+      log("err", "guard() captured", { code: e?.code, msg: e?.message });
+      return fallbackValue;
+    }
+  }
+
+  async function guardAsync(fn, fallbackValue) {
+    try {
+      return await fn();
+    } catch (e) {
+      log("err", "guardAsync() captured", { code: e?.code, msg: e?.message });
+      return fallbackValue;
+    }
+  }
+
+  // helper comum: detecta storage full (QuotaExceededError)
+  function isStorageFullError(e) {
+    const msg = String(e?.message || e || "").toLowerCase();
+    return (
+      e?.name === "QuotaExceededError" ||
+      msg.includes("quota") ||
+      msg.includes("storage") && msg.includes("exceed")
+    );
   }
 
   window.RCF_ERRORS = {
     __v10: true,
-    fatal,
-    error,
-    warn
+    CODES,
+    make,
+    wrap,
+    toPublic,
+    guard,
+    guardAsync,
+    isStorageFullError,
   };
 
-  log("ok", "core/errors.js ready ✅ v1.0");
+  log("ok", "core/errors.js ready ✅ (v1.0)");
 })();
-/* === RCF_RANGE_END file:/app/js/core/errors.js === */
