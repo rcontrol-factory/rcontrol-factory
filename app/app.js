@@ -1,6 +1,363 @@
-==============================================
+/* RControl Factory — /app/app.js — V8.0 PADRÃO (reestruturado)
+   - Core organizado por módulos internos (sem mudar “o que faz”, só “como está montado”)
+   - Fix real do erro do Safari: comando build fica dentro do Agent.route (sem variável out fantasma)
+   - Mantém: UI + Storage + Logger + Stability + Apps/Editor + Fase A (Scan/Targets/Injector SAFE)
+   - Mantém: SW tools + PIN + Diagnostics + Engine init hook
+*/
+
+(() => {
+  "use strict";
+
+  // =========================================================
+  // BOOT LOCK (evita double init)
+  // =========================================================
+  if (window.__RCF_BOOTED__) return;
+  window.__RCF_BOOTED__ = true;
+
+  // =========================================================
+  // CORE: Utils
+  // =========================================================
+  const $ = (sel, root = document) => root.querySelector(sel);
+  const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+  const nowISO = () => new Date().toISOString();
+
+  const safeJsonParse = (s, fallback) => { try { return JSON.parse(s); } catch { return fallback; } };
+  const safeJsonStringify = (obj) => { try { return JSON.stringify(obj); } catch { return String(obj); } };
+
+  const slugify = (str) => {
+    return String(str || "")
+      .trim()
+      .toLowerCase()
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+  };
+
+  const escapeHtml = (s) => String(s).replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
+  const escapeAttr = (s) => escapeHtml(s).replace(/'/g, "&#39;");
+  const uiMsg = (sel, text) => { const el = $(sel); if (el) el.textContent = String(text ?? ""); };
+  const textContentSafe = (el, txt) => { try { el.textContent = txt; } catch {} };
+
+  function safeSetStatus(txt) {
+    try {
+      const el = $("#statusText");
+      if (el) el.textContent = String(txt || "");
+    } catch {}
+  }
+
+  function sleep(ms) { return new Promise(res => setTimeout(res, ms)); }
+
+  // =========================================================
+  // CORE: Storage
+  // =========================================================
+  const Storage = {
+    prefix: "rcf:",
+    get(key, fallback) {
+      try {
+        const v = localStorage.getItem(this.prefix + key);
+        if (v == null) return fallback;
+        return safeJsonParse(v, fallback);
+      } catch {
+        return fallback;
+      }
+    },
+    set(key, value) {
+      try { localStorage.setItem(this.prefix + key, JSON.stringify(value)); } catch {}
+    },
+    setRaw(key, rawText) {
+      try { localStorage.setItem(this.prefix + key, String(rawText ?? "")); } catch {}
+    },
+    getRaw(key, fallback = "") {
+      try {
+        const v = localStorage.getItem(this.prefix + key);
+        return v == null ? fallback : String(v);
+      } catch {
+        return fallback;
+      }
+    },
+    del(key) { try { localStorage.removeItem(this.prefix + key); } catch {} }
+  };
+
+  // =========================================================
+  // CORE: Logger
+  // =========================================================
+  const Logger = {
+    bufKey: "logs",
+    max: 900,
+
+    _mirrorUI(logs) {
+      const txt = (logs || []).join("\n");
+      const boxDrawer = $("#logsBox");
+      if (boxDrawer) boxDrawer.textContent = txt;
+      const boxLogsOut = $("#logsOut");
+      if (boxLogsOut) boxLogsOut.textContent = txt;
+      const boxView = $("#logsViewBox");
+      if (boxView) boxView.textContent = txt;
+
+      const injLog = $("#injLog");
+      if (injLog) injLog.textContent = txt.slice(-8000);
+    },
+
+    write(...args) {
+      const msg = args.map(a => (typeof a === "string" ? a : safeJsonStringify(a))).join(" ");
+      const line = `[${new Date().toLocaleString()}] ${msg}`;
+      const logs = Storage.get(this.bufKey, []);
+      logs.push(line);
+      while (logs.length > this.max) logs.shift();
+      Storage.set(this.bufKey, logs);
+      this._mirrorUI(logs);
+      try { console.log("[RCF]", ...args); } catch {}
+    },
+
+    clear() {
+      Storage.set(this.bufKey, []);
+      this._mirrorUI([]);
+    },
+
+    getAll() { return Storage.get(this.bufKey, []); }
+  };
+
+  // Globais compatíveis
+  window.RCF_LOGGER = window.RCF_LOGGER || {
+    push(level, msg) { Logger.write(String(level || "log") + ":", msg); },
+    clear() { Logger.clear(); },
+    getText() { return Logger.getAll().join("\n"); },
+    dump() { return Logger.getAll().join("\n"); }
+  };
+
+  // =========================================================
+  // CORE: Stability (anti tela branca)
+  // =========================================================
+  const Stability = (() => {
+    let installed = false;
+    let originalConsoleError = null;
+
+    function normalizeErr(e) {
+      try {
+        if (!e) return { message: "unknown", stack: "" };
+        if (typeof e === "string") return { message: e, stack: "" };
+        return { message: String(e.message || e), stack: String(e.stack || "") };
+      } catch {
+        return { message: "unknown", stack: "" };
+      }
+    }
+
+    function showErrorScreen(title, details) {
+      try {
+        const root = $("#app");
+        if (!root) return;
+
+        root.innerHTML = `
+          <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:18px;background:#070b12;color:#fff;font-family:system-ui">
+            <div style="max-width:780px;width:100%;border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:16px;background:rgba(255,255,255,.04)">
+              <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+                <div style="font-size:20px">⚠️</div>
+                <div style="font-weight:900;font-size:18px">${escapeHtml(title || "Erro")}</div>
+              </div>
+              <div style="opacity:.9;margin-bottom:10px">
+                A Factory detectou um erro e abriu esta tela controlada para evitar “tela branca”.
+              </div>
+              <pre style="white-space:pre-wrap;word-break:break-word;padding:12px;border-radius:10px;background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.12);max-height:45vh;overflow:auto">${escapeHtml(String(details || ""))}</pre>
+              <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
+                <button id="rcfReloadBtn" style="padding:10px 14px;border-radius:10px;border:0;background:#2dd4bf;color:#022; font-weight:800">Recarregar</button>
+                <button id="rcfClearLogsBtn" style="padding:10px 14px;border-radius:10px;border:0;background:#ef4444;color:#fff;font-weight:800">Limpar logs</button>
+              </div>
+            </div>
+          </div>
+        `;
+
+        const r = $("#rcfReloadBtn");
+        r && r.addEventListener("click", () => location.reload(), { passive: true });
+
+        const c = $("#rcfClearLogsBtn");
+        c && c.addEventListener("click", () => {
+          try { Logger.clear(); } catch {}
+          try { localStorage.removeItem("rcf:logs"); } catch {}
+          alert("Logs limpos.");
+        });
+      } catch {}
+    }
+
+    function install() {
+      if (installed) return;
+      installed = true;
+
+      window.addEventListener("error", (ev) => {
+        try {
+          const msg = ev?.message || "window.error";
+          const src = ev?.filename ? ` @ ${ev.filename}:${ev.lineno || 0}:${ev.colno || 0}` : "";
+          Logger.write("ERR:", msg + src);
+          if (ev?.error) {
+            const ne = normalizeErr(ev.error);
+            Logger.write("ERR.stack:", ne.stack || "(no stack)");
+          }
+        } catch {}
+      });
+
+      window.addEventListener("unhandledrejection", (ev) => {
+        try {
+          const ne = normalizeErr(ev?.reason);
+          Logger.write("UNHANDLED:", ne.message);
+          if (ne.stack) Logger.write("UNHANDLED.stack:", ne.stack);
+        } catch {}
+      });
+
+      try {
+        if (!originalConsoleError) originalConsoleError = console.error.bind(console);
+        console.error = (...args) => {
+          try { Logger.write("console.error:", ...args); } catch {}
+          try { originalConsoleError(...args); } catch {}
+        };
+      } catch {}
+
+      Logger.write("stability:", "ErrorGuard installed ✅");
+    }
+
+    return { install, showErrorScreen };
+  })();
+
+  // =========================================================
+  // CORE: iOS tap binder (anti duplo clique)
+  // =========================================================
+  function bindTap(el, fn) {
+    if (!el) return;
+    if (el.__rcf_bound__) return;
+    el.__rcf_bound__ = true;
+
+    let last = 0;
+    const handler = (ev) => {
+      const t = Date.now();
+      if ((t - last) < 350) return;
+      last = t;
+
+      try {
+        if (ev && ev.cancelable) ev.preventDefault();
+        if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
+      } catch {}
+
+      try { fn(ev); }
+      catch (e) { Logger.write("tap err:", e?.message || e); }
+    };
+
+    try {
+      el.style.pointerEvents = "auto";
+      el.style.touchAction = "manipulation";
+      el.style.webkitTapHighlightColor = "transparent";
+    } catch {}
+
+    if (window.PointerEvent) el.addEventListener("pointerup", handler, { passive: false });
+    else {
+      el.addEventListener("touchend", handler, { passive: false });
+      el.addEventListener("click", handler, { passive: false });
+    }
+  }
+
+  // =========================================================
+  // STATE
+  // =========================================================
+  const State = {
+    cfg: Storage.get("cfg", { mode: "safe", autoApplySafe: true, writeMode: "modal" }),
+    apps: Storage.get("apps", []),
+    active: Storage.get("active", { appSlug: null, file: null, view: "dashboard" }),
+    pending: Storage.get("pending", { patch: null, source: null })
+  };
+
+  function saveAll() {
+    Storage.set("cfg", State.cfg);
+    Storage.set("apps", State.apps);
+    Storage.set("active", State.active);
+    Storage.set("pending", State.pending);
+  }
+
+  // Globals compat
+  window.RCF = window.RCF || {};
+  window.RCF.state = State;
+  window.RCF.log = (...a) => Logger.write(...a);
+
+  // =========================================================
+  // UI: Compact CSS
+  // =========================================================
+  const UI = {
+    brandTitle: "RCF",
+    brandSubtitle: "Factory interna • PWA • Offline-first",
+    compactEnabled: true
+  };
+
+  function injectCompactCSSOnce() {
+    try {
+      if (!UI.compactEnabled) return;
+      if (document.getElementById("rcfCompactCss")) return;
+
+      const css = `
+:root { --rcf-compact: 1; }
+
+#rcfRoot .topbar{ padding: 8px 10px !important; }
+#rcfRoot .brand{ gap: 10px !important; }
+#rcfRoot .brand .title{ font-size: 18px !important; line-height: 1.15 !important; letter-spacing:.2px; }
+#rcfRoot .brand .subtitle{ font-size: 12px !important; opacity:.82 !important; }
+#rcfRoot .status-pill{ transform: scale(.92); transform-origin: right center; }
+
+#rcfRoot .tabs{
+  display:flex !important;
+  gap: 8px !important;
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
+  -webkit-overflow-scrolling: touch !important;
+  padding: 6px 0 2px !important;
+  margin-top: 8px !important;
+  scrollbar-width: none !important;
+}
+#rcfRoot .tabs::-webkit-scrollbar{ display:none !important; }
+#rcfRoot .tabs .tab{
+  flex: 0 0 auto !important;
+  min-width: 96px !important;
+  padding: 10px 12px !important;
+  font-size: 13px !important;
+  border-radius: 999px !important;
+}
+
+#rcfRoot .container{ padding-top: 10px !important; }
+#rcfRoot .card{ padding: 12px !important; border-radius: 14px !important; }
+#rcfRoot .card h1{ font-size: 24px !important; margin: 0 0 10px !important; }
+#rcfRoot .card h2{ font-size: 18px !important; margin: 10px 0 8px !important; }
+
+#rcfRoot .row{ gap: 10px !important; }
+#rcfRoot .btn{ padding: 10px 12px !important; font-size: 13px !important; border-radius: 999px !important; }
+#rcfRoot .btn.small{ padding: 8px 10px !important; font-size: 12px !important; }
+#rcfRoot input, #rcfRoot select, #rcfRoot textarea{ font-size: 14px !important; }
+
+#rcfRoot pre.mono{ max-height: 24vh !important; overflow:auto !important; -webkit-overflow-scrolling: touch !important; }
+#rcfRoot pre.mono.small{ max-height: 20vh !important; }
+#rcfRoot #logsBox, #rcfRoot #logsOut, #rcfRoot #logsViewBox, #rcfRoot #injLog{
+  max-height: 22vh !important; overflow:auto !important; -webkit-overflow-scrolling: touch !important;
+}
+#rcfRoot #injPayload{ max-height: 22vh !important; }
+#rcfRoot #diffOut{ max-height: 20vh !important; }
+#rcfRoot .tools .tools-body pre{ max-height: 28vh !important; }
+
+@media (max-width: 520px){
+  #rcfRoot .brand .title{ font-size: 17px !important; }
+  #rcfRoot .brand .subtitle{ font-size: 11px !important; }
+  #rcfRoot .tabs .tab{ min-width: 90px !important; padding: 9px 11px !important; }
+  #rcfRoot .card{ padding: 10px !important; }
+  #rcfRoot pre.mono{ max-height: 20vh !important; }
+}
+      `.trim();
+
+      const st = document.createElement("style");
+      st.id = "rcfCompactCss";
+      st.textContent = css;
+      document.head.appendChild(st);
+
+      try { window.RCF_LOGGER?.push?.("OK", "ui_compact: injected ✅"); } catch {}
+    } catch {}
+  }
+
+  // =========================================================
+  // VFS Overrides (localStorage)
+  // =========================================================
   const OverridesVFS = (() => {
-    const KEY = "RCF_OVERRIDES_MAP"; // { "/path": "content" }
+    const KEY = "RCF_OVERRIDES_MAP";
     const getMap = () => Storage.get(KEY, {});
     const setMap = (m) => Storage.set(KEY, m || {});
 
@@ -13,17 +370,12 @@
       return x;
     };
 
-    function list() {
-      const m = getMap();
-      return Object.keys(m || {}).sort();
-    }
-
+    function list() { return Object.keys(getMap() || {}).sort(); }
     function read(path) {
       const p = norm(path);
       const m = getMap();
       return (m && p in m) ? String(m[p] ?? "") : null;
     }
-
     function write(path, content) {
       const p = norm(path);
       const m = getMap();
@@ -31,15 +383,10 @@
       setMap(m);
       return true;
     }
-
     function del(path) {
       const p = norm(path);
       const m = getMap();
-      if (m && p in m) {
-        delete m[p];
-        setMap(m);
-        return true;
-      }
+      if (m && p in m) { delete m[p]; setMap(m); return true; }
       return false;
     }
 
@@ -54,9 +401,9 @@
 
   window.RCF_OVERRIDES_VFS = OverridesVFS;
 
-  // -----------------------------
-  // UI Shell
-  // -----------------------------
+  // =========================================================
+  // UI Shell + Views
+  // =========================================================
   function renderShell() {
     const root = $("#app");
     if (!root) return;
@@ -165,9 +512,9 @@
             <p class="hint">Comandos naturais + patchset (fase atual: comandos básicos).</p>
 
             <div class="row cmd">
-              <input id="agentCmd" placeholder='Ex: create "Meu App" meu-app' />
+              <input id="agentCmd" placeholder='Ex: create "Meu App" meu-app | scan | targets | inj apply | build "Meu App" agenda' />
               <button class="btn ok" id="btnAgentRun" type="button">Executar</button>
-              <button class="btn ghost" id="btnAgentClear" type="button">Ajuda</button>
+              <button class="btn ghost" id="btnAgentHelp" type="button">Ajuda</button>
             </div>
 
             <pre class="mono" id="agentOut">Pronto.</pre>
@@ -201,8 +548,7 @@
           <section class="view card" id="view-diagnostics">
             <h1>Diagnostics</h1>
             <div class="row">
-              <button class="btn ok" id="btnDiagRun" type="button">Rodar V7 Stability Check</button>
-              <button class="btn ghost" id="btnDiagInstall" type="button">Instalar Guards</button>
+              <button class="btn ok" id="btnDiagRun" type="button">Rodar V8 Stability Check</button>
               <button class="btn ghost" id="btnDiagScan" type="button">Scan overlays</button>
               <button class="btn ghost" id="btnDiagTests" type="button">Run micro-tests</button>
               <button class="btn danger" id="btnDiagClear" type="button">Limpar</button>
@@ -215,7 +561,7 @@
             <div class="row">
               <button class="btn ghost" id="btnLogsRefresh2" type="button">Atualizar</button>
               <button class="btn ok" id="btnCopyLogs" type="button">Copiar</button>
-              <button class="btn danger" id="btnClearLogs" type="button">Limpar</button>
+              <button class="btn danger" id="btnClearLogs2" type="button">Limpar</button>
             </div>
             <pre class="mono small" id="logsViewBox">Pronto.</pre>
           </section>
@@ -230,7 +576,6 @@
 
             <pre class="mono" id="adminOut">Pronto.</pre>
 
-            <!-- ✅ PADRÃO: Painel GitHub vem do /app/js/admin.github.js -->
             <div class="card" id="admin-maint">
               <h2>MAINTENANCE • Self-Update (Mãe)</h2>
               <div class="row">
@@ -309,14 +654,10 @@
     `;
   }
 
-  // -----------------------------
-  // Views
-  // -----------------------------
   function refreshLogsViews() { Logger._mirrorUI(Logger.getAll()); }
 
   function setView(name) {
     if (!name) return;
-
     State.active.view = name;
     saveAll();
 
@@ -330,7 +671,6 @@
     $$(`[data-view="${name}"]`).forEach(b => b.classList.add("active"));
 
     if (name === "logs" || name === "settings" || name === "admin") refreshLogsViews();
-
     Logger.write("view:", name);
   }
 
@@ -341,9 +681,9 @@
     else d.classList.remove("open");
   }
 
-  // -----------------------------
+  // =========================================================
   // Apps / Editor
-  // -----------------------------
+  // =========================================================
   function getActiveApp() {
     if (!State.active.appSlug) return null;
     return State.apps.find(a => a.slug === State.active.appSlug) || null;
@@ -380,15 +720,11 @@
       box.appendChild(row);
     });
 
-    $$('[data-act="select"]', box).forEach(btn => {
-      bindTap(btn, () => setActiveApp(btn.getAttribute("data-slug")));
-    });
-    $$('[data-act="edit"]', box).forEach(btn => {
-      bindTap(btn, () => {
-        setActiveApp(btn.getAttribute("data-slug"));
-        setView("editor");
-      });
-    });
+    $$('[data-act="select"]', box).forEach(btn => bindTap(btn, () => setActiveApp(btn.getAttribute("data-slug"))));
+    $$('[data-act="edit"]', box).forEach(btn => bindTap(btn, () => {
+      setActiveApp(btn.getAttribute("data-slug"));
+      setView("editor");
+    }));
   }
 
   function renderFilesList() {
@@ -441,6 +777,8 @@
   function setActiveApp(slug) {
     const app = State.apps.find(a => a.slug === slug);
     if (!app) return false;
+
+    ensureAppFiles(app);
 
     State.active.appSlug = slug;
     State.active.file = State.active.file || Object.keys(app.files || {})[0] || null;
@@ -500,344 +838,9 @@
     Logger.write("file saved:", app.slug, fname);
   }
 
-// -----------------------------
-// Agent (V2) — CLI do Injector + Scan/Targets + Find/Peek
-// -----------------------------
-const Agent = {
-  _mem: {
-    inj: { mode: "INSERT", targetId: "", payload: "" }
-  },
-
-  help() {
-    return [
-      "AGENT HELP (V2)",
-      "",
-      "Base:",
-      "- help",
-      "- list",
-      "- show",
-      "- create NOME [SLUG]",
-      "- select SLUG",
-      "- open dashboard|newapp|editor|generator|agent|settings|admin|logs|diagnostics",
-      "",
-      "FASE A (Admin):",
-      "- scan                 -> CP1 Scan & Index",
-      "- targets              -> CP2 Generate Target Map",
-      "- dropdown             -> CP3 Refresh dropdown",
-      "- paths                -> lista paths do index",
-      "",
-      "Buscar / checar:",
-      "- find TEXTO           -> procura TEXTO nos arquivos indexados (rápido, limitado)",
-      "- peek /caminho        -> mostra início do arquivo",
-      "",
-      "Injector (CLI SAFE):",
-      "- inj mode INSERT|REPLACE|DELETE",
-      "- inj target PARTE_DO_ID   (seleciona primeiro target que contém o texto)",
-      "- inj payload <<<   (cole multiline)   >>>",
-      "- inj preview",
-      "- inj apply",
-      "- inj rollback"
-    ].join("\n");
-  },
-
-  list() {
-    if (!State.apps.length) return "(vazio)";
-    return State.apps.map(a => `${a.slug} — ${a.name}`).join("\n");
-  },
-
-  show() {
-    const app = getActiveApp();
-    const idx = Storage.get("RCF_FILE_INDEX", null);
-    const map = Storage.get("RCF_TARGET_MAP", null);
-    const cIdx = idx?.meta?.count ?? 0;
-    const cTg = map?.meta?.count ?? 0;
-
-    return [
-      `mode: ${State.cfg.mode}`,
-      `apps: ${State.apps.length}`,
-      `active app: ${app ? `${app.name} (${app.slug})` : "-"}`,
-      `active file: ${State.active.file || "-"}`,
-      `view: ${State.active.view}`,
-      `index: files=${cIdx} source=${idx?.meta?.source || "-"}`,
-      `targets: count=${cTg}`
-    ].join("\n");
-  },
-
-  _out(text) {
-    const out = $("#agentOut");
-    if (out) out.textContent = String(text ?? "");
-  },
-
-  _setCmdUI(mode, targetId, payload) {
-    // mantém UI do injector sincronizada com o CLI
-    const m = $("#injMode");
-    const t = $("#injTarget");
-    const p = $("#injPayload");
-    if (m && mode) m.value = mode;
-    if (t && targetId) t.value = targetId;
-    if (p && payload != null) p.value = payload;
-  },
-
-  _pickTargetByContains(part) {
-    const map = Storage.get("RCF_TARGET_MAP", null);
-    const targets = map && Array.isArray(map.targets) ? map.targets : [];
-    const q = String(part || "").trim().toLowerCase();
-    if (!q) return null;
-    return targets.find(x => String(x.targetId || "").toLowerCase().includes(q)) || null;
-  },
-
-  async _scan() {
-    const idx = await scanFactoryFiles();
-    return `✅ Scan OK\nsource=${idx.meta.source}\nfiles=${idx.meta.count}\nscannedAt=${idx.meta.scannedAt}`;
-  },
-
-  _targets() {
-    const idx = Storage.get("RCF_FILE_INDEX", null);
-    const r = generateTargetMap(idx);
-    if (!r.ok) return `❌ ${r.err || "falhou gerar map"}`;
-    return `✅ Target Map OK\ncount=${r.map.meta.count}\nsource=${r.map.meta.source}\ncreatedAt=${r.map.meta.createdAt}`;
-  },
-
-  _paths() {
-    const idx = Storage.get("RCF_FILE_INDEX", null);
-    const files = idx && Array.isArray(idx.files) ? idx.files : [];
-    if (!files.length) return "⚠️ Sem index. Rode: scan";
-    return files.slice(0, 120).map(f => f.path).join("\n") + (files.length > 120 ? `\n... (${files.length - 120} mais)` : "");
-  },
-
-  async _peek(path) {
-    const p = normalizePath(path);
-    const txt = await readTextFromInventoryPath(p);
-    const head = String(txt || "").slice(0, 1200);
-    return `PEEK ${p}\nlen=${(txt || "").length}\n\n${head}${(txt || "").length > 1200 ? "\n\n...(truncado)" : ""}`;
-  },
-
-  async _find(q) {
-    const idx = Storage.get("RCF_FILE_INDEX", null);
-    const files = idx && Array.isArray(idx.files) ? idx.files : [];
-    if (!files.length) return "⚠️ Sem index. Rode: scan";
-
-    const needle = String(q || "").trim();
-    if (!needle) return "⚠️ Use: find TEXTO";
-
-    const needleLow = needle.toLowerCase();
-    const hits = [];
-    // limite pra não travar iPhone:
-    const LIMIT_FILES = 45;
-
-    for (const f of files.slice(0, LIMIT_FILES)) {
-      const p = f.path;
-      const txt = await readTextFromInventoryPath(p);
-      const pos = String(txt || "").toLowerCase().indexOf(needleLow);
-      if (pos >= 0) {
-        const start = Math.max(0, pos - 80);
-        const end = Math.min((txt || "").length, pos + needle.length + 120);
-        const snippet = (txt || "").slice(start, end).replace(/\n/g, "⏎");
-        hits.push(`- ${p} @${pos}\n  ...${snippet}...`);
-      }
-      if (hits.length >= 8) break;
-    }
-
-    if (!hits.length) return `❌ Não achei "${needle}" (busca limitada a ${LIMIT_FILES} arquivos, 8 hits max).`;
-    return `✅ HITS para "${needle}"\n` + hits.join("\n\n");
-  },
-
-  async route(cmdRaw) {
-    const cmd = String(cmdRaw || "").trim();
-    if (!cmd) return this._out("Comando vazio. Use: help");
-
-    const lower = cmd.toLowerCase();
-
-    // base
-    if (lower === "help") return this._out(this.help());
-    if (lower === "list") return this._out(this.list());
-    if (lower === "show") return this._out(this.show());
-
-    // open view
-    if (lower.startsWith("open ")) {
-      const target = lower.replace("open ", "").trim();
-      const map = {
-        dashboard: "dashboard",
-        newapp: "newapp",
-        "new app": "newapp",
-        editor: "editor",
-        generator: "generator",
-        agent: "agent",
-        settings: "settings",
-        admin: "admin",
-        logs: "logs",
-        diagnostics: "diagnostics",
-        diag: "diagnostics"
-      };
-      const v = map[target] || target;
-      setView(v);
-      return this._out(`OK. view=${v}`);
-    }
-
-    // create/select
-    if (lower.startsWith("create ")) {
-      const rest = cmd.replace(/^create\s+/i, "").trim();
-      const qm = rest.match(/^"([^"]+)"\s*([a-z0-9-]+)?/i);
-      let name = "", slug = "";
-      if (qm) { name = qm[1].trim(); slug = (qm[2] || "").trim(); }
-      else { name = rest; }
-      const r = createApp(name, slug);
-      return this._out(r.msg);
-    }
-
-    if (lower.startsWith("select ")) {
-      const slug = slugify(cmd.replace(/^select\s+/i, "").trim());
-      const ok = setActiveApp(slug);
-      return this._out(ok ? `OK. selecionado: ${slug}` : `Falhou: ${slug}`);
-    }
-
-    // FASE A
-    if (lower === "scan") {
-      safeSetStatus("Scan…");
-      try {
-        const r = await this._scan();
-        safeSetStatus("OK ✅");
-        return this._out(r);
-      } catch (e) {
-        safeSetStatus("ERRO ❌");
-        return this._out("❌ scan falhou: " + (e?.message || e));
-      }
-    }
-
-    if (lower === "targets") {
-      try {
-        const r = this._targets();
-        return this._out(r);
-      } catch (e) {
-        return this._out("❌ targets falhou: " + (e?.message || e));
-      }
-    }
-
-    if (lower === "dropdown") {
-      try {
-        populateTargetsDropdown(true);
-        return this._out("✅ Dropdown atualizado.");
-      } catch (e) {
-        return this._out("❌ dropdown falhou: " + (e?.message || e));
-      }
-    }
-
-    if (lower === "paths") {
-      return this._out(this._paths());
-    }
-
-    if (lower.startsWith("peek ")) {
-      const p = cmd.replace(/^peek\s+/i, "").trim();
-      return this._out(await this._peek(p));
-    }
-
-    if (lower.startsWith("find ")) {
-      const q = cmd.replace(/^find\s+/i, "").trim();
-      return this._out(await this._find(q));
-    }
-
-    // Injector CLI
-    if (lower.startsWith("inj mode ")) {
-      const mode = cmd.replace(/^inj\s+mode\s+/i, "").trim().toUpperCase();
-      if (!["INSERT","REPLACE","DELETE"].includes(mode)) return this._out("⚠️ modos: INSERT | REPLACE | DELETE");
-      this._mem.inj.mode = mode;
-      this._setCmdUI(mode, null, null);
-      return this._out(`✅ inj mode=${mode}`);
-    }
-
-    if (lower.startsWith("inj target ")) {
-      const part = cmd.replace(/^inj\s+target\s+/i, "").trim();
-      const t = this._pickTargetByContains(part);
-      if (!t) return this._out("❌ Não achei target contendo: " + part + "\nUse: targets (gera map) ou dropdown");
-      this._mem.inj.targetId = t.targetId;
-      this._setCmdUI(null, t.targetId, null);
-      return this._out(`✅ inj target=${t.targetId}\npath=${t.path}\nkind=${t.kind}`);
-    }
-
-    if (lower.startsWith("inj payload")) {
-      // formato:
-      // inj payload <<<
-      // ...texto...
-      // >>>
-      const m = cmdRaw.match(/inj\s+payload\s*<<<([\s\S]*?)>>>/i);
-      if (!m) return this._out("⚠️ Use:\ninj payload <<<\nSEU TEXTO AQUI\n>>>");
-      const payload = m[1].replace(/^\n+|\n+$/g, "");
-      this._mem.inj.payload = payload;
-      this._setCmdUI(null, null, payload);
-      return this._out(`✅ payload set (len=${payload.length})`);
-    }
-
-    if (lower === "inj preview") {
-      // garante UI preenchida
-      this._setCmdUI(this._mem.inj.mode, this._mem.inj.targetId, this._mem.inj.payload);
-      const r = await injectorPreview();
-      return this._out(r.ok ? "✅ preview ok (veja Diff no Admin)" : ("❌ " + (r.err || "preview falhou")));
-    }
-
-    if (lower === "inj apply") {
-      this._setCmdUI(this._mem.inj.mode, this._mem.inj.targetId, this._mem.inj.payload);
-      safeSetStatus("Apply…");
-      const r = await injectorApplySafe();
-      safeSetStatus("OK ✅");
-      return this._out(r.ok ? "✅ APPLY OK (SAFE)" : ("❌ APPLY FAIL" + (r.rolledBack ? " (rollback feito)" : "")));
-    }
-
-    if (lower === "inj rollback") {
-      safeSetStatus("Rollback…");
-      const r = await injectorRollback();
-      safeSetStatus("OK ✅");
-      return this._out(r.ok ? "✅ rollback ok" : "❌ rollback falhou");
-    }
-
-    return this._out("Comando não reconhecido. Use: help");
-  }
-};
-
-      // ✅ NOVO: build (ENGINE)
-      // Ex: build "Meu App" agenda calculator
-      if (lower.startsWith("build ")) {
-        const rest = cmd.replace(/^build\s+/i, "").trim();
-        const qm = rest.match(/^"([^"]+)"\s*(.*)$/);
-
-        const name = qm ? qm[1].trim() : rest;
-        const modsPart = qm ? (qm[2] || "").trim() : "";
-
-        const mods = modsPart
-          .replace(/^with\s+/i, "")
-          .split(/[,\s]+/g)
-          .map(s => s.trim())
-          .filter(Boolean);
-
-        const ENG = window.RCF_ENGINE;
-
-        if (!ENG || typeof ENG.createSpec !== "function" || typeof ENG.createAppFromSpec !== "function") {
-          out && (out.textContent = "❌ ENGINE não carregou. Verifique se os 4 scripts /js/engine/*.js estão no index.html.");
-          return;
-        }
-
-        const r1 = ENG.createSpec({ name, modules: mods });
-        if (!r1 || !r1.ok) {
-          out && (out.textContent = "❌ " + (r1?.err || "spec falhou"));
-          return;
-        }
-
-        const r2 = ENG.createAppFromSpec(r1.spec);
-        out && (out.textContent = r2?.ok ? `✅ BUILD OK: ${r2.app.slug}` : `❌ BUILD FAIL: ${r2?.err || ""}`);
-
-        // Atualiza listas (se existirem)
-        try { renderAppsList(); } catch {}
-        try { if (r2?.ok) setActiveApp(r2.app.slug); } catch {}
-
-        return;
-      }
-
-      out && (out.textContent = "Comando não reconhecido. Use: help");
-    }
-  };
-
-  // -----------------------------
+  // =========================================================
   // PIN
-  // -----------------------------
+  // =========================================================
   const Pin = {
     key: "admin_pin",
     get() { return Storage.get(this.key, ""); },
@@ -845,9 +848,9 @@ const Agent = {
     clear() { Storage.del(this.key); }
   };
 
-  // -----------------------------
+  // =========================================================
   // SW helpers (safe)
-  // -----------------------------
+  // =========================================================
   async function swRegister() {
     try {
       if (!("serviceWorker" in navigator)) {
@@ -926,7 +929,7 @@ const Agent = {
       out.err = String(e?.message || e);
     }
 
-    await new Promise(res => setTimeout(res, 350));
+    await sleep(350);
 
     reg = await tryGet();
     if (reg) {
@@ -945,9 +948,9 @@ const Agent = {
     return out;
   }
 
-  // -----------------------------
-  // Overlay scanner (embutido)
-  // -----------------------------
+  // =========================================================
+  // Diagnostics: overlay + microtests + css token
+  // =========================================================
   function scanOverlays() {
     const suspects = [];
     const vw = Math.max(document.documentElement.clientWidth, window.innerWidth || 0);
@@ -989,9 +992,6 @@ const Agent = {
     return { ok: true, suspects };
   }
 
-  // -----------------------------
-  // Micro-tests (embutido)
-  // -----------------------------
   function runMicroTests() {
     const results = [];
     const push = (name, pass, info = "") => results.push({ name, pass: !!pass, info: String(info || "") });
@@ -1012,9 +1012,6 @@ const Agent = {
     return { ok: passCount === results.length, pass: passCount, total: results.length, results };
   }
 
-  // -----------------------------
-  // CSS token check
-  // -----------------------------
   function cssLoadedCheck() {
     try {
       const token = getComputedStyle(document.documentElement)
@@ -1028,23 +1025,7 @@ const Agent = {
     }
   }
 
-  // -----------------------------
-  // Guards flags
-  // -----------------------------
-  const ModuleFlags = { diagnosticsInstalled: false, guardsInstalled: false };
-
-  function installGuardsOnce() {
-    if (ModuleFlags.guardsInstalled) return true;
-    ModuleFlags.guardsInstalled = true;
-    Logger.write("ok:", "GlobalErrorGuard instalado ✅");
-    Logger.write("ok:", "ClickGuard instalado ✅");
-    return true;
-  }
-
-  // -----------------------------
-  // Stability report
-  // -----------------------------
-  async function runV7StabilityCheck() {
+  async function runV8StabilityCheck() {
     const lines = [];
     const failList = [];
     let pass = 0, fail = 0;
@@ -1059,16 +1040,9 @@ const Agent = {
     const css = cssLoadedCheck();
     add(css.ok, "[CSS] CSS_TOKEN", `token: "${css.token}"`);
 
-    add(true, "[MODULES] CORE_ONCE", "ok");
-    add(ModuleFlags.guardsInstalled, "[MODULES] GUARDS_ONCE", ModuleFlags.guardsInstalled ? "ok" : "não instalado");
-
     const swr = await swCheckAutoFix();
-    if (swr.ok) {
-      add(true, "[SW] SW_REGISTERED", swr.detail || "registrado");
-    } else {
-      lines.push(`WARN: [SW] SW_REGISTERED — ${swr.detail || swr.status}${swr.err ? " | err=" + swr.err : ""}`);
-      Logger.write("sw warn:", swr.status, swr.detail, swr.err ? ("err=" + swr.err) : "");
-    }
+    if (swr.ok) add(true, "[SW] SW_REGISTERED", swr.detail || "registrado");
+    else lines.push(`WARN: [SW] SW_REGISTERED — ${swr.detail || swr.status}${swr.err ? " | err=" + swr.err : ""}`);
 
     const overlay = scanOverlays();
     add(overlay.ok, "[CLICK] OVERLAY_SCANNER", overlay.ok ? "ok" : "erro");
@@ -1081,7 +1055,7 @@ const Agent = {
     window.RCF_STABLE = stable;
 
     lines.unshift("=========================================================");
-    lines.unshift("RCF — V7 STABILITY CHECK (REPORT)");
+    lines.unshift("RCF — V8 STABILITY CHECK (REPORT)");
     lines.push("=========================================================");
     lines.push(`PASS: ${pass} | FAIL: ${fail}`);
     lines.push(`RCF_STABLE: ${stable ? "TRUE ✅" : "FALSE ❌"}`);
@@ -1096,12 +1070,12 @@ const Agent = {
 
     const report = lines.join("\n");
     uiMsg("#diagOut", report);
-    Logger.write("V7 check:", stable ? "PASS ✅" : "FAIL ❌", `${pass}/${pass + fail}`);
+    Logger.write("V8 check:", stable ? "PASS ✅" : "FAIL ❌", `${pass}/${pass + fail}`);
     return { stable, pass, fail, report, overlay, microtests: mt, css, sw: swr };
   }
 
   // =========================================================
-  // ✅ FASE A — REAL SCAN / TARGET MAP / INJECT SAFE
+  // FASE A — Scan / Targets / Injector SAFE
   // =========================================================
   function simpleHash(str) {
     let h = 2166136261;
@@ -1164,23 +1138,6 @@ const Agent = {
     return x;
   }
 
-  async function tryFetchLocalBundleFromCfg() {
-    const cfg = Storage.get("ghcfg", null);
-    const path = cfg && cfg.path ? String(cfg.path) : "";
-    if (!path) return null;
-
-    const url = new URL(path, document.baseURI).toString();
-
-    try {
-      const res = await fetch(url, { cache: "no-store" });
-      if (!res.ok) return null;
-      const txt = await res.text();
-      return txt || null;
-    } catch {
-      return null;
-    }
-  }
-
   async function vfsListAll(vfs) {
     if (!vfs) return [];
     try {
@@ -1205,6 +1162,22 @@ const Agent = {
     return null;
   }
 
+  async function tryFetchLocalBundleFromCfg() {
+    const cfg = Storage.get("ghcfg", null);
+    const path = cfg && cfg.path ? String(cfg.path) : "";
+    if (!path) return null;
+
+    const url = new URL(path, document.baseURI).toString();
+    try {
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) return null;
+      const txt = await res.text();
+      return txt || null;
+    } catch {
+      return null;
+    }
+  }
+
   function getLocalMotherBundleText() {
     const raw = Storage.getRaw("mother_bundle", "");
     if (raw && raw.trim().startsWith("{")) return raw;
@@ -1213,16 +1186,10 @@ const Agent = {
     return "";
   }
 
-  // =========================================================
-  // ✅ CP1 — Scan em cascata REAL (A -> B -> C)
-  // =========================================================
   async function scanFactoryFiles() {
-    const index = {
-      meta: { scannedAt: nowISO(), source: "", count: 0 },
-      files: []
-    };
+    const index = { meta: { scannedAt: nowISO(), source: "", count: 0 }, files: [] };
 
-    // 0) sempre indexa overrides (não define source por isso)
+    // 0) overrides sempre entram
     try {
       const olist = await OverridesVFS.listFiles();
       for (const p0 of (olist || []).slice(0, 800)) {
@@ -1230,8 +1197,7 @@ const Agent = {
         const txt = String((await OverridesVFS.readFile(p)) ?? "");
         const type = guessType(p);
         index.files.push({
-          path: p,
-          type,
+          path: p, type,
           size: txt.length,
           hash: simpleHash(txt),
           markers: detectMarkers(txt),
@@ -1240,14 +1206,10 @@ const Agent = {
       }
     } catch {}
 
-    // RCF_RANGE:START SCAN_RUNTIME_VFS_CHAIN
-    // A) runtime vfs (NÃO usar RCF_VFS_OVERRIDES aqui — isso é RPC, não FS)
+    // A) runtime vfs
     const vfs = (window.RCF_VFS || window.RCF_FS || window.RCF_FILES || window.RCF_STORE) || null;
-    // RCF_RANGE:END SCAN_RUNTIME_VFS_CHAIN
-
     if (vfs) {
       const baseLen = index.files.length;
-
       const list = await vfsListAll(vfs);
       const paths = (list || []).map(p => normalizePath(p)).filter(Boolean).slice(0, 1200);
 
@@ -1255,21 +1217,17 @@ const Agent = {
         const content = await vfsRead(vfs, p);
         const txt = (content == null) ? "" : String(content);
         const type = guessType(p);
-        const markers = detectMarkers(txt);
-        const anchors = getAnchorsForContent(type, txt);
         index.files.push({
-          path: p,
-          type,
+          path: p, type,
           size: txt.length,
           hash: simpleHash(txt),
-          markers,
-          anchors
+          markers: detectMarkers(txt),
+          anchors: getAnchorsForContent(type, txt)
         });
       }
 
-      const addedByRuntimeVfs = index.files.length - baseLen;
-
-      if (addedByRuntimeVfs > 0) {
+      const added = index.files.length - baseLen;
+      if (added > 0) {
         index.meta.source = "A:runtime_vfs";
         index.meta.count = index.files.length;
         Storage.set("RCF_FILE_INDEX", index);
@@ -1290,7 +1248,6 @@ const Agent = {
       try { parsed = JSON.parse(bundleText); } catch { parsed = null; }
 
       let entries = [];
-
       if (parsed && Array.isArray(parsed.files)) {
         entries = parsed.files
           .map(it => {
@@ -1313,25 +1270,19 @@ const Agent = {
           (rawVal && typeof rawVal === "object" && "content" in rawVal)
             ? String(rawVal.content ?? "")
             : String(rawVal ?? "");
-
         const type = guessType(p);
-        const markers = detectMarkers(txt);
-        const anchors = getAnchorsForContent(type, txt);
-
         index.files.push({
-          path: p,
-          type,
+          path: p, type,
           size: txt.length,
           hash: simpleHash(txt),
-          markers,
-          anchors
+          markers: detectMarkers(txt),
+          anchors: getAnchorsForContent(type, txt)
         });
       }
 
       index.meta.count = index.files.length;
       Storage.set("RCF_FILE_INDEX", index);
       Storage.setRaw("mother_bundle", bundleText);
-
       Logger.write("scan:", index.meta.source, "files=" + index.meta.count);
       return index;
     }
@@ -1340,16 +1291,13 @@ const Agent = {
     Logger.write("scan fallback -> DOM anchors");
     index.meta.source = "C:dom_anchors_only";
     const html = document.documentElement ? document.documentElement.outerHTML : "";
-    const markers = detectMarkers(html);
-    const anchors = getAnchorsForContent("html", html);
-
     index.files.push({
       path: "/runtime/document.html",
       type: "html",
       size: html.length,
       hash: simpleHash(html),
-      markers,
-      anchors
+      markers: detectMarkers(html),
+      anchors: getAnchorsForContent("html", html)
     });
 
     index.meta.count = index.files.length;
@@ -1358,17 +1306,11 @@ const Agent = {
     return index;
   }
 
-  // =========================================================
-  // ✅ CP2 — Target map garante >=2
-  // =========================================================
   function generateTargetMap(fileIndex) {
     const idx = fileIndex || Storage.get("RCF_FILE_INDEX", null);
-    if (!idx || !Array.isArray(idx.files)) {
-      return { ok: false, err: "RCF_FILE_INDEX ausente. Rode Scan & Index primeiro." };
-    }
+    if (!idx || !Array.isArray(idx.files)) return { ok: false, err: "RCF_FILE_INDEX ausente. Rode Scan & Index primeiro." };
 
     const targets = [];
-
     for (const f of idx.files) {
       const path = String(f.path || "");
       const markers = Array.isArray(f.markers) ? f.markers : [];
@@ -1416,35 +1358,13 @@ const Agent = {
     if (uniq.length < 2) {
       const fallbackPaths = ["/index.html", "/app/index.html"];
       for (const fp of fallbackPaths) {
-        uniq.push({
-          targetId: `${fp}::HEAD_END`,
-          path: fp,
-          kind: "ANCHOR",
-          offset: 0,
-          anchorId: "HEAD_END",
-          supportedModes: ["INSERT","REPLACE","DELETE"],
-          defaultRisk: "low",
-          note: "FORCED_FALLBACK_HEAD_END"
-        });
-        uniq.push({
-          targetId: `${fp}::BODY_END`,
-          path: fp,
-          kind: "ANCHOR",
-          offset: 0,
-          anchorId: "BODY_END",
-          supportedModes: ["INSERT","REPLACE","DELETE"],
-          defaultRisk: "medium",
-          note: "FORCED_FALLBACK_BODY_END"
-        });
+        uniq.push({ targetId: `${fp}::HEAD_END`, path: fp, kind: "ANCHOR", offset: 0, anchorId: "HEAD_END", supportedModes: ["INSERT","REPLACE","DELETE"], defaultRisk: "low", note: "FORCED_FALLBACK_HEAD_END" });
+        uniq.push({ targetId: `${fp}::BODY_END`, path: fp, kind: "ANCHOR", offset: 0, anchorId: "BODY_END", supportedModes: ["INSERT","REPLACE","DELETE"], defaultRisk: "medium", note: "FORCED_FALLBACK_BODY_END" });
         if (uniq.length >= 2) break;
       }
     }
 
-    const out = {
-      meta: { createdAt: nowISO(), count: uniq.length, source: (idx.meta && idx.meta.source) || "" },
-      targets: uniq
-    };
-
+    const out = { meta: { createdAt: nowISO(), count: uniq.length, source: (idx.meta && idx.meta.source) || "" }, targets: uniq };
     Storage.set("RCF_TARGET_MAP", out);
     Logger.write("targets:", "count=" + out.meta.count, "source=" + out.meta.source);
 
@@ -1531,9 +1451,7 @@ const Agent = {
       } catch {}
     }
 
-    if (p === "/runtime/document.html") {
-      return document.documentElement ? document.documentElement.outerHTML : "";
-    }
+    if (p === "/runtime/document.html") return document.documentElement ? document.documentElement.outerHTML : "";
 
     if (p === "/app/index.html" || p === "/app/styles.css" || p === "/app/app.js" || p === "/index.html" || p === "/styles.css" || p === "/app.js") {
       try {
@@ -1680,12 +1598,319 @@ const Agent = {
     return { ok: true };
   }
 
-  // -----------------------------
+  // =========================================================
+  // Agent V8 (inclui build corretamente)
+  // =========================================================
+  const Agent = {
+    _mem: { inj: { mode: "INSERT", targetId: "", payload: "" } },
+
+    _out(text) {
+      const out = $("#agentOut");
+      if (out) out.textContent = String(text ?? "");
+    },
+
+    help() {
+      return [
+        "AGENT HELP (V8)",
+        "",
+        "Base:",
+        "- help",
+        "- list",
+        "- show",
+        "- create NOME [SLUG]        (ex: create \"Meu App\" meu-app)",
+        "- select SLUG",
+        "- open dashboard|newapp|editor|generator|agent|settings|admin|logs|diagnostics",
+        "",
+        "FASE A (Admin):",
+        "- scan                 -> CP1 Scan & Index",
+        "- targets              -> CP2 Generate Target Map",
+        "- dropdown             -> CP3 Refresh dropdown",
+        "- paths                -> lista paths do index",
+        "",
+        "Buscar / checar:",
+        "- find TEXTO           -> procura TEXTO nos arquivos indexados (limitado p/ iPhone)",
+        "- peek /caminho        -> mostra início do arquivo",
+        "",
+        "Injector (CLI SAFE):",
+        "- inj mode INSERT|REPLACE|DELETE",
+        "- inj target PARTE_DO_ID",
+        "- inj payload <<<  (multiline)  >>>",
+        "- inj preview",
+        "- inj apply",
+        "- inj rollback",
+        "",
+        "ENGINE (Reflect-style):",
+        "- build \"Nome do App\" [mods...]   (ex: build \"Agenda\" agenda calculator)"
+      ].join("\n");
+    },
+
+    list() {
+      if (!State.apps.length) return "(vazio)";
+      return State.apps.map(a => `${a.slug} — ${a.name}`).join("\n");
+    },
+
+    show() {
+      const app = getActiveApp();
+      const idx = Storage.get("RCF_FILE_INDEX", null);
+      const map = Storage.get("RCF_TARGET_MAP", null);
+      const cIdx = idx?.meta?.count ?? 0;
+      const cTg = map?.meta?.count ?? 0;
+
+      return [
+        `mode: ${State.cfg.mode}`,
+        `apps: ${State.apps.length}`,
+        `active app: ${app ? `${app.name} (${app.slug})` : "-"}`,
+        `active file: ${State.active.file || "-"}`,
+        `view: ${State.active.view}`,
+        `index: files=${cIdx} source=${idx?.meta?.source || "-"}`,
+        `targets: count=${cTg}`
+      ].join("\n");
+    },
+
+    _setCmdUI(mode, targetId, payload) {
+      const m = $("#injMode");
+      const t = $("#injTarget");
+      const p = $("#injPayload");
+      if (m && mode) m.value = mode;
+      if (t && targetId) t.value = targetId;
+      if (p && payload != null) p.value = payload;
+    },
+
+    _pickTargetByContains(part) {
+      const map = Storage.get("RCF_TARGET_MAP", null);
+      const targets = map && Array.isArray(map.targets) ? map.targets : [];
+      const q = String(part || "").trim().toLowerCase();
+      if (!q) return null;
+      return targets.find(x => String(x.targetId || "").toLowerCase().includes(q)) || null;
+    },
+
+    async _scan() {
+      const idx = await scanFactoryFiles();
+      return `✅ Scan OK\nsource=${idx.meta.source}\nfiles=${idx.meta.count}\nscannedAt=${idx.meta.scannedAt}`;
+    },
+
+    _targets() {
+      const idx = Storage.get("RCF_FILE_INDEX", null);
+      const r = generateTargetMap(idx);
+      if (!r.ok) return `❌ ${r.err || "falhou gerar map"}`;
+      return `✅ Target Map OK\ncount=${r.map.meta.count}\nsource=${r.map.meta.source}\ncreatedAt=${r.map.meta.createdAt}`;
+    },
+
+    _paths() {
+      const idx = Storage.get("RCF_FILE_INDEX", null);
+      const files = idx && Array.isArray(idx.files) ? idx.files : [];
+      if (!files.length) return "⚠️ Sem index. Rode: scan";
+      return files.slice(0, 120).map(f => f.path).join("\n") + (files.length > 120 ? `\n... (${files.length - 120} mais)` : "");
+    },
+
+    async _peek(path) {
+      const p = normalizePath(path);
+      const txt = await readTextFromInventoryPath(p);
+      const head = String(txt || "").slice(0, 1200);
+      return `PEEK ${p}\nlen=${(txt || "").length}\n\n${head}${(txt || "").length > 1200 ? "\n\n...(truncado)" : ""}`;
+    },
+
+    async _find(q) {
+      const idx = Storage.get("RCF_FILE_INDEX", null);
+      const files = idx && Array.isArray(idx.files) ? idx.files : [];
+      if (!files.length) return "⚠️ Sem index. Rode: scan";
+
+      const needle = String(q || "").trim();
+      if (!needle) return "⚠️ Use: find TEXTO";
+
+      const needleLow = needle.toLowerCase();
+      const hits = [];
+      const LIMIT_FILES = 45;
+
+      for (const f of files.slice(0, LIMIT_FILES)) {
+        const p = f.path;
+        const txt = await readTextFromInventoryPath(p);
+        const pos = String(txt || "").toLowerCase().indexOf(needleLow);
+        if (pos >= 0) {
+          const start = Math.max(0, pos - 80);
+          const end = Math.min((txt || "").length, pos + needle.length + 120);
+          const snippet = (txt || "").slice(start, end).replace(/\n/g, "⏎");
+          hits.push(`- ${p} @${pos}\n  ...${snippet}...`);
+        }
+        if (hits.length >= 8) break;
+      }
+
+      if (!hits.length) return `❌ Não achei "${needle}" (busca limitada a ${LIMIT_FILES} arquivos, 8 hits max).`;
+      return `✅ HITS para "${needle}"\n` + hits.join("\n\n");
+    },
+
+    async route(cmdRaw) {
+      const cmd = String(cmdRaw || "").trim();
+      if (!cmd) return this._out("Comando vazio. Use: help");
+      const lower = cmd.toLowerCase();
+
+      // base
+      if (lower === "help") return this._out(this.help());
+      if (lower === "list") return this._out(this.list());
+      if (lower === "show") return this._out(this.show());
+
+      // open view
+      if (lower.startsWith("open ")) {
+        const target = lower.replace("open ", "").trim();
+        const map = {
+          dashboard: "dashboard",
+          newapp: "newapp",
+          "new app": "newapp",
+          editor: "editor",
+          generator: "generator",
+          agent: "agent",
+          settings: "settings",
+          admin: "admin",
+          logs: "logs",
+          diagnostics: "diagnostics",
+          diag: "diagnostics"
+        };
+        const v = map[target] || target;
+        setView(v);
+        return this._out(`OK. view=${v}`);
+      }
+
+      // create/select
+      if (lower.startsWith("create ")) {
+        const rest = cmd.replace(/^create\s+/i, "").trim();
+        const qm = rest.match(/^"([^"]+)"\s*([a-z0-9-]+)?/i);
+        let name = "", slug = "";
+        if (qm) { name = qm[1].trim(); slug = (qm[2] || "").trim(); }
+        else { name = rest; }
+        const r = createApp(name, slug);
+        return this._out(r.msg);
+      }
+
+      if (lower.startsWith("select ")) {
+        const slug = slugify(cmd.replace(/^select\s+/i, "").trim());
+        const ok = setActiveApp(slug);
+        return this._out(ok ? `OK. selecionado: ${slug}` : `Falhou: ${slug}`);
+      }
+
+      // FASE A
+      if (lower === "scan") {
+        safeSetStatus("Scan…");
+        try {
+          const r = await this._scan();
+          safeSetStatus("OK ✅");
+          return this._out(r);
+        } catch (e) {
+          safeSetStatus("ERRO ❌");
+          return this._out("❌ scan falhou: " + (e?.message || e));
+        }
+      }
+
+      if (lower === "targets") {
+        try { return this._out(this._targets()); }
+        catch (e) { return this._out("❌ targets falhou: " + (e?.message || e)); }
+      }
+
+      if (lower === "dropdown") {
+        try { populateTargetsDropdown(true); return this._out("✅ Dropdown atualizado."); }
+        catch (e) { return this._out("❌ dropdown falhou: " + (e?.message || e)); }
+      }
+
+      if (lower === "paths") return this._out(this._paths());
+
+      if (lower.startsWith("peek ")) {
+        const p = cmd.replace(/^peek\s+/i, "").trim();
+        return this._out(await this._peek(p));
+      }
+
+      if (lower.startsWith("find ")) {
+        const q = cmd.replace(/^find\s+/i, "").trim();
+        return this._out(await this._find(q));
+      }
+
+      // Injector CLI
+      if (lower.startsWith("inj mode ")) {
+        const mode = cmd.replace(/^inj\s+mode\s+/i, "").trim().toUpperCase();
+        if (!["INSERT","REPLACE","DELETE"].includes(mode)) return this._out("⚠️ modos: INSERT | REPLACE | DELETE");
+        this._mem.inj.mode = mode;
+        this._setCmdUI(mode, null, null);
+        return this._out(`✅ inj mode=${mode}`);
+      }
+
+      if (lower.startsWith("inj target ")) {
+        const part = cmd.replace(/^inj\s+target\s+/i, "").trim();
+        const t = this._pickTargetByContains(part);
+        if (!t) return this._out("❌ Não achei target contendo: " + part + "\nUse: targets (gera map) ou dropdown");
+        this._mem.inj.targetId = t.targetId;
+        this._setCmdUI(null, t.targetId, null);
+        return this._out(`✅ inj target=${t.targetId}\npath=${t.path}\nkind=${t.kind}`);
+      }
+
+      if (lower.startsWith("inj payload")) {
+        const m = cmdRaw.match(/inj\s+payload\s*<<<([\s\S]*?)>>>/i);
+        if (!m) return this._out("⚠️ Use:\ninj payload <<<\nSEU TEXTO AQUI\n>>>");
+        const payload = m[1].replace(/^\n+|\n+$/g, "");
+        this._mem.inj.payload = payload;
+        this._setCmdUI(null, null, payload);
+        return this._out(`✅ payload set (len=${payload.length})`);
+      }
+
+      if (lower === "inj preview") {
+        this._setCmdUI(this._mem.inj.mode, this._mem.inj.targetId, this._mem.inj.payload);
+        const r = await injectorPreview();
+        return this._out(r.ok ? "✅ preview ok (veja Diff no Admin)" : ("❌ " + (r.err || "preview falhou")));
+      }
+
+      if (lower === "inj apply") {
+        this._setCmdUI(this._mem.inj.mode, this._mem.inj.targetId, this._mem.inj.payload);
+        safeSetStatus("Apply…");
+        const r = await injectorApplySafe();
+        safeSetStatus("OK ✅");
+        return this._out(r.ok ? "✅ APPLY OK (SAFE)" : ("❌ APPLY FAIL" + (r.rolledBack ? " (rollback feito)" : "")));
+      }
+
+      if (lower === "inj rollback") {
+        safeSetStatus("Rollback…");
+        const r = await injectorRollback();
+        safeSetStatus("OK ✅");
+        return this._out(r.ok ? "✅ rollback ok" : "❌ rollback falhou");
+      }
+
+      // ✅ ENGINE build (AGORA CERTO, dentro do route)
+      if (lower.startsWith("build ")) {
+        const rest = cmd.replace(/^build\s+/i, "").trim();
+        const qm = rest.match(/^"([^"]+)"\s*(.*)$/);
+
+        const name = qm ? qm[1].trim() : rest;
+        const modsPart = qm ? (qm[2] || "").trim() : "";
+
+        const mods = modsPart
+          .replace(/^with\s+/i, "")
+          .split(/[,\s]+/g)
+          .map(s => s.trim())
+          .filter(Boolean);
+
+        const ENG = window.RCF_ENGINE;
+
+        if (!ENG || typeof ENG.createSpec !== "function" || typeof ENG.createAppFromSpec !== "function") {
+          return this._out("❌ ENGINE não carregou. Verifique se os scripts /js/engine/*.js estão no index.html.");
+        }
+
+        const r1 = ENG.createSpec({ name, modules: mods });
+        if (!r1 || !r1.ok) return this._out("❌ " + (r1?.err || "spec falhou"));
+
+        const r2 = ENG.createAppFromSpec(r1.spec);
+        if (r2?.ok) {
+          try { renderAppsList(); } catch {}
+          try { setActiveApp(r2.app.slug); } catch {}
+          return this._out(`✅ BUILD OK: ${r2.app.slug}`);
+        }
+        return this._out(`❌ BUILD FAIL: ${r2?.err || ""}`);
+      }
+
+      return this._out("Comando não reconhecido. Use: help");
+    }
+  };
+
+  // =========================================================
   // Bind UI
-  // -----------------------------
+  // =========================================================
   function bindUI() {
     $$("[data-view]").forEach(btn => bindTap(btn, () => setView(btn.getAttribute("data-view"))));
-
     bindTap($("#btnOpenTools"), () => openTools(true));
     bindTap($("#btnCloseTools"), () => openTools(false));
 
@@ -1732,7 +1957,7 @@ const Agent = {
     bindTap($("#btnGenPreview"), () => uiMsg("#genOut", "Preview (stub)."));
 
     bindTap($("#btnAgentRun"), () => Agent.route($("#agentCmd")?.value || ""));
-    bindTap($("#btnAgentClear"), () => uiMsg("#agentOut", Agent.help()));
+    bindTap($("#btnAgentHelp"), () => uiMsg("#agentOut", Agent.help()));
 
     const doLogsRefresh = () => {
       refreshLogsViews();
@@ -1757,7 +1982,7 @@ const Agent = {
     bindTap($("#btnLogsCopy"), doLogsCopy);
 
     bindTap($("#btnLogsRefresh2"), doLogsRefresh);
-    bindTap($("#btnClearLogs"), doLogsClear);
+    bindTap($("#btnClearLogs2"), doLogsClear);
     bindTap($("#btnCopyLogs"), doLogsCopy);
 
     bindTap($("#btnDrawerLogsRefresh"), doLogsRefresh);
@@ -1786,37 +2011,18 @@ const Agent = {
     // Diagnostics actions
     bindTap($("#btnDiagRun"), async () => {
       safeSetStatus("Diag…");
-      await runV7StabilityCheck();
+      await runV8StabilityCheck();
       setTimeout(() => safeSetStatus("OK ✅"), 700);
     });
 
-    bindTap($("#btnDiagInstall"), () => {
-      try {
-        installGuardsOnce();
-        ModuleFlags.diagnosticsInstalled = true;
-        uiMsg("#diagOut", "✅ installAll OK");
-        Logger.write("ok:", "Diagnostics: installAll ✅");
-      } catch (e) {
-        uiMsg("#diagOut", "❌ " + (e?.message || e));
-      }
-    });
-
     bindTap($("#btnDiagScan"), () => {
-      try {
-        const r = scanOverlays();
-        uiMsg("#diagOut", JSON.stringify(r, null, 2));
-      } catch (e) {
-        uiMsg("#diagOut", "❌ " + (e?.message || e));
-      }
+      try { uiMsg("#diagOut", JSON.stringify(scanOverlays(), null, 2)); }
+      catch (e) { uiMsg("#diagOut", "❌ " + (e?.message || e)); }
     });
 
     bindTap($("#btnDiagTests"), () => {
-      try {
-        const r = runMicroTests();
-        uiMsg("#diagOut", JSON.stringify(r, null, 2));
-      } catch (e) {
-        uiMsg("#diagOut", "❌ " + (e?.message || e));
-      }
+      try { uiMsg("#diagOut", JSON.stringify(runMicroTests(), null, 2)); }
+      catch (e) { uiMsg("#diagOut", "❌ " + (e?.message || e)); }
     });
 
     bindTap($("#btnDiagClear"), () => uiMsg("#diagOut", "Pronto."));
@@ -1845,7 +2051,7 @@ const Agent = {
       uiMsg("#adminOut", "✅ Zerado (safe). Logs limpos.");
     });
 
-    // Mãe buttons
+    // Mãe
     bindTap($("#btnMaeLoad"), async () => {
       const MAE = window.RCF_MOTHER || window.RCF_MAE;
       if (!MAE) {
@@ -1865,7 +2071,6 @@ const Agent = {
       Logger.write("mae check:", safeJsonStringify(s));
     });
 
-    // ✅ FIX: trava reentrada + timeout
     let maeUpdateLock = false;
     bindTap($("#btnMaeUpdate"), async () => {
       const MAE = window.RCF_MOTHER || window.RCF_MAE;
@@ -1916,7 +2121,7 @@ const Agent = {
       }
     });
 
-    // ✅ FASE A
+    // FASE A buttons
     bindTap($("#btnScanIndex"), async () => {
       safeSetStatus("Scan…");
       try {
@@ -1933,29 +2138,14 @@ const Agent = {
     bindTap($("#btnGenTargets"), () => {
       const idx = Storage.get("RCF_FILE_INDEX", null);
       const r = generateTargetMap(idx);
-      if (!r.ok) {
-        uiMsg("#scanOut", "❌ " + (r.err || "falhou gerar map"));
-        return;
-      }
+      if (!r.ok) return uiMsg("#scanOut", "❌ " + (r.err || "falhou gerar map"));
       uiMsg("#scanOut", `✅ Target Map OK\ncount=${r.map.meta.count}\nsource=${r.map.meta.source}\ncreatedAt=${r.map.meta.createdAt}`);
-      Logger.write("CP2 targets:", "count=" + r.map.meta.count);
-
-      try {
-        populateTargetsDropdown(true);
-        Logger.write("CP3 ui:", "dropdown updated", "auto-selected=" + String($("#injTarget")?.value || ""));
-      } catch {}
-
-      const sel = $("#injTarget");
-      if (sel && !String(sel.value || "").trim()) {
-        const first = Array.from(sel.options).find(o => (o.value || "").trim());
-        if (first) sel.value = first.value;
-      }
+      try { populateTargetsDropdown(true); } catch {}
     });
 
     bindTap($("#btnRefreshTargets"), () => {
       populateTargetsDropdown(true);
       uiMsg("#scanOut", "Dropdown atualizado ✅");
-      Logger.write("CP3 ui:", "dropdown refresh", "selected=" + String($("#injTarget")?.value || ""));
     });
 
     bindTap($("#btnPreviewDiff"), async () => {
@@ -1966,7 +2156,7 @@ const Agent = {
     bindTap($("#btnApplyInject"), async () => {
       safeSetStatus("Apply…");
       const ok = await injectorApplySafe();
-      Logger.write("CP3 apply:", ok && ok.ok ? "OK" : "FAIL", "target=" + String($("#injTarget")?.value || ""));
+      Logger.write("apply:", ok && ok.ok ? "OK" : "FAIL", "target=" + String($("#injTarget")?.value || ""));
       setTimeout(() => safeSetStatus("OK ✅"), 900);
     });
 
@@ -1977,9 +2167,9 @@ const Agent = {
     });
   }
 
-  // -----------------------------
+  // =========================================================
   // Boot hydrate
-  // -----------------------------
+  // =========================================================
   function hydrateUIFromState() {
     refreshLogsViews();
     renderAppsList();
@@ -2001,28 +2191,27 @@ const Agent = {
     populateTargetsDropdown(true);
   }
 
+  // =========================================================
+  // SAFE INIT
+  // =========================================================
   async function safeInit() {
     try {
       Stability.install();
-
-      // ✅ injeta compact CSS antes de render
       injectCompactCSSOnce();
 
       renderShell();
       bindUI();
       hydrateUIFromState();
 
-      installGuardsOnce();
-
-      // ✅ ENGINE init (não mexe em UI)
+      // Engine hook (não quebra se não existir)
       try { window.RCF_ENGINE?.init?.({ State, Storage, Logger }); Logger.write("engine:", "init ok ✅"); }
       catch (e) { Logger.write("engine init err:", e?.message || e); }
 
-      // ✅ P1: NÃO registrar SW duplicado aqui (index.html já registra).
+      // não força SW duplicado (mas tenta auto-fix)
       const swr = await swCheckAutoFix();
       if (!swr.ok) Logger.write("sw warn:", swr.status, swr.detail, swr.err ? ("err=" + swr.err) : "");
 
-      Logger.write("RCF app.js init ok — mode:", State.cfg.mode);
+      Logger.write("RCF V8 init ok — mode:", State.cfg.mode);
       safeSetStatus("OK ✅");
     } catch (e) {
       const msg = (e?.message || e);
