@@ -982,1439 +982,1445 @@
      STOP AQUI — PARTE 1/3
      A PRÓXIMA PARTE COMEÇA EM:  // =========================================================
                                 // PIN
-     ========== */// =========================================================
-  // PIN
-  // =========================================================
-  const Pin = {
-    key: "admin_pin",
-    get() { return Storage.get(this.key, ""); },
-    set(pin) { Storage.set(this.key, String(pin || "")); },
-    clear() { Storage.del(this.key); }
-  };
+     ========== */
+})();
+// =========================================================
+// PIN
+// =========================================================
+const Pin = {
+  key: "admin_pin",
+  get() { return Storage.get(this.key, ""); },
+  set(pin) { Storage.set(this.key, String(pin || "")); },
+  clear() { Storage.del(this.key); }
+};
 
-  // =========================================================
-  // SW helpers (safe)
-  // =========================================================
-  async function swRegister() {
-    try {
-      if (!("serviceWorker" in navigator)) {
-        Logger.write("sw:", "serviceWorker não suportado");
-        return { ok: false, msg: "SW não suportado" };
-      }
-      const reg = await navigator.serviceWorker.register("./sw.js", { scope: "./" });
-      Logger.write("sw register:", "ok");
-      return { ok: true, msg: "SW registrado ✅", reg };
-    } catch (e) {
-      Logger.write("sw register fail:", (e?.message || e));
-      return { ok: false, msg: "Falhou registrar SW: " + (e?.message || e) };
-    }
-  }
-
-  async function swUnregisterAll() {
-    try {
-      if (!("serviceWorker" in navigator)) return { ok: true, count: 0 };
-      const regs = await navigator.serviceWorker.getRegistrations();
-      let n = 0;
-      for (const r of regs) { try { if (await r.unregister()) n++; } catch {} }
-      Logger.write("sw unregister:", n, "ok");
-      return { ok: true, count: n };
-    } catch (e) {
-      Logger.write("sw unregister err:", e?.message || e);
-      return { ok: false, count: 0, err: e?.message || e };
-    }
-  }
-
-  async function swClearCaches() {
-    try {
-      const keys = await caches.keys();
-      await Promise.all(keys.map(k => caches.delete(k)));
-      Logger.write("cache clear:", keys.length, "caches");
-      return { ok: true, count: keys.length };
-    } catch (e) {
-      Logger.write("cache clear err:", e?.message || e);
-      return { ok: false, count: 0, err: e?.message || e };
-    }
-  }
-
-  async function swCheckAutoFix() {
-    const out = { ok: false, status: "missing", detail: "", attempts: 0, err: "" };
-
+// =========================================================
+// SW helpers (safe)
+// =========================================================
+async function swRegister() {
+  try {
     if (!("serviceWorker" in navigator)) {
-      out.status = "unsupported";
-      out.detail = "serviceWorker não suportado neste browser";
-      return out;
+      Logger.write("sw:", "serviceWorker não suportado");
+      return { ok: false, msg: "SW não suportado" };
     }
+    const reg = await navigator.serviceWorker.register("./sw.js", { scope: "./" });
+    Logger.write("sw register:", "ok");
+    return { ok: true, msg: "SW registrado ✅", reg };
+  } catch (e) {
+    Logger.write("sw register fail:", (e?.message || e));
+    return { ok: false, msg: "Falhou registrar SW: " + (e?.message || e) };
+  }
+}
 
-    const tryGet = async () => {
-      try {
-        const a = await navigator.serviceWorker.getRegistration("./");
-        if (a) return a;
-        const b = await navigator.serviceWorker.getRegistration();
-        return b || null;
-      } catch (e) {
-        out.err = String(e?.message || e);
-        return null;
-      }
-    };
+async function swUnregisterAll() {
+  try {
+    if (!("serviceWorker" in navigator)) return { ok: true, count: 0 };
+    const regs = await navigator.serviceWorker.getRegistrations();
+    let n = 0;
+    for (const r of regs) { try { if (await r.unregister()) n++; } catch {} }
+    Logger.write("sw unregister:", n, "ok");
+    return { ok: true, count: n };
+  } catch (e) {
+    Logger.write("sw unregister err:", e?.message || e);
+    return { ok: false, count: 0, err: e?.message || e };
+  }
+}
 
-    let reg = await tryGet();
-    if (reg) {
-      out.ok = true;
-      out.status = "registered";
-      out.detail = "já estava registrado";
-      return out;
-    }
+async function swClearCaches() {
+  try {
+    const keys = await caches.keys();
+    await Promise.all(keys.map(k => caches.delete(k)));
+    Logger.write("cache clear:", keys.length, "caches");
+    return { ok: true, count: keys.length };
+  } catch (e) {
+    Logger.write("cache clear err:", e?.message || e);
+    return { ok: false, count: 0, err: e?.message || e };
+  }
+}
 
-    out.attempts++;
+async function swCheckAutoFix() {
+  const out = { ok: false, status: "missing", detail: "", attempts: 0, err: "" };
+
+  if (!("serviceWorker" in navigator)) {
+    out.status = "unsupported";
+    out.detail = "serviceWorker não suportado neste browser";
+    return out;
+  }
+
+  const tryGet = async () => {
     try {
-      const r = await swRegister();
-      out.detail = r?.msg || "tentou registrar";
+      const a = await navigator.serviceWorker.getRegistration("./");
+      if (a) return a;
+      const b = await navigator.serviceWorker.getRegistration();
+      return b || null;
     } catch (e) {
       out.err = String(e?.message || e);
-    }
-
-    await sleep(350);
-
-    reg = await tryGet();
-    if (reg) {
-      out.ok = true;
-      out.status = "registered";
-      out.detail = "registrou após auto-fix";
-      return out;
-    }
-
-    out.status = "missing";
-    out.detail =
-      (location.protocol !== "https:" && location.hostname !== "localhost")
-        ? "SW exige HTTPS (ou localhost)."
-        : "sw.js não registrou (pode ser path/scope/privacidade).";
-
-    return out;
-  }
-
-  // =========================================================
-  // Diagnostics: overlay + microtests + css token
-  // =========================================================
-  function scanOverlays() {
-    const suspects = [];
-    const vw = Math.max(document.documentElement.clientWidth, window.innerWidth || 0);
-    const vh = Math.max(document.documentElement.clientHeight, window.innerHeight || 0);
-
-    const all = $$("body *");
-    for (const el of all) {
-      try {
-        const cs = getComputedStyle(el);
-        if (!cs) continue;
-        if (cs.pointerEvents === "none") continue;
-
-        const pos = cs.position;
-        if (pos !== "fixed" && pos !== "absolute") continue;
-
-        const zi = parseInt(cs.zIndex || "0", 10);
-        if (!Number.isFinite(zi)) continue;
-        if (zi < 50) continue;
-
-        const r = el.getBoundingClientRect();
-        const area = Math.max(0, r.width) * Math.max(0, r.height);
-        if (area < (vw * vh * 0.10)) continue;
-
-        const touches = (r.right > 0 && r.bottom > 0 && r.left < vw && r.top < vh);
-        if (!touches) continue;
-
-        suspects.push({
-          tag: el.tagName.toLowerCase(),
-          id: el.id || "",
-          cls: (el.className && String(el.className).slice(0, 80)) || "",
-          z: zi,
-          pe: cs.pointerEvents,
-          pos,
-          rect: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }
-        });
-      } catch {}
-      if (suspects.length >= 8) break;
-    }
-    return { ok: true, suspects };
-  }
-
-  function runMicroTests() {
-    const results = [];
-    const push = (name, pass, info = "") => results.push({ name, pass: !!pass, info: String(info || "") });
-
-    try { push("TEST_RENDER", !!$("#rcfRoot") && !!$("#views"), !!$("#rcfRoot") ? "UI root ok" : "UI root missing"); }
-    catch (e) { push("TEST_RENDER", false, e?.message || e); }
-
-    try { push("TEST_IMPORTS", !!window.RCF_LOGGER && !!window.RCF && !!window.RCF.state, "globals"); }
-    catch (e) { push("TEST_IMPORTS", false, e?.message || e); }
-
-    try { push("TEST_STATE_INIT", !!State && Array.isArray(State.apps) && !!State.active && typeof State.cfg === "object", "state"); }
-    catch (e) { push("TEST_STATE_INIT", false, e?.message || e); }
-
-    try { push("TEST_EVENT_BIND", !!$("#btnOpenTools") && !!$("#btnAgentRun") && !!$("#btnSaveFile"), "buttons"); }
-    catch (e) { push("TEST_EVENT_BIND", false, e?.message || e); }
-
-    const passCount = results.filter(r => r.pass).length;
-    return { ok: passCount === results.length, pass: passCount, total: results.length, results };
-  }
-
-  function cssLoadedCheck() {
-    try {
-      const token = getComputedStyle(document.documentElement)
-        .getPropertyValue("--rcf-css-token")
-        .trim()
-        .replace(/^["']|["']$/g, "");
-      const ok = !!token && token.toLowerCase() !== "(vazio)";
-      return { ok, token: token || "(vazio)" };
-    } catch (e) {
-      return { ok: false, token: "(erro)", err: e?.message || e };
-    }
-  }
-
-  async function runV8StabilityCheck() {
-    const lines = [];
-    const failList = [];
-    let pass = 0, fail = 0;
-
-    const add = (ok, label, detail) => {
-      if (ok) { pass++; lines.push(`PASS: ${label}${detail ? " — " + detail : ""}`); }
-      else { fail++; const t = `FAIL: ${label}${detail ? " — " + detail : ""}`; lines.push(t); failList.push(label + (detail ? `: ${detail}` : "")); }
-    };
-
-    add(!!window.__RCF_BOOTED__, "[BOOT] __RCF_BOOTED__", window.__RCF_BOOTED__ ? "lock ativo" : "lock ausente");
-
-    const css = cssLoadedCheck();
-    add(css.ok, "[CSS] CSS_TOKEN", `token: "${css.token}"`);
-
-    const swr = await swCheckAutoFix();
-    if (swr.ok) add(true, "[SW] SW_REGISTERED", swr.detail || "registrado");
-    else lines.push(`WARN: [SW] SW_REGISTERED — ${swr.detail || swr.status}${swr.err ? " | err=" + swr.err : ""}`);
-
-    const overlay = scanOverlays();
-    add(overlay.ok, "[CLICK] OVERLAY_SCANNER", overlay.ok ? "ok" : "erro");
-    add((overlay.suspects || []).length === 0, "[CLICK] OVERLAY_BLOCK", (overlay.suspects || []).length ? `suspects=${overlay.suspects.length}` : "nenhum");
-
-    const mt = runMicroTests();
-    add(mt.ok, "[MICROTEST] ALL", `${mt.pass}/${mt.total}`);
-
-    const stable = (fail === 0);
-    window.RCF_STABLE = stable;
-
-    lines.unshift("=========================================================");
-    lines.unshift("RCF — V8 STABILITY CHECK (REPORT)");
-    lines.push("=========================================================");
-    lines.push(`PASS: ${pass} | FAIL: ${fail}`);
-    lines.push(`RCF_STABLE: ${stable ? "TRUE ✅" : "FALSE ❌"}`);
-    lines.push("");
-
-    if (!stable) {
-      lines.push("FAIL LIST:");
-      for (const f of failList) lines.push(`- ${f}`);
-    } else {
-      lines.push("STATUS: RCF_STABLE = TRUE ✅");
-    }
-
-    const report = lines.join("\n");
-    uiMsg("#diagOut", report);
-    Logger.write("V8 check:", stable ? "PASS ✅" : "FAIL ❌", `${pass}/${pass + fail}`);
-    return { stable, pass, fail, report, overlay, microtests: mt, css, sw: swr };
-  }
-
-  /* ==========
-     STOP AQUI — PARTE 2/3
-     A PRÓXIMA PARTE COMEÇA EM:  // =========================================================
-                                 // FASE A — Scan / Targets / Injector SAFE
-     ========== */// =========================================================
-  // FASE A — Scan / Targets / Injector SAFE
-  // =========================================================
-  function simpleHash(str) {
-    let h = 2166136261;
-    const s = String(str ?? "");
-    for (let i = 0; i < s.length; i++) {
-      h ^= s.charCodeAt(i);
-      h = (h * 16777619) >>> 0;
-    }
-    return ("00000000" + h.toString(16)).slice(-8);
-  }
-
-  function guessType(path) {
-    const p = String(path || "");
-    if (p.endsWith(".js")) return "js";
-    if (p.endsWith(".css")) return "css";
-    if (p.endsWith(".html")) return "html";
-    if (p.endsWith(".json")) return "json";
-    if (p.endsWith(".txt")) return "txt";
-    return "bin";
-  }
-
-  function detectMarkers(text) {
-    const s = String(text ?? "");
-    const re = /@RCF:INJECT\s*([A-Za-z0-9_-]+)?/g;
-    const out = [];
-    let m;
-    while ((m = re.exec(s))) {
-      out.push({ marker: m[0], id: (m[1] || "").trim() || null, index: m.index });
-      if (out.length >= 20) break;
-    }
-    return out;
-  }
-
-  function getAnchorsForContent(type, content) {
-    const s = String(content ?? "");
-    const anchors = [];
-    if (type === "html") {
-      const headEnd = s.toLowerCase().lastIndexOf("</head>");
-      const bodyEnd = s.toLowerCase().lastIndexOf("</body>");
-      if (headEnd >= 0) anchors.push({ id: "HEAD_END", at: headEnd, note: "</head>" });
-      if (bodyEnd >= 0) anchors.push({ id: "BODY_END", at: bodyEnd, note: "</body>" });
-    }
-    if (type === "css") {
-      const rootIdx = s.indexOf(":root");
-      if (rootIdx >= 0) anchors.push({ id: "CSS_ROOT", at: rootIdx, note: ":root" });
-    }
-    if (type === "js") {
-      anchors.push({ id: "JS_TOP", at: 0, note: "top" });
-      anchors.push({ id: "JS_EOF", at: s.length, note: "eof" });
-    }
-    return anchors;
-  }
-
-  function normalizePath(p) {
-    let x = String(p || "").trim();
-    if (!x) return "";
-    x = x.split("#")[0].split("?")[0].trim();
-    if (!x.startsWith("/")) x = "/" + x;
-    x = x.replace(/\/{2,}/g, "/");
-    return x;
-  }
-
-  async function vfsListAll(vfs) {
-    if (!vfs) return [];
-    try {
-      if (typeof vfs.listFiles === "function") return (await vfs.listFiles()) || [];
-      if (typeof vfs.list === "function") return (await vfs.list()) || [];
-      if (typeof vfs.keys === "function") return (await vfs.keys()) || [];
-      if (typeof vfs.entries === "function") {
-        const ent = await vfs.entries();
-        return Array.isArray(ent) ? ent.map(e => e && (e.path || e[0])) : [];
-      }
-    } catch {}
-    return [];
-  }
-
-  async function vfsRead(vfs, path) {
-    if (!vfs) return null;
-    try {
-      if (typeof vfs.readFile === "function") return await vfs.readFile(path);
-      if (typeof vfs.read === "function") return await vfs.read(path);
-      if (typeof vfs.get === "function") return await vfs.get(path);
-    } catch {}
-    return null;
-  }
-
-  async function tryFetchLocalBundleFromCfg() {
-    const cfg = Storage.get("ghcfg", null);
-    const path = cfg && cfg.path ? String(cfg.path) : "";
-    if (!path) return null;
-
-    const url = new URL(path, document.baseURI).toString();
-    try {
-      const res = await fetch(url, { cache: "no-store" });
-      if (!res.ok) return null;
-      const txt = await res.text();
-      return txt || null;
-    } catch {
       return null;
     }
+  };
+
+  let reg = await tryGet();
+  if (reg) {
+    out.ok = true;
+    out.status = "registered";
+    out.detail = "já estava registrado";
+    return out;
   }
 
-  function getLocalMotherBundleText() {
-    const raw = Storage.getRaw("mother_bundle", "");
-    if (raw && raw.trim().startsWith("{")) return raw;
-    const raw2 = localStorage.getItem("RCF_MOTHER_BUNDLE") || "";
-    if (raw2 && raw2.trim().startsWith("{")) return raw2;
-    return "";
+  out.attempts++;
+  try {
+    const r = await swRegister();
+    out.detail = r?.msg || "tentou registrar";
+  } catch (e) {
+    out.err = String(e?.message || e);
   }
 
-  async function scanFactoryFiles() {
-    const index = { meta: { scannedAt: nowISO(), source: "", count: 0 }, files: [] };
+  await sleep(350);
 
-    // 0) overrides sempre entram
+  reg = await tryGet();
+  if (reg) {
+    out.ok = true;
+    out.status = "registered";
+    out.detail = "registrou após auto-fix";
+    return out;
+  }
+
+  out.status = "missing";
+  out.detail =
+    (location.protocol !== "https:" && location.hostname !== "localhost")
+      ? "SW exige HTTPS (ou localhost)."
+      : "sw.js não registrou (pode ser path/scope/privacidade).";
+
+  return out;
+}
+
+// =========================================================
+// Diagnostics: overlay + microtests + css token
+// =========================================================
+function scanOverlays() {
+  const suspects = [];
+  const vw = Math.max(document.documentElement.clientWidth, window.innerWidth || 0);
+  const vh = Math.max(document.documentElement.clientHeight, window.innerHeight || 0);
+
+  const all = $$("body *");
+  for (const el of all) {
     try {
-      const olist = await OverridesVFS.listFiles();
-      for (const p0 of (olist || []).slice(0, 800)) {
-        const p = normalizePath(p0);
-        const txt = String((await OverridesVFS.readFile(p)) ?? "");
-        const type = guessType(p);
-        index.files.push({
-          path: p, type,
-          size: txt.length,
-          hash: simpleHash(txt),
-          markers: detectMarkers(txt),
-          anchors: getAnchorsForContent(type, txt)
-        });
-      }
+      const cs = getComputedStyle(el);
+      if (!cs) continue;
+      if (cs.pointerEvents === "none") continue;
+
+      const pos = cs.position;
+      if (pos !== "fixed" && pos !== "absolute") continue;
+
+      const zi = parseInt(cs.zIndex || "0", 10);
+      if (!Number.isFinite(zi)) continue;
+      if (zi < 50) continue;
+
+      const r = el.getBoundingClientRect();
+      const area = Math.max(0, r.width) * Math.max(0, r.height);
+      if (area < (vw * vh * 0.10)) continue;
+
+      const touches = (r.right > 0 && r.bottom > 0 && r.left < vw && r.top < vh);
+      if (!touches) continue;
+
+      suspects.push({
+        tag: el.tagName.toLowerCase(),
+        id: el.id || "",
+        cls: (el.className && String(el.className).slice(0, 80)) || "",
+        z: zi,
+        pe: cs.pointerEvents,
+        pos,
+        rect: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }
+      });
     } catch {}
+    if (suspects.length >= 8) break;
+  }
+  return { ok: true, suspects };
+}
 
-    // A) runtime vfs
-    const vfs = (window.RCF_VFS || window.RCF_FS || window.RCF_FILES || window.RCF_STORE) || null;
-    if (vfs) {
-      const baseLen = index.files.length;
-      const list = await vfsListAll(vfs);
-      const paths = (list || []).map(p => normalizePath(p)).filter(Boolean).slice(0, 1200);
+function runMicroTests() {
+  const results = [];
+  const push = (name, pass, info = "") => results.push({ name, pass: !!pass, info: String(info || "") });
 
-      for (const p of paths) {
-        const content = await vfsRead(vfs, p);
-        const txt = (content == null) ? "" : String(content);
-        const type = guessType(p);
-        index.files.push({
-          path: p, type,
-          size: txt.length,
-          hash: simpleHash(txt),
-          markers: detectMarkers(txt),
-          anchors: getAnchorsForContent(type, txt)
-        });
-      }
+  try { push("TEST_RENDER", !!$("#rcfRoot") && !!$("#views"), !!$("#rcfRoot") ? "UI root ok" : "UI root missing"); }
+  catch (e) { push("TEST_RENDER", false, e?.message || e); }
 
-      const added = index.files.length - baseLen;
-      if (added > 0) {
-        index.meta.source = "A:runtime_vfs";
-        index.meta.count = index.files.length;
-        Storage.set("RCF_FILE_INDEX", index);
-        Logger.write("scan:", index.meta.source, "files=" + index.meta.count);
-        return index;
-      }
+  try { push("TEST_IMPORTS", !!window.RCF_LOGGER && !!window.RCF && !!window.RCF.state, "globals"); }
+  catch (e) { push("TEST_IMPORTS", false, e?.message || e); }
 
-      Logger.write("scan:", "A:runtime_vfs files=0 => FALHA", "scan fallback -> mother_bundle");
+  try { push("TEST_STATE_INIT", !!State && Array.isArray(State.apps) && !!State.active && typeof State.cfg === "object", "state"); }
+  catch (e) { push("TEST_STATE_INIT", false, e?.message || e); }
+
+  try { push("TEST_EVENT_BIND", !!$("#btnOpenTools") && !!$("#btnAgentRun") && !!$("#btnSaveFile"), "buttons"); }
+  catch (e) { push("TEST_EVENT_BIND", false, e?.message || e); }
+
+  const passCount = results.filter(r => r.pass).length;
+  return { ok: passCount === results.length, pass: passCount, total: results.length, results };
+}
+
+function cssLoadedCheck() {
+  try {
+    const token = getComputedStyle(document.documentElement)
+      .getPropertyValue("--rcf-css-token")
+      .trim()
+      .replace(/^["']|["']$/g, "");
+    const ok = !!token && token.toLowerCase() !== "(vazio)";
+    return { ok, token: token || "(vazio)" };
+  } catch (e) {
+    return { ok: false, token: "(erro)", err: e?.message || e };
+  }
+}
+
+async function runV8StabilityCheck() {
+  const lines = [];
+  const failList = [];
+  let pass = 0, fail = 0;
+
+  const add = (ok, label, detail) => {
+    if (ok) { pass++; lines.push(`PASS: ${label}${detail ? " — " + detail : ""}`); }
+    else { fail++; const t = `FAIL: ${label}${detail ? " — " + detail : ""}`; lines.push(t); failList.push(label + (detail ? `: ${detail}` : "")); }
+  };
+
+  add(!!window.__RCF_BOOTED__, "[BOOT] __RCF_BOOTED__", window.__RCF_BOOTED__ ? "lock ativo" : "lock ausente");
+
+  const css = cssLoadedCheck();
+  add(css.ok, "[CSS] CSS_TOKEN", `token: "${css.token}"`);
+
+  const swr = await swCheckAutoFix();
+  if (swr.ok) add(true, "[SW] SW_REGISTERED", swr.detail || "registrado");
+  else lines.push(`WARN: [SW] SW_REGISTERED — ${swr.detail || swr.status}${swr.err ? " | err=" + swr.err : ""}`);
+
+  const overlay = scanOverlays();
+  add(overlay.ok, "[CLICK] OVERLAY_SCANNER", overlay.ok ? "ok" : "erro");
+  add((overlay.suspects || []).length === 0, "[CLICK] OVERLAY_BLOCK", (overlay.suspects || []).length ? `suspects=${overlay.suspects.length}` : "nenhum");
+
+  const mt = runMicroTests();
+  add(mt.ok, "[MICROTEST] ALL", `${mt.pass}/${mt.total}`);
+
+  const stable = (fail === 0);
+  window.RCF_STABLE = stable;
+
+  lines.unshift("=========================================================");
+  lines.unshift("RCF — V8 STABILITY CHECK (REPORT)");
+  lines.push("=========================================================");
+  lines.push(`PASS: ${pass} | FAIL: ${fail}`);
+  lines.push(`RCF_STABLE: ${stable ? "TRUE ✅" : "FALSE ❌"}`);
+  lines.push("");
+
+  if (!stable) {
+    lines.push("FAIL LIST:");
+    for (const f of failList) lines.push(`- ${f}`);
+  } else {
+    lines.push("STATUS: RCF_STABLE = TRUE ✅");
+  }
+
+  const report = lines.join("\n");
+  uiMsg("#diagOut", report);
+  Logger.write("V8 check:", stable ? "PASS ✅" : "FAIL ❌", `${pass}/${pass + fail}`);
+  return { stable, pass, fail, report, overlay, microtests: mt, css, sw: swr };
+}
+
+/* ==========
+   STOP AQUI — PARTE 2/3
+   A PRÓXIMA PARTE COMEÇA EM:  // =========================================================
+                                // FASE A — Scan / Targets / Injector SAFE
+   ========== */// =========================================================
+// FASE A — Scan / Targets / Injector SAFE
+// =========================================================
+function simpleHash(str) {
+  let h = 2166136261;
+  const s = String(str ?? "");
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = (h * 16777619) >>> 0;
+  }
+  return ("00000000" + h.toString(16)).slice(-8);
+}
+
+function guessType(path) {
+  const p = String(path || "");
+  if (p.endsWith(".js")) return "js";
+  if (p.endsWith(".css")) return "css";
+  if (p.endsWith(".html")) return "html";
+  if (p.endsWith(".json")) return "json";
+  if (p.endsWith(".txt")) return "txt";
+  return "bin";
+}
+
+function detectMarkers(text) {
+  const s = String(text ?? "");
+  const re = /@RCF:INJECT\s*([A-Za-z0-9_-]+)?/g;
+  const out = [];
+  let m;
+  while ((m = re.exec(s))) {
+    out.push({ marker: m[0], id: (m[1] || "").trim() || null, index: m.index });
+    if (out.length >= 20) break;
+  }
+  return out;
+}
+
+function getAnchorsForContent(type, content) {
+  const s = String(content ?? "");
+  const anchors = [];
+  if (type === "html") {
+    const headEnd = s.toLowerCase().lastIndexOf("</head>");
+    const bodyEnd = s.toLowerCase().lastIndexOf("</body>");
+    if (headEnd >= 0) anchors.push({ id: "HEAD_END", at: headEnd, note: "</head>" });
+    if (bodyEnd >= 0) anchors.push({ id: "BODY_END", at: bodyEnd, note: "</body>" });
+  }
+  if (type === "css") {
+    const rootIdx = s.indexOf(":root");
+    if (rootIdx >= 0) anchors.push({ id: "CSS_ROOT", at: rootIdx, note: ":root" });
+  }
+  if (type === "js") {
+    anchors.push({ id: "JS_TOP", at: 0, note: "top" });
+    anchors.push({ id: "JS_EOF", at: s.length, note: "eof" });
+  }
+  return anchors;
+}
+
+function normalizePath(p) {
+  let x = String(p || "").trim();
+  if (!x) return "";
+  x = x.split("#")[0].split("?")[0].trim();
+  if (!x.startsWith("/")) x = "/" + x;
+  x = x.replace(/\/{2,}/g, "/");
+  return x;
+}
+
+async function vfsListAll(vfs) {
+  if (!vfs) return [];
+  try {
+    if (typeof vfs.listFiles === "function") return (await vfs.listFiles()) || [];
+    if (typeof vfs.list === "function") return (await vfs.list()) || [];
+    if (typeof vfs.keys === "function") return (await vfs.keys()) || [];
+    if (typeof vfs.entries === "function") {
+      const ent = await vfs.entries();
+      return Array.isArray(ent) ? ent.map(e => e && (e.path || e[0])) : [];
+    }
+  } catch {}
+  return [];
+}
+
+async function vfsRead(vfs, path) {
+  if (!vfs) return null;
+  try {
+    if (typeof vfs.readFile === "function") return await vfs.readFile(path);
+    if (typeof vfs.read === "function") return await vfs.read(path);
+    if (typeof vfs.get === "function") return await vfs.get(path);
+  } catch {}
+  return null;
+}
+
+async function tryFetchLocalBundleFromCfg() {
+  const cfg = Storage.get("ghcfg", null);
+  const path = cfg && cfg.path ? String(cfg.path) : "";
+  if (!path) return null;
+
+  const url = new URL(path, document.baseURI).toString();
+  try {
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) return null;
+    const txt = await res.text();
+    return txt || null;
+  } catch {
+    return null;
+  }
+}
+
+function getLocalMotherBundleText() {
+  const raw = Storage.getRaw("mother_bundle", "");
+  if (raw && raw.trim().startsWith("{")) return raw;
+  const raw2 = localStorage.getItem("RCF_MOTHER_BUNDLE") || "";
+  if (raw2 && raw2.trim().startsWith("{")) return raw2;
+  return "";
+}
+
+async function scanFactoryFiles() {
+  const index = { meta: { scannedAt: nowISO(), source: "", count: 0 }, files: [] };
+
+  // 0) overrides sempre entram
+  try {
+    const olist = await OverridesVFS.listFiles();
+    for (const p0 of (olist || []).slice(0, 800)) {
+      const p = normalizePath(p0);
+      const txt = String((await OverridesVFS.readFile(p)) ?? "");
+      const type = guessType(p);
+      index.files.push({
+        path: p, type,
+        size: txt.length,
+        hash: simpleHash(txt),
+        markers: detectMarkers(txt),
+        anchors: getAnchorsForContent(type, txt)
+      });
+    }
+  } catch {}
+
+  // A) runtime vfs
+  const vfs = (window.RCF_VFS || window.RCF_FS || window.RCF_FILES || window.RCF_STORE) || null;
+  if (vfs) {
+    const baseLen = index.files.length;
+    const list = await vfsListAll(vfs);
+    const paths = (list || []).map(p => normalizePath(p)).filter(Boolean).slice(0, 1200);
+
+    for (const p of paths) {
+      const content = await vfsRead(vfs, p);
+      const txt = (content == null) ? "" : String(content);
+      const type = guessType(p);
+      index.files.push({
+        path: p, type,
+        size: txt.length,
+        hash: simpleHash(txt),
+        markers: detectMarkers(txt),
+        anchors: getAnchorsForContent(type, txt)
+      });
     }
 
-    // B) mother_bundle local
-    let bundleText = getLocalMotherBundleText();
-    if (!bundleText) bundleText = await tryFetchLocalBundleFromCfg();
-
-    if (bundleText) {
-      index.meta.source = "B:mother_bundle_local";
-      let parsed = null;
-      try { parsed = JSON.parse(bundleText); } catch { parsed = null; }
-
-      let entries = [];
-      if (parsed && Array.isArray(parsed.files)) {
-        entries = parsed.files
-          .map(it => {
-            const rawPath = it && (it.path || it.file || it.name);
-            const rawVal  = it && ("content" in it ? it.content : (it.text ?? it.data ?? ""));
-            return [rawPath, rawVal];
-          })
-          .filter(([p]) => !!p);
-      } else {
-        const filesObj =
-          (parsed && parsed.files && typeof parsed.files === "object")
-            ? parsed.files
-            : (parsed && typeof parsed === "object" ? parsed : {});
-        entries = Object.entries(filesObj || {});
-      }
-
-      for (const [rawPath, rawVal] of entries) {
-        const p = normalizePath(rawPath);
-        const txt =
-          (rawVal && typeof rawVal === "object" && "content" in rawVal)
-            ? String(rawVal.content ?? "")
-            : String(rawVal ?? "");
-        const type = guessType(p);
-        index.files.push({
-          path: p, type,
-          size: txt.length,
-          hash: simpleHash(txt),
-          markers: detectMarkers(txt),
-          anchors: getAnchorsForContent(type, txt)
-        });
-      }
-
+    const added = index.files.length - baseLen;
+    if (added > 0) {
+      index.meta.source = "A:runtime_vfs";
       index.meta.count = index.files.length;
       Storage.set("RCF_FILE_INDEX", index);
-      Storage.setRaw("mother_bundle", bundleText);
       Logger.write("scan:", index.meta.source, "files=" + index.meta.count);
       return index;
     }
 
-    // C) DOM anchors only
-    Logger.write("scan fallback -> DOM anchors");
-    index.meta.source = "C:dom_anchors_only";
-    const html = document.documentElement ? document.documentElement.outerHTML : "";
-    index.files.push({
-      path: "/runtime/document.html",
-      type: "html",
-      size: html.length,
-      hash: simpleHash(html),
-      markers: detectMarkers(html),
-      anchors: getAnchorsForContent("html", html)
-    });
+    Logger.write("scan:", "A:runtime_vfs files=0 => FALHA", "scan fallback -> mother_bundle");
+  }
+
+  // B) mother_bundle local
+  let bundleText = getLocalMotherBundleText();
+  if (!bundleText) bundleText = await tryFetchLocalBundleFromCfg();
+
+  if (bundleText) {
+    index.meta.source = "B:mother_bundle_local";
+    let parsed = null;
+    try { parsed = JSON.parse(bundleText); } catch { parsed = null; }
+
+    let entries = [];
+    if (parsed && Array.isArray(parsed.files)) {
+      entries = parsed.files
+        .map(it => {
+          const rawPath = it && (it.path || it.file || it.name);
+          const rawVal  = it && ("content" in it ? it.content : (it.text ?? it.data ?? ""));
+          return [rawPath, rawVal];
+        })
+        .filter(([p]) => !!p);
+    } else {
+      const filesObj =
+        (parsed && parsed.files && typeof parsed.files === "object")
+          ? parsed.files
+          : (parsed && typeof parsed === "object" ? parsed : {});
+      entries = Object.entries(filesObj || {});
+    }
+
+    for (const [rawPath, rawVal] of entries) {
+      const p = normalizePath(rawPath);
+      const txt =
+        (rawVal && typeof rawVal === "object" && "content" in rawVal)
+          ? String(rawVal.content ?? "")
+          : String(rawVal ?? "");
+      const type = guessType(p);
+      index.files.push({
+        path: p, type,
+        size: txt.length,
+        hash: simpleHash(txt),
+        markers: detectMarkers(txt),
+        anchors: getAnchorsForContent(type, txt)
+      });
+    }
 
     index.meta.count = index.files.length;
     Storage.set("RCF_FILE_INDEX", index);
+    Storage.setRaw("mother_bundle", bundleText);
     Logger.write("scan:", index.meta.source, "files=" + index.meta.count);
     return index;
   }
 
-  function generateTargetMap(fileIndex) {
-    const idx = fileIndex || Storage.get("RCF_FILE_INDEX", null);
-    if (!idx || !Array.isArray(idx.files)) return { ok: false, err: "RCF_FILE_INDEX ausente. Rode Scan & Index primeiro." };
+  // C) DOM anchors only
+  Logger.write("scan fallback -> DOM anchors");
+  index.meta.source = "C:dom_anchors_only";
+  const html = document.documentElement ? document.documentElement.outerHTML : "";
+  index.files.push({
+    path: "/runtime/document.html",
+    type: "html",
+    size: html.length,
+    hash: simpleHash(html),
+    markers: detectMarkers(html),
+    anchors: getAnchorsForContent("html", html)
+  });
 
-    const targets = [];
-    for (const f of idx.files) {
-      const path = String(f.path || "");
-      const markers = Array.isArray(f.markers) ? f.markers : [];
+  index.meta.count = index.files.length;
+  Storage.set("RCF_FILE_INDEX", index);
+  Logger.write("scan:", index.meta.source, "files=" + index.meta.count);
+  return index;
+}
 
-      for (const m of markers) {
-        const id = m.id ? m.id : `MARKER_${path}_${m.index}`;
+function generateTargetMap(fileIndex) {
+  const idx = fileIndex || Storage.get("RCF_FILE_INDEX", null);
+  if (!idx || !Array.isArray(idx.files)) return { ok: false, err: "RCF_FILE_INDEX ausente. Rode Scan & Index primeiro." };
+
+  const targets = [];
+  for (const f of idx.files) {
+    const path = String(f.path || "");
+    const markers = Array.isArray(f.markers) ? f.markers : [];
+
+    for (const m of markers) {
+      const id = m.id ? m.id : `MARKER_${path}_${m.index}`;
+      targets.push({
+        targetId: id,
+        path,
+        kind: "MARKER",
+        offset: m.index,
+        supportedModes: ["INSERT", "REPLACE", "DELETE"],
+        defaultRisk: "low",
+        note: "@RCF:INJECT"
+      });
+    }
+
+    if (!markers.length) {
+      const anchors = Array.isArray(f.anchors) ? f.anchors : [];
+      for (const a of anchors) {
         targets.push({
-          targetId: id,
+          targetId: `${path}::${a.id}`,
           path,
-          kind: "MARKER",
-          offset: m.index,
+          kind: "ANCHOR",
+          offset: a.at,
+          anchorId: a.id,
           supportedModes: ["INSERT", "REPLACE", "DELETE"],
-          defaultRisk: "low",
-          note: "@RCF:INJECT"
+          defaultRisk: (String(a.id || "").includes("BODY") || String(a.id || "").includes("JS_EOF")) ? "medium" : "low",
+          note: a.note
         });
       }
-
-      if (!markers.length) {
-        const anchors = Array.isArray(f.anchors) ? f.anchors : [];
-        for (const a of anchors) {
-          targets.push({
-            targetId: `${path}::${a.id}`,
-            path,
-            kind: "ANCHOR",
-            offset: a.at,
-            anchorId: a.id,
-            supportedModes: ["INSERT", "REPLACE", "DELETE"],
-            defaultRisk: (String(a.id || "").includes("BODY") || String(a.id || "").includes("JS_EOF")) ? "medium" : "low",
-            note: a.note
-          });
-        }
-      }
-    }
-
-    const seen = new Set();
-    const uniq = [];
-    for (const t of targets) {
-      if (!t || !t.targetId) continue;
-      if (seen.has(t.targetId)) continue;
-      seen.add(t.targetId);
-      uniq.push(t);
-      if (uniq.length >= 800) break;
-    }
-
-    if (uniq.length < 2) {
-      const fallbackPaths = ["/index.html", "/app/index.html"];
-      for (const fp of fallbackPaths) {
-        uniq.push({ targetId: `${fp}::HEAD_END`, path: fp, kind: "ANCHOR", offset: 0, anchorId: "HEAD_END", supportedModes: ["INSERT","REPLACE","DELETE"], defaultRisk: "low", note: "FORCED_FALLBACK_HEAD_END" });
-        uniq.push({ targetId: `${fp}::BODY_END`, path: fp, kind: "ANCHOR", offset: 0, anchorId: "BODY_END", supportedModes: ["INSERT","REPLACE","DELETE"], defaultRisk: "medium", note: "FORCED_FALLBACK_BODY_END" });
-        if (uniq.length >= 2) break;
-      }
-    }
-
-    const out = { meta: { createdAt: nowISO(), count: uniq.length, source: (idx.meta && idx.meta.source) || "" }, targets: uniq };
-    Storage.set("RCF_TARGET_MAP", out);
-    Logger.write("targets:", "count=" + out.meta.count, "source=" + out.meta.source);
-
-    try { populateTargetsDropdown(true); } catch {}
-    return { ok: true, map: out };
-  }
-
-  function populateTargetsDropdown(autoSelect = false) {
-    const sel = $("#injTarget");
-    if (!sel) return;
-
-    const map = Storage.get("RCF_TARGET_MAP", null);
-    const t = map && Array.isArray(map.targets) ? map.targets : [];
-
-    sel.innerHTML = "";
-
-    if (!t.length) {
-      const opt = document.createElement("option");
-      opt.value = "";
-      opt.textContent = "(sem targets — gere o map)";
-      sel.appendChild(opt);
-      return;
-    }
-
-    for (const item of t.slice(0, 500)) {
-      const opt = document.createElement("option");
-      opt.value = item.targetId;
-      opt.textContent = `${item.targetId}  —  ${item.path}  (${item.kind})`;
-      sel.appendChild(opt);
-    }
-
-    if (autoSelect) {
-      const first = Array.from(sel.options).find(o => (o.value || "").trim());
-      if (first) sel.value = first.value;
     }
   }
 
-  function tinyDiff(oldText, newText) {
-    const a = String(oldText ?? "").split("\n");
-    const b = String(newText ?? "").split("\n");
-    const max = Math.max(a.length, b.length);
-    const out = [];
-    for (let i = 0; i < max; i++) {
-      const A = a[i], B = b[i];
-      if (A === B) continue;
-      if (A !== undefined) out.push(`- ${A}`);
-      if (B !== undefined) out.push(`+ ${B}`);
-      if (out.length > 220) { out.push("... (diff truncado)"); break; }
-    }
-    return out.join("\n") || "(sem mudanças)";
+  const seen = new Set();
+  const uniq = [];
+  for (const t of targets) {
+    if (!t || !t.targetId) continue;
+    if (seen.has(t.targetId)) continue;
+    seen.add(t.targetId);
+    uniq.push(t);
+    if (uniq.length >= 800) break;
   }
 
-  async function readTextFromInventoryPath(path) {
-    const p = normalizePath(path);
-
-    const ov = await OverridesVFS.readFile(p);
-    if (ov != null) return String(ov);
-
-    const vfs = (window.RCF_VFS || window.RCF_FS || window.RCF_FILES || window.RCF_STORE) || null;
-    if (vfs) {
-      const txt = await vfsRead(vfs, p);
-      return (txt == null) ? "" : String(txt);
+  if (uniq.length < 2) {
+    const fallbackPaths = ["/index.html", "/app/index.html"];
+    for (const fp of fallbackPaths) {
+      uniq.push({ targetId: `${fp}::HEAD_END`, path: fp, kind: "ANCHOR", offset: 0, anchorId: "HEAD_END", supportedModes: ["INSERT","REPLACE","DELETE"], defaultRisk: "low", note: "FORCED_FALLBACK_HEAD_END" });
+      uniq.push({ targetId: `${fp}::BODY_END`, path: fp, kind: "ANCHOR", offset: 0, anchorId: "BODY_END", supportedModes: ["INSERT","REPLACE","DELETE"], defaultRisk: "medium", note: "FORCED_FALLBACK_BODY_END" });
+      if (uniq.length >= 2) break;
     }
-
-    const bundleText = getLocalMotherBundleText() || (await tryFetchLocalBundleFromCfg()) || "";
-    if (bundleText) {
-      try {
-        const parsed = JSON.parse(bundleText);
-
-        if (parsed && Array.isArray(parsed.files)) {
-          const hit = parsed.files.find(it => normalizePath(it?.path || it?.file || it?.name) === p);
-          if (hit) {
-            if ("content" in hit) return String(hit.content ?? "");
-            if ("text" in hit) return String(hit.text ?? "");
-            if ("data" in hit) return String(hit.data ?? "");
-            return "";
-          }
-        }
-
-        const filesObj = (parsed && parsed.files && typeof parsed.files === "object") ? parsed.files : parsed;
-        const v = filesObj && filesObj[p];
-        if (v && typeof v === "object" && "content" in v) return String(v.content ?? "");
-        if (v != null) return String(v);
-      } catch {}
-    }
-
-    if (p === "/runtime/document.html") return document.documentElement ? document.documentElement.outerHTML : "";
-
-    if (p === "/app/index.html" || p === "/app/styles.css" || p === "/app/app.js" || p === "/index.html" || p === "/styles.css" || p === "/app.js") {
-      try {
-        const res = await fetch(p, { cache: "no-store" });
-        if (res.ok) return await res.text();
-      } catch {}
-    }
-
-    return "";
   }
 
-  async function writeTextToInventoryPath(path, newText) {
-    const p = normalizePath(path);
+  const out = { meta: { createdAt: nowISO(), count: uniq.length, source: (idx.meta && idx.meta.source) || "" }, targets: uniq };
+  Storage.set("RCF_TARGET_MAP", out);
+  Logger.write("targets:", "count=" + out.meta.count, "source=" + out.meta.source);
 
-    const vfs = (window.RCF_VFS || window.RCF_FS || window.RCF_FILES || window.RCF_STORE) || null;
-    if (vfs) {
-      try {
-        if (typeof vfs.writeFile === "function") { await vfs.writeFile(p, String(newText ?? "")); return { ok: true, mode: "vfs.writeFile" }; }
-        if (typeof vfs.write === "function") { await vfs.write(p, String(newText ?? "")); return { ok: true, mode: "vfs.write" }; }
-        if (typeof vfs.put === "function") { await vfs.put(p, String(newText ?? "")); return { ok: true, mode: "vfs.put" }; }
-        if (typeof vfs.set === "function") { await vfs.set(p, String(newText ?? "")); return { ok: true, mode: "vfs.set" }; }
-      } catch (e) {
-        return { ok: false, err: e?.message || e };
-      }
-    }
+  try { populateTargetsDropdown(true); } catch {}
+  return { ok: true, map: out };
+}
 
+function populateTargetsDropdown(autoSelect = false) {
+  const sel = $("#injTarget");
+  if (!sel) return;
+
+  const map = Storage.get("RCF_TARGET_MAP", null);
+  const t = map && Array.isArray(map.targets) ? map.targets : [];
+
+  sel.innerHTML = "";
+
+  if (!t.length) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "(sem targets — gere o map)";
+    sel.appendChild(opt);
+    return;
+  }
+
+  for (const item of t.slice(0, 500)) {
+    const opt = document.createElement("option");
+    opt.value = item.targetId;
+    opt.textContent = `${item.targetId}  —  ${item.path}  (${item.kind})`;
+    sel.appendChild(opt);
+  }
+
+  if (autoSelect) {
+    const first = Array.from(sel.options).find(o => (o.value || "").trim());
+    if (first) sel.value = first.value;
+  }
+}
+
+function tinyDiff(oldText, newText) {
+  const a = String(oldText ?? "").split("\n");
+  const b = String(newText ?? "").split("\n");
+  const max = Math.max(a.length, b.length);
+  const out = [];
+  for (let i = 0; i < max; i++) {
+    const A = a[i], B = b[i];
+    if (A === B) continue;
+    if (A !== undefined) out.push(`- ${A}`);
+    if (B !== undefined) out.push(`+ ${B}`);
+    if (out.length > 220) { out.push("... (diff truncado)"); break; }
+  }
+  return out.join("\n") || "(sem mudanças)";
+}
+
+async function readTextFromInventoryPath(path) {
+  const p = normalizePath(path);
+
+  const ov = await OverridesVFS.readFile(p);
+  if (ov != null) return String(ov);
+
+  const vfs = (window.RCF_VFS || window.RCF_FS || window.RCF_FILES || window.RCF_STORE) || null;
+  if (vfs) {
+    const txt = await vfsRead(vfs, p);
+    return (txt == null) ? "" : String(txt);
+  }
+
+  const bundleText = getLocalMotherBundleText() || (await tryFetchLocalBundleFromCfg()) || "";
+  if (bundleText) {
     try {
-      await OverridesVFS.writeFile(p, String(newText ?? ""));
-      return { ok: true, mode: "override.writeFile" };
+      const parsed = JSON.parse(bundleText);
+
+      if (parsed && Array.isArray(parsed.files)) {
+        const hit = parsed.files.find(it => normalizePath(it?.path || it?.file || it?.name) === p);
+        if (hit) {
+          if ("content" in hit) return String(hit.content ?? "");
+          if ("text" in hit) return String(hit.text ?? "");
+          if ("data" in hit) return String(hit.data ?? "");
+          return "";
+        }
+      }
+
+      const filesObj = (parsed && parsed.files && typeof parsed.files === "object") ? parsed.files : parsed;
+      const v = filesObj && filesObj[p];
+      if (v && typeof v === "object" && "content" in v) return String(v.content ?? "");
+      if (v != null) return String(v);
+    } catch {}
+  }
+
+  if (p === "/runtime/document.html") return document.documentElement ? document.documentElement.outerHTML : "";
+
+  if (p === "/app/index.html" || p === "/app/styles.css" || p === "/app/app.js" || p === "/index.html" || p === "/styles.css" || p === "/app.js") {
+    try {
+      const res = await fetch(p, { cache: "no-store" });
+      if (res.ok) return await res.text();
+    } catch {}
+  }
+
+  return "";
+}
+
+async function writeTextToInventoryPath(path, newText) {
+  const p = normalizePath(path);
+
+  const vfs = (window.RCF_VFS || window.RCF_FS || window.RCF_FILES || window.RCF_STORE) || null;
+  if (vfs) {
+    try {
+      if (typeof vfs.writeFile === "function") { await vfs.writeFile(p, String(newText ?? "")); return { ok: true, mode: "vfs.writeFile" }; }
+      if (typeof vfs.write === "function") { await vfs.write(p, String(newText ?? "")); return { ok: true, mode: "vfs.write" }; }
+      if (typeof vfs.put === "function") { await vfs.put(p, String(newText ?? "")); return { ok: true, mode: "vfs.put" }; }
+      if (typeof vfs.set === "function") { await vfs.set(p, String(newText ?? "")); return { ok: true, mode: "vfs.set" }; }
     } catch (e) {
       return { ok: false, err: e?.message || e };
     }
   }
 
-  function applyAtTarget(oldText, target, mode, payload) {
-    const s = String(oldText ?? "");
-    const pl = String(payload ?? "");
-
-    const resolveOffset = () => {
-      if (!target || target.kind !== "ANCHOR") return Math.max(0, Math.min(s.length, target.offset || 0));
-      if ((target.offset || 0) > 0) return Math.max(0, Math.min(s.length, target.offset || 0));
-      const lower = s.toLowerCase();
-      if (target.anchorId === "HEAD_END") {
-        const i = lower.lastIndexOf("</head>");
-        return i >= 0 ? i : 0;
-      }
-      if (target.anchorId === "BODY_END") {
-        const i = lower.lastIndexOf("</body>");
-        return i >= 0 ? i : s.length;
-      }
-      return Math.max(0, Math.min(s.length, target.offset || 0));
-    };
-
-    if (target.kind === "MARKER") {
-      const at = Math.max(0, Math.min(s.length, target.offset || 0));
-      if (mode === "INSERT") return s.slice(0, at) + pl + "\n" + s.slice(at);
-      if (mode === "REPLACE") return s.slice(0, at) + pl + "\n" + s.slice(at);
-      if (mode === "DELETE") return s.replace(target.note || "@RCF:INJECT", "");
-    }
-
-    const at = resolveOffset();
-    if (mode === "INSERT") return s.slice(0, at) + "\n" + pl + "\n" + s.slice(at);
-    if (mode === "REPLACE") return s.slice(0, at) + "\n" + pl + "\n" + s.slice(at);
-    if (mode === "DELETE") {
-      if (!pl.trim()) return s;
-      return s.split(pl).join("");
-    }
-    return s;
+  try {
+    await OverridesVFS.writeFile(p, String(newText ?? ""));
+    return { ok: true, mode: "override.writeFile" };
+  } catch (e) {
+    return { ok: false, err: e?.message || e };
   }
+}
 
-  const InjectState = { lastSnapshot: null };
+function applyAtTarget(oldText, target, mode, payload) {
+  const s = String(oldText ?? "");
+  const pl = String(payload ?? "");
 
-  async function injectorPreview() {
-    const map = Storage.get("RCF_TARGET_MAP", null);
-    const targets = map && Array.isArray(map.targets) ? map.targets : [];
-    const targetId = ($("#injTarget")?.value || "").trim();
-    const mode = ($("#injMode")?.value || "INSERT").trim();
-    const payload = ($("#injPayload")?.value || "");
-
-    const t = targets.find(x => x.targetId === targetId);
-    if (!t) return { ok: false, err: "Target inválido (gere o map e selecione)." };
-
-    const oldText = await readTextFromInventoryPath(t.path);
-    const newText = applyAtTarget(oldText, t, mode, payload);
-
-    uiMsg("#diffOut", tinyDiff(oldText, newText));
-    return { ok: true, oldText, newText, t, mode };
-  }
-
-  async function injectorApplySafe() {
-    const map = Storage.get("RCF_TARGET_MAP", null);
-    const targets = map && Array.isArray(map.targets) ? map.targets : [];
-    Logger.write("apply:", "targets count=" + targets.length);
-
-    const pre = await injectorPreview();
-    if (!pre.ok) {
-      uiMsg("#diffOut", "❌ " + (pre.err || "preview falhou"));
-      Logger.write("apply:", "FAIL target inválido");
-      return { ok: false };
+  const resolveOffset = () => {
+    if (!target || target.kind !== "ANCHOR") return Math.max(0, Math.min(s.length, target.offset || 0));
+    if ((target.offset || 0) > 0) return Math.max(0, Math.min(s.length, target.offset || 0));
+    const lower = s.toLowerCase();
+    if (target.anchorId === "HEAD_END") {
+      const i = lower.lastIndexOf("</head>");
+      return i >= 0 ? i : 0;
     }
-
-    InjectState.lastSnapshot = {
-      path: pre.t.path,
-      oldText: pre.oldText,
-      newText: pre.newText,
-      targetId: pre.t.targetId,
-      ts: nowISO()
-    };
-
-    const before = runMicroTests();
-    if (!before.ok) {
-      uiMsg("#diffOut", "❌ Microtests BEFORE falharam. Abortando.\n" + JSON.stringify(before, null, 2));
-      Logger.write("apply:", "FAIL microtests before");
-      return { ok: false };
+    if (target.anchorId === "BODY_END") {
+      const i = lower.lastIndexOf("</body>");
+      return i >= 0 ? i : s.length;
     }
-
-    const w = await writeTextToInventoryPath(pre.t.path, pre.newText);
-    if (!w.ok) {
-      uiMsg("#diffOut", "❌ Não consegui escrever.\n" + (w.err || ""));
-      Logger.write("apply:", "FAIL write", pre.t.path, pre.t.targetId);
-      return { ok: false };
-    }
-
-    const after = runMicroTests();
-    if (!after.ok) {
-      await writeTextToInventoryPath(pre.t.path, pre.oldText);
-      uiMsg("#diffOut", "❌ Microtests AFTER falharam. Rollback aplicado.\n" + JSON.stringify(after, null, 2));
-      Logger.write("apply:", "AFTER FAIL -> rollback", pre.t.path, pre.t.targetId);
-      return { ok: false, rolledBack: true };
-    }
-
-    Logger.write("apply:", "OK", pre.t.path, pre.t.targetId, "mode=" + pre.mode, "write=" + w.mode);
-    uiMsg("#diffOut", "✅ Aplicado com sucesso (SAFE).");
-    return { ok: true };
-  }
-
-  async function injectorRollback() {
-    const s = InjectState.lastSnapshot;
-    if (!s) { uiMsg("#diffOut", "Nada para rollback."); return { ok: false }; }
-    const w = await writeTextToInventoryPath(s.path, s.oldText);
-    if (!w.ok) { uiMsg("#diffOut", "Rollback falhou: " + (w.err || "")); return { ok: false }; }
-    uiMsg("#diffOut", "✅ Rollback aplicado.");
-    Logger.write("inject:", "rollback OK", s.path, s.targetId);
-    return { ok: true };
-  }
-
-  // =========================================================
-  // Agent V8 (inclui build corretamente)
-  // =========================================================
-  const Agent = {
-    _mem: { inj: { mode: "INSERT", targetId: "", payload: "" } },
-
-    _out(text) {
-      const out = $("#agentOut");
-      if (out) out.textContent = String(text ?? "");
-    },
-
-    help() {
-      return [
-        "AGENT HELP (V8)",
-        "",
-        "Base:",
-        "- help",
-        "- list",
-        "- show",
-        "- create NOME [SLUG]        (ex: create \"Meu App\" meu-app)",
-        "- select SLUG",
-        "- open dashboard|newapp|editor|generator|agent|settings|admin|logs|diagnostics",
-        "",
-        "FASE A (Admin):",
-        "- scan                 -> CP1 Scan & Index",
-        "- targets              -> CP2 Generate Target Map",
-        "- dropdown             -> CP3 Refresh dropdown",
-        "- paths                -> lista paths do index",
-        "",
-        "Buscar / checar:",
-        "- find TEXTO           -> procura TEXTO nos arquivos indexados (limitado p/ iPhone)",
-        "- peek /caminho        -> mostra início do arquivo",
-        "",
-        "Injector (CLI SAFE):",
-        "- inj mode INSERT|REPLACE|DELETE",
-        "- inj target PARTE_DO_ID",
-        "- inj payload <<<  (multiline)  >>>",
-        "- inj preview",
-        "- inj apply",
-        "- inj rollback",
-        "",
-        "ENGINE (Reflect-style):",
-        "- build \"Nome do App\" [mods...]   (ex: build \"Agenda\" agenda calculator)"
-      ].join("\n");
-    },
-
-    list() {
-      if (!State.apps.length) return "(vazio)";
-      return State.apps.map(a => `${a.slug} — ${a.name}`).join("\n");
-    },
-
-    show() {
-      const app = getActiveApp();
-      const idx = Storage.get("RCF_FILE_INDEX", null);
-      const map = Storage.get("RCF_TARGET_MAP", null);
-      const cIdx = idx?.meta?.count ?? 0;
-      const cTg = map?.meta?.count ?? 0;
-
-      return [
-        `mode: ${State.cfg.mode}`,
-        `apps: ${State.apps.length}`,
-        `active app: ${app ? `${app.name} (${app.slug})` : "-"}`,
-        `active file: ${State.active.file || "-"}`,
-        `view: ${State.active.view}`,
-        `index: files=${cIdx} source=${idx?.meta?.source || "-"}`,
-        `targets: count=${cTg}`
-      ].join("\n");
-    },
-
-    _setCmdUI(mode, targetId, payload) {
-      const m = $("#injMode");
-      const t = $("#injTarget");
-      const p = $("#injPayload");
-      if (m && mode) m.value = mode;
-      if (t && targetId) t.value = targetId;
-      if (p && payload != null) p.value = payload;
-    },
-
-    _pickTargetByContains(part) {
-      const map = Storage.get("RCF_TARGET_MAP", null);
-      const targets = map && Array.isArray(map.targets) ? map.targets : [];
-      const q = String(part || "").trim().toLowerCase();
-      if (!q) return null;
-      return targets.find(x => String(x.targetId || "").toLowerCase().includes(q)) || null;
-    },
-
-    async _scan() {
-      const idx = await scanFactoryFiles();
-      return `✅ Scan OK\nsource=${idx.meta.source}\nfiles=${idx.meta.count}\nscannedAt=${idx.meta.scannedAt}`;
-    },
-
-    _targets() {
-      const idx = Storage.get("RCF_FILE_INDEX", null);
-      const r = generateTargetMap(idx);
-      if (!r.ok) return `❌ ${r.err || "falhou gerar map"}`;
-      return `✅ Target Map OK\ncount=${r.map.meta.count}\nsource=${r.map.meta.source}\ncreatedAt=${r.map.meta.createdAt}`;
-    },
-
-    _paths() {
-      const idx = Storage.get("RCF_FILE_INDEX", null);
-      const files = idx && Array.isArray(idx.files) ? idx.files : [];
-      if (!files.length) return "⚠️ Sem index. Rode: scan";
-      return files.slice(0, 120).map(f => f.path).join("\n") + (files.length > 120 ? `\n... (${files.length - 120} mais)` : "");
-    },
-
-    async _peek(path) {
-      const p = normalizePath(path);
-      const txt = await readTextFromInventoryPath(p);
-      const head = String(txt || "").slice(0, 1200);
-      return `PEEK ${p}\nlen=${(txt || "").length}\n\n${head}${(txt || "").length > 1200 ? "\n\n...(truncado)" : ""}`;
-    },
-
-    async _find(q) {
-      const idx = Storage.get("RCF_FILE_INDEX", null);
-      const files = idx && Array.isArray(idx.files) ? idx.files : [];
-      if (!files.length) return "⚠️ Sem index. Rode: scan";
-
-      const needle = String(q || "").trim();
-      if (!needle) return "⚠️ Use: find TEXTO";
-
-      const needleLow = needle.toLowerCase();
-      const hits = [];
-      const LIMIT_FILES = 45;
-
-      for (const f of files.slice(0, LIMIT_FILES)) {
-        const p = f.path;
-        const txt = await readTextFromInventoryPath(p);
-        const pos = String(txt || "").toLowerCase().indexOf(needleLow);
-        if (pos >= 0) {
-          const start = Math.max(0, pos - 80);
-          const end = Math.min((txt || "").length, pos + needle.length + 120);
-          const snippet = (txt || "").slice(start, end).replace(/\n/g, "⏎");
-          hits.push(`- ${p} @${pos}\n  ...${snippet}...`);
-        }
-        if (hits.length >= 8) break;
-      }
-
-      if (!hits.length) return `❌ Não achei "${needle}" (busca limitada a ${LIMIT_FILES} arquivos, 8 hits max).`;
-      return `✅ HITS para "${needle}"\n` + hits.join("\n\n");
-    },
-
-    async route(cmdRaw) {
-      const cmd = String(cmdRaw || "").trim();
-      if (!cmd) return this._out("Comando vazio. Use: help");
-      const lower = cmd.toLowerCase();
-
-      // base
-      if (lower === "help") return this._out(this.help());
-      if (lower === "list") return this._out(this.list());
-      if (lower === "show") return this._out(this.show());
-
-      // open view
-      if (lower.startsWith("open ")) {
-        const target = lower.replace("open ", "").trim();
-        const map = {
-          dashboard: "dashboard",
-          newapp: "newapp",
-          "new app": "newapp",
-          editor: "editor",
-          generator: "generator",
-          agent: "agent",
-          settings: "settings",
-          admin: "admin",
-          logs: "logs",
-          diagnostics: "diagnostics",
-          diag: "diagnostics"
-        };
-        const v = map[target] || target;
-        setView(v);
-        return this._out(`OK. view=${v}`);
-      }
-
-      // create/select
-      if (lower.startsWith("create ")) {
-        const rest = cmd.replace(/^create\s+/i, "").trim();
-        const qm = rest.match(/^"([^"]+)"\s*([a-z0-9-]+)?/i);
-        let name = "", slug = "";
-        if (qm) { name = qm[1].trim(); slug = (qm[2] || "").trim(); }
-        else { name = rest; }
-        const r = createApp(name, slug);
-        return this._out(r.msg);
-      }
-
-      if (lower.startsWith("select ")) {
-        const slug = slugify(cmd.replace(/^select\s+/i, "").trim());
-        const ok = setActiveApp(slug);
-        return this._out(ok ? `OK. selecionado: ${slug}` : `Falhou: ${slug}`);
-      }
-
-      // FASE A
-      if (lower === "scan") {
-        safeSetStatus("Scan…");
-        syncFabStatusText();
-        try {
-          const r = await this._scan();
-          safeSetStatus("OK ✅");
-          syncFabStatusText();
-          return this._out(r);
-        } catch (e) {
-          safeSetStatus("ERRO ❌");
-          syncFabStatusText();
-          return this._out("❌ scan falhou: " + (e?.message || e));
-        }
-      }
-
-      if (lower === "targets") {
-        try { return this._out(this._targets()); }
-        catch (e) { return this._out("❌ targets falhou: " + (e?.message || e)); }
-      }
-
-      if (lower === "dropdown") {
-        try { populateTargetsDropdown(true); return this._out("✅ Dropdown atualizado."); }
-        catch (e) { return this._out("❌ dropdown falhou: " + (e?.message || e)); }
-      }
-
-      if (lower === "paths") return this._out(this._paths());
-
-      if (lower.startsWith("peek ")) {
-        const p = cmd.replace(/^peek\s+/i, "").trim();
-        return this._out(await this._peek(p));
-      }
-
-      if (lower.startsWith("find ")) {
-        const q = cmd.replace(/^find\s+/i, "").trim();
-        return this._out(await this._find(q));
-      }
-
-      // Injector CLI
-      if (lower.startsWith("inj mode ")) {
-        const mode = cmd.replace(/^inj\s+mode\s+/i, "").trim().toUpperCase();
-        if (!["INSERT","REPLACE","DELETE"].includes(mode)) return this._out("⚠️ modos: INSERT | REPLACE | DELETE");
-        this._mem.inj.mode = mode;
-        this._setCmdUI(mode, null, null);
-        return this._out(`✅ inj mode=${mode}`);
-      }
-
-      if (lower.startsWith("inj target ")) {
-        const part = cmd.replace(/^inj\s+target\s+/i, "").trim();
-        const t = this._pickTargetByContains(part);
-        if (!t) return this._out("❌ Não achei target contendo: " + part + "\nUse: targets (gera map) ou dropdown");
-        this._mem.inj.targetId = t.targetId;
-        this._setCmdUI(null, t.targetId, null);
-        return this._out(`✅ inj target=${t.targetId}\npath=${t.path}\nkind=${t.kind}`);
-      }
-
-      if (lower.startsWith("inj payload")) {
-        const m = cmdRaw.match(/inj\s+payload\s*<<<([\s\S]*?)>>>/i);
-        if (!m) return this._out("⚠️ Use:\ninj payload <<<\nSEU TEXTO AQUI\n>>>");
-        const payload = m[1].replace(/^\n+|\n+$/g, "");
-        this._mem.inj.payload = payload;
-        this._setCmdUI(null, null, payload);
-        return this._out(`✅ payload set (len=${payload.length})`);
-      }
-
-      if (lower === "inj preview") {
-        this._setCmdUI(this._mem.inj.mode, this._mem.inj.targetId, this._mem.inj.payload);
-        const r = await injectorPreview();
-        return this._out(r.ok ? "✅ preview ok (veja Diff no Admin)" : ("❌ " + (r.err || "preview falhou")));
-      }
-
-      if (lower === "inj apply") {
-        this._setCmdUI(this._mem.inj.mode, this._mem.inj.targetId, this._mem.inj.payload);
-        safeSetStatus("Apply…");
-        syncFabStatusText();
-        const r = await injectorApplySafe();
-        safeSetStatus("OK ✅");
-        syncFabStatusText();
-        return this._out(r.ok ? "✅ APPLY OK (SAFE)" : ("❌ APPLY FAIL" + (r.rolledBack ? " (rollback feito)" : "")));
-      }
-
-      if (lower === "inj rollback") {
-        safeSetStatus("Rollback…");
-        syncFabStatusText();
-        const r = await injectorRollback();
-        safeSetStatus("OK ✅");
-        syncFabStatusText();
-        return this._out(r.ok ? "✅ rollback ok" : "❌ rollback falhou");
-      }
-
-      // ✅ ENGINE build (AGORA CERTO, dentro do route)
-      if (lower.startsWith("build ")) {
-        const rest = cmd.replace(/^build\s+/i, "").trim();
-        const qm = rest.match(/^"([^"]+)"\s*(.*)$/);
-
-        const name = qm ? qm[1].trim() : rest;
-        const modsPart = qm ? (qm[2] || "").trim() : "";
-
-        const mods = modsPart
-          .replace(/^with\s+/i, "")
-          .split(/[,\s]+/g)
-          .map(s => s.trim())
-          .filter(Boolean);
-
-        const ENG = window.RCF_ENGINE;
-
-        if (!ENG || typeof ENG.createSpec !== "function" || typeof ENG.createAppFromSpec !== "function") {
-          return this._out("❌ ENGINE não carregou. Verifique se os scripts /js/engine/*.js estão no index.html.");
-        }
-
-        const r1 = ENG.createSpec({ name, modules: mods });
-        if (!r1 || !r1.ok) return this._out("❌ " + (r1?.err || "spec falhou"));
-
-        const r2 = ENG.createAppFromSpec(r1.spec);
-        if (r2?.ok) {
-          try { renderAppsList(); } catch {}
-          try { setActiveApp(r2.app.slug); } catch {}
-          return this._out(`✅ BUILD OK: ${r2.app.slug}`);
-        }
-        return this._out(`❌ BUILD FAIL: ${r2?.err || ""}`);
-      }
-
-      return this._out("Comando não reconhecido. Use: help");
-    }
+    return Math.max(0, Math.min(s.length, target.offset || 0));
   };
 
-  // =========================================================
-  // Bind UI
-  // =========================================================
-  function bindUI() {
-    $$("[data-view]").forEach(btn => bindTap(btn, () => setView(btn.getAttribute("data-view"))));
-    bindTap($("#btnOpenTools"), () => { openTools(true); openFabPanel(false); });
-    bindTap($("#btnCloseTools"), () => openTools(false));
+  if (target.kind === "MARKER") {
+    const at = Math.max(0, Math.min(s.length, target.offset || 0));
+    if (mode === "INSERT") return s.slice(0, at) + pl + "\n" + s.slice(at);
+    if (mode === "REPLACE") return s.slice(0, at) + pl + "\n" + s.slice(at);
+    if (mode === "DELETE") return s.replace(target.note || "@RCF:INJECT", "");
+  }
 
-    // PATCH: FAB
-    bindTap($("#rcfFab"), () => { toggleFabPanel(); syncFabStatusText(); });
-    bindTap($("#btnFabClose"), () => openFabPanel(false));
-    bindTap($("#btnFabTools"), () => { openFabPanel(false); openTools(true); });
-    bindTap($("#btnFabAdmin"), () => { openFabPanel(false); setView("admin"); });
-    bindTap($("#btnFabLogs"), () => { openFabPanel(false); setView("logs"); });
+  const at = resolveOffset();
+  if (mode === "INSERT") return s.slice(0, at) + "\n" + pl + "\n" + s.slice(at);
+  if (mode === "REPLACE") return s.slice(0, at) + "\n" + pl + "\n" + s.slice(at);
+  if (mode === "DELETE") {
+    if (!pl.trim()) return s;
+    return s.split(pl).join("");
+  }
+  return s;
+}
 
-    // fecha painel se tocar fora
-    document.addEventListener("pointerdown", (ev) => {
-      try {
-        const p = $("#rcfFabPanel");
-        if (!p || !p.classList.contains("open")) return;
-        const fab = $("#rcfFab");
-        const t = ev.target;
-        if (p.contains(t) || (fab && fab.contains(t))) return;
-        openFabPanel(false);
-      } catch {}
-    }, { passive: true });
+const InjectState = { lastSnapshot: null };
 
-    bindTap($("#btnCreateNewApp"), () => setView("newapp"));
-    bindTap($("#btnOpenEditor"), () => setView("editor"));
+async function injectorPreview() {
+  const map = Storage.get("RCF_TARGET_MAP", null);
+  const targets = map && Array.isArray(map.targets) ? map.targets : [];
+  const targetId = ($("#injTarget")?.value || "").trim();
+  const mode = ($("#injMode")?.value || "INSERT").trim();
+  const payload = ($("#injPayload")?.value || "");
 
-    bindTap($("#btnExportBackup"), () => {
-      const payload = JSON.stringify({ apps: State.apps, cfg: State.cfg, active: State.active }, null, 2);
-      try { navigator.clipboard.writeText(payload); } catch {}
-      safeSetStatus("Backup copiado ✅");
-      syncFabStatusText();
-      setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 800);
-      Logger.write("backup copied");
-    });
+  const t = targets.find(x => x.targetId === targetId);
+  if (!t) return { ok: false, err: "Target inválido (gere o map e selecione)." };
 
-    bindTap($("#btnAutoSlug"), () => {
-      const n = ($("#newAppName")?.value || "");
-      const s = slugify(n);
-      const inSlug = $("#newAppSlug");
-      if (inSlug) inSlug.value = s;
-    });
+  const oldText = await readTextFromInventoryPath(t.path);
+  const newText = applyAtTarget(oldText, t, mode, payload);
 
-    bindTap($("#btnDoCreateApp"), () => {
-      const name = ($("#newAppName")?.value || "");
-      const slug = ($("#newAppSlug")?.value || "");
+  uiMsg("#diffOut", tinyDiff(oldText, newText));
+  return { ok: true, oldText, newText, t, mode };
+}
+
+async function injectorApplySafe() {
+  const map = Storage.get("RCF_TARGET_MAP", null);
+  const targets = map && Array.isArray(map.targets) ? map.targets : [];
+  Logger.write("apply:", "targets count=" + targets.length);
+
+  const pre = await injectorPreview();
+  if (!pre.ok) {
+    uiMsg("#diffOut", "❌ " + (pre.err || "preview falhou"));
+    Logger.write("apply:", "FAIL target inválido");
+    return { ok: false };
+  }
+
+  InjectState.lastSnapshot = {
+    path: pre.t.path,
+    oldText: pre.oldText,
+    newText: pre.newText,
+    targetId: pre.t.targetId,
+    ts: nowISO()
+  };
+
+  const before = runMicroTests();
+  if (!before.ok) {
+    uiMsg("#diffOut", "❌ Microtests BEFORE falharam. Abortando.\n" + JSON.stringify(before, null, 2));
+    Logger.write("apply:", "FAIL microtests before");
+    return { ok: false };
+  }
+
+  const w = await writeTextToInventoryPath(pre.t.path, pre.newText);
+  if (!w.ok) {
+    uiMsg("#diffOut", "❌ Não consegui escrever.\n" + (w.err || ""));
+    Logger.write("apply:", "FAIL write", pre.t.path, pre.t.targetId);
+    return { ok: false };
+  }
+
+  const after = runMicroTests();
+  if (!after.ok) {
+    await writeTextToInventoryPath(pre.t.path, pre.oldText);
+    uiMsg("#diffOut", "❌ Microtests AFTER falharam. Rollback aplicado.\n" + JSON.stringify(after, null, 2));
+    Logger.write("apply:", "AFTER FAIL -> rollback", pre.t.path, pre.t.targetId);
+    return { ok: false, rolledBack: true };
+  }
+
+  Logger.write("apply:", "OK", pre.t.path, pre.t.targetId, "mode=" + pre.mode, "write=" + w.mode);
+  uiMsg("#diffOut", "✅ Aplicado com sucesso (SAFE).");
+  return { ok: true };
+}
+
+async function injectorRollback() {
+  const s = InjectState.lastSnapshot;
+  if (!s) { uiMsg("#diffOut", "Nada para rollback."); return { ok: false }; }
+  const w = await writeTextToInventoryPath(s.path, s.oldText);
+  if (!w.ok) { uiMsg("#diffOut", "Rollback falhou: " + (w.err || "")); return { ok: false }; }
+  uiMsg("#diffOut", "✅ Rollback aplicado.");
+  Logger.write("inject:", "rollback OK", s.path, s.targetId);
+  return { ok: true };
+}
+
+// =========================================================
+// Agent V8 (inclui build corretamente)
+// =========================================================
+const Agent = {
+  _mem: { inj: { mode: "INSERT", targetId: "", payload: "" } },
+
+  _out(text) {
+    const out = $("#agentOut");
+    if (out) out.textContent = String(text ?? "");
+  },
+
+  help() {
+    return [
+      "AGENT HELP (V8)",
+      "",
+      "Base:",
+      "- help",
+      "- list",
+      "- show",
+      "- create NOME [SLUG]        (ex: create \"Meu App\" meu-app)",
+      "- select SLUG",
+      "- open dashboard|newapp|editor|generator|agent|settings|admin|logs|diagnostics",
+      "",
+      "FASE A (Admin):",
+      "- scan                 -> CP1 Scan & Index",
+      "- targets              -> CP2 Generate Target Map",
+      "- dropdown             -> CP3 Refresh dropdown",
+      "- paths                -> lista paths do index",
+      "",
+      "Buscar / checar:",
+      "- find TEXTO           -> procura TEXTO nos arquivos indexados (limitado p/ iPhone)",
+      "- peek /caminho        -> mostra início do arquivo",
+      "",
+      "Injector (CLI SAFE):",
+      "- inj mode INSERT|REPLACE|DELETE",
+      "- inj target PARTE_DO_ID",
+      "- inj payload <<<  (multiline)  >>>",
+      "- inj preview",
+      "- inj apply",
+      "- inj rollback",
+      "",
+      "ENGINE (Reflect-style):",
+      "- build \"Nome do App\" [mods...]   (ex: build \"Agenda\" agenda calculator)"
+    ].join("\n");
+  },
+
+  list() {
+    if (!State.apps.length) return "(vazio)";
+    return State.apps.map(a => `${a.slug} — ${a.name}`).join("\n");
+  },
+
+  show() {
+    const app = getActiveApp();
+    const idx = Storage.get("RCF_FILE_INDEX", null);
+    const map = Storage.get("RCF_TARGET_MAP", null);
+    const cIdx = idx?.meta?.count ?? 0;
+    const cTg = map?.meta?.count ?? 0;
+
+    return [
+      `mode: ${State.cfg.mode}`,
+      `apps: ${State.apps.length}`,
+      `active app: ${app ? `${app.name} (${app.slug})` : "-"}`,
+      `active file: ${State.active.file || "-"}`,
+      `view: ${State.active.view}`,
+      `index: files=${cIdx} source=${idx?.meta?.source || "-"}`,
+      `targets: count=${cTg}`
+    ].join("\n");
+  },
+
+  _setCmdUI(mode, targetId, payload) {
+    const m = $("#injMode");
+    const t = $("#injTarget");
+    const p = $("#injPayload");
+    if (m && mode) m.value = mode;
+    if (t && targetId) t.value = targetId;
+    if (p && payload != null) p.value = payload;
+  },
+
+  _pickTargetByContains(part) {
+    const map = Storage.get("RCF_TARGET_MAP", null);
+    const targets = map && Array.isArray(map.targets) ? map.targets : [];
+    const q = String(part || "").trim().toLowerCase();
+    if (!q) return null;
+    return targets.find(x => String(x.targetId || "").toLowerCase().includes(q)) || null;
+  },
+
+  async _scan() {
+    const idx = await scanFactoryFiles();
+    return `✅ Scan OK\nsource=${idx.meta.source}\nfiles=${idx.meta.count}\nscannedAt=${idx.meta.scannedAt}`;
+  },
+
+  _targets() {
+    const idx = Storage.get("RCF_FILE_INDEX", null);
+    const r = generateTargetMap(idx);
+    if (!r.ok) return `❌ ${r.err || "falhou gerar map"}`;
+    return `✅ Target Map OK\ncount=${r.map.meta.count}\nsource=${r.map.meta.source}\ncreatedAt=${r.map.meta.createdAt}`;
+  },
+
+  _paths() {
+    const idx = Storage.get("RCF_FILE_INDEX", null);
+    const files = idx && Array.isArray(idx.files) ? idx.files : [];
+    if (!files.length) return "⚠️ Sem index. Rode: scan";
+    return files.slice(0, 120).map(f => f.path).join("\n") + (files.length > 120 ? `\n... (${files.length - 120} mais)` : "");
+  },
+
+  async _peek(path) {
+    const p = normalizePath(path);
+    const txt = await readTextFromInventoryPath(p);
+    const head = String(txt || "").slice(0, 1200);
+    return `PEEK ${p}\nlen=${(txt || "").length}\n\n${head}${(txt || "").length > 1200 ? "\n\n...(truncado)" : ""}`;
+  },
+
+  async _find(q) {
+    const idx = Storage.get("RCF_FILE_INDEX", null);
+    const files = idx && Array.isArray(idx.files) ? idx.files : [];
+    if (!files.length) return "⚠️ Sem index. Rode: scan";
+
+    const needle = String(q || "").trim();
+    if (!needle) return "⚠️ Use: find TEXTO";
+
+    const needleLow = needle.toLowerCase();
+    const hits = [];
+    const LIMIT_FILES = 45;
+
+    for (const f of files.slice(0, LIMIT_FILES)) {
+      const p = f.path;
+      const txt = await readTextFromInventoryPath(p);
+      const pos = String(txt || "").toLowerCase().indexOf(needleLow);
+      if (pos >= 0) {
+        const start = Math.max(0, pos - 80);
+        const end = Math.min((txt || "").length, pos + needle.length + 120);
+        const snippet = (txt || "").slice(start, end).replace(/\n/g, "⏎");
+        hits.push(`- ${p} @${pos}\n  ...${snippet}...`);
+      }
+      if (hits.length >= 8) break;
+    }
+
+    if (!hits.length) return `❌ Não achei "${needle}" (busca limitada a ${LIMIT_FILES} arquivos, 8 hits max).`;
+    return `✅ HITS para "${needle}"\n` + hits.join("\n\n");
+  },
+
+  async route(cmdRaw) {
+    const cmd = String(cmdRaw || "").trim();
+    if (!cmd) return this._out("Comando vazio. Use: help");
+    const lower = cmd.toLowerCase();
+
+    // base
+    if (lower === "help") return this._out(this.help());
+    if (lower === "list") return this._out(this.list());
+    if (lower === "show") return this._out(this.show());
+
+    // open view
+    if (lower.startsWith("open ")) {
+      const target = lower.replace("open ", "").trim();
+      const map = {
+        dashboard: "dashboard",
+        newapp: "newapp",
+        "new app": "newapp",
+        editor: "editor",
+        generator: "generator",
+        agent: "agent",
+        settings: "settings",
+        admin: "admin",
+        logs: "logs",
+        diagnostics: "diagnostics",
+        diag: "diagnostics"
+      };
+      const v = map[target] || target;
+      setView(v);
+      return this._out(`OK. view=${v}`);
+    }
+
+    // create/select
+    if (lower.startsWith("create ")) {
+      const rest = cmd.replace(/^create\s+/i, "").trim();
+      const qm = rest.match(/^"([^"]+)"\s*([a-z0-9-]+)?/i);
+      let name = "", slug = "";
+      if (qm) { name = qm[1].trim(); slug = (qm[2] || "").trim(); }
+      else { name = rest; }
       const r = createApp(name, slug);
-      uiMsg("#newAppOut", r.msg);
-      if (r.ok) { setView("editor"); safeSetStatus("OK ✅"); }
-      else safeSetStatus("ERRO ❌");
-      syncFabStatusText();
-    });
+      return this._out(r.msg);
+    }
 
-    bindTap($("#btnSaveFile"), () => saveFile());
+    if (lower.startsWith("select ")) {
+      const slug = slugify(cmd.replace(/^select\s+/i, "").trim());
+      const ok = setActiveApp(slug);
+      return this._out(ok ? `OK. selecionado: ${slug}` : `Falhou: ${slug}`);
+    }
 
-    bindTap($("#btnResetFile"), () => {
-      const app = getActiveApp();
-      if (!app || !State.active.file) return uiMsg("#editorOut", "⚠️ Selecione app e arquivo.");
-      ensureAppFiles(app);
-      app.files[State.active.file] = "";
-      saveAll();
-      openFile(State.active.file);
-      uiMsg("#editorOut", "⚠️ Arquivo resetado (limpo).");
-    });
-
-    bindTap($("#btnGenZip"), () => uiMsg("#genOut", "ZIP (stub)."));
-    bindTap($("#btnGenPreview"), () => uiMsg("#genOut", "Preview (stub)."));
-
-    bindTap($("#btnAgentRun"), () => Agent.route($("#agentCmd")?.value || ""));
-    bindTap($("#btnAgentHelp"), () => uiMsg("#agentOut", Agent.help()));
-
-    const doLogsRefresh = () => {
-      refreshLogsViews();
-      safeSetStatus("Logs ✅");
-      syncFabStatusText();
-      setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 600);
-    };
-    const doLogsClear = () => {
-      Logger.clear();
-      doLogsRefresh();
-      safeSetStatus("Logs limpos ✅");
-      syncFabStatusText();
-      setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 600);
-    };
-    const doLogsCopy = async () => {
-      const txt = Logger.getAll().join("\n");
-      try { await navigator.clipboard.writeText(txt); } catch {}
-      safeSetStatus("Logs copiados ✅");
-      syncFabStatusText();
-      setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 800);
-    };
-
-    bindTap($("#btnLogsRefresh"), doLogsRefresh);
-    bindTap($("#btnLogsClear"), doLogsClear);
-    bindTap($("#btnLogsCopy"), doLogsCopy);
-
-    bindTap($("#btnLogsRefresh2"), doLogsRefresh);
-    bindTap($("#btnClearLogs2"), doLogsClear);
-    bindTap($("#btnCopyLogs"), doLogsCopy);
-
-    bindTap($("#btnDrawerLogsRefresh"), doLogsRefresh);
-    bindTap($("#btnDrawerLogsClear"), doLogsClear);
-    bindTap($("#btnDrawerLogsCopy"), doLogsCopy);
-
-    // SW tools
-    bindTap($("#btnSwUnregister"), async () => {
-      const r = await swUnregisterAll();
-      safeSetStatus(r.ok ? `SW unreg: ${r.count} ✅` : "SW unreg ❌");
-      syncFabStatusText();
-      setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 900);
-    });
-
-    bindTap($("#btnSwClearCache"), async () => {
-      const r = await swClearCaches();
-      safeSetStatus(r.ok ? `Cache: ${r.count} ✅` : "Cache ❌");
-      syncFabStatusText();
-      setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 900);
-    });
-
-    bindTap($("#btnSwRegister"), async () => {
-      const r = await swRegister();
-      safeSetStatus(r.ok ? "SW ✅" : "SW ❌");
-      syncFabStatusText();
-      setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 900);
-    });
-
-    // Diagnostics actions
-    bindTap($("#btnDiagRun"), async () => {
-      safeSetStatus("Diag…");
-      syncFabStatusText();
-      await runV8StabilityCheck();
-      setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 700);
-    });
-
-    bindTap($("#btnDiagScan"), () => {
-      try { uiMsg("#diagOut", JSON.stringify(scanOverlays(), null, 2)); }
-      catch (e) { uiMsg("#diagOut", "❌ " + (e?.message || e)); }
-    });
-
-    bindTap($("#btnDiagTests"), () => {
-      try { uiMsg("#diagOut", JSON.stringify(runMicroTests(), null, 2)); }
-      catch (e) { uiMsg("#diagOut", "❌ " + (e?.message || e)); }
-    });
-
-    bindTap($("#btnDiagClear"), () => uiMsg("#diagOut", "Pronto."));
-
-    // PIN
-    bindTap($("#btnPinSave"), () => {
-      const raw = String($("#pinInput")?.value || "").trim();
-      if (!/^\d{4,8}$/.test(raw)) return uiMsg("#pinOut", "⚠️ PIN inválido. Use 4 a 8 dígitos.");
-      Pin.set(raw);
-      uiMsg("#pinOut", "✅ PIN salvo.");
-      Logger.write("pin saved");
-    });
-
-    bindTap($("#btnPinRemove"), () => {
-      Pin.clear();
-      uiMsg("#pinOut", "✅ PIN removido.");
-      Logger.write("pin removed");
-    });
-
-    // Admin quick
-    bindTap($("#btnAdminDiag"), () => uiMsg("#adminOut", "Admin OK."));
-    bindTap($("#btnAdminZero"), () => {
-      Logger.clear();
-      safeSetStatus("Zerado ✅");
-      syncFabStatusText();
-      setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 800);
-      uiMsg("#adminOut", "✅ Zerado (safe). Logs limpos.");
-    });
-
-    // Mãe
-    bindTap($("#btnMaeLoad"), async () => {
-      const MAE = window.RCF_MOTHER || window.RCF_MAE;
-      if (!MAE) {
-        uiMsg("#maintOut", "⚠️ RCF_MOTHER/RCF_MAE não está carregada no runtime.");
-        Logger.write("mae:", "absent");
-        return;
-      }
-      uiMsg("#maintOut", "✅ Mãe detectada. Funções: " + Object.keys(MAE).slice(0, 20).join(", "));
-      Logger.write("mae:", "loaded");
-    });
-
-    bindTap($("#btnMaeCheck"), () => {
-      const MAE = window.RCF_MOTHER || window.RCF_MAE;
-      const s = MAE && typeof MAE.status === "function" ? MAE.status() : { ok: false, msg: "status() ausente" };
-      try { alert("CHECK:\n\n" + JSON.stringify(s, null, 2)); } catch {}
-      uiMsg("#maintOut", "Check rodado (alert).");
-      Logger.write("mae check:", safeJsonStringify(s));
-    });
-
-    let maeUpdateLock = false;
-    bindTap($("#btnMaeUpdate"), async () => {
-      const MAE = window.RCF_MOTHER || window.RCF_MAE;
-      if (!MAE || typeof MAE.updateFromGitHub !== "function") {
-        uiMsg("#maintOut", "⚠️ updateFromGitHub() ausente (ou mãe não carregou).");
-        Logger.write("mae update:", "missing");
-        return;
-      }
-      if (maeUpdateLock) {
-        uiMsg("#maintOut", "⏳ Update já está rodando… (aguarde)");
-        Logger.write("mae update:", "blocked (lock)");
-        return;
-      }
-
-      maeUpdateLock = true;
-      uiMsg("#maintOut", "Atualizando…");
-
-      try {
-        const res = await Promise.race([
-          Promise.resolve(MAE.updateFromGitHub()),
-          new Promise((_, rej) => setTimeout(() => rej(new Error("TIMEOUT 15000ms (updateFromGitHub)")), 15000))
-        ]);
-        uiMsg("#maintOut", "✅ Update acionado.");
-        Logger.write("mae update:", "ok", res ? safeJsonStringify(res) : "");
-      } catch (e) {
-        uiMsg("#maintOut", "❌ Falhou: " + (e?.message || e));
-        Logger.write("mae update err:", e?.message || e);
-      } finally {
-        maeUpdateLock = false;
-      }
-    });
-
-    bindTap($("#btnMaeClear"), async () => {
-      const MAE = window.RCF_MOTHER || window.RCF_MAE;
-      if (!MAE || typeof MAE.clearOverrides !== "function") {
-        uiMsg("#maintOut", "⚠️ clearOverrides() ausente (ou mãe não carregou).");
-        Logger.write("mae clear:", "missing");
-        return;
-      }
-      uiMsg("#maintOut", "Limpando...");
-      try {
-        await MAE.clearOverrides();
-        uiMsg("#maintOut", "✅ Clear acionado.");
-        Logger.write("mae clear:", "ok");
-      } catch (e) {
-        uiMsg("#maintOut", "❌ Falhou: " + (e?.message || e));
-        Logger.write("mae clear err:", e?.message || e);
-      }
-    });
-
-    // FASE A buttons
-    bindTap($("#btnScanIndex"), async () => {
+    // FASE A
+    if (lower === "scan") {
       safeSetStatus("Scan…");
       syncFabStatusText();
       try {
-        const idx = await scanFactoryFiles();
-        uiMsg("#scanOut", `✅ Scan OK\nsource=${idx.meta.source}\nfiles=${idx.meta.count}\nscannedAt=${idx.meta.scannedAt}`);
-        Logger.write("CP1 scan:", `source=${idx.meta.source}`, `files=${idx.meta.count}`);
+        const r = await this._scan();
+        safeSetStatus("OK ✅");
+        syncFabStatusText();
+        return this._out(r);
       } catch (e) {
-        uiMsg("#scanOut", "❌ Scan falhou: " + (e?.message || e));
-        Logger.write("scan err:", e?.message || e);
+        safeSetStatus("ERRO ❌");
+        syncFabStatusText();
+        return this._out("❌ scan falhou: " + (e?.message || e));
       }
-      setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 700);
-    });
+    }
 
-    bindTap($("#btnGenTargets"), () => {
-      const idx = Storage.get("RCF_FILE_INDEX", null);
-      const r = generateTargetMap(idx);
-      if (!r.ok) return uiMsg("#scanOut", "❌ " + (r.err || "falhou gerar map"));
-      uiMsg("#scanOut", `✅ Target Map OK\ncount=${r.map.meta.count}\nsource=${r.map.meta.source}\ncreatedAt=${r.map.meta.createdAt}`);
-      try { populateTargetsDropdown(true); } catch {}
-    });
+    if (lower === "targets") {
+      try { return this._out(this._targets()); }
+      catch (e) { return this._out("❌ targets falhou: " + (e?.message || e)); }
+    }
 
-    bindTap($("#btnRefreshTargets"), () => {
-      populateTargetsDropdown(true);
-      uiMsg("#scanOut", "Dropdown atualizado ✅");
-    });
+    if (lower === "dropdown") {
+      try { populateTargetsDropdown(true); return this._out("✅ Dropdown atualizado."); }
+      catch (e) { return this._out("❌ dropdown falhou: " + (e?.message || e)); }
+    }
 
-    bindTap($("#btnPreviewDiff"), async () => {
+    if (lower === "paths") return this._out(this._paths());
+
+    if (lower.startsWith("peek ")) {
+      const p = cmd.replace(/^peek\s+/i, "").trim();
+      return this._out(await this._peek(p));
+    }
+
+    if (lower.startsWith("find ")) {
+      const q = cmd.replace(/^find\s+/i, "").trim();
+      return this._out(await this._find(q));
+    }
+
+    // Injector CLI
+    if (lower.startsWith("inj mode ")) {
+      const mode = cmd.replace(/^inj\s+mode\s+/i, "").trim().toUpperCase();
+      if (!["INSERT","REPLACE","DELETE"].includes(mode)) return this._out("⚠️ modos: INSERT | REPLACE | DELETE");
+      this._mem.inj.mode = mode;
+      this._setCmdUI(mode, null, null);
+      return this._out(`✅ inj mode=${mode}`);
+    }
+
+    if (lower.startsWith("inj target ")) {
+      const part = cmd.replace(/^inj\s+target\s+/i, "").trim();
+      const t = this._pickTargetByContains(part);
+      if (!t) return this._out("❌ Não achei target contendo: " + part + "\nUse: targets (gera map) ou dropdown");
+      this._mem.inj.targetId = t.targetId;
+      this._setCmdUI(null, t.targetId, null);
+      return this._out(`✅ inj target=${t.targetId}\npath=${t.path}\nkind=${t.kind}`);
+    }
+
+    if (lower.startsWith("inj payload")) {
+      const m = cmdRaw.match(/inj\s+payload\s*<<<([\s\S]*?)>>>/i);
+      if (!m) return this._out("⚠️ Use:\ninj payload <<<\nSEU TEXTO AQUI\n>>>");
+      const payload = m[1].replace(/^\n+|\n+$/g, "");
+      this._mem.inj.payload = payload;
+      this._setCmdUI(null, null, payload);
+      return this._out(`✅ payload set (len=${payload.length})`);
+    }
+
+    if (lower === "inj preview") {
+      this._setCmdUI(this._mem.inj.mode, this._mem.inj.targetId, this._mem.inj.payload);
       const r = await injectorPreview();
-      if (!r.ok) uiMsg("#diffOut", "❌ " + (r.err || "preview falhou"));
-    });
+      return this._out(r.ok ? "✅ preview ok (veja Diff no Admin)" : ("❌ " + (r.err || "preview falhou")));
+    }
 
-    bindTap($("#btnApplyInject"), async () => {
+    if (lower === "inj apply") {
+      this._setCmdUI(this._mem.inj.mode, this._mem.inj.targetId, this._mem.inj.payload);
       safeSetStatus("Apply…");
       syncFabStatusText();
-      const ok = await injectorApplySafe();
-      Logger.write("apply:", ok && ok.ok ? "OK" : "FAIL", "target=" + String($("#injTarget")?.value || ""));
-      setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 900);
-    });
-
-    bindTap($("#btnRollbackInject"), async () => {
-      safeSetStatus("Rollback…");
-      syncFabStatusText();
-      await injectorRollback();
-      setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 900);
-    });
-  }
-
-  // =========================================================
-  // Boot hydrate
-  // =========================================================
-  function hydrateUIFromState() {
-    refreshLogsViews();
-    renderAppsList();
-
-    const app = getActiveApp();
-    if (app) {
-      setActiveApp(app.slug);
-      if (State.active.file) openFile(State.active.file);
-    } else {
-      const text = $("#activeAppText");
-      if (text) textContentSafe(text, "Sem app ativo ✅");
-    }
-
-    setView(State.active.view || "dashboard");
-
-    const pin = Pin.get();
-    if (pin) uiMsg("#pinOut", "PIN definido ✅");
-
-    populateTargetsDropdown(true);
-
-    // PATCH
-    syncFabStatusText();
-  }
-
-  // =========================================================
-  // SAFE INIT
-  // =========================================================
-  async function safeInit() {
-    try {
-      Stability.install();
-      injectCompactCSSOnce();
-
-      renderShell();
-      bindUI();
-      hydrateUIFromState();
-
-      // Engine hook (não quebra se não existir)
-      try { window.RCF_ENGINE?.init?.({ State, Storage, Logger }); Logger.write("engine:", "init ok ✅"); }
-      catch (e) { Logger.write("engine init err:", e?.message || e); }
-
-      // não força SW duplicado (mas tenta auto-fix)
-      const swr = await swCheckAutoFix();
-      if (!swr.ok) Logger.write("sw warn:", swr.status, swr.detail, swr.err ? ("err=" + swr.err) : "");
-
-      Logger.write("RCF V8 init ok — mode:", State.cfg.mode);
+      const r = await injectorApplySafe();
       safeSetStatus("OK ✅");
       syncFabStatusText();
-    } catch (e) {
-      const msg = (e?.message || e);
-      Logger.write("FATAL init:", msg);
-      Stability.showErrorScreen("Falha ao iniciar (safeInit)", String(msg));
+      return this._out(r.ok ? "✅ APPLY OK (SAFE)" : ("❌ APPLY FAIL" + (r.rolledBack ? " (rollback feito)" : "")));
     }
-  }
 
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", () => { safeInit(); }, { passive: true });
+    if (lower === "inj rollback") {
+      safeSetStatus("Rollback…");
+      syncFabStatusText();
+      const r = await injectorRollback();
+      safeSetStatus("OK ✅");
+      syncFabStatusText();
+      return this._out(r.ok ? "✅ rollback ok" : "❌ rollback falhou");
+    }
+
+    // ✅ ENGINE build (AGORA CERTO, dentro do route)
+    if (lower.startsWith("build ")) {
+      const rest = cmd.replace(/^build\s+/i, "").trim();
+      const qm = rest.match(/^"([^"]+)"\s*(.*)$/);
+
+      const name = qm ? qm[1].trim() : rest;
+      const modsPart = qm ? (qm[2] || "").trim() : "";
+
+      const mods = modsPart
+        .replace(/^with\s+/i, "")
+        .split(/[,\s]+/g)
+        .map(s => s.trim())
+        .filter(Boolean);
+
+      const ENG = window.RCF_ENGINE;
+
+      if (!ENG || typeof ENG.createSpec !== "function" || typeof ENG.createAppFromSpec !== "function") {
+        return this._out("❌ ENGINE não carregou. Verifique se os scripts /js/engine/*.js estão no index.html.");
+      }
+
+      const r1 = ENG.createSpec({ name, modules: mods });
+      if (!r1 || !r1.ok) return this._out("❌ " + (r1?.err || "spec falhou"));
+
+      const r2 = ENG.createAppFromSpec(r1.spec);
+      if (r2?.ok) {
+        try { renderAppsList(); } catch {}
+        try { setActiveApp(r2.app.slug); } catch {}
+        return this._out(`✅ BUILD OK: ${r2.app.slug}`);
+      }
+      return this._out(`❌ BUILD FAIL: ${r2?.err || ""}`);
+    }
+
+    return this._out("Comando não reconhecido. Use: help");
+  }
+};
+
+// =========================================================
+// Bind UI
+// =========================================================
+function bindUI() {
+  $$("[data-view]").forEach(btn => bindTap(btn, () => setView(btn.getAttribute("data-view"))));
+  bindTap($("#btnOpenTools"), () => { openTools(true); openFabPanel(false); });
+  bindTap($("#btnCloseTools"), () => openTools(false));
+
+  // PATCH: FAB
+  bindTap($("#rcfFab"), () => { toggleFabPanel(); syncFabStatusText(); });
+  bindTap($("#btnFabClose"), () => openFabPanel(false));
+  bindTap($("#btnFabTools"), () => { openFabPanel(false); openTools(true); });
+  bindTap($("#btnFabAdmin"), () => { openFabPanel(false); setView("admin"); });
+  bindTap($("#btnFabLogs"), () => { openFabPanel(false); setView("logs"); });
+
+  // fecha painel se tocar fora
+  document.addEventListener("pointerdown", (ev) => {
+    try {
+      const p = $("#rcfFabPanel");
+      if (!p || !p.classList.contains("open")) return;
+      const fab = $("#rcfFab");
+      const t = ev.target;
+      if (p.contains(t) || (fab && fab.contains(t))) return;
+      openFabPanel(false);
+    } catch {}
+  }, { passive: true });
+
+  bindTap($("#btnCreateNewApp"), () => setView("newapp"));
+  bindTap($("#btnOpenEditor"), () => setView("editor"));
+
+  bindTap($("#btnExportBackup"), () => {
+    const payload = JSON.stringify({ apps: State.apps, cfg: State.cfg, active: State.active }, null, 2);
+    try { navigator.clipboard.writeText(payload); } catch {}
+    safeSetStatus("Backup copiado ✅");
+    syncFabStatusText();
+    setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 800);
+    Logger.write("backup copied");
+  });
+
+  bindTap($("#btnAutoSlug"), () => {
+    const n = ($("#newAppName")?.value || "");
+    const s = slugify(n);
+    const inSlug = $("#newAppSlug");
+    if (inSlug) inSlug.value = s;
+  });
+
+  bindTap($("#btnDoCreateApp"), () => {
+    const name = ($("#newAppName")?.value || "");
+    const slug = ($("#newAppSlug")?.value || "");
+    const r = createApp(name, slug);
+    uiMsg("#newAppOut", r.msg);
+    if (r.ok) { setView("editor"); safeSetStatus("OK ✅"); }
+    else safeSetStatus("ERRO ❌");
+    syncFabStatusText();
+  });
+
+  bindTap($("#btnSaveFile"), () => saveFile());
+
+  bindTap($("#btnResetFile"), () => {
+    const app = getActiveApp();
+    if (!app || !State.active.file) return uiMsg("#editorOut", "⚠️ Selecione app e arquivo.");
+    ensureAppFiles(app);
+    app.files[State.active.file] = "";
+    saveAll();
+    openFile(State.active.file);
+    uiMsg("#editorOut", "⚠️ Arquivo resetado (limpo).");
+  });
+
+  bindTap($("#btnGenZip"), () => uiMsg("#genOut", "ZIP (stub)."));
+  bindTap($("#btnGenPreview"), () => uiMsg("#genOut", "Preview (stub)."));
+
+  bindTap($("#btnAgentRun"), () => Agent.route($("#agentCmd")?.value || ""));
+  bindTap($("#btnAgentHelp"), () => uiMsg("#agentOut", Agent.help()));
+
+  const doLogsRefresh = () => {
+    refreshLogsViews();
+    safeSetStatus("Logs ✅");
+    syncFabStatusText();
+    setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 600);
+  };
+  const doLogsClear = () => {
+    Logger.clear();
+    doLogsRefresh();
+    safeSetStatus("Logs limpos ✅");
+    syncFabStatusText();
+    setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 600);
+  };
+  const doLogsCopy = async () => {
+    const txt = Logger.getAll().join("\n");
+    try { await navigator.clipboard.writeText(txt); } catch {}
+    safeSetStatus("Logs copiados ✅");
+    syncFabStatusText();
+    setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 800);
+  };
+
+  bindTap($("#btnLogsRefresh"), doLogsRefresh);
+  bindTap($("#btnLogsClear"), doLogsClear);
+  bindTap($("#btnLogsCopy"), doLogsCopy);
+
+  bindTap($("#btnLogsRefresh2"), doLogsRefresh);
+  bindTap($("#btnClearLogs2"), doLogsClear);
+  bindTap($("#btnCopyLogs"), doLogsCopy);
+
+  bindTap($("#btnDrawerLogsRefresh"), doLogsRefresh);
+  bindTap($("#btnDrawerLogsClear"), doLogsClear);
+  bindTap($("#btnDrawerLogsCopy"), doLogsCopy);
+
+  // SW tools
+  bindTap($("#btnSwUnregister"), async () => {
+    const r = await swUnregisterAll();
+    safeSetStatus(r.ok ? `SW unreg: ${r.count} ✅` : "SW unreg ❌");
+    syncFabStatusText();
+    setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 900);
+  });
+
+  bindTap($("#btnSwClearCache"), async () => {
+    const r = await swClearCaches();
+    safeSetStatus(r.ok ? `Cache: ${r.count} ✅` : "Cache ❌");
+    syncFabStatusText();
+    setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 900);
+  });
+
+  bindTap($("#btnSwRegister"), async () => {
+    const r = await swRegister();
+    safeSetStatus(r.ok ? "SW ✅" : "SW ❌");
+    syncFabStatusText();
+    setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 900);
+  });
+
+  // Diagnostics actions
+  bindTap($("#btnDiagRun"), async () => {
+    safeSetStatus("Diag…");
+    syncFabStatusText();
+    await runV8StabilityCheck();
+    setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 700);
+  });
+
+  bindTap($("#btnDiagScan"), () => {
+    try { uiMsg("#diagOut", JSON.stringify(scanOverlays(), null, 2)); }
+    catch (e) { uiMsg("#diagOut", "❌ " + (e?.message || e)); }
+  });
+
+  bindTap($("#btnDiagTests"), () => {
+    try { uiMsg("#diagOut", JSON.stringify(runMicroTests(), null, 2)); }
+    catch (e) { uiMsg("#diagOut", "❌ " + (e?.message || e)); }
+  });
+
+  bindTap($("#btnDiagClear"), () => uiMsg("#diagOut", "Pronto."));
+
+  // PIN
+  bindTap($("#btnPinSave"), () => {
+    const raw = String($("#pinInput")?.value || "").trim();
+    if (!/^\d{4,8}$/.test(raw)) return uiMsg("#pinOut", "⚠️ PIN inválido. Use 4 a 8 dígitos.");
+    Pin.set(raw);
+    uiMsg("#pinOut", "✅ PIN salvo.");
+    Logger.write("pin saved");
+  });
+
+  bindTap($("#btnPinRemove"), () => {
+    Pin.clear();
+    uiMsg("#pinOut", "✅ PIN removido.");
+    Logger.write("pin removed");
+  });
+
+  // Admin quick
+  bindTap($("#btnAdminDiag"), () => uiMsg("#adminOut", "Admin OK."));
+  bindTap($("#btnAdminZero"), () => {
+    Logger.clear();
+    safeSetStatus("Zerado ✅");
+    syncFabStatusText();
+    setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 800);
+    uiMsg("#adminOut", "✅ Zerado (safe). Logs limpos.");
+  });
+
+  // Mãe
+  bindTap($("#btnMaeLoad"), async () => {
+    const MAE = window.RCF_MOTHER || window.RCF_MAE;
+    if (!MAE) {
+      uiMsg("#maintOut", "⚠️ RCF_MOTHER/RCF_MAE não está carregada no runtime.");
+      Logger.write("mae:", "absent");
+      return;
+    }
+    uiMsg("#maintOut", "✅ Mãe detectada. Funções: " + Object.keys(MAE).slice(0, 20).join(", "));
+    Logger.write("mae:", "loaded");
+  });
+
+  bindTap($("#btnMaeCheck"), () => {
+    const MAE = window.RCF_MOTHER || window.RCF_MAE;
+    const s = MAE && typeof MAE.status === "function" ? MAE.status() : { ok: false, msg: "status() ausente" };
+    try { alert("CHECK:\n\n" + JSON.stringify(s, null, 2)); } catch {}
+    uiMsg("#maintOut", "Check rodado (alert).");
+    Logger.write("mae check:", safeJsonStringify(s));
+  });
+
+  let maeUpdateLock = false;
+  bindTap($("#btnMaeUpdate"), async () => {
+    const MAE = window.RCF_MOTHER || window.RCF_MAE;
+    if (!MAE || typeof MAE.updateFromGitHub !== "function") {
+      uiMsg("#maintOut", "⚠️ updateFromGitHub() ausente (ou mãe não carregou).");
+      Logger.write("mae update:", "missing");
+      return;
+    }
+    if (maeUpdateLock) {
+      uiMsg("#maintOut", "⏳ Update já está rodando… (aguarde)");
+      Logger.write("mae update:", "blocked (lock)");
+      return;
+    }
+
+    maeUpdateLock = true;
+    uiMsg("#maintOut", "Atualizando…");
+
+    try {
+      const res = await Promise.race([
+        Promise.resolve(MAE.updateFromGitHub()),
+        new Promise((_, rej) => setTimeout(() => rej(new Error("TIMEOUT 15000ms (updateFromGitHub)")), 15000))
+      ]);
+      uiMsg("#maintOut", "✅ Update acionado.");
+      Logger.write("mae update:", "ok", res ? safeJsonStringify(res) : "");
+    } catch (e) {
+      uiMsg("#maintOut", "❌ Falhou: " + (e?.message || e));
+      Logger.write("mae update err:", e?.message || e);
+    } finally {
+      maeUpdateLock = false;
+    }
+  });
+
+  bindTap($("#btnMaeClear"), async () => {
+    const MAE = window.RCF_MOTHER || window.RCF_MAE;
+    if (!MAE || typeof MAE.clearOverrides !== "function") {
+      uiMsg("#maintOut", "⚠️ clearOverrides() ausente (ou mãe não carregou).");
+      Logger.write("mae clear:", "missing");
+      return;
+    }
+    uiMsg("#maintOut", "Limpando...");
+    try {
+      await MAE.clearOverrides();
+      uiMsg("#maintOut", "✅ Clear acionado.");
+      Logger.write("mae clear:", "ok");
+    } catch (e) {
+      uiMsg("#maintOut", "❌ Falhou: " + (e?.message || e));
+      Logger.write("mae clear err:", e?.message || e);
+    }
+  });
+
+  // FASE A buttons
+  bindTap($("#btnScanIndex"), async () => {
+    safeSetStatus("Scan…");
+    syncFabStatusText();
+    try {
+      const idx = await scanFactoryFiles();
+      uiMsg("#scanOut", `✅ Scan OK\nsource=${idx.meta.source}\nfiles=${idx.meta.count}\nscannedAt=${idx.meta.scannedAt}`);
+      Logger.write("CP1 scan:", `source=${idx.meta.source}`, `files=${idx.meta.count}`);
+    } catch (e) {
+      uiMsg("#scanOut", "❌ Scan falhou: " + (e?.message || e));
+      Logger.write("scan err:", e?.message || e);
+    }
+    setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 700);
+  });
+
+  bindTap($("#btnGenTargets"), () => {
+    const idx = Storage.get("RCF_FILE_INDEX", null);
+    const r = generateTargetMap(idx);
+    if (!r.ok) return uiMsg("#scanOut", "❌ " + (r.err || "falhou gerar map"));
+    uiMsg("#scanOut", `✅ Target Map OK\ncount=${r.map.meta.count}\nsource=${r.map.meta.source}\ncreatedAt=${r.map.meta.createdAt}`);
+    try { populateTargetsDropdown(true); } catch {}
+  });
+
+  bindTap($("#btnRefreshTargets"), () => {
+    populateTargetsDropdown(true);
+    uiMsg("#scanOut", "Dropdown atualizado ✅");
+  });
+
+  bindTap($("#btnPreviewDiff"), async () => {
+    const r = await injectorPreview();
+    if (!r.ok) uiMsg("#diffOut", "❌ " + (r.err || "preview falhou"));
+  });
+
+  bindTap($("#btnApplyInject"), async () => {
+    safeSetStatus("Apply…");
+    syncFabStatusText();
+    const ok = await injectorApplySafe();
+    Logger.write("apply:", ok && ok.ok ? "OK" : "FAIL", "target=" + String($("#injTarget")?.value || ""));
+    setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 900);
+  });
+
+  bindTap($("#btnRollbackInject"), async () => {
+    safeSetStatus("Rollback…");
+    syncFabStatusText();
+    await injectorRollback();
+    setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 900);
+  });
+}
+
+// =========================================================
+// Boot hydrate
+// =========================================================
+function hydrateUIFromState() {
+  refreshLogsViews();
+  renderAppsList();
+
+  const app = getActiveApp();
+  if (app) {
+    setActiveApp(app.slug);
+    if (State.active.file) openFile(State.active.file);
   } else {
-    safeInit();
+    const text = $("#activeAppText");
+    if (text) textContentSafe(text, "Sem app ativo ✅");
   }
 
+  setView(State.active.view || "dashboard");
+
+  const pin = Pin.get();
+  if (pin) uiMsg("#pinOut", "PIN definido ✅");
+
+  populateTargetsDropdown(true);
+
+  // PATCH
+  syncFabStatusText();
+}
+
+// =========================================================
+// SAFE INIT
+// =========================================================
+async function safeInit() {
+  try {
+    Stability.install();
+    injectCompactCSSOnce();
+
+    renderShell();
+    bindUI();
+    hydrateUIFromState();
+
+    // Engine hook (não quebra se não existir)
+    try { window.RCF_ENGINE?.init?.({ State, Storage, Logger }); Logger.write("engine:", "init ok ✅"); }
+    catch (e) { Logger.write("engine init err:", e?.message || e); }
+
+    // não força SW duplicado (mas tenta auto-fix)
+    const swr = await swCheckAutoFix();
+    if (!swr.ok) Logger.write("sw warn:", swr.status, swr.detail, swr.err ? ("err=" + swr.err) : "");
+
+    Logger.write("RCF V8 init ok — mode:", State.cfg.mode);
+    safeSetStatus("OK ✅");
+    syncFabStatusText();
+  } catch (e) {
+    const msg = (e?.message || e);
+    Logger.write("FATAL init:", msg);
+    Stability.showErrorScreen("Falha ao iniciar (safeInit)", String(msg));
+  }
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", () => { safeInit(); }, { passive: true });
+} else {
+  safeInit();
+}
+
+/* ==========
+   STOP AQUI — PARTE 3/3
+   (fecha o IIFE lá no final do app.js)
+   ========== */
 })();
