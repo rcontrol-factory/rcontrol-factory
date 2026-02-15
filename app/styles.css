@@ -571,3 +571,12 @@ input[type="checkbox"]{
     display: none !important;
   }
 }
+@media (max-width: 520px){
+  .topbar .tabs .tab[aria-label="Settings"],
+  .topbar .tabs .tab[data-tab="settings"],
+  .topbar .tabs .tab[data-route="settings"],
+  .topbar .tabs .tab[data-view="settings"]{
+    grid-column: 1 / -1 !important;
+    order: 999 !important;
+  }
+}
