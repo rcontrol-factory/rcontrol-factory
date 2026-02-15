@@ -2418,12 +2418,6 @@ if (document.readyState === "loading") {
 } else {
   safeInit();
 }
-
-/* ==========
-   STOP AQUI — PARTE 3/3
-   (fecha o IIFE lá no final do app.js)
-   ========== */
-})();
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", () => { safeInit(); }, { passive: true });
 } else {
