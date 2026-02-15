@@ -3,7 +3,6 @@
    - Mantém tudo do seu V8.0
    - Remove status-pill do topo (sem quebrar safeSetStatus)
    - Adiciona FAB (bolinha) + mini painel de ações
-   - PATCH EXTRA: Status Manager + Toast (auto-clear, anti "grudar")
    =========================== */
 
 (() => {
@@ -39,86 +38,50 @@
   const uiMsg = (sel, text) => { const el = $(sel); if (el) el.textContent = String(text ?? ""); };
   const textContentSafe = (el, txt) => { try { el.textContent = txt; } catch {} };
 
-  function sleep(ms) { return new Promise(res => setTimeout(res, ms)); }
-
   // =========================================================
-  // STATUS MANAGER (auto-clear, anti "grudar" + toast discreto)
+  // STATUS MANAGER (auto-clear, anti "grudar")
   // =========================================================
   const Status = (() => {
     let tmr = null;
     let current = "OK ✅";
     let lockUntil = 0;
 
-    function _apply(text) {
-      current = String(text || "");
+    function set(text, opts = {}) {
+      const now = Date.now();
+      const { ttl = 900, sticky = false, minGap = 120 } = opts || {};
 
-      // status discreto no Tools Drawer
+      if (now < lockUntil) return;
+      lockUntil = now + minGap;
+
+      current = String(text || "");
       try {
         const el = document.querySelector("#statusText");
         if (el) el.textContent = current;
       } catch {}
 
-      // status no painel do FAB
-      try {
-        const fab = document.querySelector("#fabStatus");
-        if (fab) fab.textContent = current;
-      } catch {}
-    }
-
-    function _toast(text, ttl) {
-      try {
-        const box = document.querySelector("#rcfToast");
-        if (!box) return;
-
-        const msg = String(text || "").trim();
-        if (!msg || msg === "OK ✅") {
-          box.classList.remove("show");
-          box.textContent = "";
-          return;
-        }
-
-        box.textContent = msg;
-        box.classList.add("show");
-
-        setTimeout(() => {
-          try { box.classList.remove("show"); } catch {}
-        }, Math.max(800, ttl || 3500));
-      } catch {}
-    }
-
-    function set(text, opts = {}) {
-      const now = Date.now();
-      const {
-        ttl = 3500,
-        sticky = false,
-        minGap = 120,
-        toast = true
-      } = opts || {};
-
-      if (now < lockUntil) return;
-      lockUntil = now + minGap;
-
-      _apply(text);
-      if (toast) _toast(text, ttl);
-
       if (tmr) { try { clearTimeout(tmr); } catch {} tmr = null; }
 
       if (!sticky) {
         tmr = setTimeout(() => {
-          _apply("OK ✅");
-          _toast("OK ✅", 0);
+          current = "OK ✅";
+          try {
+            const el = document.querySelector("#statusText");
+            if (el) el.textContent = current;
+          } catch {}
         }, Math.max(250, ttl));
       }
     }
 
-    function ok() { set("OK ✅", { ttl: 0, sticky: true, toast: false }); }
+    function ok() { set("OK ✅", { ttl: 0, sticky: true }); }
 
-    return { set, ok, get: () => current };
+    return { set, ok };
   })();
 
   function safeSetStatus(txt) {
-    Status.set(txt, { ttl: 3500, sticky: false, toast: true });
+    try { Status.set(txt, { ttl: 900, sticky: false }); } catch {}
   }
+
+  function sleep(ms) { return new Promise(res => setTimeout(res, ms)); }
 
   // =========================================================
   // CORE: Storage
@@ -467,33 +430,6 @@
   flex: 1 1 auto !important;
 }
 
-/* Toast discreto (aparece e some sozinho) */
-#rcfToast{
-  position:fixed !important;
-  left: 12px !important;
-  top: 10px !important;
-  padding: 8px 10px !important;
-  border-radius: 999px !important;
-  border: 1px solid rgba(255,255,255,.14) !important;
-  background: rgba(8,12,18,.72) !important;
-  color:#fff !important;
-  font-size: 12px !important;
-  font-weight: 800 !important;
-  opacity: 0 !important;
-  transform: translateY(-6px) !important;
-  transition: opacity .22s ease, transform .22s ease !important;
-  z-index: 99999 !important;
-  pointer-events:none !important;
-  max-width: 80vw !important;
-  white-space:nowrap !important;
-  overflow:hidden !important;
-  text-overflow:ellipsis !important;
-}
-#rcfToast.show{
-  opacity: 1 !important;
-  transform: translateY(0) !important;
-}
-
 @media (max-width: 520px){
   #rcfRoot .brand .title{ font-size: 17px !important; }
   #rcfRoot .brand .subtitle{ font-size: 11px !important; }
@@ -832,9 +768,6 @@
           </div>
         </div>
 
-        <!-- PATCH: Toast (aparece 3–5s e some) -->
-        <div id="rcfToast" aria-live="polite"></div>
-
       </div>
     `;
   }
@@ -1049,8 +982,7 @@
      STOP AQUI — PARTE 1/3
      A PRÓXIMA PARTE COMEÇA EM:  // =========================================================
                                 // PIN
-     ========== */
-})(); // =========================================================                           
+     ========== */// =========================================================
   // PIN
   // =========================================================
   const Pin = {
@@ -1285,12 +1217,12 @@
     Logger.write("V8 check:", stable ? "PASS ✅" : "FAIL ❌", `${pass}/${pass + fail}`);
     return { stable, pass, fail, report, overlay, microtests: mt, css, sw: swr };
   }
-})();
+
   /* ==========
      STOP AQUI — PARTE 2/3
      A PRÓXIMA PARTE COMEÇA EM:  // =========================================================
-                                // FASE A — Scan / Targets / Injector SAFE
-     ========== */  // =========================================================
+                                 // FASE A — Scan / Targets / Injector SAFE
+     ========== */// =========================================================
   // FASE A — Scan / Targets / Injector SAFE
   // =========================================================
   function simpleHash(str) {
