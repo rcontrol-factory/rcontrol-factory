@@ -63,23 +63,16 @@
         } catch {}
       }
 
-      function hidePanel(){
-        try {
-          const pan = document.getElementById("rcfBootPanel");
-          if (pan) pan.style.display = "none";
-        } catch {}
-      }
-
       // botões
       try {
         document.getElementById("rcfReloadBtn").onclick = () => location.reload();
-        document.getElementById("rcfHideBtn").onclick = () => hidePanel();
+        document.getElementById("rcfHideBtn").onclick = () => {
+          const pan = document.getElementById("rcfBootPanel");
+          if (pan) pan.style.display = "none";
+        };
       } catch {}
 
-      // ✅ Auto-hide (evita Safari “tela gigante” no uso normal)
-      // (se der erro, o stability_guard pode renderizar a ErrorScreen mesmo assim)
-      setTimeout(() => hidePanel(), 4500);
-
+      // BootPanel logger (não substitui RCF_LOGGER real)
       bootLog("boot: panel ready");
 
       function loadScript(src){
@@ -97,32 +90,34 @@
         bootLog("BOOT: index boot: starting…");
         bootLog("BOOT: base href = " + document.baseURI);
 
-        // ✅ ORDEM PADRÃO:
-        // 1) logger (pra logar tudo)
-        // 2) stability_guard (pega erro cedo e evita tela branca)
-        // 3) resto da core
+        // ✅ ordem segura: logger -> guard -> storage -> GH/VFS/MAE -> cores -> UI -> admin -> app.js
         const modules = [
           "./js/core/logger.js",
           "./js/core/stability_guard.js",
-
           "./js/core/storage.js",
           "./js/core/github_sync.js",
           "./js/core/vfs_overrides.js",
           "./js/core/vfs_shim.js",
           "./js/core/mother_selfupdate.js",
 
-          "./js/admin.github.js",
+          // ✅ core (NÃO ficam vazios)
+          "./js/core/errors.js",
+          "./js/core/risk.js",
+          "./js/core/snapshot.js",
+          "./js/core/selfheal.js",
+          "./js/core/ui_safety.js",
 
-          // opcionais (se existirem, não quebra):
-          "./js/core/diagnostics.js",
-          "./js/core/ui_bindings.js",
+          // ✅ UI/qualidade de vida (se existirem no repo)
           "./js/core/ui_compact_outputs.js",
-          "./js/core/injector.js",
-          "./js/core/policy.js",
-          "./js/core/preview_runner.js",
+          "./js/core/ui_bindings.js",
+          "./js/core/diagnostics.js",
           "./js/core/publish_queue.js",
-          "./js/core/registry.js",
-          "./js/core/settings_cleanup.js"
+          "./js/core/preview_runner.js",
+          "./js/core/policy.js",
+          "./js/core/settings_cleanup.js",
+          "./js/core/injector.js",
+
+          "./js/admin.github.js"
         ];
 
         for (const src of modules) {
@@ -136,6 +131,19 @@
           }
         }
 
+        // ✅ auto-check no LOGS (sem F12)
+        try {
+          const flags = {
+            RCF_ERRORS: !!window.RCF_ERRORS,
+            RCF_RISK: !!window.RCF_RISK,
+            RCF_SNAPSHOT: !!window.RCF_SNAPSHOT,
+            RCF_SELFHEAL: !!window.RCF_SELFHEAL,
+            RCF_UI_SAFETY: !!window.RCF_UI_SAFETY
+          };
+          window.RCF_LOGGER?.push?.("INFO", "CORE READY CHECK => " + JSON.stringify(flags));
+          bootLog("INFO: CORE READY CHECK => " + JSON.stringify(flags));
+        } catch {}
+
         try {
           await loadScript("./app.js");
           try { window.RCF_LOGGER?.push?.("BOOT", "app.js loaded ✅ ./app.js"); } catch {}
@@ -145,7 +153,6 @@
           bootLog("ERR: app.js missing/failed ❌ ./app.js :: " + (e.message||e));
         }
 
-        // SW (mantido igual)
         try {
           if ("serviceWorker" in navigator) {
             navigator.serviceWorker.register("./sw.js", { scope: "./" })
@@ -165,5 +172,6 @@
     })();
   </script>
   <!-- RCF_BOOT_SCRIPT_END -->
+
 </body>
 </html>
