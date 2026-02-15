@@ -498,3 +498,93 @@ input[type="checkbox"]{
 .view-admin pre.log {
   display: none !important;
 }
+/* =========================================================
+   RCF MOBILE FIX PACK — iPhone safe-area + overflow + tabs
+   Cola no FINAL do /app/styles.css
+   ========================================================= */
+
+/* base: nunca mais “vazar” lateral */
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;              /* ✅ mata o “passando da lateral” */
+}
+
+/* iPhone notch / safe-area */
+#rcfRoot, .topbar, .container {
+  padding-left: calc(12px + env(safe-area-inset-left));
+  padding-right: calc(12px + env(safe-area-inset-right));
+}
+
+/* garante altura correta no iOS moderno */
+#rcfRoot { min-height: 100dvh; }
+
+/* topbar segura largura e não deixa nada passar */
+.topbar {
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+/* tabs: por padrão pode quebrar linha sem estourar */
+.tabs {
+  width: 100%;
+  max-width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+  padding-top: 10px;
+}
+
+/* cada tab não estoura a tela */
+.tab {
+  max-width: 100%;
+  flex: 1 1 auto;
+  min-width: 105px;     /* ajusta aqui se quiser maior/menor */
+}
+
+/* em telas estreitas (iPhone), vira “scroll horizontal” em vez de cortar */
+@media (max-width: 430px) {
+  .tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    justify-content: flex-start;
+    padding-bottom: 6px;
+  }
+
+  .tabs::-webkit-scrollbar { height: 0; }
+  .tab { flex: 0 0 auto; }
+}
+
+/* container e cards: nunca mais passar do limite */
+.container, .views {
+  width: 100%;
+  max-width: 100%;
+}
+
+.card, .view.card {
+  width: 100%;
+  max-width: 100%;
+}
+
+/* rows: quando não couber, quebra linha ao invés de vazar */
+.row {
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+
+/* inputs/textarea/select não estouram */
+input, textarea, select, pre, .mono, .textarea {
+  max-width: 100%;
+}
+
+/* selects longos (teu dropdown do injector) — evita “cortar” e estourar */
+select {
+  width: 100%;
+  min-width: 0;
+}
