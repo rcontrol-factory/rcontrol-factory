@@ -8,18 +8,24 @@
   --accent:#16c784;
   --danger:#d35a5a;
   --shadow: 0 20px 60px rgba(0,0,0,.45);
-  --radius: 18px;
-  --radius2: 14px;
+  --radius: 16px;
+  --radius2: 12px;
   --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   --ui: -apple-system, system-ui, Segoe UI, Roboto, Helvetica, Arial;
 
   /* V7 token */
-  --rcf-css-token:"v7";
+  --rcf-css-token:"v7-compact-grid";
 }
 
 *{ box-sizing:border-box; }
 html,body{ height:100%; }
 html{ -webkit-text-size-adjust: 100%; }
+
+html, body {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden; /* ✅ mata overflow lateral */
+}
 
 body{
   margin:0;
@@ -51,7 +57,7 @@ button, a, .btn, .tab, input, textarea, select, label{
 }
 
 /* =================================
-   TOP BAR
+   TOP BAR (COMPACTO)
    ================================= */
 .topbar{
   position: sticky;
@@ -61,89 +67,162 @@ button, a, .btn, .tab, input, textarea, select, label{
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--line);
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+
+  /* mais baixo */
+  padding: 10px 10px 8px;
 }
+
+/* safe-area iPhone */
+#rcfRoot, .topbar, .container {
+  padding-left: calc(10px + env(safe-area-inset-left));
+  padding-right: calc(10px + env(safe-area-inset-right));
+}
+#rcfRoot { min-height: 100dvh; }
 
 .brand{
   display:flex;
-  gap:12px;
-  padding: 14px 16px 6px;
-  align-items:center;
-}
-.dot{
-  width:12px;height:12px;border-radius:50%;
-  background: var(--accent);
-  box-shadow: 0 0 0 6px rgba(22,199,132,.10);
-}
-.brand-text .title{ font-weight:800; font-size:18px; }
-.brand-text .subtitle{ color:var(--muted); font-size:13px; margin-top:2px; }
-
-.tabs{
-  display:flex;
   gap:10px;
-  padding: 10px 12px 14px;
+  padding: 0;                 /* ✅ remove gordura */
   align-items:center;
-  flex-wrap: wrap;
+}
+
+.dot{
+  width:10px;height:10px;border-radius:50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 5px rgba(22,199,132,.10);
+}
+
+.brand-text .title{
+  font-weight:900;
+  font-size:16px;
+  line-height:1.1;
+  letter-spacing:.2px;
+}
+
+.brand-text .subtitle{
+  color:var(--muted);
+  font-size:11px;
+  margin-top:2px;
+  opacity:.8;
 }
 
 .spacer{ flex:1; }
 
-/* Botões/abas */
-.tab, .btn, .dockbtn, .gear{
+.btn.small{ padding: 8px 12px; font-size: 13px; }
+
+.status-pill{
+  display:flex; align-items:center; gap:8px;
+  padding: 8px 12px;
+  border-radius:999px;
+  border:1px solid var(--line);
+  background: rgba(255,255,255,.03);
+  transform: scale(.95);
+}
+.status-pill .ok{ font-size:13px; }
+
+/* =================================
+   TABS
+   Desktop/tablet: flex wrap normal
+   iPhone: GRID 4 colunas + Settings “barra longa”
+   ================================= */
+.tabs{
+  width:100%;
+  max-width:100%;
+  display:flex;
+  gap:8px;
+  padding: 10px 0 0;
+  align-items:center;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.tab, .btn{
   border:1px solid var(--line);
   background: rgba(255,255,255,.03);
   color:var(--text);
-  padding: 10px 14px;
+  padding: 10px 12px;
   border-radius: 999px;
   cursor:pointer;
   user-select:none;
+  font-size:13px;
+  line-height:1;
+  min-height: 38px;
 }
 
 .tab.active{
   border-color: rgba(22,199,132,.45);
-  box-shadow: 0 0 0 6px rgba(22,199,132,.10);
+  box-shadow: 0 0 0 5px rgba(22,199,132,.10);
 }
 
-.status-pill{
-  display:flex; align-items:center; gap:8px;
-  padding: 10px 14px;
-  border-radius:999px;
-  border:1px solid var(--line);
-  background: rgba(255,255,255,.03);
+@media (max-width: 460px) {
+  .tabs{
+    display:grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap:10px;
+    justify-content: initial;
+    padding-top: 12px;
+  }
+
+  .tabs .tab{
+    width: 100%;
+    min-width: 0;
+    padding: 11px 10px;
+    text-align:center;
+  }
+
+  /* Settings vira “barra longa” (igual sua referência) */
+  .tabs .tab[data-view="settings"]{
+    grid-column: 1 / -1;
+  }
 }
-.status-pill .ok{ font-size:14px; }
 
 /* =================================
-   CONTEÚDO
+   CONTEÚDO (COMPACTO)
    ================================= */
 .container{
   max-width: 980px;
-  margin: 14px auto 110px;
-  padding: 0 12px;
+  margin: 10px auto 96px;
+  padding: 0;
   z-index: 1;
+  width: 100%;
 }
 
+.views{ width:100%; max-width:100%; }
+
 .card{
-  background: linear-gradient(180deg, rgba(15,26,45,.65), rgba(11,18,32,.75));
+  background: linear-gradient(180deg, rgba(15,26,45,.62), rgba(11,18,32,.74));
   border:1px solid var(--line);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
-  padding: 16px;
-  margin-bottom: 14px;
+  padding: 12px;
+  margin: 0 0 12px;
   z-index: 1;
+  width: 100%;
+  max-width: 100%;
 }
 
-.hero h1{ margin: 0 0 6px; font-size: 36px; }
-.hero p{ margin: 0 0 12px; color: var(--muted); }
+/* títulos menores */
+h1,h2{ margin: 0 0 10px; }
+.card h1{ font-size: 26px; margin: 0 0 10px; }
+.card h2{ font-size: 18px; margin: 10px 0 8px; }
+
+.hero h1{ margin: 0 0 6px; font-size: 30px; }
+.hero p{ margin: 0 0 10px; color: var(--muted); }
+
+.hint{ color: var(--muted); font-size: 13px; margin: 6px 0; }
 
 .row{
   display:flex;
   gap:10px;
   flex-wrap:wrap;
   align-items:center;
-  margin: 10px 0;
+  margin: 8px 0;
+  max-width: 100%;
 }
 
-.btn.small{ padding: 8px 12px; font-size: 13px; }
 .btn.ok{
   background: rgba(22,199,132,.12);
   border-color: rgba(22,199,132,.45);
@@ -153,11 +232,6 @@ button, a, .btn, .tab, input, textarea, select, label{
   border-color: rgba(211,90,90,.45);
 }
 .btn.ghost{ background: rgba(255,255,255,.02); }
-
-h1,h2{ margin: 0 0 10px; }
-h2{ margin-top: 12px; }
-
-.hint{ color: var(--muted); font-size: 13px; }
 
 .apps{ display:flex; flex-direction:column; gap:10px; margin-top:10px; }
 .app-item{
@@ -173,13 +247,13 @@ h2{ margin-top: 12px; }
   border-radius: 999px;
   border:1px solid rgba(22,199,132,.45);
   background: rgba(22,199,132,.10);
-  font-weight:700;
+  font-weight:800;
 }
 
 .status-box{
   border: 1px dashed rgba(255,255,255,.18);
   border-radius: 14px;
-  padding: 14px;
+  padding: 12px;
   display:flex;
   gap:10px;
   align-items:center;
@@ -189,14 +263,18 @@ h2{ margin-top: 12px; }
 .view{ display:none; }
 .view.active{ display:block; }
 
-.form input, textarea, .cmd input{
+/* inputs / editor */
+.form input, textarea, .cmd input, select{
   width:100%;
+  max-width:100%;
+  min-width:0;
   border:1px solid var(--line);
   background: rgba(0,0,0,.20);
   color: var(--text);
   border-radius: 14px;
   padding: 12px 12px;
   outline:none;
+  font-size:14px;
 }
 
 textarea{ min-height: 120px; resize: vertical; }
@@ -230,10 +308,11 @@ textarea{ min-height: 120px; resize: vertical; }
   background: rgba(255,255,255,.03);
   border-bottom:1px solid var(--line);
   color: var(--muted);
+  font-size: 12px;
 }
 #fileContent{
   width:100%;
-  min-height: 320px;
+  min-height: 300px;
   font-family: var(--mono);
   font-size: 13px;
   line-height: 1.45;
@@ -245,23 +324,27 @@ textarea{ min-height: 120px; resize: vertical; }
   color: rgba(255,255,255,.90);
 }
 
+/* monos / outputs (compact + com limite) */
 .mono{
   font-family: var(--mono);
   white-space: pre-wrap;
   background: rgba(0,0,0,.18);
   border:1px solid var(--line);
   border-radius: 14px;
-  padding: 12px;
+  padding: 10px;
   margin: 10px 0 0;
+  max-width:100%;
 }
 .mono.small{ font-size: 12px; }
 
-/* OUTPUT BOXES (GitHub / Maintenance / Logs) */
-#ghOut, #maintOut, #adminOut, #agentOut, #editorOut, #genOut, #diagOut, #logsOut, #logsBox, #logsViewBox{
+/* OUTPUT BOXES (compactadas) */
+#ghOut, #maintOut, #adminOut, #agentOut, #editorOut, #genOut, #diagOut,
+#logsOut, #logsBox, #logsViewBox, #scanOut, #diffOut, #injLog{
   display:block;
   width:100%;
-  min-height:90px;
-  padding:12px 12px;
+  min-height: 64px;            /* ✅ antes era 90/120 */
+  max-height: 180px;           /* ✅ evita “telão” */
+  padding:10px 12px;
   margin-top:10px;
   border-radius:14px;
   border:1px solid rgba(255,255,255,.10);
@@ -273,9 +356,11 @@ textarea{ min-height: 120px; resize: vertical; }
   -webkit-overflow-scrolling: touch;
   line-height: 1.35;
   font-family: var(--mono);
-  font-size: 13px;
+  font-size: 12px;
 }
-#maintOut{ min-height:120px; }
+
+/* maintenance pode ser um pouco maior */
+#maintOut{ max-height: 220px; }
 
 /* =================================
    TOOLS DRAWER
@@ -291,7 +376,7 @@ textarea{ min-height: 120px; resize: vertical; }
   border-radius: var(--radius);
   box-shadow: var(--shadow);
   display:none;
-  z-index: 99999;
+  z-index: 9000000; /* abaixo do boot pill */
   overflow:hidden;
 
   /* fechado: não captura toque */
@@ -316,39 +401,8 @@ textarea{ min-height: 120px; resize: vertical; }
 .tools-body{ padding: 12px; }
 
 /* =================================
-   GEAR MODAL
-   ================================= */
-.rcf-gear-backdrop{
-  position: fixed; inset: 0;
-  background: rgba(0,0,0,.45);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
-  z-index: 99998;
-  display:flex;
-  align-items:flex-end;
-  justify-content:center;
-  padding: 16px;
-
-  /* fechado por default (se você usar classe/open no JS) */
-  pointer-events: none;
-}
-.rcf-gear-backdrop.open{ pointer-events: auto; }
-
-.rcf-gear-sheet{
-  width: min(560px, 100%);
-  background: rgba(11,18,32,.92);
-  border: 1px solid rgba(255,255,255,.08);
-  border-radius: 16px;
-  box-shadow: 0 20px 60px rgba(0,0,0,.45);
-  padding: 14px;
-}
-.rcf-gear-sheet h3{ margin: 0 0 10px 0; font-size: 16px; }
-.rcf-gear-grid{ display:flex; gap:10px; flex-wrap:wrap; }
-.rcf-gear-grid .btn{ flex: 1 1 160px; }
-
-/* =================================
-   OVERLAYS GENÉRICOS: não podem bloquear toque
-   (mas SEM matar .glass/.blur do layout)
+   OVERLAYS GENÉRICOS
+   (cuidado pra não quebrar boot overlay do INDEX)
    ================================= */
 .overlay, .backdrop, #overlay, #backdrop, .scrim, .modal, .sheet{
   pointer-events: none !important;
@@ -387,107 +441,31 @@ input[type="checkbox"]{
   border-color: rgba(22,199,132,.45);
 }
 .switch input:checked + .slider::after{ transform: translateX(18px); }
-/* RCF — Floating Boot Panel (minimized by default) */
-:root{
-  --rcf-fab-h: 42px;
-  --rcf-panel-w: min(520px, calc(100vw - 24px));
-  --rcf-panel-h: min(55vh, 520px);
-  --rcf-z: 99999;
+
+/* =================================
+   BOOT UI (INDEX) — garante visível
+   ================================= */
+#rcfBootPill{
+  position: fixed !important;
+  left: 12px !important;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 12px) !important;
+  z-index: 9999999 !important;
+  opacity: .92 !important;
+  transform: scale(.96) !important;
+}
+#rcfBootOverlay{
+  z-index: 10000000 !important;
 }
 
-#rcfBootFab{
-  position: fixed;
-  left: 12px;
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
-  height: var(--rcf-fab-h);
-  padding: 0 12px;
-  border-radius: 999px;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  background: rgba(10, 18, 24, 0.88);
-  border: 1px solid rgba(255,255,255,0.10);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  color: rgba(255,255,255,0.92);
-  z-index: var(--rcf-z);
-  user-select: none;
-}
-
-#rcfBootFab .dot{
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: #2bdc7b;
-  box-shadow: 0 0 0 2px rgba(43,220,123,0.18);
-}
-
-#rcfBootFab .txt{
-  font-size: 13px;
-  letter-spacing: 0.2px;
-  opacity: 0.95;
-}
-
+/* =================================
+   DESATIVA BOOT PANEL DO app.js (evita “LOG NO LUGAR ERRADO”)
+   ================================= */
+#rcfBootFab,
 #rcfBootPanel{
-  position: fixed;
-  left: 12px;
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 62px);
-  width: var(--rcf-panel-w);
-  height: var(--rcf-panel-h);
-  max-height: calc(100vh - 120px);
-  border-radius: 14px;
-  background: rgba(8, 12, 18, 0.92);
-  border: 1px solid rgba(255,255,255,0.10);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  box-shadow: 0 14px 40px rgba(0,0,0,0.45);
-  overflow: hidden;
-  z-index: var(--rcf-z);
-  display: none; /* default fechado */
+  display:none !important;
 }
 
-#rcfBootPanel.open{ display: block; }
-
-#rcfBootPanel .hdr{
-  display:flex;
-  align-items:center;
-  justify-content: space-between;
-  padding: 10px 10px 8px 12px;
-  border-bottom: 1px solid rgba(255,255,255,0.08);
-}
-
-#rcfBootPanel .hdr .title{
-  font-size: 13px;
-  opacity: 0.92;
-}
-
-#rcfBootPanel .hdr .btns{
-  display:flex;
-  gap: 8px;
-}
-
-#rcfBootPanel .hdr button{
-  height: 30px;
-  padding: 0 10px;
-  border-radius: 10px;
-  border: 1px solid rgba(255,255,255,0.10);
-  background: rgba(255,255,255,0.06);
-  color: rgba(255,255,255,0.92);
-}
-
-#rcfBootPanel .body{
-  height: calc(100% - 48px);
-  overflow: auto;
-  padding: 10px 12px 14px 12px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-  font-size: 12px;
-  line-height: 1.35;
-  white-space: pre-wrap;
-  word-break: break-word;
-  color: rgba(255,255,255,0.88);
-}
-
-/* IMPORTANT: mata o "Log:" gigante dentro de telas (Admin etc.) */
+/* IMPORTANT: mata qualquer “Log:” inline que vaze dentro de telas */
 .rcf-inline-log,
 [data-rcf-inline-log],
 #adminLogBox,
@@ -498,199 +476,3 @@ input[type="checkbox"]{
 .view-admin pre.log {
   display: none !important;
 }
-/* =========================================================
-   RCF MOBILE FIX PACK — iPhone safe-area + overflow + tabs
-   Cola no FINAL do /app/styles.css
-   ========================================================= */
-
-/* base: nunca mais “vazar” lateral */
-*, *::before, *::after { box-sizing: border-box; }
-
-html, body {
-  width: 100%;
-  max-width: 100%;
-  overflow-x: hidden;              /* ✅ mata o “passando da lateral” */
-}
-
-/* iPhone notch / safe-area */
-#rcfRoot, .topbar, .container {
-  padding-left: calc(12px + env(safe-area-inset-left));
-  padding-right: calc(12px + env(safe-area-inset-right));
-}
-
-/* garante altura correta no iOS moderno */
-#rcfRoot { min-height: 100dvh; }
-
-/* topbar segura largura e não deixa nada passar */
-.topbar {
-  width: 100%;
-  max-width: 100%;
-  overflow: hidden;
-}
-
-/* tabs: por padrão pode quebrar linha sem estourar */
-.tabs {
-  width: 100%;
-  max-width: 100%;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  justify-content: center;
-  padding-top: 10px;
-}
-
-/* cada tab não estoura a tela */
-.tab {
-  max-width: 100%;
-  flex: 1 1 auto;
-  min-width: 105px;     /* ajusta aqui se quiser maior/menor */
-}
-
-/* em telas estreitas (iPhone), vira “scroll horizontal” em vez de cortar */
-@media (max-width: 430px) {
-  .tabs {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    overflow-y: hidden;
-    -webkit-overflow-scrolling: touch;
-    justify-content: flex-start;
-    padding-bottom: 6px;
-  }
-
-  .tabs::-webkit-scrollbar { height: 0; }
-  .tab { flex: 0 0 auto; }
-}
-
-/* container e cards: nunca mais passar do limite */
-.container, .views {
-  width: 100%;
-  max-width: 100%;
-}
-
-.card, .view.card {
-  width: 100%;
-  max-width: 100%;
-}
-
-/* rows: quando não couber, quebra linha ao invés de vazar */
-.row {
-  flex-wrap: wrap;
-  max-width: 100%;
-}
-
-/* inputs/textarea/select não estouram */
-input, textarea, select, pre, .mono, .textarea {
-  max-width: 100%;
-}
-
-/* selects longos (teu dropdown do injector) — evita “cortar” e estourar */
-select {
-  width: 100%;
-  min-width: 0;
-}
-/* =========================================================
-   RCF — UI COMPACT PATCH (cola no FINAL do styles.css)
-   Objetivo: cards menores + header menor + mais área útil
-========================================================= */
-
-:root{
-  --rcf-gap: 10px;
-  --rcf-pad: 10px;
-  --rcf-radius: 14px;
-}
-
-/* ---------- HEADER / TOPBAR: mais baixo ---------- */
-.topbar{ padding: 10px 10px 6px !important; }
-.brand{ gap: 10px !important; }
-.brand .title{ font-size: 16px !important; line-height: 1.1 !important; }
-.brand .subtitle{ font-size: 11px !important; opacity: .75 !important; }
-.status-pill{ transform: scale(.95) !important; }
-
-/* ---------- TABS: mais compactas (sem “telão” em cima) ---------- */
-.tabs{
-  gap: 8px !important;
-  padding: 8px 10px 10px !important;
-  flex-wrap: wrap !important;
-}
-
-.tabs .tab{
-  padding: 10px 12px !important;
-  border-radius: 999px !important;
-  font-size: 13px !important;
-  line-height: 1 !important;
-  min-height: 38px !important;
-}
-
-/* Se tiver “tab grande demais” */
-.tab{ min-height: 38px !important; }
-
-/* ---------- CONTAINER: mais área útil ---------- */
-.container{
-  padding: 10px !important;
-}
-
-.views{
-  gap: 10px !important;
-}
-
-/* ---------- CARDS: MENOS ALTURA / MENOS PADDING ---------- */
-.card{
-  padding: 12px !important;
-  border-radius: var(--rcf-radius) !important;
-  margin: 0 !important;
-}
-
-.view.card{
-  padding: 12px !important;
-}
-
-/* Títulos de seção menores */
-.card h1{ font-size: 26px !important; margin: 0 0 10px !important; }
-.card h2{ font-size: 18px !important; margin: 10px 0 8px !important; }
-.card h3{ font-size: 16px !important; margin: 10px 0 8px !important; }
-
-.hint{ margin: 6px 0 !important; }
-
-/* Rows menos gordas */
-.row{ gap: 10px !important; margin: 8px 0 !important; flex-wrap: wrap !important; }
-
-/* Botões menores (principalmente no Admin) */
-.btn{
-  padding: 10px 12px !important;
-  min-height: 38px !important;
-  border-radius: 999px !important;
-  font-size: 13px !important;
-}
-
-/* Textareas/inputs menos altos */
-input, textarea, select{
-  font-size: 14px !important;
-}
-
-/* Pre/logs: não “empurrar” a tela */
-pre.mono{
-  padding: 10px !important;
-  border-radius: 12px !important;
-}
-pre.mono.small{
-  max-height: 220px !important;
-  overflow: auto !important;
-  -webkit-overflow-scrolling: touch !important;
-}
-
-/* ---------- BOOT “BOLHAZINHA” / PILL: garantir visível e discreta ---------- */
-#rcfBootPill, #rcfBootFab{
-  position: fixed !important;
-  left: 12px !important;
-  bottom: 12px !important;
-  z-index: 9999999 !important;
-  opacity: 0.92 !important;
-  transform: scale(.95) !important;
-}
-
-#rcfBootOverlay, #rcfBootPanel{
-  z-index: 10000000 !important;
-}
-
-/* Não deixar a bolha sumir atrás de drawer/cards */
-.tools.open{ z-index: 9000000 !important; }
