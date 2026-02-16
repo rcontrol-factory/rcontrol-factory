@@ -1,12 +1,15 @@
-/* RControl Factory — /app/js/core/mother_selfupdate.js (PADRÃO) — v2.2c
-   PATCH MÍNIMO (sobre v2.2b):
-   - Alias clearOverrides() -> clear() (compat com app.js que chama clearOverrides)
-   - Mantém tudo do v2.2b (compat chaves, normalize, apply/clear via overrides)
+/* RControl Factory — /app/js/core/mother_selfupdate.js (PADRÃO) — v2.3c
+   PATCH MÍNIMO (SAFE GATE):
+   - Mantém tudo do v2.2b (compat + normalize + vfs prefer OVERRIDES)
+   - ✅ updateFromGitHub() por padrão = PASSIVO (pull+save, NÃO aplica) -> evita tela branca
+   - ✅ applySaved(): aplica SOMENTE o bundle já salvo (ação manual/confirmada)
+   - Para aplicar direto: updateFromGitHub({ apply:true })
+   - NÃO mexe no SW
 */
 (() => {
   "use strict";
 
-  if (window.RCF_MAE && window.RCF_MAE.__v22c) return;
+  if (window.RCF_MAE && window.RCF_MAE.__v23c) return;
 
   // ✅ chaves padrão + compat antigas
   const LS_BUNDLE_KEY       = "rcf:mother_bundle_local";     // padrão: SEMPRE normalizado {version,ts,files:[...]}
@@ -14,6 +17,10 @@
   const LS_BUNDLE_META      = "rcf:mother_bundle_meta";      // meta/info
   const LS_BUNDLE_COMPAT_1  = "rcf:mother_bundle";           // compat
   const LS_BUNDLE_COMPAT_2  = "rcf:mother_bundle_json";      // compat
+
+  // ✅ GATE: por padrão NÃO aplica nada automaticamente
+  // (pra aplicar: updateFromGitHub({apply:true}) ou applySaved())
+  const LS_APPLY_GATE_KEY   = "rcf:mae:apply_gate";          // "1" = gate ON (default), "0" = gate OFF
 
   const log = (lvl, msg, obj) => {
     try {
@@ -164,12 +171,10 @@
     let j = null;
     try { j = JSON.parse(raw); } catch { return null; }
 
-    // aceita {version,ts,files:[...]} ou qualquer shape
     let files = [];
     if (Array.isArray(j.files)) files = j.files;
     else files = normalizeFilesFromAnyShape(j);
 
-    // normaliza itens para {path,content,contentType}
     const out = (files || []).map((f, idx) => {
       if (isPlainObject(f) && (f.path || f.name)) {
         const path = String(f.path || f.name || "").trim();
@@ -195,7 +200,7 @@
     const normTxt = JSON.stringify(normalizedObj);
     localStorage.setItem(LS_BUNDLE_KEY, normTxt);
 
-    // ✅ COMPAT: salva também nas chaves antigas (evita scan B lendo errado)
+    // ✅ COMPAT: salva também nas chaves antigas
     try { localStorage.setItem(LS_BUNDLE_COMPAT_1, normTxt); } catch {}
     try { localStorage.setItem(LS_BUNDLE_COMPAT_2, normTxt); } catch {}
 
@@ -211,7 +216,6 @@
     return { ok:true, meta };
   }
 
-  // texto do bundle normalizado (usado pelo pushMotherBundle)
   function getLocalBundleText(){
     const txt = String(localStorage.getItem(LS_BUNDLE_KEY) || "").trim();
     return txt || "";
@@ -222,18 +226,19 @@
     if (!b) return { ok:false, msg:"bundle local ausente" };
 
     const meta = safeParse(localStorage.getItem(LS_BUNDLE_META), {}) || {};
+    const gate = String(localStorage.getItem(LS_APPLY_GATE_KEY) || "1") !== "0";
     return {
       ok: true,
       msg: "bundle local ok",
       meta: {
         ...meta,
-        filesCount: b?.files?.length || meta.filesCount || 0
+        filesCount: b?.files?.length || meta.filesCount || 0,
+        applyGate: gate ? "ON" : "OFF"
       }
     };
   }
 
   function pickVFS(){
-    // ✅ preferido (novo)
     if (window.RCF_VFS_OVERRIDES && typeof window.RCF_VFS_OVERRIDES.put === "function") {
       return {
         kind: "OVERRIDES",
@@ -244,7 +249,6 @@
       };
     }
 
-    // ✅ fallback (antigo)
     if (window.RCF_VFS && typeof window.RCF_VFS.put === "function") {
       return {
         kind: "VFS",
@@ -299,9 +303,7 @@
     return { ok:true, wrote, failed, total:files.length };
   }
 
-  async function updateFromGitHub(opts){
-    log("ok", "update start");
-
+  async function pullAndSaveFromGitHub(){
     if (!window.RCF_GH_SYNC?.pull) throw new Error("RCF_GH_SYNC.pull ausente");
 
     const cfg = window.RCF_GH_SYNC.loadConfig ? window.RCF_GH_SYNC.loadConfig() : {};
@@ -315,9 +317,43 @@
     const saved = setLocalBundleNormalized(rawTxt, norm.normalized, { source:"github_pull", rawKeys: norm.rawKeys });
     log("info", "mother_bundle_local saved", saved.meta);
 
-    const r = await applyBundleToOverrides(JSON.stringify(norm.normalized), opts);
+    return { rawTxt, normalizedObj: norm.normalized, normalizedText: JSON.stringify(norm.normalized), meta: saved.meta };
+  }
+
+  // ✅ PASSIVO por padrão (pra evitar tela branca)
+  async function updateFromGitHub(opts){
+    log("ok", "update start");
+
+    // default gate ON (se não existir, ON)
+    if (localStorage.getItem(LS_APPLY_GATE_KEY) == null) {
+      try { localStorage.setItem(LS_APPLY_GATE_KEY, "1"); } catch {}
+    }
+    const gateOn = String(localStorage.getItem(LS_APPLY_GATE_KEY) || "1") !== "0";
+
+    const pulled = await pullAndSaveFromGitHub();
+
+    const wantApply = !!opts?.apply; // só aplica se pedir explicitamente
+    if (gateOn && !wantApply) {
+      log("warn", "update passive: saved only (applyGate=ON). To apply: RCF_MAE.applySaved() or updateFromGitHub({apply:true})");
+      log("ok", "update done");
+      return { ok:true, passive:true, saved:true, wrote:0, failed:0, total: pulled?.normalizedObj?.files?.length || 0 };
+    }
+
+    const r = await applyBundleToOverrides(pulled.normalizedText, opts);
 
     log("ok", "update done");
+    return r;
+  }
+
+  // ✅ aplicar SOMENTE o que já está salvo (ação manual)
+  async function applySaved(opts){
+    // respeita gate: aqui é manual, então deixa aplicar
+    const txt = getLocalBundleText();
+    if (!txt) throw new Error("Sem bundle salvo. Rode Update (passivo) primeiro.");
+
+    log("ok", "applySaved start");
+    const r = await applyBundleToOverrides(txt, opts);
+    log("ok", "applySaved done");
     return r;
   }
 
@@ -331,19 +367,20 @@
     throw new Error("Overrides VFS sem clear/clearOverrides()");
   }
 
-  // ✅ alias de compat (seu app.js chama clearOverrides)
-  async function clearOverrides(){
-    return clear();
+  // util: ligar/desligar gate (se um dia você quiser)
+  function setApplyGate(on){
+    try { localStorage.setItem(LS_APPLY_GATE_KEY, on ? "1" : "0"); } catch {}
+    return { ok:true, applyGate: on ? "ON" : "OFF" };
   }
 
   window.RCF_MAE = {
-    __v22c: true,
+    __v23c: true,
     updateFromGitHub,
+    applySaved,
     clear,
-    clearOverrides, // ✅ compat
     status,
+    setApplyGate,
     getLocalBundleText,
-    // ✅ exposto pra CP1/scan usar (se precisar)
     getMotherBundleLocal,
   };
 
