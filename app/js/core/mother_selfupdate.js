@@ -281,7 +281,8 @@
     __v23e: true,
     updateFromGitHub,
     applySaved,
-    clear
+    clear,
+    getLocalBundleText
   };
 
   log("ok", "mother_selfupdate.js ready ✅ (bridge patch)");
