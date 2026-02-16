@@ -156,7 +156,9 @@ button, a, .btn, .tab, input, textarea, select, label{
 
 /* ✅ FIX DEFINITIVO: iPhone vira BARRA ROLANTE (sem depender de .topbar) */
 @media (max-width: 520px){
-  .tabs{
+  .tabs{ padding: 10px 2px 8px !important; }
+  .tabs .tab{ padding: 10px 12px !important; }
+}
     flex-wrap: nowrap !important;
     justify-content: flex-start !important;
     overflow-x: auto !important;
