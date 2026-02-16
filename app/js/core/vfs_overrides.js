@@ -1,40 +1,35 @@
-/* RControl Factory — /app/js/core/vfs_overrides.js (PADRÃO) — v1.3b
-   Patch mínimo (anti "files=0" falso) + compat CLEAR:
-   - listOverridesSafe(): nunca throw (retorna [] + motivo)
-   - cache da última LIST ok (evita 0 intermitente)
-   - status() mais informativo (can_rpc, last_list_count)
-   - ✅ COMPAT: adiciona clear() como alias de clearOverrides()
-   - rpc/put/clearOverrides/del continuam STRICT (throw) como antes
+/* RControl Factory — /app/js/core/mother_selfupdate.js (PADRÃO) — v2.3c
+   PATCH MÍNIMO (SAFE GATE):
+   - ✅ updateFromGitHub() por padrão = PASSIVO (pull+save, NÃO aplica) -> evita tela branca
+   - ✅ applySaved(): aplica SOMENTE o bundle já salvo (ação manual/confirmada)
+   - Para aplicar direto: updateFromGitHub({ apply:true })
+   - NÃO mexe no SW
 */
 (() => {
   "use strict";
 
-  if (window.RCF_VFS_OVERRIDES && window.RCF_VFS_OVERRIDES.__v13b) return;
+  if (window.RCF_MAE && window.RCF_MAE.__v23c) return;
 
-  const VERSION = "v1.3b";
+  const LS_BUNDLE_KEY       = "rcf:mother_bundle_local";
+  const LS_BUNDLE_RAW       = "rcf:mother_bundle_raw";
+  const LS_BUNDLE_META      = "rcf:mother_bundle_meta";
+  const LS_BUNDLE_COMPAT_1  = "rcf:mother_bundle";
+  const LS_BUNDLE_COMPAT_2  = "rcf:mother_bundle_json";
 
-  const log = (lvl, msg) => {
-    try { window.RCF_LOGGER?.push?.(lvl, msg); } catch {}
-    try { console.log("[VFS_OVR]", lvl, msg); } catch {}
+  const LS_APPLY_GATE_KEY   = "rcf:mae:apply_gate"; // "1" ON default, "0" OFF
+
+  const log = (lvl, msg, obj) => {
+    try {
+      if (obj !== undefined) window.RCF_LOGGER?.push?.(lvl, String(msg) + " " + JSON.stringify(obj));
+      else window.RCF_LOGGER?.push?.(lvl, String(msg));
+    } catch {}
+    try {
+      if (obj !== undefined) console.log("[MAE]", lvl, msg, obj);
+      else console.log("[MAE]", lvl, msg);
+    } catch {}
   };
 
-  // ---- last good LIST cache (pra não cair em 0 do nada) ----
-  let _lastList = null; // {ts:number, res:any}
-  let _lastListCount = 0;
-
-  function normPath(input) {
-    let p = String(input || "").trim();
-    if (!p) return "/";
-    p = p.split("#")[0].split("?")[0].trim();
-    if (!p.startsWith("/")) p = "/" + p;
-    p = p.replace(/\/{2,}/g, "/");
-
-    // compat repo -> runtime
-    if (p === "/app/index.html") p = "/index.html";
-    if (p.startsWith("/app/")) p = p.slice(4);
-    if (!p.startsWith("/")) p = "/" + p;
-    return p;
-  }
+  function safeParse(raw, fb){ try { return raw ? JSON.parse(raw) : fb; } catch { return fb; } }
 
   function guessType(path) {
     const p = String(path || "");
@@ -46,139 +41,317 @@
     return "text/plain; charset=utf-8";
   }
 
-  async function waitForController(timeoutMs = 2500) {
-    const start = Date.now();
-    while (Date.now() - start < timeoutMs) {
-      const ctrl = navigator.serviceWorker?.controller;
-      if (ctrl) return ctrl;
-      await new Promise(r => setTimeout(r, 50));
+  function isPlainObject(x){ return !!x && typeof x === "object" && !Array.isArray(x); }
+
+  function pick(obj, pathArr){
+    let cur = obj;
+    for (const k of (pathArr || [])) {
+      if (!cur) return null;
+      cur = cur[k];
     }
-    return null;
+    return cur ?? null;
   }
 
-  async function rpc(msg, timeoutMs = 6000) {
-    const ctrl = await waitForController();
-    if (!ctrl) throw new Error("SW controller ausente (recarregue a página)");
+  function normalizeFilesFromAnyShape(j){
+    const candidates = [
+      ["files"], ["items"],
+      ["bundle","files"], ["bundle","items"],
+      ["data","files"], ["data","items"],
+      ["mother","files"], ["mother","items"],
+      ["mother_bundle","files"], ["mother_bundle","items"],
+      ["payload","files"], ["payload","items"],
+    ];
 
-    const ch = new MessageChannel();
+    for (const p of candidates){
+      const v = pick(j, p);
+      if (Array.isArray(v) && v.length) return v;
+    }
 
-    const p = new Promise((resolve, reject) => {
-      let done = false;
-      const t = setTimeout(() => {
-        if (done) return;
-        done = true;
-        reject(new Error("RPC timeout"));
-      }, timeoutMs);
+    const mapCandidates = [
+      ["files"], ["overrides"], ["vfs"], ["entries"], ["map"],
+      ["bundle","files"], ["bundle","overrides"],
+      ["data","files"], ["data","overrides"],
+    ];
 
-      ch.port1.onmessage = (ev) => {
-        if (done) return;
-        done = true;
-        clearTimeout(t);
-        resolve(ev.data);
-      };
-    });
+    for (const p of mapCandidates){
+      const v = pick(j, p);
+      if (isPlainObject(v)) {
+        const out = [];
+        for (const [k, val] of Object.entries(v)) {
+          const path = String(k || "").trim();
+          if (!path) continue;
 
-    ctrl.postMessage(msg, [ch.port2]);
-    return p;
+          if (typeof val === "string") {
+            out.push({ path, content: val, contentType: guessType(path) });
+            continue;
+          }
+
+          if (isPlainObject(val)) {
+            const content =
+              (val.content != null) ? String(val.content) :
+              (val.text != null) ? String(val.text) :
+              (val.body != null) ? String(val.body) :
+              "";
+            const ct = String(val.contentType || val.type || guessType(path));
+            out.push({ path, content, contentType: ct });
+            continue;
+          }
+
+          out.push({ path, content: String(val ?? ""), contentType: guessType(path) });
+        }
+
+        if (out.length) return out;
+      }
+    }
+
+    return [];
   }
 
-  async function put(path, content, contentType) {
-    const p = normPath(path);
-    const ct = contentType || guessType(p);
-    const res = await rpc({ type: "RCF_OVERRIDE_PUT", path: p, content: String(content ?? ""), contentType: ct });
-    if (!res || (res.type || "").endsWith("_ERR")) throw new Error(res?.error || "PUT falhou");
-    return res;
-  }
+  function normalizeBundleShape(bundleText){
+    const rawTxt = String(bundleText || "").trim();
+    if (!rawTxt) throw new Error("Bundle vazio");
 
-  async function clearOverrides() {
-    const res = await rpc({ type: "RCF_OVERRIDE_CLEAR" }, 12000);
-    if (!res || (res.type || "").endsWith("_ERR")) throw new Error(res?.error || "CLEAR falhou");
-    return res;
-  }
+    let j = null;
+    try { j = JSON.parse(rawTxt); }
+    catch { throw new Error("Bundle não é JSON válido"); }
 
-  // ✅ COMPAT: alguns módulos antigos chamam .clear()
-  async function clear() {
-    return clearOverrides();
-  }
+    const rawKeys = Object.keys(j || {});
+    const filesAny = normalizeFilesFromAnyShape(j);
 
-  async function listOverrides() {
-    const res = await rpc({ type: "RCF_OVERRIDE_LIST" }, 8000);
-    if (!res || (res.type || "").endsWith("_ERR")) throw new Error(res?.error || "LIST falhou");
-
-    // cache do último ok
-    try {
-      _lastList = { ts: Date.now(), res };
-      const items = Array.isArray(res?.items) ? res.items
-        : Array.isArray(res?.list) ? res.list
-        : Array.isArray(res?.paths) ? res.paths
-        : Array.isArray(res?.keys) ? res.keys
-        : null;
-      _lastListCount = Array.isArray(items) ? items.length : (_lastListCount || 0);
-    } catch {}
-
-    return res;
-  }
-
-  // ✅ SAFE para scanner: nunca quebra, nunca throw
-  async function listOverridesSafe(opts = {}) {
-    const maxAgeMs = Number(opts.maxAgeMs || 25_000); // usa cache recente (25s)
-    const allowStale = (opts.allowStale !== false);   // padrão: true
-
-    try {
-      const res = await listOverrides();
-      return { ok: true, res, itemsCount: _lastListCount, from: "rpc" };
-    } catch (e) {
-      const reason = (e && e.message) ? e.message : String(e);
-
-      if (allowStale && _lastList && (Date.now() - _lastList.ts) <= maxAgeMs) {
-        return { ok: true, res: _lastList.res, itemsCount: _lastListCount, from: "cache", warn: reason };
+    const files = (filesAny || []).map((f, idx) => {
+      if (isPlainObject(f) && (f.path || f.name)) {
+        const path = String(f.path || f.name || "").trim();
+        const content = (f.content != null) ? String(f.content) : "";
+        const ct = String(f.contentType || f.type || guessType(path));
+        if (!path) return null;
+        return { path, content, contentType: ct };
       }
 
-      return { ok: false, res: null, itemsCount: 0, from: "none", warn: reason };
+      if (typeof f === "string") {
+        return { path: `/unknown_${idx}.txt`, content: f, contentType: "text/plain; charset=utf-8" };
+      }
+
+      return null;
+    }).filter(Boolean);
+
+    if (!files.length) {
+      log("err", "bundle normalize failed: sem files. keys=", rawKeys);
+      return { ok:false, rawKeys, normalized:null };
     }
+
+    const normalized = { version: "rcf_bundle_v1", ts: Date.now(), files };
+    return { ok:true, rawKeys, normalized };
   }
 
-  async function delOverride(path) {
-    const p = normPath(path);
-    const res = await rpc({ type: "RCF_OVERRIDE_DEL", path: p }, 8000);
-    if (!res || (res.type || "").endsWith("_ERR")) throw new Error(res?.error || "DEL falhou");
-    return res;
+  function getMotherBundleLocal(){
+    const raw =
+      localStorage.getItem(LS_BUNDLE_KEY) ||
+      localStorage.getItem(LS_BUNDLE_COMPAT_1) ||
+      localStorage.getItem(LS_BUNDLE_COMPAT_2) ||
+      "";
+
+    if (!raw) return null;
+
+    let j = null;
+    try { j = JSON.parse(raw); } catch { return null; }
+
+    let files = [];
+    if (Array.isArray(j.files)) files = j.files;
+    else files = normalizeFilesFromAnyShape(j);
+
+    const out = (files || []).map((f, idx) => {
+      if (isPlainObject(f) && (f.path || f.name)) {
+        const path = String(f.path || f.name || "").trim();
+        if (!path) return null;
+        const content = (f.content != null) ? String(f.content) : "";
+        const ct = String(f.contentType || f.type || guessType(path));
+        return { path, content, contentType: ct };
+      }
+      if (typeof f === "string") {
+        return { path: `/unknown_${idx}.txt`, content: f, contentType: "text/plain; charset=utf-8" };
+      }
+      return null;
+    }).filter(Boolean);
+
+    return { meta: j, files: out };
   }
 
-  function status() {
-    const ctrl = !!navigator.serviceWorker?.controller;
+  function setLocalBundleNormalized(rawTxt, normalizedObj, metaExtra){
+    localStorage.setItem(LS_BUNDLE_RAW, String(rawTxt || ""));
+
+    const normTxt = JSON.stringify(normalizedObj);
+    localStorage.setItem(LS_BUNDLE_KEY, normTxt);
+
+    try { localStorage.setItem(LS_BUNDLE_COMPAT_1, normTxt); } catch {}
+    try { localStorage.setItem(LS_BUNDLE_COMPAT_2, normTxt); } catch {}
+
+    const meta = {
+      ts: Date.now(),
+      filesCount: Array.isArray(normalizedObj?.files) ? normalizedObj.files.length : 0,
+      source: "unknown",
+      rawKeys: Object.keys(normalizedObj || {}),
+      ...((metaExtra && typeof metaExtra === "object") ? metaExtra : {})
+    };
+    localStorage.setItem(LS_BUNDLE_META, JSON.stringify(meta));
+    return { ok:true, meta };
+  }
+
+  function getLocalBundleText(){
+    const txt = String(localStorage.getItem(LS_BUNDLE_KEY) || "").trim();
+    return txt || "";
+  }
+
+  function status(){
+    const b = getMotherBundleLocal();
+    if (!b) return { ok:false, msg:"bundle local ausente" };
+
+    const meta = safeParse(localStorage.getItem(LS_BUNDLE_META), {}) || {};
+    const gate = String(localStorage.getItem(LS_APPLY_GATE_KEY) || "1") !== "0";
     return {
       ok: true,
-      v: VERSION,
-      base: document.baseURI || location.href,
-      sw_controller: ctrl,
-      can_rpc: ctrl,
-      last_list_count: _lastListCount || 0,
-      last_list_at: _lastList?.ts || 0
+      msg: "bundle local ok",
+      meta: { ...meta, filesCount: b?.files?.length || meta.filesCount || 0, applyGate: gate ? "ON" : "OFF" }
     };
   }
 
-  const api = {
-    __v13b: true,
-    VERSION,
-    normPath,
-    guessType,
-    rpc,
-    put,
-    clearOverrides,
-    clear,              // ✅ alias compat
-    listOverrides,
-    listOverridesSafe,  // ✅ novo (scanner usa isso)
-    delOverride,
+  function pickVFS(){
+    if (window.RCF_VFS_OVERRIDES && typeof window.RCF_VFS_OVERRIDES.put === "function") {
+      return {
+        kind: "OVERRIDES",
+        put: window.RCF_VFS_OVERRIDES.put.bind(window.RCF_VFS_OVERRIDES),
+        clear:
+          (typeof window.RCF_VFS_OVERRIDES.clear === "function") ? window.RCF_VFS_OVERRIDES.clear.bind(window.RCF_VFS_OVERRIDES) :
+          (typeof window.RCF_VFS_OVERRIDES.clearOverrides === "function") ? window.RCF_VFS_OVERRIDES.clearOverrides.bind(window.RCF_VFS_OVERRIDES) :
+          null
+      };
+    }
+
+    if (window.RCF_VFS && typeof window.RCF_VFS.put === "function") {
+      return {
+        kind: "VFS",
+        put: window.RCF_VFS.put.bind(window.RCF_VFS),
+        clear:
+          (typeof window.RCF_VFS.clearOverrides === "function") ? window.RCF_VFS.clearOverrides.bind(window.RCF_VFS) :
+          (typeof window.RCF_VFS.clear === "function") ? window.RCF_VFS.clear.bind(window.RCF_VFS) :
+          (typeof window.RCF_VFS.clearAll === "function") ? window.RCF_VFS.clearAll.bind(window.RCF_VFS) :
+          null
+      };
+    }
+
+    return null;
+  }
+
+  async function applyBundleToOverrides(normalizedBundleText, opts){
+    const onProgress = opts?.onProgress;
+
+    const txt = String(normalizedBundleText || "").trim();
+    if (!txt) throw new Error("Bundle normalizado vazio para aplicar");
+
+    const bundle = JSON.parse(txt);
+    const files = Array.isArray(bundle.files) ? bundle.files : [];
+    if (!files.length) throw new Error("Bundle normalizado sem files[]");
+
+    const vfs = pickVFS();
+    if (!vfs || !vfs.put) throw new Error("Overrides VFS incompleto (sem put). Recarregue 1x após SW controlar.");
+
+    let wrote = 0;
+    let failed = 0;
+
+    for (let i = 0; i < files.length; i++){
+      const f = files[i] || {};
+      const path = String(f.path || "").trim();
+      const content = (f.content != null) ? String(f.content) : "";
+      const contentType = String(f.contentType || guessType(path));
+
+      if (!path) { failed++; continue; }
+
+      try {
+        if (onProgress) onProgress({ step:"apply_progress", done:(wrote+failed), total:files.length, path });
+        await Promise.resolve(vfs.put(path, content, contentType));
+        wrote++;
+      } catch (e) {
+        failed++;
+        log("err", `apply fail ${path} :: ${e?.message || e}`);
+      }
+    }
+
+    if (onProgress) onProgress({ step:"apply_done", done:wrote, total:files.length });
+
+    return { ok:true, wrote, failed, total:files.length };
+  }
+
+  async function pullAndSaveFromGitHub(){
+    if (!window.RCF_GH_SYNC?.pull) throw new Error("RCF_GH_SYNC.pull ausente");
+
+    const cfg = window.RCF_GH_SYNC.loadConfig ? window.RCF_GH_SYNC.loadConfig() : {};
+    const rawTxt = await window.RCF_GH_SYNC.pull(cfg);
+
+    const norm = normalizeBundleShape(rawTxt);
+    if (!norm.ok || !norm.normalized) throw new Error("Bundle sem files[] (formato não reconhecido)");
+
+    const saved = setLocalBundleNormalized(rawTxt, norm.normalized, { source:"github_pull", rawKeys: norm.rawKeys });
+    log("info", "mother_bundle_local saved", saved.meta);
+
+    return { rawTxt, normalizedObj: norm.normalized, normalizedText: JSON.stringify(norm.normalized), meta: saved.meta };
+  }
+
+  async function updateFromGitHub(opts){
+    log("ok", "update start");
+
+    if (localStorage.getItem(LS_APPLY_GATE_KEY) == null) {
+      try { localStorage.setItem(LS_APPLY_GATE_KEY, "1"); } catch {}
+    }
+    const gateOn = String(localStorage.getItem(LS_APPLY_GATE_KEY) || "1") !== "0";
+
+    const pulled = await pullAndSaveFromGitHub();
+
+    const wantApply = !!opts?.apply;
+    if (gateOn && !wantApply) {
+      log("warn", "update passive: saved only (applyGate=ON). To apply: RCF_MAE.applySaved() or updateFromGitHub({apply:true})");
+      log("ok", "update done");
+      return { ok:true, passive:true, saved:true, wrote:0, failed:0, total: pulled?.normalizedObj?.files?.length || 0 };
+    }
+
+    const r = await applyBundleToOverrides(pulled.normalizedText, opts);
+    log("ok", "update done");
+    return r;
+  }
+
+  async function applySaved(opts){
+    const txt = getLocalBundleText();
+    if (!txt) throw new Error("Sem bundle salvo. Rode Update (passivo) primeiro.");
+
+    log("ok", "applySaved start");
+    const r = await applyBundleToOverrides(txt, opts);
+    log("ok", "applySaved done");
+    return r;
+  }
+
+  async function clear(){
+    const vfs = pickVFS();
+    if (vfs?.clear) {
+      const r = await Promise.resolve(vfs.clear());
+      log("ok", "mae clear: ok");
+      return r;
+    }
+    throw new Error("Overrides VFS sem clear/clearOverrides()");
+  }
+
+  function setApplyGate(on){
+    try { localStorage.setItem(LS_APPLY_GATE_KEY, on ? "1" : "0"); } catch {}
+    return { ok:true, applyGate: on ? "ON" : "OFF" };
+  }
+
+  window.RCF_MAE = {
+    __v23c: true,
+    updateFromGitHub,
+    applySaved,
+    clear,
     status,
+    setApplyGate,
+    getLocalBundleText,
+    getMotherBundleLocal,
   };
 
-  window.RCF_VFS_OVERRIDES = api;
-
-  // compat aliases (se alguém chamar por nomes diferentes)
-  window.RCF_VFS = window.RCF_VFS || {};
-  window.RCF_VFS.put = put;
-  window.RCF_VFS.clearOverrides = clearOverrides;
-
-  log("ok", `vfs_overrides ready ✅ ${VERSION} base=${(document.baseURI || "").split("?")[0]}`);
+  log("ok", "mother_selfupdate.js ready ✅ (v2.3c)");
 })();
