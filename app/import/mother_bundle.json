@@ -1,7 +1,1 @@
-{
-  "version": "rcf_bundle_v1",
-  "ts": 123,
-  "files": [
-    { "path": "app/js/core/mother_selfupdate.js", "content": "...", "contentType": "application/javascript; charset=utf-8" }
-  ]
-}
+{"version":"rcf_bundle_v1","ts":1771278743866,"files":[{"path":"app/js/core/mother_selfupdate.js","content":"...","contentType":"application/javascript; charset=utf-8"}]}
