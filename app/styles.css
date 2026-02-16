@@ -13,7 +13,7 @@
   --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   --ui: -apple-system, system-ui, Segoe UI, Roboto, Helvetica, Arial;
 
-  /* ✅ V8 token (Diagnostics + referência de versão) */
+  /* ✅ V8 token */
   --rcf-css-token:"V8.0";
 }
 
@@ -36,7 +36,6 @@ body{
     var(--bg);
   color:var(--text);
 
-  /* iOS: evita bugs de empilhamento */
   position: relative;
   isolation: isolate;
 }
@@ -57,7 +56,7 @@ button, a, .btn, .tab, input, textarea, select, label{
 }
 
 /* =================================
-   TOP BAR (COMPACTO)
+   TOP BAR (STICKY)
    ================================= */
 .topbar{
   position: sticky;
@@ -70,7 +69,6 @@ button, a, .btn, .tab, input, textarea, select, label{
   width: 100%;
   max-width: 100%;
   overflow: hidden;
-
   padding: 10px 10px 8px;
 }
 
@@ -84,7 +82,7 @@ button, a, .btn, .tab, input, textarea, select, label{
 .brand{
   display:flex;
   gap:10px;
-  padding: 0;                 /* ✅ remove gordura */
+  padding: 0;
   align-items:center;
 }
 
@@ -124,8 +122,8 @@ button, a, .btn, .tab, input, textarea, select, label{
 
 /* =================================
    TABS (PADRÃO)
-   Desktop/tablet: flex wrap
-   iPhone: grid 4 colunas + Settings full width
+   Desktop/tablet: flex wrap normal
+   Mobile: barra rolante horizontal (igual tava perfeito)
    ================================= */
 .tabs{
   width:100%;
@@ -156,46 +154,40 @@ button, a, .btn, .tab, input, textarea, select, label{
   box-shadow: 0 0 0 5px rgba(22,199,132,.10);
 }
 
-/* ✅ ÚNICO FIX MOBILE (sem duplicatas / sem briga) */
+/* ✅ FIX DEFINITIVO: iPhone vira BARRA ROLANTE (sem depender de .topbar) */
 @media (max-width: 520px){
-  .topbar{
-    padding: 10px 10px 6px !important;
-  }
+  .tabs{
+    flex-wrap: nowrap !important;
+    justify-content: flex-start !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    -webkit-overflow-scrolling: touch !important;
 
-  .topbar .tabs{
-    display: grid !important;
-    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
     gap: 10px !important;
-    width: 100% !important;
-    padding: 12px 0 8px !important;
-    align-items: stretch !important;
-    justify-content: initial !important;
-    overflow: visible !important;
+    padding: 12px 2px 10px !important;
+
+    /* evita “sumir” quando rola */
+    scrollbar-width: none;
   }
+  .tabs::-webkit-scrollbar{ display:none; }
 
-  .topbar .tabs .tab{
-    width: 100% !important;
-    min-width: 0 !important;
-    max-width: 100% !important;
+  /* mata qualquer CSS antigo que esteja forçando 100%/block */
+  .tabs .tab{
+    width: auto !important;
+    min-width: max-content !important;
+    flex: 0 0 auto !important;
 
-    display:flex !important;
-    align-items:center !important;
-    justify-content:center !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
 
-    padding: 11px 10px !important;
+    padding: 11px 14px !important;
     min-height: 40px !important;
     font-size: 13px !important;
     line-height: 1 !important;
 
-    flex: none !important;
-    box-sizing: border-box !important;
     white-space: nowrap !important;
-  }
-
-  /* Settings vira barra longa (igual sua referência) */
-  .topbar .tabs .tab[data-view="settings"]{
-    grid-column: 1 / -1 !important;
-    order: 999 !important;
+    box-sizing: border-box !important;
   }
 }
 
@@ -344,7 +336,7 @@ textarea{ min-height: 120px; resize: vertical; }
   color: rgba(255,255,255,.90);
 }
 
-/* monos / outputs (compact + com limite) */
+/* monos / outputs */
 .mono{
   font-family: var(--mono);
   white-space: pre-wrap;
@@ -357,7 +349,7 @@ textarea{ min-height: 120px; resize: vertical; }
 }
 .mono.small{ font-size: 12px; }
 
-/* OUTPUT BOXES (compactadas) */
+/* OUTPUT BOXES */
 #ghOut, #maintOut, #adminOut, #agentOut, #editorOut, #genOut, #diagOut,
 #logsOut, #logsBox, #logsViewBox, #scanOut, #diffOut, #injLog{
   display:block;
@@ -378,8 +370,6 @@ textarea{ min-height: 120px; resize: vertical; }
   font-family: var(--mono);
   font-size: 12px;
 }
-
-/* maintenance pode ser um pouco maior */
 #maintOut{ max-height: 220px; }
 
 /* =================================
@@ -399,7 +389,6 @@ textarea{ min-height: 120px; resize: vertical; }
   z-index: 9000000;
   overflow:hidden;
 
-  /* fechado: não captura toque */
   pointer-events: none;
 }
 .tools.open{
@@ -420,9 +409,7 @@ textarea{ min-height: 120px; resize: vertical; }
 }
 .tools-body{ padding: 12px; }
 
-/* =================================
-   OVERLAYS GENÉRICOS
-   ================================= */
+/* overlays genéricos */
 .overlay, .backdrop, #overlay, #backdrop, .scrim{
   pointer-events: none !important;
 }
@@ -461,9 +448,7 @@ input[type="checkbox"]{
 }
 .switch input:checked + .slider::after{ transform: translateX(18px); }
 
-/* =================================
-   BOOT UI (INDEX) — garante visível
-   ================================= */
+/* BOOT UI (INDEX) */
 #rcfBootPill{
   position: fixed !important;
   left: 12px !important;
@@ -476,15 +461,13 @@ input[type="checkbox"]{
   z-index: 10000000 !important;
 }
 
-/* =================================
-   DESATIVA BOOT PANEL DO app.js (se existir)
-   ================================= */
+/* desativa boot panel do app.js (se existir) */
 #rcfBootFab,
 #rcfBootPanel{
   display:none !important;
 }
 
-/* IMPORTANT: mata qualquer “Log:” inline que vaze dentro de telas */
+/* mata log inline indevido */
 .rcf-inline-log,
 [data-rcf-inline-log],
 #adminLogBox,
@@ -496,16 +479,14 @@ input[type="checkbox"]{
   display: none !important;
 }
 
-/* garante que a área oficial de logs continua aparecendo */
+/* garante logs view */
 .view-logs #logsOut,
 .view-logs #logsBox,
 .view-logs #logsViewBox{
   display:block !important;
 }
 
-/* =========================================================
-   FIX: badge "CSS NOVO CARREGOU" não ficar travado na tela
-   ========================================================= */
+/* toast “CSS novo carregou” */
 body::before{
   content:"CSS NOVO CARREGOU ✅" !important;
   position: fixed !important;
@@ -525,7 +506,6 @@ body::before{
   transform: translateY(-6px) scale(.98) !important;
   animation: rcfCssToast 2.4s ease-in-out 1 !important;
 }
-
 @keyframes rcfCssToast{
   0%   { opacity: 0; transform: translateY(-6px) scale(.98); }
   10%  { opacity: 1; transform: translateY(0) scale(1); }
