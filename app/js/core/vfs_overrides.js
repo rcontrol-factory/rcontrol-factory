@@ -1,16 +1,15 @@
-/* RControl Factory — /app/js/core/vfs_overrides.js (PADRÃO) — v1.3
-   Patch mínimo (anti "files=0" falso):
-   - listOverridesSafe(): nunca throw (retorna [] + motivo)
-   - cache da última LIST ok (evita 0 intermitente)
-   - status() mais informativo (can_rpc, last_list_count)
-   - rpc/put/clear/del continuam STRICT (throw) como antes
+/* RControl Factory — /app/js/core/vfs_overrides.js (PADRÃO) — v1.3a
+   PATCH MÍNIMO (mantém seu v1.3):
+   - Adiciona api.clear() como alias de clearOverrides()  ✅ (MAE para de dar "missing")
+   - Adiciona compat extra: window.RCF_VFS.clear = clearOverrides  ✅ (fallback)
+   - NÃO muda RPC / put / del / list (mantém strict)
 */
 (() => {
   "use strict";
 
-  if (window.RCF_VFS_OVERRIDES && window.RCF_VFS_OVERRIDES.__v13) return;
+  if (window.RCF_VFS_OVERRIDES && window.RCF_VFS_OVERRIDES.__v13a) return;
 
-  const VERSION = "v1.3";
+  const VERSION = "v1.3a";
 
   const log = (lvl, msg) => {
     try { window.RCF_LOGGER?.push?.(lvl, msg); } catch {}
@@ -95,6 +94,11 @@
     return res;
   }
 
+  // ✅ alias que a MAE procura (pickVFS => RCF_VFS_OVERRIDES.clear)
+  async function clear() {
+    return clearOverrides();
+  }
+
   async function listOverrides() {
     const res = await rpc({ type: "RCF_OVERRIDE_LIST" }, 8000);
     if (!res || (res.type || "").endsWith("_ERR")) throw new Error(res?.error || "LIST falhou");
@@ -157,25 +161,27 @@
   }
 
   const api = {
-    __v13: true,
+    __v13a: true,
     VERSION,
     normPath,
     guessType,
     rpc,
     put,
     clearOverrides,
+    clear,               // ✅ NOVO (MAE usa isso)
     listOverrides,
-    listOverridesSafe, // ✅ novo (scanner usa isso)
+    listOverridesSafe,   // ✅ seu safe
     delOverride,
     status,
   };
 
   window.RCF_VFS_OVERRIDES = api;
 
-  // compat aliases (se alguém chamar por nomes diferentes)
+  // compat aliases (fallbacks antigos)
   window.RCF_VFS = window.RCF_VFS || {};
   window.RCF_VFS.put = put;
   window.RCF_VFS.clearOverrides = clearOverrides;
+  window.RCF_VFS.clear = clearOverrides; // ✅ extra
 
   log("ok", `vfs_overrides ready ✅ ${VERSION} scope=/ base=${(document.baseURI || "").split("?")[0]}`);
 })();
