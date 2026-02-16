@@ -1,25 +1,26 @@
 /* RControl Factory — /app/js/core/mother_selfupdate.js (PADRÃO) — v2.3d
-   PATCH MÍNIMO (FIX CLEAR):
+   PATCH MÍNIMO (SAFE GATE + FIX CLEAR):
    - Mantém tudo do v2.3c
-   - ✅ FIX: pickVFS() agora reconhece clearOverrides() do RCF_VFS_OVERRIDES
-     (antes ele procurava .clear e dava "mae clear: missing")
-   - clear() continua SAFE/EXPLÍCITO (não mexe SW)
+   - ✅ FIX: MAE.clear agora reconhece window.RCF_VFS_OVERRIDES.clearOverrides()
+     (antes procurava "clear" e dava "mae clear: missing")
+   - updateFromGitHub() por padrão = PASSIVO (pull+save, NÃO aplica)
+   - applySaved(): aplica SOMENTE o bundle já salvo (ação manual/confirmada)
+   - Para aplicar direto: updateFromGitHub({ apply:true })
+   - NÃO mexe no SW
 */
 (() => {
   "use strict";
 
   if (window.RCF_MAE && window.RCF_MAE.__v23d) return;
 
-  // ✅ chaves padrão + compat antigas
-  const LS_BUNDLE_KEY       = "rcf:mother_bundle_local";     // padrão: SEMPRE normalizado {version,ts,files:[...]}
-  const LS_BUNDLE_RAW       = "rcf:mother_bundle_raw";       // texto raw do GH
-  const LS_BUNDLE_META      = "rcf:mother_bundle_meta";      // meta/info
-  const LS_BUNDLE_COMPAT_1  = "rcf:mother_bundle";           // compat
-  const LS_BUNDLE_COMPAT_2  = "rcf:mother_bundle_json";      // compat
+  const LS_BUNDLE_KEY       = "rcf:mother_bundle_local";
+  const LS_BUNDLE_RAW       = "rcf:mother_bundle_raw";
+  const LS_BUNDLE_META      = "rcf:mother_bundle_meta";
+  const LS_BUNDLE_COMPAT_1  = "rcf:mother_bundle";
+  const LS_BUNDLE_COMPAT_2  = "rcf:mother_bundle_json";
 
   // ✅ GATE: por padrão NÃO aplica nada automaticamente
-  // (pra aplicar: updateFromGitHub({apply:true}) ou applySaved())
-  const LS_APPLY_GATE_KEY   = "rcf:mae:apply_gate";          // "1" = gate ON (default), "0" = gate OFF
+  const LS_APPLY_GATE_KEY   = "rcf:mae:apply_gate"; // "1" ON (default) | "0" OFF
 
   const log = (lvl, msg, obj) => {
     try {
@@ -60,7 +61,6 @@
   }
 
   function normalizeFilesFromAnyShape(j){
-    // 1) arrays diretas
     const candidates = [
       ["files"], ["items"],
       ["bundle","files"], ["bundle","items"],
@@ -75,7 +75,6 @@
       if (Array.isArray(v) && v.length) return v;
     }
 
-    // 2) maps/objetos (files: { "/x": "..." } ou { "/x": {content,...} })
     const mapCandidates = [
       ["files"], ["overrides"], ["vfs"], ["entries"], ["map"],
       ["bundle","files"], ["bundle","overrides"],
@@ -148,16 +147,10 @@
       return { ok:false, rawKeys, normalized:null };
     }
 
-    const normalized = {
-      version: "rcf_bundle_v1",
-      ts: Date.now(),
-      files,
-    };
-
+    const normalized = { version: "rcf_bundle_v1", ts: Date.now(), files };
     return { ok:true, rawKeys, normalized };
   }
 
-  // ✅ Função ÚNICA (pra qualquer SCAN/CP1 ler sempre certo)
   function getMotherBundleLocal(){
     const raw =
       localStorage.getItem(LS_BUNDLE_KEY) ||
@@ -192,14 +185,11 @@
   }
 
   function setLocalBundleNormalized(rawTxt, normalizedObj, metaExtra){
-    // RAW (sempre)
     localStorage.setItem(LS_BUNDLE_RAW, String(rawTxt || ""));
 
-    // NORMALIZADO (padrão)
     const normTxt = JSON.stringify(normalizedObj);
     localStorage.setItem(LS_BUNDLE_KEY, normTxt);
 
-    // ✅ COMPAT: salva também nas chaves antigas
     try { localStorage.setItem(LS_BUNDLE_COMPAT_1, normTxt); } catch {}
     try { localStorage.setItem(LS_BUNDLE_COMPAT_2, normTxt); } catch {}
 
@@ -211,7 +201,6 @@
       ...((metaExtra && typeof metaExtra === "object") ? metaExtra : {})
     };
     localStorage.setItem(LS_BUNDLE_META, JSON.stringify(meta));
-
     return { ok:true, meta };
   }
 
@@ -237,8 +226,9 @@
     };
   }
 
+  // ✅ FIX: reconhece clearOverrides() no OVERRIDES
   function pickVFS(){
-    // ✅ Preferência: RCF_VFS_OVERRIDES (service worker overrides)
+    // prefer: OVERRIDES (rpc via SW)
     if (window.RCF_VFS_OVERRIDES && typeof window.RCF_VFS_OVERRIDES.put === "function") {
       const o = window.RCF_VFS_OVERRIDES;
       const clearFn =
@@ -253,7 +243,7 @@
       };
     }
 
-    // ✅ Fallback: RCF_VFS (compat antigo)
+    // fallback: VFS compat antigo
     if (window.RCF_VFS && typeof window.RCF_VFS.put === "function") {
       const v = window.RCF_VFS;
       const clearFn =
@@ -262,11 +252,7 @@
         (typeof v.clear === "function") ? v.clear.bind(v) :
         null;
 
-      return {
-        kind: "VFS",
-        put: v.put.bind(v),
-        clear: clearFn
-      };
+      return { kind: "VFS", put: v.put.bind(v), clear: clearFn };
     }
 
     return null;
@@ -307,7 +293,6 @@
     }
 
     if (onProgress) onProgress({ step:"apply_done", done:wrote, total:files.length });
-
     return { ok:true, wrote, failed, total:files.length };
   }
 
@@ -328,11 +313,9 @@
     return { rawTxt, normalizedObj: norm.normalized, normalizedText: JSON.stringify(norm.normalized), meta: saved.meta };
   }
 
-  // ✅ PASSIVO por padrão (pra evitar tela branca)
   async function updateFromGitHub(opts){
     log("ok", "update start");
 
-    // default gate ON (se não existir, ON)
     if (localStorage.getItem(LS_APPLY_GATE_KEY) == null) {
       try { localStorage.setItem(LS_APPLY_GATE_KEY, "1"); } catch {}
     }
@@ -340,7 +323,7 @@
 
     const pulled = await pullAndSaveFromGitHub();
 
-    const wantApply = !!opts?.apply; // só aplica se pedir explicitamente
+    const wantApply = !!opts?.apply;
     if (gateOn && !wantApply) {
       log("warn", "update passive: saved only (applyGate=ON). To apply: RCF_MAE.applySaved() or updateFromGitHub({apply:true})");
       log("ok", "update done");
@@ -348,12 +331,10 @@
     }
 
     const r = await applyBundleToOverrides(pulled.normalizedText, opts);
-
     log("ok", "update done");
     return r;
   }
 
-  // ✅ aplicar SOMENTE o que já está salvo (ação manual)
   async function applySaved(opts){
     const txt = getLocalBundleText();
     if (!txt) throw new Error("Sem bundle salvo. Rode Update (passivo) primeiro.");
@@ -374,7 +355,6 @@
     throw new Error("Overrides VFS sem clear/clearOverrides()");
   }
 
-  // util: ligar/desligar gate (se um dia você quiser)
   function setApplyGate(on){
     try { localStorage.setItem(LS_APPLY_GATE_KEY, on ? "1" : "0"); } catch {}
     return { ok:true, applyGate: on ? "ON" : "OFF" };
