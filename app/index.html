@@ -28,9 +28,14 @@
     - NÃO cria UI/overlay (isso fica no app.js)
     - NÃO captura logs (logger.js oficial manda pro Storage/UI)
     - Evita SW register duplicado
+    - ✅ Evita BOOT duplicado do index (iOS/SW edge cases)
   ========================================================== -->
   <script>
     (function () {
+      // ✅ Guard: evita carregar tudo 2x em edge cases
+      if (window.__RCF_INDEX_BOOTED__) return;
+      window.__RCF_INDEX_BOOTED__ = true;
+
       function log(){ try { console.log.apply(console, ["[RCF/index]"].concat([].slice.call(arguments))); } catch(e){} }
 
       function loadScript(src){
