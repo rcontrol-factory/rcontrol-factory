@@ -1,15 +1,17 @@
-/* RControl Factory — /app/js/core/vfs_overrides.js (PADRÃO) — v1.3a
-   PATCH MÍNIMO (mantém seu v1.3):
-   - Adiciona api.clear() como alias de clearOverrides()  ✅ (MAE para de dar "missing")
-   - Adiciona compat extra: window.RCF_VFS.clear = clearOverrides  ✅ (fallback)
-   - NÃO muda RPC / put / del / list (mantém strict)
+/* RControl Factory — /app/js/core/vfs_overrides.js (PADRÃO) — v1.3b
+   Patch mínimo (anti "files=0" falso) + compat CLEAR:
+   - listOverridesSafe(): nunca throw (retorna [] + motivo)
+   - cache da última LIST ok (evita 0 intermitente)
+   - status() mais informativo (can_rpc, last_list_count)
+   - ✅ COMPAT: adiciona clear() como alias de clearOverrides()
+   - rpc/put/clearOverrides/del continuam STRICT (throw) como antes
 */
 (() => {
   "use strict";
 
-  if (window.RCF_VFS_OVERRIDES && window.RCF_VFS_OVERRIDES.__v13a) return;
+  if (window.RCF_VFS_OVERRIDES && window.RCF_VFS_OVERRIDES.__v13b) return;
 
-  const VERSION = "v1.3a";
+  const VERSION = "v1.3b";
 
   const log = (lvl, msg) => {
     try { window.RCF_LOGGER?.push?.(lvl, msg); } catch {}
@@ -94,7 +96,7 @@
     return res;
   }
 
-  // ✅ alias que a MAE procura (pickVFS => RCF_VFS_OVERRIDES.clear)
+  // ✅ COMPAT: alguns módulos antigos chamam .clear()
   async function clear() {
     return clearOverrides();
   }
@@ -123,18 +125,15 @@
     const allowStale = (opts.allowStale !== false);   // padrão: true
 
     try {
-      // tenta LIST normal
       const res = await listOverrides();
       return { ok: true, res, itemsCount: _lastListCount, from: "rpc" };
     } catch (e) {
       const reason = (e && e.message) ? e.message : String(e);
 
-      // se tem cache, devolve pra não cair em 0 “falso”
       if (allowStale && _lastList && (Date.now() - _lastList.ts) <= maxAgeMs) {
         return { ok: true, res: _lastList.res, itemsCount: _lastListCount, from: "cache", warn: reason };
       }
 
-      // sem cache: devolve vazio SEM throw (scanner decide fallback)
       return { ok: false, res: null, itemsCount: 0, from: "none", warn: reason };
     }
   }
@@ -151,7 +150,6 @@
     return {
       ok: true,
       v: VERSION,
-      scope: (navigator.serviceWorker?.controller?.scriptURL ? "./" : "/"),
       base: document.baseURI || location.href,
       sw_controller: ctrl,
       can_rpc: ctrl,
@@ -161,27 +159,26 @@
   }
 
   const api = {
-    __v13a: true,
+    __v13b: true,
     VERSION,
     normPath,
     guessType,
     rpc,
     put,
     clearOverrides,
-    clear,               // ✅ NOVO (MAE usa isso)
+    clear,              // ✅ alias compat
     listOverrides,
-    listOverridesSafe,   // ✅ seu safe
+    listOverridesSafe,  // ✅ novo (scanner usa isso)
     delOverride,
     status,
   };
 
   window.RCF_VFS_OVERRIDES = api;
 
-  // compat aliases (fallbacks antigos)
+  // compat aliases (se alguém chamar por nomes diferentes)
   window.RCF_VFS = window.RCF_VFS || {};
   window.RCF_VFS.put = put;
   window.RCF_VFS.clearOverrides = clearOverrides;
-  window.RCF_VFS.clear = clearOverrides; // ✅ extra
 
-  log("ok", `vfs_overrides ready ✅ ${VERSION} scope=/ base=${(document.baseURI || "").split("?")[0]}`);
+  log("ok", `vfs_overrides ready ✅ ${VERSION} base=${(document.baseURI || "").split("?")[0]}`);
 })();
