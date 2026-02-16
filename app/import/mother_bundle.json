@@ -1,1 +1,1 @@
-
+RCF_MAE.getLocalBundleText().then(console.log)
