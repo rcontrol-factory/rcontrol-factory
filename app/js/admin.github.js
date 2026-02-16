@@ -1,12 +1,13 @@
-/* RControl Factory — /app/js/admin.github.js (PADRÃO) — v2.7b
-   PATCH MÍNIMO sobre v2.7:
+/* RControl Factory — /app/js/admin.github.js (PADRÃO) — v2.7c
+   PATCH MÍNIMO sobre v2.7b:
+   - ✅ Adiciona botão "MAE clear" + clear robusto (prioriza RCF_MAE.clear, com fallbacks OVERRIDES/VFS)
    - Remove double-save / double-log de ghcfg (UI não salva antes de chamar GH_SYNC.* porque GH_SYNC já salva)
    - Mantém iOS safe (sem touchend->click artificial)
 */
 (() => {
   "use strict";
 
-  if (window.RCF_ADMIN_GH && window.RCF_ADMIN_GH.__v27b) return;
+  if (window.RCF_ADMIN_GH && window.RCF_ADMIN_GH.__v27c) return;
 
   const UI_OPEN_KEY = "rcf:ghui:open";
   const LS_CFG_KEY  = "rcf:ghcfg";
@@ -184,6 +185,7 @@
         <div style="margin-top:10px; display:flex; gap:10px; flex-wrap:wrap;">
           <button id="btnPushMother" type="button" style="padding:10px 12px; border-radius:999px; border:1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.08); color:#fff;">Push Mother Bundle</button>
           <button id="btnMaeUpdate" type="button" style="padding:10px 12px; border-radius:999px; border:1px solid rgba(60,255,170,.25); background: rgba(60,255,170,.10); color:#eafff4;">MAE update</button>
+          <button id="btnMaeClear" type="button" style="padding:10px 12px; border-radius:999px; border:1px solid rgba(255,180,80,.25); background: rgba(255,180,80,.10); color:#fff;">MAE clear</button>
         </div>
 
         <pre id="ghOut" style="
@@ -242,6 +244,61 @@
       try { await fn(); }
       finally { busy = false; }
     };
+
+    function probeVFS(){
+      const o = window.RCF_VFS_OVERRIDES;
+      const v = window.RCF_VFS;
+
+      const swc = !!navigator.serviceWorker?.controller;
+      const base = (() => { try { return String(location.origin || ""); } catch { return ""; } })();
+
+      return {
+        has_overrides: !!o,
+        overrides_put: typeof o?.put,
+        overrides_clearOverrides: typeof o?.clearOverrides,
+        overrides_clear: typeof o?.clear,
+
+        has_legacy: !!v,
+        legacy_put: typeof v?.put,
+        legacy_clearOverrides: typeof v?.clearOverrides,
+        legacy_clearAll: typeof v?.clearAll,
+        legacy_clear: typeof v?.clear,
+
+        sw_controller: swc,
+        base
+      };
+    }
+
+    async function robustMaeClear(){
+      // 1) fonte da verdade
+      if (typeof window.RCF_MAE?.clear === "function") {
+        return await window.RCF_MAE.clear();
+      }
+
+      // 2) OVERRIDES direto
+      if (typeof window.RCF_VFS_OVERRIDES?.clearOverrides === "function") {
+        return await window.RCF_VFS_OVERRIDES.clearOverrides();
+      }
+      if (typeof window.RCF_VFS_OVERRIDES?.clear === "function") {
+        return await window.RCF_VFS_OVERRIDES.clear();
+      }
+
+      // 3) legado
+      if (typeof window.RCF_VFS?.clearOverrides === "function") {
+        return await window.RCF_VFS.clearOverrides();
+      }
+      if (typeof window.RCF_VFS?.clearAll === "function") {
+        return await window.RCF_VFS.clearAll();
+      }
+      if (typeof window.RCF_VFS?.clear === "function") {
+        return await window.RCF_VFS.clear();
+      }
+
+      const p = probeVFS();
+      const err = new Error("MAE clear: missing");
+      err._probe = p;
+      throw err;
+    }
 
     // ✅ Só aqui salva config explicitamente (ação do usuário)
     document.getElementById("btnSaveCfg").addEventListener("click", () => {
@@ -322,6 +379,20 @@
       } catch (e) {
         setGHOut("ERR: " + (e?.message || e));
         log("err", "ERR: mae update err :: " + (e?.message || e));
+      }
+    }));
+
+    // ✅ NOVO: MAE clear (robusto)
+    document.getElementById("btnMaeClear").addEventListener("click", () => lock(async () => {
+      try {
+        setGHOut("MAE clear…");
+        const r = await robustMaeClear();
+        setGHOut("OK: mae clear ok " + (r ? JSON.stringify(r) : ""));
+        log("ok", "OK: mae clear ok");
+      } catch (e) {
+        const probe = e?._probe ? (" probe= " + JSON.stringify(e._probe)) : "";
+        setGHOut("ERR: " + (e?.message || e) + probe);
+        log("err", "ERR: mae clear err :: " + (e?.message || e) + probe);
       }
     }));
 
@@ -417,7 +488,7 @@
     window.addEventListener("popstate",  () => { try { ensureGitHubButton(); } catch {} });
   }
 
-  window.RCF_ADMIN_GH = { __v27b: true, boot, openModal, closeModal };
+  window.RCF_ADMIN_GH = { __v27c: true, boot, openModal, closeModal };
 
   if (document.readyState === "loading") {
     window.addEventListener("DOMContentLoaded", boot, { once:true });
@@ -425,5 +496,5 @@
     boot();
   }
 
-  log("ok", "admin.github.js ready ✅ (v2.7b)");
+  log("ok", "admin.github.js ready ✅ (v2.7c)");
 })();
