@@ -1,13 +1,13 @@
-/* RControl Factory — /app/js/admin.github.js (PADRÃO) — v2.7c
-   PATCH MÍNIMO sobre v2.7b:
-   - ✅ Adiciona botão "MAE clear" + clear robusto (prioriza RCF_MAE.clear, com fallbacks OVERRIDES/VFS)
-   - Remove double-save / double-log de ghcfg (UI não salva antes de chamar GH_SYNC.* porque GH_SYNC já salva)
-   - Mantém iOS safe (sem touchend->click artificial)
+/* RControl Factory — /app/js/admin.github.js (PADRÃO) — v2.7d
+   PATCH sobre v2.7c:
+   - ✅ FIX: não deixa owner/repo virar vazio (merge com cfg salvo)
+   - ✅ FIX: antes de Test/Pull/Push salva cfg “merged” (garante ghcfg completo)
+   - Mantém MAE clear robusto
 */
 (() => {
   "use strict";
 
-  if (window.RCF_ADMIN_GH && window.RCF_ADMIN_GH.__v27c) return;
+  if (window.RCF_ADMIN_GH && window.RCF_ADMIN_GH.__v27d) return;
 
   const UI_OPEN_KEY = "rcf:ghui:open";
   const LS_CFG_KEY  = "rcf:ghcfg";
@@ -27,10 +27,6 @@
     x = x.replace(/^\/+/, "");
     if (x.startsWith("import/")) x = "app/" + x;
     return x;
-  }
-
-  function hasGHSYNC(){
-    return !!(window.RCF_GH_SYNC && (window.RCF_GH_SYNC.loadConfig || window.RCF_GH_SYNC.saveConfig));
   }
 
   function getCfg(){
@@ -216,13 +212,21 @@
       if (out) out.textContent = String(t || "Pronto.");
     }
 
-    function readInputs(){
+    // ✅ PATCH: merge com cfg salvo (não deixa owner/repo virar vazio)
+    function readInputsMerged(){
+      const cur = getCfg() || {};
+      const ownerIn  = String(document.getElementById("ghOwner")?.value || "").trim();
+      const repoIn   = String(document.getElementById("ghRepo")?.value || "").trim();
+      const branchIn = String(document.getElementById("ghBranch")?.value || "").trim();
+      const pathIn   = String(document.getElementById("ghPath")?.value || "").trim();
+      const tokenIn  = String(document.getElementById("ghToken")?.value || "").trim();
+
       return {
-        owner: String(document.getElementById("ghOwner")?.value || "").trim(),
-        repo: String(document.getElementById("ghRepo")?.value || "").trim(),
-        branch: String(document.getElementById("ghBranch")?.value || "main").trim(),
-        path: normalizePathInput(document.getElementById("ghPath")?.value || ""),
-        token: String(document.getElementById("ghToken")?.value || "").trim(),
+        owner:  ownerIn  || String(cur.owner || "").trim(),
+        repo:   repoIn   || String(cur.repo || "").trim(),
+        branch: (branchIn || String(cur.branch || "main")).trim(),
+        path:   normalizePathInput(pathIn || String(cur.path || "app/import/mother_bundle.json")),
+        token:  tokenIn  || String(cur.token || "").trim(),
       };
     }
 
@@ -245,64 +249,21 @@
       finally { busy = false; }
     };
 
-    function probeVFS(){
-      const o = window.RCF_VFS_OVERRIDES;
-      const v = window.RCF_VFS;
-
-      const swc = !!navigator.serviceWorker?.controller;
-      const base = (() => { try { return String(location.origin || ""); } catch { return ""; } })();
-
-      return {
-        has_overrides: !!o,
-        overrides_put: typeof o?.put,
-        overrides_clearOverrides: typeof o?.clearOverrides,
-        overrides_clear: typeof o?.clear,
-
-        has_legacy: !!v,
-        legacy_put: typeof v?.put,
-        legacy_clearOverrides: typeof v?.clearOverrides,
-        legacy_clearAll: typeof v?.clearAll,
-        legacy_clear: typeof v?.clear,
-
-        sw_controller: swc,
-        base
-      };
-    }
-
     async function robustMaeClear(){
-      // 1) fonte da verdade
-      if (typeof window.RCF_MAE?.clear === "function") {
-        return await window.RCF_MAE.clear();
-      }
+      if (typeof window.RCF_MAE?.clear === "function") return await window.RCF_MAE.clear();
 
-      // 2) OVERRIDES direto
-      if (typeof window.RCF_VFS_OVERRIDES?.clearOverrides === "function") {
-        return await window.RCF_VFS_OVERRIDES.clearOverrides();
-      }
-      if (typeof window.RCF_VFS_OVERRIDES?.clear === "function") {
-        return await window.RCF_VFS_OVERRIDES.clear();
-      }
+      if (typeof window.RCF_VFS_OVERRIDES?.clearOverrides === "function") return await window.RCF_VFS_OVERRIDES.clearOverrides();
+      if (typeof window.RCF_VFS_OVERRIDES?.clear === "function") return await window.RCF_VFS_OVERRIDES.clear();
 
-      // 3) legado
-      if (typeof window.RCF_VFS?.clearOverrides === "function") {
-        return await window.RCF_VFS.clearOverrides();
-      }
-      if (typeof window.RCF_VFS?.clearAll === "function") {
-        return await window.RCF_VFS.clearAll();
-      }
-      if (typeof window.RCF_VFS?.clear === "function") {
-        return await window.RCF_VFS.clear();
-      }
+      if (typeof window.RCF_VFS?.clearOverrides === "function") return await window.RCF_VFS.clearOverrides();
+      if (typeof window.RCF_VFS?.clearAll === "function") return await window.RCF_VFS.clearAll();
+      if (typeof window.RCF_VFS?.clear === "function") return await window.RCF_VFS.clear();
 
-      const p = probeVFS();
-      const err = new Error("MAE clear: missing");
-      err._probe = p;
-      throw err;
+      throw new Error("MAE clear: missing");
     }
 
-    // ✅ Só aqui salva config explicitamente (ação do usuário)
     document.getElementById("btnSaveCfg").addEventListener("click", () => {
-      const cfg = readInputs();
+      const cfg = readInputsMerged();
       saveCfg(cfg);
       setGHOut("OK: ghcfg saved");
       log("ok", "OK: ghcfg saved");
@@ -310,12 +271,11 @@
 
     document.getElementById("btnTestToken").addEventListener("click", () => lock(async () => {
       try {
-        const cfg = readInputs();
+        const cfg = readInputsMerged();
+        saveCfg(cfg); // ✅ garante owner/repo/path antes do test
 
         setGHOut("Testando token…");
         if (!window.RCF_GH_SYNC?.test) throw new Error("RCF_GH_SYNC.test ausente");
-
-        // ✅ NÃO chama saveCfg aqui (GH_SYNC.test já salva)
         const res = await window.RCF_GH_SYNC.test(cfg);
 
         setGHOut(String(res || "OK"));
@@ -328,12 +288,11 @@
 
     document.getElementById("btnPull").addEventListener("click", () => lock(async () => {
       try {
-        const cfg = readInputs();
+        const cfg = readInputsMerged();
+        saveCfg(cfg); // ✅ garante owner/repo/path antes do pull
 
         setGHOut("Pull…");
         if (!window.RCF_GH_SYNC?.pull) throw new Error("RCF_GH_SYNC.pull ausente");
-
-        // ✅ NÃO chama saveCfg aqui (GH_SYNC.pull já salva)
         const txt = await window.RCF_GH_SYNC.pull(cfg);
 
         setGHOut("OK: pull ok (bytes=" + String(txt || "").length + ")");
@@ -346,12 +305,11 @@
 
     document.getElementById("btnPushMother").addEventListener("click", () => lock(async () => {
       try {
-        const cfg = readInputs();
+        const cfg = readInputsMerged();
+        saveCfg(cfg); // ✅ garante owner/repo/path antes do push
 
         setGHOut("Push Mother Bundle…");
         if (!window.RCF_GH_SYNC?.pushMotherBundle) throw new Error("RCF_GH_SYNC.pushMotherBundle ausente");
-
-        // ✅ NÃO chama saveCfg aqui (GH_SYNC.pushMotherBundle já salva)
         await window.RCF_GH_SYNC.pushMotherBundle(cfg);
 
         setGHOut("OK: GitHub: pushMotherBundle ok");
@@ -382,7 +340,6 @@
       }
     }));
 
-    // ✅ NOVO: MAE clear (robusto)
     document.getElementById("btnMaeClear").addEventListener("click", () => lock(async () => {
       try {
         setGHOut("MAE clear…");
@@ -390,9 +347,8 @@
         setGHOut("OK: mae clear ok " + (r ? JSON.stringify(r) : ""));
         log("ok", "OK: mae clear ok");
       } catch (e) {
-        const probe = e?._probe ? (" probe= " + JSON.stringify(e._probe)) : "";
-        setGHOut("ERR: " + (e?.message || e) + probe);
-        log("err", "ERR: mae clear err :: " + (e?.message || e) + probe);
+        setGHOut("ERR: " + (e?.message || e));
+        log("err", "ERR: mae clear err :: " + (e?.message || e));
       }
     }));
 
@@ -488,7 +444,7 @@
     window.addEventListener("popstate",  () => { try { ensureGitHubButton(); } catch {} });
   }
 
-  window.RCF_ADMIN_GH = { __v27c: true, boot, openModal, closeModal };
+  window.RCF_ADMIN_GH = { __v27d: true, boot, openModal, closeModal };
 
   if (document.readyState === "loading") {
     window.addEventListener("DOMContentLoaded", boot, { once:true });
@@ -496,5 +452,5 @@
     boot();
   }
 
-  log("ok", "admin.github.js ready ✅ (v2.7c)");
+  log("ok", "admin.github.js ready ✅ (v2.7d)");
 })();
