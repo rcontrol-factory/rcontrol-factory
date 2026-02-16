@@ -1,15 +1,14 @@
-/* RControl Factory — /app/js/core/mother_selfupdate.js (PADRÃO) — v2.3c
-   PATCH MÍNIMO (SAFE GATE):
-   - Mantém tudo do v2.2b (compat + normalize + vfs prefer OVERRIDES)
-   - ✅ updateFromGitHub() por padrão = PASSIVO (pull+save, NÃO aplica) -> evita tela branca
-   - ✅ applySaved(): aplica SOMENTE o bundle já salvo (ação manual/confirmada)
-   - Para aplicar direto: updateFromGitHub({ apply:true })
-   - NÃO mexe no SW
+/* RControl Factory — /app/js/core/mother_selfupdate.js (PADRÃO) — v2.3d
+   PATCH MÍNIMO (FIX CLEAR):
+   - Mantém tudo do v2.3c
+   - ✅ FIX: pickVFS() agora reconhece clearOverrides() do RCF_VFS_OVERRIDES
+     (antes ele procurava .clear e dava "mae clear: missing")
+   - clear() continua SAFE/EXPLÍCITO (não mexe SW)
 */
 (() => {
   "use strict";
 
-  if (window.RCF_MAE && window.RCF_MAE.__v23c) return;
+  if (window.RCF_MAE && window.RCF_MAE.__v23d) return;
 
   // ✅ chaves padrão + compat antigas
   const LS_BUNDLE_KEY       = "rcf:mother_bundle_local";     // padrão: SEMPRE normalizado {version,ts,files:[...]}
@@ -239,25 +238,34 @@
   }
 
   function pickVFS(){
+    // ✅ Preferência: RCF_VFS_OVERRIDES (service worker overrides)
     if (window.RCF_VFS_OVERRIDES && typeof window.RCF_VFS_OVERRIDES.put === "function") {
+      const o = window.RCF_VFS_OVERRIDES;
+      const clearFn =
+        (typeof o.clearOverrides === "function") ? o.clearOverrides.bind(o) :
+        (typeof o.clear === "function") ? o.clear.bind(o) :
+        null;
+
       return {
         kind: "OVERRIDES",
-        put: window.RCF_VFS_OVERRIDES.put.bind(window.RCF_VFS_OVERRIDES),
-        clear: (typeof window.RCF_VFS_OVERRIDES.clear === "function")
-          ? window.RCF_VFS_OVERRIDES.clear.bind(window.RCF_VFS_OVERRIDES)
-          : null
+        put: o.put.bind(o),
+        clear: clearFn
       };
     }
 
+    // ✅ Fallback: RCF_VFS (compat antigo)
     if (window.RCF_VFS && typeof window.RCF_VFS.put === "function") {
+      const v = window.RCF_VFS;
+      const clearFn =
+        (typeof v.clearOverrides === "function") ? v.clearOverrides.bind(v) :
+        (typeof v.clearAll === "function") ? v.clearAll.bind(v) :
+        (typeof v.clear === "function") ? v.clear.bind(v) :
+        null;
+
       return {
         kind: "VFS",
-        put: window.RCF_VFS.put.bind(window.RCF_VFS),
-        clear: (typeof window.RCF_VFS.clearOverrides === "function")
-          ? window.RCF_VFS.clearOverrides.bind(window.RCF_VFS)
-          : (typeof window.RCF_VFS.clearAll === "function")
-            ? window.RCF_VFS.clearAll.bind(window.RCF_VFS)
-            : null
+        put: v.put.bind(v),
+        clear: clearFn
       };
     }
 
@@ -347,7 +355,6 @@
 
   // ✅ aplicar SOMENTE o que já está salvo (ação manual)
   async function applySaved(opts){
-    // respeita gate: aqui é manual, então deixa aplicar
     const txt = getLocalBundleText();
     if (!txt) throw new Error("Sem bundle salvo. Rode Update (passivo) primeiro.");
 
@@ -374,7 +381,7 @@
   }
 
   window.RCF_MAE = {
-    __v23c: true,
+    __v23d: true,
     updateFromGitHub,
     applySaved,
     clear,
