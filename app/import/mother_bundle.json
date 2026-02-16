@@ -1,1 +1,5 @@
-RCF_MAE.getLocalBundleText().then(console.log)
+{
+  "version": "bridge",
+  "ts": "2026-02-16T00:00:00.000Z",
+  "files": []
+}
