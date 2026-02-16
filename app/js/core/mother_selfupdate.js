@@ -1,23 +1,14 @@
 /* RControl Factory — /app/js/core/mother_selfupdate.js (PADRÃO) — v2.3f
-   PATCH OBRIGATÓRIO (BUNDLE BRIDGE + GHCFG AUTO-FIX):
-   - Permite bundle com files vazio (bridge)
-   - Só rejeita se bundle inválido ou files não for array
-   - files.length === 0 => NÃO erro, apenas aviso
-   - Auto-completa ghcfg (owner/repo/branch/path) se vier incompleto
-   - Salva bundle em chaves compatíveis (local + compat)
+   PATCH:
+   - Mantém BRIDGE (files[] vazio não dá erro)
+   - ✅ FIX CRÍTICO: MAE update agora usa ghcfg salvo (owner/repo/branch/path/token)
+     -> antes chamava pull({}) e dava "ghcfg incompleto (owner/repo)"
+   - Mantém estrutura original (patch mínimo)
 */
 (() => {
   "use strict";
 
   if (window.RCF_MAE && window.RCF_MAE.__v23f) return;
-
-  // ===== Defaults do seu repo (pode ajustar se quiser) =====
-  const DEF_OWNER  = "rcontrol-factory";
-  const DEF_REPO   = "rcontrol-factory";
-  const DEF_BRANCH = "main";
-  const DEF_PATH   = "app/import/mother_bundle.json";
-
-  const LS_GHCFG_KEY        = "rcf:ghcfg";
 
   const LS_BUNDLE_KEY       = "rcf:mother_bundle_local";
   const LS_BUNDLE_RAW       = "rcf:mother_bundle_raw";
@@ -26,6 +17,7 @@
   const LS_BUNDLE_COMPAT_2  = "rcf:mother_bundle_json";
 
   const LS_APPLY_GATE_KEY   = "rcf:mae:apply_gate";
+  const LS_GHCFG_KEY        = "rcf:ghcfg";
 
   const log = (lvl, msg, obj) => {
     try {
@@ -40,10 +32,6 @@
 
   function safeParse(raw, fb){
     try { return raw ? JSON.parse(raw) : fb; } catch { return fb; }
-  }
-
-  function safeStringify(obj, fb){
-    try { return JSON.stringify(obj); } catch { return fb || ""; }
   }
 
   function guessType(path) {
@@ -69,55 +57,6 @@
     return cur ?? null;
   }
 
-  // ===== GHCFG AUTO-FIX =====
-  function readGhcfg(){
-    const raw = String(localStorage.getItem(LS_GHCFG_KEY) || "").trim();
-    const j = safeParse(raw, null);
-    return isPlainObject(j) ? j : {};
-  }
-
-  function normalizeGhcfg(cfg){
-    const out = isPlainObject(cfg) ? { ...cfg } : {};
-
-    // aceita variações de campo (caso algum módulo use outros nomes)
-    const owner = String(out.owner || out.org || out.user || out.username || "").trim();
-    const repo  = String(out.repo  || out.repository || out.repoName || "").trim();
-    const branch= String(out.branch|| out.ref || "").trim();
-    const path  = String(out.path  || out.bundlePath || "").trim();
-
-    out.owner  = owner  || DEF_OWNER;
-    out.repo   = repo   || DEF_REPO;
-    out.branch = branch || DEF_BRANCH;
-    out.path   = path   || DEF_PATH;
-
-    return out;
-  }
-
-  function ensureGhcfgComplete(){
-    const cfg0 = readGhcfg();
-    const cfg = normalizeGhcfg(cfg0);
-
-    const wasMissing =
-      !String(cfg0.owner || cfg0.org || cfg0.user || cfg0.username || "").trim() ||
-      !String(cfg0.repo  || cfg0.repository || cfg0.repoName || "").trim();
-
-    // se faltava owner/repo, a gente completa e salva
-    if (wasMissing) {
-      try {
-        localStorage.setItem(LS_GHCFG_KEY, safeStringify(cfg, ""));
-        log("warn", "ghcfg incompleto -> auto-fix aplicado", { owner: cfg.owner, repo: cfg.repo, branch: cfg.branch, path: cfg.path });
-      } catch {}
-    }
-
-    // se mesmo assim estiver ruim, aborta com erro claro
-    if (!cfg.owner || !cfg.repo) {
-      throw new Error("ghcfg incompleto (owner/repo)");
-    }
-
-    return cfg;
-  }
-
-  // ===== bundle normalize =====
   function normalizeFilesFromAnyShape(j){
     const candidates = [
       ["files"], ["items"],
@@ -130,7 +69,7 @@
 
     for (const p of candidates){
       const v = pick(j, p);
-      if (Array.isArray(v)) return v; // aceita array vazio também
+      if (Array.isArray(v)) return v; // aceita array vazio
     }
 
     const mapCandidates = [
@@ -165,6 +104,7 @@
 
           out.push({ path, content: String(val ?? ""), contentType: guessType(path) });
         }
+
         return out; // pode retornar vazio
       }
     }
@@ -204,9 +144,11 @@
       return null;
     }).filter(Boolean);
 
-    // aceita files.length === 0 (bridge)
+    // BRIDGE: aceita files.length === 0
     if (!files.length) {
+      console.warn("Bundle bridge detectado (files vazio). Nada para aplicar.");
       log("warn", "bundle bridge detectado (files vazio)", rawKeys);
+
       const normalized = { version: "rcf_bundle_v1", ts: Date.now(), files: [] };
       return { ok:true, rawKeys, normalized, bridge:true };
     }
@@ -218,6 +160,41 @@
   function getLocalBundleText(){
     const txt = String(localStorage.getItem(LS_BUNDLE_KEY) || "").trim();
     return txt || "";
+  }
+
+  // ✅ NOVO: carregar ghcfg salvo (fonte: GH_SYNC.loadConfig OU localStorage)
+  function loadGHCfg(){
+    let cfg = {};
+    try {
+      if (window.RCF_GH_SYNC?.loadConfig) cfg = window.RCF_GH_SYNC.loadConfig() || {};
+      else cfg = safeParse(localStorage.getItem(LS_GHCFG_KEY), {}) || {};
+    } catch {
+      cfg = safeParse(localStorage.getItem(LS_GHCFG_KEY), {}) || {};
+    }
+
+    // normalizar strings
+    const out = {
+      owner: String(cfg.owner || "").trim(),
+      repo: String(cfg.repo || "").trim(),
+      branch: String(cfg.branch || "main").trim(),
+      path: String(cfg.path || "app/import/mother_bundle.json").trim(),
+      token: String(cfg.token || "").trim(),
+    };
+
+    // autofix default (se você usa sempre o mesmo)
+    if (!out.owner) out.owner = "rcontrol-factory";
+    if (!out.repo)  out.repo  = "rcontrol-factory";
+    if (!out.branch) out.branch = "main";
+    if (!out.path) out.path = "app/import/mother_bundle.json";
+
+    // salvar de volta (para travar o cfg correto)
+    try {
+      if (window.RCF_GH_SYNC?.saveConfig) window.RCF_GH_SYNC.saveConfig(out);
+      else localStorage.setItem(LS_GHCFG_KEY, JSON.stringify(out));
+      log("warn", "ghcfg carregado/normalizado", { owner: out.owner, repo: out.repo, branch: out.branch, path: out.path });
+    } catch {}
+
+    return out;
   }
 
   function pickVFS(){
@@ -249,14 +226,26 @@
 
     const bundle = JSON.parse(txt);
 
-    if (!bundle || typeof bundle !== "object") throw new Error("Bundle inválido");
-    if (!("files" in bundle)) throw new Error("Bundle sem propriedade files");
-    if (!Array.isArray(bundle.files)) throw new Error("Bundle files não é array");
+    if (!bundle || typeof bundle !== "object") {
+      throw new Error("Bundle inválido");
+    }
 
+    if (!("files" in bundle)) {
+      throw new Error("Bundle sem propriedade files");
+    }
+
+    if (!Array.isArray(bundle.files)) {
+      throw new Error("Bundle files não é array");
+    }
+
+    // BRIDGE
     if (bundle.files.length === 0) {
+      console.warn("Bundle bridge detectado (files vazio). Nada para aplicar.");
       log("warn", "apply bridge: files vazio");
       return { applied: 0, bridge: true };
     }
+
+    const files = bundle.files;
 
     const vfs = pickVFS();
     if (!vfs || !vfs.put) throw new Error("Overrides VFS incompleto");
@@ -264,8 +253,8 @@
     let wrote = 0;
     let failed = 0;
 
-    for (let i = 0; i < bundle.files.length; i++){
-      const f = bundle.files[i] || {};
+    for (let i = 0; i < files.length; i++){
+      const f = files[i] || {};
       const path = String(f.path || "").trim();
       const content = (f.content != null) ? String(f.content) : "";
       const contentType = String(f.contentType || guessType(path));
@@ -281,44 +270,29 @@
       }
     }
 
-    return { ok:true, wrote, failed, total: bundle.files.length };
-  }
-
-  function saveBundleEverywhere(normalizedObj){
-    const txt = safeStringify(normalizedObj, "");
-    if (!txt) throw new Error("Falha ao serializar bundle");
-
-    try { localStorage.setItem(LS_BUNDLE_KEY, txt); } catch {}
-    try { localStorage.setItem(LS_BUNDLE_COMPAT_1, txt); } catch {}
-    try { localStorage.setItem(LS_BUNDLE_COMPAT_2, txt); } catch {}
-    try { localStorage.setItem(LS_BUNDLE_RAW, txt); } catch {}
-    try { localStorage.setItem(LS_BUNDLE_META, safeStringify({ ts: Date.now(), files: normalizedObj?.files?.length || 0 }, "")); } catch {}
-
-    return txt;
+    return { ok:true, wrote, failed, total:files.length };
   }
 
   async function updateFromGitHub(opts){
     log("ok", "update start");
 
-    // garante ghcfg completo ANTES do github_sync ler
-    ensureGhcfgComplete();
-
     if (localStorage.getItem(LS_APPLY_GATE_KEY) == null) {
       try { localStorage.setItem(LS_APPLY_GATE_KEY, "1"); } catch {}
     }
 
-    if (!window.RCF_GH_SYNC?.pull) {
-      throw new Error("RCF_GH_SYNC indisponível");
-    }
+    // ✅ FIX: usa o cfg salvo (não passa {})
+    const cfg = loadGHCfg();
 
-    const rawTxt = await window.RCF_GH_SYNC.pull({});
+    if (!window.RCF_GH_SYNC?.pull) throw new Error("RCF_GH_SYNC.pull ausente");
+
+    const rawTxt = await window.RCF_GH_SYNC.pull(cfg);
     const norm = normalizeBundleShape(rawTxt);
 
     if (!norm.ok || !norm.normalized) {
       throw new Error("Bundle inválido");
     }
 
-    saveBundleEverywhere(norm.normalized);
+    localStorage.setItem(LS_BUNDLE_KEY, JSON.stringify(norm.normalized));
 
     if (norm.bridge) {
       return { applied: 0, bridge: true };
@@ -329,7 +303,7 @@
       return { ok:true, passive:true, saved:true, total: norm.normalized.files.length };
     }
 
-    return await applyBundleToOverrides(safeStringify(norm.normalized, ""), opts);
+    return await applyBundleToOverrides(JSON.stringify(norm.normalized), opts);
   }
 
   async function applySaved(opts){
@@ -352,5 +326,5 @@
     getLocalBundleText
   };
 
-  log("ok", "mother_selfupdate.js ready ✅ (bridge+ghcfg autofix)");
+  log("ok", "mother_selfupdate.js ready ✅ (bridge+ghcfg cfg fix)");
 })();
