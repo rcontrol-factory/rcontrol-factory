@@ -1,1 +1,26 @@
-{"version":"rcf_bundle_v1","ts":1771278743866,"files":[{"path":"app/js/core/mother_selfupdate.js","content":"...","contentType":"application/javascript; charset=utf-8"}]}
+{
+  "version": "rcf_bundle_v1",
+  "ts": 1771278743866,
+  "files": [
+    {
+      "path": "app/js/core/mother_selfupdate.js",
+      "content": "COLE_AQUI_O_ARQUIVO_INTEIRO\nlinha2\nlinha3",
+      "contentType": "application/javascript; charset=utf-8"
+    },
+    {
+      "path": "app/js/admin.github.js",
+      "content": "COLE_AQUI_O_ARQUIVO_INTEIRO\n...",
+      "contentType": "application/javascript; charset=utf-8"
+    },
+    {
+      "path": "app/js/core/github_sync.js",
+      "content": "COLE_AQUI_O_ARQUIVO_INTEIRO\n...",
+      "contentType": "application/javascript; charset=utf-8"
+    },
+    {
+      "path": "app/js/core/ui_bindings.js",
+      "content": "COLE_AQUI_O_ARQUIVO_INTEIRO\n...",
+      "contentType": "application/javascript; charset=utf-8"
+    }
+  ]
+}
