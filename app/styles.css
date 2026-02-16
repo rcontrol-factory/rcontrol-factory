@@ -13,8 +13,8 @@
   --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   --ui: -apple-system, system-ui, Segoe UI, Roboto, Helvetica, Arial;
 
-  /* ✅ V8 token */
-  --rcf-css-token:"V8.0";
+  /* ✅ V8 token (Diagnostics) */
+  --rcf-css-token:"V8.1";
 }
 
 *{ box-sizing:border-box; }
@@ -123,7 +123,7 @@ button, a, .btn, .tab, input, textarea, select, label{
 /* =================================
    TABS (PADRÃO)
    Desktop/tablet: flex wrap normal
-   Mobile: barra rolante horizontal (igual tava perfeito)
+   Mobile: barra rolante horizontal (perfeito)
    ================================= */
 .tabs{
   width:100%;
@@ -154,11 +154,12 @@ button, a, .btn, .tab, input, textarea, select, label{
   box-shadow: 0 0 0 5px rgba(22,199,132,.10);
 }
 
-/* ✅ FIX: iPhone vira BARRA ROLANTE HORIZONTAL (conserta o bloco que quebrou) */
+/* ✅ MOBILE: vira barra horizontal (scroll + snap + fade bordas) */
 @media (max-width: 520px){
   .tabs{
     flex-wrap: nowrap !important;
     justify-content: flex-start !important;
+
     overflow-x: auto !important;
     overflow-y: hidden !important;
     -webkit-overflow-scrolling: touch !important;
@@ -166,12 +167,26 @@ button, a, .btn, .tab, input, textarea, select, label{
     gap: 10px !important;
     padding: 12px 2px 10px !important;
 
-    /* evita “sumir” quando rola */
+    /* snap suave */
+    scroll-snap-type: x proximity !important;
+
+    /* esconde scrollbar */
     scrollbar-width: none;
+    
+    /* ✅ fade bordas: mostra que tem mais */
+    -webkit-mask-image: linear-gradient(to right,
+      transparent 0px,
+      #000 16px,
+      #000 calc(100% - 16px),
+      transparent 100%);
+    mask-image: linear-gradient(to right,
+      transparent 0px,
+      #000 16px,
+      #000 calc(100% - 16px),
+      transparent 100%);
   }
   .tabs::-webkit-scrollbar{ display:none; }
 
-  /* mata qualquer CSS antigo que esteja forçando 100%/block */
   .tabs .tab{
     width: auto !important;
     min-width: max-content !important;
@@ -188,6 +203,9 @@ button, a, .btn, .tab, input, textarea, select, label{
 
     white-space: nowrap !important;
     box-sizing: border-box !important;
+
+    /* snap */
+    scroll-snap-align: center !important;
   }
 }
 
