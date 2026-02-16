@@ -1,13 +1,13 @@
-/* RControl Factory — /app/js/core/github_sync.js (PADRÃO) — v2.4d
+/* RControl Factory — /app/js/core/github_sync.js (PADRÃO) — v2.4e
    PATCH MÍNIMO:
-   - pull() robusto: aceita content | download_url | git_url
-   - erro claro quando path vira diretório (array)
-   - mantém normalizeBundlePath sempre app/import/mother_bundle.json
+   ✅ PATH 100% FIXO: sempre app/import/mother_bundle.json (ignora typo .jsc/.txt etc.)
+   ✅ pull() debug: se não for JSON, mostra preview do conteúdo recebido
+   ✅ pushMotherBundle() fallback: tenta LS (rcf:mother_bundle / RCF_MOTHER_BUNDLE) se MAE retornar vazio
 */
 (() => {
   "use strict";
 
-  if (window.RCF_GH_SYNC && window.RCF_GH_SYNC.__v24d) return;
+  if (window.RCF_GH_SYNC && window.RCF_GH_SYNC.__v24e) return;
 
   const LS_CFG_KEY = "rcf:ghcfg";
   const API_BASE = "https://api.github.com";
@@ -24,20 +24,11 @@
     try { return raw ? JSON.parse(raw) : fb; } catch { return fb; }
   }
 
-  // ✅ PADRÃO DEFINITIVO: sempre app/import/mother_bundle.json
+  // ✅ PADRÃO DEFINITIVO: IGNORA QUALQUER INPUT E SEMPRE USA ESTE PATH
   function normalizeBundlePath(input) {
     const raw = String(input || "").trim();
-    let p = raw.replace(/^\/+/, "");
-
-    if (p.startsWith("import/")) p = "app/" + p;
-    if (!p.startsWith("app/")) p = "app/" + p;
-
-    if (!p.startsWith("app/import/")) {
-      const file = (p.split("/").pop() || "mother_bundle.json").trim();
-      p = "app/import/" + file;
-    }
-
-    return { raw, normalized: p };
+    const normalized = "app/import/mother_bundle.json";
+    return { raw, normalized };
   }
 
   function loadConfig(){
@@ -125,15 +116,18 @@
   }
 
   function decodeB64Utf8(b64){
-    // GitHub manda base64, pode ter UTF-8
     const clean = String(b64 || "").replace(/\n/g, "");
     let bin = "";
     try { bin = atob(clean); } catch { throw new Error("Falha ao decodificar base64"); }
-    try {
-      // converte binário -> utf8
-      return decodeURIComponent(escape(bin));
-    } catch {
-      return bin; // fallback
+    try { return decodeURIComponent(escape(bin)); } catch { return bin; }
+  }
+
+  function ensureJsonOrThrow(text, where){
+    const t = String(text ?? "");
+    try { JSON.parse(t); return t; }
+    catch {
+      const preview = t.replace(/\s+/g, " ").slice(0, 140);
+      throw new Error(`Bundle puxado não é JSON válido (${where}). Preview="${preview}"`);
     }
   }
 
@@ -146,39 +140,34 @@
     const txt = await ghFetch(url, cfg, { method: "GET" });
     const j = safeParse(txt, null);
 
-    // ✅ se path virou diretório, GitHub retorna array
     if (Array.isArray(j)) {
       throw new Error("Resposta inválida: path parece ser diretório (array). Confirme cfg.path.");
     }
 
-    // caso normal: vem content base64
     if (j && j.content) {
       const decoded = decodeB64Utf8(j.content);
-      try { JSON.parse(decoded); } catch { throw new Error("Bundle puxado não é JSON válido"); }
+      const okTxt = ensureJsonOrThrow(decoded, "content");
       log("info", `GitHub: pull ok (content). url=${url}`);
-      return decoded;
+      return okTxt;
     }
 
-    // ✅ fallback 1: download_url (raw)
     if (j && j.download_url) {
       const raw = await ghFetch(j.download_url, cfg, { method: "GET", headers: { "Accept": "application/vnd.github.raw" } });
-      try { JSON.parse(raw); } catch { throw new Error("Bundle (download_url) não é JSON válido"); }
+      const okTxt = ensureJsonOrThrow(raw, "download_url");
       log("info", `GitHub: pull ok (download_url). url=${j.download_url}`);
-      return raw;
+      return okTxt;
     }
 
-    // ✅ fallback 2: git_url -> blob -> content
     if (j && j.git_url) {
       const blobTxt = await ghFetch(j.git_url, cfg, { method: "GET" });
       const blob = safeParse(blobTxt, null);
       if (!blob || !blob.content) throw new Error("Resposta inválida do GitHub (blob sem content)");
       const decoded = decodeB64Utf8(blob.content);
-      try { JSON.parse(decoded); } catch { throw new Error("Bundle (git_url blob) não é JSON válido"); }
+      const okTxt = ensureJsonOrThrow(decoded, "git_url");
       log("info", `GitHub: pull ok (git_url). url=${j.git_url}`);
-      return decoded;
+      return okTxt;
     }
 
-    // se chegou aqui, o shape não tem nada do que precisamos
     throw new Error("Resposta inválida do GitHub (sem content/download_url/git_url)");
   }
 
@@ -225,6 +214,17 @@
     return { ok: true };
   }
 
+  function tryGetLocalBundleFallback(){
+    const keys = ["rcf:mother_bundle", "RCF_MOTHER_BUNDLE", "mother_bundle"];
+    for (const k of keys) {
+      try {
+        const v = localStorage.getItem(k);
+        if (v && String(v).trim().length > 10) return v;
+      } catch {}
+    }
+    return "";
+  }
+
   async function pushMotherBundle(cfgIn){
     const cfg = saveConfig(cfgIn || loadConfig());
 
@@ -232,19 +232,22 @@
     cfg.path = norm.normalized;
     log("info", "bundle path normalized", { raw: norm.raw, path: cfg.path });
 
-    if (!window.RCF_MAE?.getLocalBundleText) {
-      throw new Error("RCF_MAE.getLocalBundleText ausente");
+    let bundleTxt = "";
+    if (window.RCF_MAE?.getLocalBundleText) {
+      try { bundleTxt = await window.RCF_MAE.getLocalBundleText(); } catch {}
     }
 
-    const bundleTxt = await window.RCF_MAE.getLocalBundleText();
+    if (!bundleTxt) bundleTxt = tryGetLocalBundleFallback();
+
     if (!bundleTxt) throw new Error("Bundle local vazio");
+    ensureJsonOrThrow(bundleTxt, "local");
 
     await push(cfg, bundleTxt);
     return { ok: true };
   }
 
   window.RCF_GH_SYNC = {
-    __v24d: true,
+    __v24e: true,
     loadConfig,
     saveConfig,
     test,
@@ -253,5 +256,5 @@
     pushMotherBundle,
   };
 
-  log("info", "github_sync.js loaded (v2.4d)");
+  log("info", "github_sync.js loaded (v2.4e)");
 })();
