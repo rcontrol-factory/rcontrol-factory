@@ -1,18 +1,21 @@
-/* RControl Factory — /app/js/core/github_sync.js (PADRÃO) — v2.4f
-   PATCH MÍNIMO (sobre v2.4e):
-   - ✅ Reduz spam de log: saveConfig() só grava no localStorage e só loga "ghcfg saved" quando houver mudança real
-   - Mantém: Path FIXO definitivo "app/import/mother_bundle.json"
-   - Mantém: pull() robusto (content | download_url | git_url), erro claro de diretório (array)
-   - Mantém: validação de JSON com preview (pra flagrar HTML/404)
+/* RControl Factory — /app/js/core/github_sync.js (PADRÃO) — v2.4g
+   PATCH MÍNIMO (sobre v2.4e/2.4f):
+   - ✅ Path FIXO definitivo: sempre "app/import/mother_bundle.json" (ignora input errado tipo .jsc)
+   - ✅ LOG LIMPO: só loga "bundle path normalized" quando raw != FIXED_BUNDLE_PATH
+   - ✅ DEBUG TOGGLE: localStorage rcf:debug:gh=1 habilita logs verbosos
+   - pull() robusto: aceita content | download_url | git_url
+   - erro claro quando path vira diretório (array)
+   - erro de JSON inválido mostra preview (pra flagrar HTML/404 na hora)
 */
 (() => {
   "use strict";
 
-  if (window.RCF_GH_SYNC && window.RCF_GH_SYNC.__v24f) return;
+  if (window.RCF_GH_SYNC && window.RCF_GH_SYNC.__v24g) return;
 
   const LS_CFG_KEY = "rcf:ghcfg";
   const API_BASE = "https://api.github.com";
   const FIXED_BUNDLE_PATH = "app/import/mother_bundle.json";
+  const DEBUG_KEY = "rcf:debug:gh";
 
   const log = (lvl, msg, obj) => {
     try {
@@ -21,6 +24,13 @@
     } catch {}
     try { console.log("[GH]", lvl, msg, obj ?? ""); } catch {}
   };
+
+  function isDebug(){
+    try {
+      const v = String(localStorage.getItem(DEBUG_KEY) || "").trim().toLowerCase();
+      return v === "1" || v === "true" || v === "on" || v === "yes";
+    } catch { return false; }
+  }
 
   function safeParse(raw, fb){
     try { return raw ? JSON.parse(raw) : fb; } catch { return fb; }
@@ -32,62 +42,45 @@
     return { raw, normalized: FIXED_BUNDLE_PATH };
   }
 
-  function normalizeCfg(any){
-    const c = any || {};
+  // ✅ Loga só quando raw veio diferente (ou quando debug ligado)
+  function maybeLogPathNormalized(raw){
+    const dbg = isDebug();
+    if (!dbg && raw === FIXED_BUNDLE_PATH) return;
+    log("info", "bundle path normalized", { raw, path: FIXED_BUNDLE_PATH, fixed: true, dbg });
+  }
+
+  function loadConfig(){
+    const c = safeParse(localStorage.getItem(LS_CFG_KEY), {}) || {};
     const norm = normalizeBundlePath(c.path || FIXED_BUNDLE_PATH);
-    return {
+
+    const cfg = {
       owner: String(c.owner || "").trim(),
       repo: String(c.repo || "").trim(),
       branch: String(c.branch || "main").trim(),
       path: norm.normalized, // FIXO
       token: String(c.token || "empty").trim(),
-      __rawPath: norm.raw,
     };
-  }
 
-  function sameCfg(a, b){
-    const A = a || {}, B = b || {};
-    return (
-      String(A.owner || "")  === String(B.owner || "") &&
-      String(A.repo || "")   === String(B.repo || "") &&
-      String(A.branch || "") === String(B.branch || "") &&
-      String(A.path || "")   === String(B.path || "") &&
-      String(A.token || "")  === String(B.token || "")
-    );
-  }
-
-  function loadConfig(){
-    const stored = safeParse(localStorage.getItem(LS_CFG_KEY), {}) || {};
-    const cfg = normalizeCfg(stored);
-
-    log("info", "bundle path normalized", { raw: cfg.__rawPath, path: cfg.path, fixed: true });
-
-    // remove campo interno
-    delete cfg.__rawPath;
+    maybeLogPathNormalized(norm.raw);
     return cfg;
   }
 
   function saveConfig(cfg){
-    const safe = normalizeCfg(cfg || {});
-    const prevRaw = localStorage.getItem(LS_CFG_KEY);
-    const prev = safeParse(prevRaw, {}) || {};
-    const prevNorm = normalizeCfg(prev);
+    const inCfg = cfg || {};
+    const norm = normalizeBundlePath(inCfg.path || FIXED_BUNDLE_PATH);
 
-    // ✅ Só grava/loga se mudou de verdade
-    const nextComparable = { owner: safe.owner, repo: safe.repo, branch: safe.branch, path: safe.path, token: safe.token };
-    const prevComparable = { owner: prevNorm.owner, repo: prevNorm.repo, branch: prevNorm.branch, path: prevNorm.path, token: prevNorm.token };
+    const safe = {
+      owner: String(inCfg.owner || "").trim(),
+      repo: String(inCfg.repo || "").trim(),
+      branch: String(inCfg.branch || "main").trim(),
+      path: norm.normalized, // FIXO
+      token: String(inCfg.token || "empty").trim(),
+    };
 
-    if (!sameCfg(prevComparable, nextComparable)) {
-      localStorage.setItem(LS_CFG_KEY, JSON.stringify(nextComparable));
-      log("ok", "OK: ghcfg saved");
-      log("info", "bundle path normalized", { raw: safe.__rawPath, path: safe.path, fixed: true });
-    } else {
-      // ainda assim, se input tinha path estranho, a gente pode logar UMA vez só via loadConfig
-      // aqui fica silencioso pra não spammar.
-    }
-
-    delete safe.__rawPath;
-    return nextComparable;
+    localStorage.setItem(LS_CFG_KEY, JSON.stringify(safe));
+    log("ok", "OK: ghcfg saved");
+    maybeLogPathNormalized(norm.raw);
+    return safe;
   }
 
   function headers(cfg){
@@ -127,7 +120,7 @@
 
     const norm = normalizeBundlePath(cfg.path);
     cfg.path = norm.normalized;
-    log("info", "bundle path normalized", { raw: norm.raw, path: cfg.path, fixed: true });
+    maybeLogPathNormalized(norm.raw);
 
     const branch = encodeURIComponent(cfg.branch || "main");
     return `${API_BASE}/repos/${encodeURIComponent(cfg.owner)}/${encodeURIComponent(cfg.repo)}/contents/${cfg.path}?ref=${branch}`;
@@ -220,7 +213,7 @@
 
     const norm = normalizeBundlePath(cfg.path);
     cfg.path = norm.normalized;
-    log("info", "bundle path normalized", { raw: norm.raw, path: cfg.path, fixed: true });
+    maybeLogPathNormalized(norm.raw);
 
     const branch = cfg.branch || "main";
     log("info", `GitHub: push iniciando... path=${cfg.path}`);
@@ -253,7 +246,7 @@
 
     const norm = normalizeBundlePath(cfg.path);
     cfg.path = norm.normalized;
-    log("info", "bundle path normalized", { raw: norm.raw, path: cfg.path, fixed: true });
+    maybeLogPathNormalized(norm.raw);
 
     if (!window.RCF_MAE?.getLocalBundleText) {
       throw new Error("RCF_MAE.getLocalBundleText ausente");
@@ -269,7 +262,7 @@
   }
 
   window.RCF_GH_SYNC = {
-    __v24f: true,
+    __v24g: true,
     loadConfig,
     saveConfig,
     test,
@@ -278,5 +271,5 @@
     pushMotherBundle,
   };
 
-  log("info", "github_sync.js loaded (v2.4f)");
+  log("info", "github_sync.js loaded (v2.4g)");
 })();
