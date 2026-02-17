@@ -266,3 +266,57 @@
 
   log("info", "github_sync.js loaded (v2.4f)");
 })();
+// ---------------------------------------------------------
+// HOTFIX: compat API (admin.github.js espera RCF_GH_SYNC.test)
+// ---------------------------------------------------------
+(() => {
+  try {
+    const GH = window.RCF_GH_SYNC;
+    if (!GH || typeof GH !== "object") return;
+
+    // se já existir, não mexe
+    if (typeof GH.test === "function") return;
+
+    // Testa token via GitHub API (safe: não escreve nada)
+    GH.test = async function testToken(opts = {}) {
+      const cfg = (() => {
+        try {
+          const raw = localStorage.getItem("rcf:ghcfg");
+          return raw ? JSON.parse(raw) : {};
+        } catch { return {}; }
+      })();
+
+      const token = (opts.token || cfg.token || cfg.ghToken || cfg.pat || "").trim();
+      if (!token) return { ok: false, err: "token ausente (rcf:ghcfg.token)" };
+
+      try {
+        const res = await fetch("https://api.github.com/user", {
+          headers: {
+            "Accept": "application/vnd.github+json",
+            "Authorization": `token ${token}`
+          },
+          cache: "no-store"
+        });
+
+        const rateLimit = {
+          limit: res.headers.get("x-ratelimit-limit"),
+          remaining: res.headers.get("x-ratelimit-remaining"),
+          reset: res.headers.get("x-ratelimit-reset")
+        };
+
+        if (!res.ok) {
+          let body = "";
+          try { body = await res.text(); } catch {}
+          return { ok: false, status: res.status, err: "token inválido / sem permissão", rateLimit, body: body.slice(0, 300) };
+        }
+
+        const me = await res.json().catch(() => ({}));
+        return { ok: true, user: { login: me.login, id: me.id }, rateLimit };
+      } catch (e) {
+        return { ok: false, err: String(e?.message || e) };
+      }
+    };
+
+    try { window.RCF_LOGGER?.push?.("OK", "RCF_GH_SYNC.test hotfix instalado ✅"); } catch {}
+  } catch {}
+})();
