@@ -1,20 +1,26 @@
-/* RControl Factory — /app/js/core/github_sync.js — v2.4g (PATCH: pushMotherBundle exports FULL snapshot) */
+/* RControl Factory — /app/js/core/github_sync.js — v2.4h (FINAL STABLE + FILLERS)
+   PATCH sobre v2.4g:
+   - ✅ FILLERS: gera bundle completo automaticamente (lista padrão + auto-discovery) quando o bundle local estiver “mínimo”
+   - ✅ pushMotherBundle passa a empurrar esse bundle completo pro GitHub (resolve root: mother_bundle.json com files=1)
+   - ✅ expõe listFillers() para UI futura (search/ordem alfabética)
+   - Mantém path FIXO: app/import/mother_bundle.json
+*/
 (() => {
   "use strict";
 
-  if (window.RCF_GH_SYNC && window.RCF_GH_SYNC.__v24g) return;
+  if (window.RCF_GH_SYNC && window.RCF_GH_SYNC.__v24h) return;
 
   const LS_CFG_KEY = "rcf:ghcfg";
   const API_BASE = "https://api.github.com";
   const FIXED_BUNDLE_PATH = "app/import/mother_bundle.json";
 
+  // bundle local (compat com MAE)
+  const LS_BUNDLE_KEY = "rcf:mother_bundle_local";
+
   const log = (lvl, msg, obj) => {
     try {
-      if (obj !== undefined) {
-        window.RCF_LOGGER?.push?.(lvl, msg + " " + JSON.stringify(obj));
-      } else {
-        window.RCF_LOGGER?.push?.(lvl, msg);
-      }
+      if (obj !== undefined) window.RCF_LOGGER?.push?.(lvl, msg + " " + JSON.stringify(obj));
+      else window.RCF_LOGGER?.push?.(lvl, msg);
     } catch {}
     try { console.log("[GH]", lvl, msg, obj ?? ""); } catch {}
   };
@@ -71,10 +77,7 @@
   async function ghFetch(url, cfg, opts) {
     const res = await fetch(url, {
       method: opts?.method || "GET",
-      headers: {
-        ...headers(cfg),
-        ...(opts?.headers || {})
-      },
+      headers: { ...headers(cfg), ...(opts?.headers || {}) },
       body: opts?.body
     });
 
@@ -96,12 +99,8 @@
   }
 
   function contentUrl(cfg) {
-    if (!cfg.owner || !cfg.repo) {
-      throw new Error("ghcfg incompleto (owner/repo)");
-    }
-
+    if (!cfg.owner || !cfg.repo) throw new Error("ghcfg incompleto (owner/repo)");
     const branch = encodeURIComponent(cfg.branch || "main");
-
     return API_BASE +
       "/repos/" + encodeURIComponent(cfg.owner) +
       "/" + encodeURIComponent(cfg.repo) +
@@ -125,26 +124,19 @@
     if (p.endsWith(".css")) return "text/css; charset=utf-8";
     if (p.endsWith(".html")) return "text/html; charset=utf-8";
     if (p.endsWith(".json")) return "application/json; charset=utf-8";
-    if (p.endsWith(".svg")) return "image/svg+xml; charset=utf-8";
     if (p.endsWith(".txt")) return "text/plain; charset=utf-8";
+    if (p.endsWith(".svg")) return "image/svg+xml; charset=utf-8";
+    if (p.endsWith(".md")) return "text/markdown; charset=utf-8";
     return "text/plain; charset=utf-8";
   }
 
   function assertValidBundleJSON(txt, where) {
     let j;
     try { j = JSON.parse(txt); }
-    catch {
-      throw new Error("Bundle inválido (" + where + ")");
-    }
+    catch { throw new Error("Bundle inválido (" + where + ")"); }
 
-    if (!j || typeof j !== "object") {
-      throw new Error("Bundle não é objeto JSON (" + where + ")");
-    }
-
-    if (!Array.isArray(j.files)) {
-      throw new Error("Bundle sem files[] (" + where + ")");
-    }
-
+    if (!j || typeof j !== "object") throw new Error("Bundle não é objeto JSON (" + where + ")");
+    if (!Array.isArray(j.files)) throw new Error("Bundle sem files[] (" + where + ")");
     return j;
   }
 
@@ -157,9 +149,7 @@
     const txt = await ghFetch(url, cfg, { method: "GET" });
     const j = safeParse(txt, null);
 
-    if (Array.isArray(j)) {
-      throw new Error("Path é diretório (array retornado)");
-    }
+    if (Array.isArray(j)) throw new Error("Path é diretório (array retornado)");
 
     if (j && j.content) {
       const decoded = decodeB64Utf8(j.content);
@@ -182,7 +172,6 @@
       const blobTxt = await ghFetch(j.git_url, cfg, { method: "GET" });
       const blob = safeParse(blobTxt, null);
       if (!blob?.content) throw new Error("Blob inválido");
-
       const decoded = decodeB64Utf8(blob.content);
       assertValidBundleJSON(decoded, "git_url");
       log("info", "GitHub: pull ok (git_url)");
@@ -235,170 +224,247 @@
   }
 
   // =========================================================
-  // PATCH: Export FULL snapshot from overrides (not only cached bundle)
+  // FILLERS (lista padrão + auto-discovery runtime)
+  // Objetivo: não ficar voltando em "files=1" nunca mais.
   // =========================================================
-  function isPlainObject(x) {
-    return !!x && typeof x === "object" && !Array.isArray(x);
+
+  // ✅ Lista padrão “do core” (você pode ir acrescentando sem quebrar)
+  // (paths no formato do repo: app/...)
+  const DEFAULT_FILLERS = [
+    // base
+    "app/index.html",
+    "app/styles.css",
+    "app/app.js",
+
+    // core
+    "app/js/core/logger.js",
+    "app/js/core/stability_guard.js",
+    "app/js/core/storage.js",
+    "app/js/core/github_sync.js",
+    "app/js/core/vfs_overrides.js",
+    "app/js/core/vfs_shim.js",
+    "app/js/core/mother_selfupdate.js",
+    "app/js/core/errors.js",
+    "app/js/core/risk.js",
+    "app/js/core/snapshot.js",
+    "app/js/core/selfheal.js",
+    "app/js/core/ui_safety.js",
+    "app/js/core/ui_compact_outputs.js",
+    "app/js/core/ui_bindings.js",
+    "app/js/core/diagnostics.js",
+    "app/js/core/publish_queue.js",
+    "app/js/core/preview_runner.js",
+    "app/js/core/policy.js",
+    "app/js/core/settings_cleanup.js",
+    "app/js/core/injector.js",
+
+    // engine
+    "app/js/engine/template_registry.js",
+    "app/js/engine/module_registry.js",
+    "app/js/engine/builder.js",
+    "app/js/engine/engine.js",
+
+    // admin
+    "app/js/admin.github.js",
+  ];
+
+  function uniqSorted(list) {
+    const set = new Set();
+    for (const x of (list || [])) {
+      const p = String(x || "").trim();
+      if (!p) continue;
+      set.add(p);
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
   }
 
-  function normalizePath(p) {
-    let x = String(p || "").trim();
-    if (!x) return "";
-    x = x.replace(/^\/+/, "");
-    return x;
+  function discoverRuntimeFillers() {
+    const out = [];
+
+    // 1) scripts com src (pega tudo que está carregando)
+    try {
+      const scripts = Array.from(document.querySelectorAll("script[src]"));
+      for (const s of scripts) {
+        const src = String(s.getAttribute("src") || "").trim();
+        if (!src) continue;
+
+        // normaliza pra repo
+        // aceita: ./js/core/x.js, /js/core/x.js, app/js/core/x.js
+        let p = src.replace(/^(\.\/)+/, "").replace(/^\/+/, "");
+        if (p.startsWith("js/")) p = "app/" + p;
+        if (p.startsWith("app/js/") || p.startsWith("app/index") || p.startsWith("app/styles") || p.startsWith("app/app.js")) {
+          out.push(p);
+        }
+      }
+    } catch {}
+
+    // 2) hints do boot (se existir algum array global)
+    // tenta ler nomes comuns sem quebrar
+    try {
+      const candidates = [
+        window.__RCF_BOOT_MODULES,
+        window.RCF_BOOT_MODULES,
+        window.__boot_modules,
+      ];
+      for (const arr of candidates) {
+        if (!Array.isArray(arr)) continue;
+        for (const item of arr) {
+          const src = (typeof item === "string") ? item : (item && item.src) ? item.src : "";
+          let p = String(src || "").trim();
+          if (!p) continue;
+          p = p.replace(/^(\.\/)+/, "").replace(/^\/+/, "");
+          if (p.startsWith("js/")) p = "app/" + p;
+          if (p.startsWith("app/")) out.push(p);
+        }
+      }
+    } catch {}
+
+    return uniqSorted(out);
   }
 
-  function buildBundleFromFiles(filesArr) {
-    const files = (filesArr || [])
-      .map((f) => {
-        const path = normalizePath(f?.path || f?.name || "");
-        if (!path) return null;
-        const content = (f?.content != null) ? String(f.content) : "";
-        const contentType = String(f?.contentType || f?.type || guessType(path));
-        return { path, content, contentType };
-      })
-      .filter(Boolean);
+  async function fetchTextForPath(repoPath) {
+    // Converte repo path (app/...) -> runtime url (./app/...) e tenta fetch
+    const p = String(repoPath || "").trim().replace(/^\/+/, "");
+    if (!p) return null;
 
+    const url = "./" + p + (p.includes("?") ? "" : ("?cb=" + Date.now()));
+    try {
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) return null;
+      const txt = await res.text();
+      return String(txt ?? "");
+    } catch {
+      return null;
+    }
+  }
+
+  async function buildFactoryBundle(opts = {}) {
+    const includeDefault = (opts.includeDefault !== false);
+    const includeDiscovered = (opts.includeDiscovered !== false);
+    const maxFiles = Number.isFinite(opts.maxFiles) ? Number(opts.maxFiles) : 250;
+
+    const discovered = includeDiscovered ? discoverRuntimeFillers() : [];
+    const baseList = [
+      ...(includeDefault ? DEFAULT_FILLERS : []),
+      ...discovered
+    ];
+
+    const paths = uniqSorted(baseList).slice(0, maxFiles);
+
+    const files = [];
+    let okCount = 0;
+    let missCount = 0;
+
+    for (const path of paths) {
+      const content = await fetchTextForPath(path);
+      if (content == null) { missCount++; continue; }
+      okCount++;
+      files.push({ path, content, contentType: guessType(path) });
+    }
+
+    const bundle = { version: "rcf_bundle_v1", ts: Date.now(), files };
+
+    log("warn", "FILLERS: bundle build", {
+      candidates: paths.length,
+      ok: okCount,
+      miss: missCount,
+      files: files.length,
+      discovered: discovered.length
+    });
+
+    return bundle;
+  }
+
+  function listFillers() {
+    // Para UI futura: alfabético + “todos os conhecidos”
+    const discovered = discoverRuntimeFillers();
     return {
-      version: "rcf_bundle_v1",
-      ts: Date.now(),
-      files
+      ok: true,
+      defaults: uniqSorted(DEFAULT_FILLERS),
+      discovered,
+      all: uniqSorted([ ...DEFAULT_FILLERS, ...discovered ])
     };
   }
 
-  function tryExportSnapshotFiles() {
-    // 1) Prefer explicit snapshot module if exists
+  function getLocalBundleTextCompat() {
     try {
-      const snap = window.RCF_SNAPSHOT;
-      if (snap && typeof snap.take === "function") {
-        const r = snap.take();
-        if (r && Array.isArray(r.files)) return r.files;
-      }
-      if (snap && typeof snap.export === "function") {
-        const r = snap.export();
-        if (r && Array.isArray(r.files)) return r.files;
-      }
-    } catch {}
-
-    // 2) Look for common override export APIs
-    try {
-      const o = window.RCF_VFS_OVERRIDES;
-      if (o) {
-        if (typeof o.exportOverrides === "function") {
-          const r = o.exportOverrides();
-          if (Array.isArray(r)) return r;
-          if (r && Array.isArray(r.files)) return r.files;
-          if (isPlainObject(r)) {
-            // maybe {path: {content, contentType}}
-            const out = [];
-            for (const [k, v] of Object.entries(r)) {
-              const path = normalizePath(k);
-              if (!path) continue;
-              if (typeof v === "string") out.push({ path, content: v, contentType: guessType(path) });
-              else if (isPlainObject(v)) out.push({ path, content: String(v.content ?? v.text ?? v.body ?? ""), contentType: String(v.contentType || v.type || guessType(path)) });
-              else out.push({ path, content: String(v ?? ""), contentType: guessType(path) });
-            }
-            return out;
-          }
-        }
-
-        if (typeof o.dump === "function") {
-          const r = o.dump();
-          if (Array.isArray(r)) return r;
-          if (r && Array.isArray(r.files)) return r.files;
-          if (isPlainObject(r)) {
-            const out = [];
-            for (const [k, v] of Object.entries(r)) {
-              const path = normalizePath(k);
-              if (!path) continue;
-              if (typeof v === "string") out.push({ path, content: v, contentType: guessType(path) });
-              else if (isPlainObject(v)) out.push({ path, content: String(v.content ?? v.text ?? v.body ?? ""), contentType: String(v.contentType || v.type || guessType(path)) });
-              else out.push({ path, content: String(v ?? ""), contentType: guessType(path) });
-            }
-            return out;
-          }
-        }
-
-        // Try known properties: overrides / map / entries
-        const maybeMap =
-          o.overrides ||
-          o.map ||
-          o.entries ||
-          o._overrides ||
-          o._map;
-
-        if (isPlainObject(maybeMap)) {
-          const out = [];
-          for (const [k, v] of Object.entries(maybeMap)) {
-            const path = normalizePath(k);
-            if (!path) continue;
-            if (typeof v === "string") out.push({ path, content: v, contentType: guessType(path) });
-            else if (isPlainObject(v)) out.push({ path, content: String(v.content ?? v.text ?? v.body ?? ""), contentType: String(v.contentType || v.type || guessType(path)) });
-            else out.push({ path, content: String(v ?? ""), contentType: guessType(path) });
-          }
-          return out;
-        }
-      }
-    } catch {}
-
-    // 3) As a last resort, check generic VFS
-    try {
-      const v = window.RCF_VFS;
-      if (v && typeof v.exportOverrides === "function") {
-        const r = v.exportOverrides();
-        if (Array.isArray(r)) return r;
-        if (r && Array.isArray(r.files)) return r.files;
-      }
-    } catch {}
-
-    return null;
+      const txt = String(localStorage.getItem(LS_BUNDLE_KEY) || "").trim();
+      return txt || "";
+    } catch {
+      return "";
+    }
   }
 
   async function pushMotherBundle(cfgIn) {
     const cfg = saveConfig(cfgIn || loadConfig());
 
-    // ✅ NEW: export FULL snapshot from overrides (what is really applied)
-    const snapFiles = tryExportSnapshotFiles();
-    if (Array.isArray(snapFiles) && snapFiles.length > 0) {
-      const bundleObj = buildBundleFromFiles(snapFiles);
-      const bundleTxt = JSON.stringify(bundleObj);
-
-      assertValidBundleJSON(bundleTxt, "pushMotherBundle(snapshot)");
-      log("ok", "pushMotherBundle: exported snapshot", { filesCount: bundleObj.files.length });
-
-      await push(cfg, bundleTxt);
-      log("ok", "GitHub: pushMotherBundle ok");
-      return { ok: true, filesCount: bundleObj.files.length, source: "snapshot" };
+    // 1) tenta via MAE (padrão)
+    let bundleTxt = "";
+    try {
+      if (window.RCF_MAE?.getLocalBundleText) {
+        bundleTxt = String(await window.RCF_MAE.getLocalBundleText() || "").trim();
+      } else {
+        bundleTxt = getLocalBundleTextCompat();
+      }
+    } catch {
+      bundleTxt = getLocalBundleTextCompat();
     }
 
-    // Fallback antigo (mantido)
-    if (!window.RCF_MAE?.getLocalBundleText) {
-      throw new Error("RCF_MAE.getLocalBundleText ausente");
+    // 2) valida e mede tamanho
+    let localFilesCount = 0;
+    let localOk = false;
+    try {
+      if (bundleTxt) {
+        const j = assertValidBundleJSON(bundleTxt, "pushMotherBundle(local)");
+        localFilesCount = Array.isArray(j.files) ? j.files.length : 0;
+        localOk = true;
+      }
+    } catch {
+      localOk = false;
+      localFilesCount = 0;
     }
 
-    const bundleTxt = await window.RCF_MAE.getLocalBundleText();
-    if (!bundleTxt) throw new Error("Bundle local vazio");
+    // 3) se bundle local estiver “mínimo”, gera bundle completo (FILLERS)
+    // threshold: <= 2 é praticamente “bundle mínimo” (teu caso é 1)
+    const THRESHOLD_MIN = 2;
 
-    assertValidBundleJSON(bundleTxt, "pushMotherBundle(fallback)");
-    const j = safeParse(bundleTxt, null);
+    if (!localOk || localFilesCount <= THRESHOLD_MIN) {
+      log("warn", "pushMotherBundle: usando FILLERS builder (bundle local mínimo)", { localOk, localFilesCount });
 
-    log("warn", "pushMotherBundle: usando fallback (bundle local)", { filesCount: j?.files?.length ?? "?" });
+      const built = await buildFactoryBundle({ includeDefault: true, includeDiscovered: true, maxFiles: 250 });
+      const builtTxt = JSON.stringify(built);
 
+      // salva local também (pra scanner ver e pra você ter fallback)
+      try { localStorage.setItem(LS_BUNDLE_KEY, builtTxt); } catch {}
+
+      // valida antes de push
+      assertValidBundleJSON(builtTxt, "pushMotherBundle(built)");
+      await push(cfg, builtTxt);
+
+      log("ok", "GitHub: pushMotherBundle ok (FILLERS)");
+      return { ok: true, mode: "fillers", filesCount: built.files.length };
+    }
+
+    // 4) bundle local normal -> push normal
+    assertValidBundleJSON(bundleTxt, "pushMotherBundle");
     await push(cfg, bundleTxt);
+
     log("ok", "GitHub: pushMotherBundle ok");
-    return { ok: true, filesCount: (j?.files?.length || 0), source: "fallback_localBundle" };
+    return { ok: true, mode: "local", filesCount: localFilesCount };
   }
 
   window.RCF_GH_SYNC = {
-    __v24g: true,
+    __v24h: true,
     loadConfig,
     saveConfig,
     pull,
     push,
-    pushMotherBundle
+    pushMotherBundle,
+    listFillers,          // ✅ novo (UI futura)
+    buildFactoryBundle    // ✅ novo (debug/manual)
   };
 
-  log("info", "github_sync.js loaded (v2.4g)");
+  log("info", "github_sync.js loaded (v2.4h)");
 })();
 
 // ---------------------------------------------------------
@@ -408,7 +474,6 @@
   try {
     const GH = window.RCF_GH_SYNC;
     if (!GH || typeof GH !== "object") return;
-
     if (typeof GH.test === "function") return;
 
     GH.test = async function testToken(opts = {}) {
