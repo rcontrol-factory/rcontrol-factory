@@ -3,6 +3,11 @@
    - ✅ FIX: não deixa owner/repo virar vazio (merge com cfg salvo)
    - ✅ FIX: antes de Test/Pull/Push salva cfg “merged” (garante ghcfg completo)
    - Mantém MAE clear robusto
+
+   PATCH (Fillers UI):
+   - ✅ Adiciona seção "Fillers" no modal GitHub (admin)
+   - ✅ Lista alfabética + busca (🔎) + refresh
+   - ✅ Fonte: mother_bundle_local + VFS overrides (se disponível)
 */
 (() => {
   "use strict";
@@ -184,6 +189,64 @@
           <button id="btnMaeClear" type="button" style="padding:10px 12px; border-radius:999px; border:1px solid rgba(255,180,80,.25); background: rgba(255,180,80,.10); color:#fff;">MAE clear</button>
         </div>
 
+        <!-- ✅ Fillers UI -->
+        <div style="
+          margin-top:14px;
+          padding-top:12px;
+          border-top: 1px solid rgba(255,255,255,.10);
+        ">
+          <div style="display:flex; align-items:center; gap:10px;">
+            <div style="font-weight:900; font-size:14px; color:#eafff4;">Fillers</div>
+            <div id="fillerCount" style="font-size:12px; color: rgba(255,255,255,.65);">—</div>
+            <button id="btnFillersRefresh" type="button" style="
+              margin-left:auto;
+              padding:8px 12px;
+              border-radius:999px;
+              border:1px solid rgba(255,255,255,.14);
+              background: rgba(255,255,255,.08);
+              color:#fff;
+            ">Atualizar</button>
+          </div>
+
+          <div style="margin-top:10px;">
+            <div style="position:relative;">
+              <div style="
+                position:absolute;
+                left:10px;
+                top:50%;
+                transform: translateY(-50%);
+                opacity:.75;
+                font-size:14px;
+              ">🔎</div>
+              <input id="fillerSearch" style="
+                width:100%;
+                padding:10px 12px;
+                padding-left:34px;
+                border-radius:12px;
+                border:1px solid rgba(255,255,255,.12);
+                background: rgba(0,0,0,.25);
+                color:#fff;
+              " placeholder="Pesquisar filler (ex: app/js/core/...)"/>
+            </div>
+          </div>
+
+          <div id="fillerList" style="
+            margin-top:10px;
+            padding:10px;
+            border-radius:12px;
+            background: rgba(0,0,0,.20);
+            border:1px solid rgba(255,255,255,.08);
+            max-height: 240px;
+            overflow:auto;
+          ">
+            <div style="color: rgba(255,255,255,.70); font-size:12px;">Carregando…</div>
+          </div>
+
+          <div style="margin-top:8px; color: rgba(255,255,255,.55); font-size: 11px; line-height:1.35;">
+            Fonte: <b>mother_bundle_local</b> + <b>VFS overrides</b> (se disponível). Clique em um item para copiar o path.
+          </div>
+        </div>
+
         <pre id="ghOut" style="
           margin-top:12px;
           padding:12px;
@@ -261,6 +324,235 @@
 
       throw new Error("MAE clear: missing");
     }
+
+    // ----------------------------
+    // ✅ Fillers (paths) loader/UI
+    // ----------------------------
+    let __fillersAll = [];   // lista completa (sorted)
+    let __fillersLastMeta = null;
+
+    function el(id){ return document.getElementById(id); }
+
+    function normPathForList(p){
+      let x = String(p || "").trim();
+      if (!x) return "";
+      x = x.replace(/^\/+/, "");
+      // manter padrão "app/..." pra UI (sem quebrar nada)
+      return x;
+    }
+
+    function uniqSorted(arr){
+      const m = new Map();
+      for (const it of (arr || [])) {
+        const k = String(it || "").trim();
+        if (!k) continue;
+        if (!m.has(k)) m.set(k, true);
+      }
+      return Array.from(m.keys()).sort((a,b) => a.localeCompare(b));
+    }
+
+    async function getBundleLocalPaths(){
+      try {
+        const raw = localStorage.getItem("rcf:mother_bundle_local") || "";
+        const j = safeParse(raw, null);
+        const files = Array.isArray(j?.files) ? j.files : [];
+        const out = [];
+        for (const f of files){
+          const p = normPathForList(f?.path || "");
+          if (p) out.push(p);
+        }
+        return { ok:true, paths: out, from: "mother_bundle_local", meta: { filesCount: files.length } };
+      } catch (e) {
+        return { ok:false, paths: [], from: "mother_bundle_local", err: String(e?.message || e) };
+      }
+    }
+
+    async function getOverridesPaths(){
+      try {
+        const O = window.RCF_VFS_OVERRIDES;
+        if (!O) return { ok:false, paths: [], from: "overrides", err: "RCF_VFS_OVERRIDES ausente" };
+
+        // prefer safe (nunca throw)
+        if (typeof O.listOverridesSafe === "function") {
+          const r = await O.listOverridesSafe({ allowStale:true });
+          const res = r?.res || null;
+          const items = Array.isArray(res?.items) ? res.items
+            : Array.isArray(res?.list) ? res.list
+            : Array.isArray(res?.paths) ? res.paths
+            : Array.isArray(res?.keys) ? res.keys
+            : null;
+
+          const out = [];
+          if (Array.isArray(items)) {
+            for (const it of items){
+              const p = normPathForList(
+                (typeof it === "string") ? it :
+                (it?.path != null) ? it.path :
+                (it?.key != null) ? it.key :
+                ""
+              );
+              if (p) out.push(p);
+            }
+          }
+          return { ok: true, paths: out, from: "overrides", meta: { itemsCount: out.length, mode: r?.from || "safe" } };
+        }
+
+        if (typeof O.listOverrides === "function") {
+          const res = await O.listOverrides();
+          const items = Array.isArray(res?.items) ? res.items
+            : Array.isArray(res?.list) ? res.list
+            : Array.isArray(res?.paths) ? res.paths
+            : Array.isArray(res?.keys) ? res.keys
+            : null;
+
+          const out = [];
+          if (Array.isArray(items)) {
+            for (const it of items){
+              const p = normPathForList(
+                (typeof it === "string") ? it :
+                (it?.path != null) ? it.path :
+                (it?.key != null) ? it.key :
+                ""
+              );
+              if (p) out.push(p);
+            }
+          }
+          return { ok:true, paths: out, from: "overrides", meta: { itemsCount: out.length, mode: "listOverrides" } };
+        }
+
+        return { ok:false, paths: [], from: "overrides", err: "sem listOverrides/listOverridesSafe" };
+      } catch (e) {
+        return { ok:false, paths: [], from: "overrides", err: String(e?.message || e) };
+      }
+    }
+
+    async function refreshFillers(){
+      const listEl = el("fillerList");
+      const countEl = el("fillerCount");
+      if (listEl) listEl.innerHTML = `<div style="color: rgba(255,255,255,.70); font-size:12px;">Carregando…</div>`;
+
+      const a = await getBundleLocalPaths();
+      const b = await getOverridesPaths();
+
+      const all = uniqSorted([ ...(a.paths || []), ...(b.paths || []) ]);
+      __fillersAll = all;
+
+      __fillersLastMeta = {
+        at: Date.now(),
+        mother_ok: !!a.ok,
+        mother_count: (a.paths || []).length,
+        overrides_ok: !!b.ok,
+        overrides_count: (b.paths || []).length,
+        overrides_err: b.err || "",
+        mother_err: a.err || ""
+      };
+
+      if (countEl) {
+        const s =
+          `Total: ${all.length}` +
+          ` | bundle_local: ${__fillersLastMeta.mother_count}` +
+          ` | overrides: ${__fillersLastMeta.overrides_count}` +
+          ((!b.ok && b.err) ? ` | WARN(overrides): ${b.err}` : "") +
+          ((!a.ok && a.err) ? ` | WARN(bundle): ${a.err}` : "");
+        countEl.textContent = s;
+      }
+
+      renderFillers(el("fillerSearch")?.value || "");
+    }
+
+    function tryCopy(text){
+      const t = String(text || "");
+      if (!t) return false;
+
+      try {
+        if (navigator.clipboard?.writeText) {
+          navigator.clipboard.writeText(t).catch(() => {});
+          return true;
+        }
+      } catch {}
+
+      // fallback antigo
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = t;
+        ta.style.position = "fixed";
+        ta.style.left = "-9999px";
+        ta.style.top = "0";
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        try { document.execCommand("copy"); } catch {}
+        document.body.removeChild(ta);
+        return true;
+      } catch {}
+
+      return false;
+    }
+
+    function renderFillers(filterText){
+      const listEl = el("fillerList");
+      if (!listEl) return;
+
+      const q = String(filterText || "").trim().toLowerCase();
+      const base = __fillersAll || [];
+      const shown = q ? base.filter(p => String(p).toLowerCase().includes(q)) : base;
+
+      if (!shown.length) {
+        listEl.innerHTML = `<div style="color: rgba(255,255,255,.70); font-size:12px;">Nenhum filler encontrado.</div>`;
+        return;
+      }
+
+      const rows = shown.slice(0, 1200).map((p) => {
+        const safeP = String(p).replace(/</g,"&lt;").replace(/>/g,"&gt;");
+        return `
+          <div class="rcfFillerRow" data-path="${safeP}" style="
+            display:flex;
+            gap:10px;
+            align-items:center;
+            padding:8px 10px;
+            border-radius:10px;
+            border:1px solid rgba(255,255,255,.06);
+            background: rgba(255,255,255,.04);
+            margin-bottom:8px;
+            cursor:pointer;
+          ">
+            <div style="font-size:12px; color: rgba(255,255,255,.90); word-break: break-all; flex:1;">${safeP}</div>
+            <div style="font-size:11px; color: rgba(255,255,255,.55);">copiar</div>
+          </div>
+        `;
+      }).join("");
+
+      listEl.innerHTML = rows;
+
+      // handler click (delegation simples)
+      try {
+        Array.from(listEl.querySelectorAll(".rcfFillerRow")).forEach((row) => {
+          row.addEventListener("click", () => {
+            const p = row.getAttribute("data-path") || "";
+            const ok = tryCopy(p);
+            setGHOut(ok ? ("OK: copied -> " + p) : ("INFO: path -> " + p));
+          }, { passive:true });
+        });
+      } catch {}
+    }
+
+    // wiring fillers UI
+    try {
+      el("btnFillersRefresh")?.addEventListener("click", () => lock(async () => {
+        try {
+          await refreshFillers();
+        } catch (e) {
+          setGHOut("ERR: fillers refresh :: " + (e?.message || e));
+        }
+      }));
+
+      el("fillerSearch")?.addEventListener("input", () => {
+        renderFillers(el("fillerSearch")?.value || "");
+      });
+    } catch {}
+
+    // carregar logo que criar
+    try { refreshFillers(); } catch {}
 
     document.getElementById("btnSaveCfg").addEventListener("click", () => {
       const cfg = readInputsMerged();
