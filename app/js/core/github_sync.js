@@ -1,8 +1,8 @@
-/* RControl Factory — /app/js/core/github_sync.js — v2.4f FINAL STABLE */
+/* RControl Factory — /app/js/core/github_sync.js — v2.4g (PATCH: pushMotherBundle exports FULL snapshot) */
 (() => {
   "use strict";
 
-  if (window.RCF_GH_SYNC && window.RCF_GH_SYNC.__v24f) return;
+  if (window.RCF_GH_SYNC && window.RCF_GH_SYNC.__v24g) return;
 
   const LS_CFG_KEY = "rcf:ghcfg";
   const API_BASE = "https://api.github.com";
@@ -26,10 +26,7 @@
 
   function normalizeBundlePath(input) {
     const raw = String(input || "").trim();
-    return {
-      raw,
-      normalized: FIXED_BUNDLE_PATH
-    };
+    return { raw, normalized: FIXED_BUNDLE_PATH };
   }
 
   function loadConfig() {
@@ -44,12 +41,7 @@
       token: String(c.token || "").trim()
     };
 
-    log("info", "bundle path normalized", {
-      raw: norm.raw,
-      path: cfg.path,
-      fixed: true
-    });
-
+    log("info", "bundle path normalized", { raw: norm.raw, path: cfg.path, fixed: true });
     return cfg;
   }
 
@@ -67,15 +59,12 @@
 
     localStorage.setItem(LS_CFG_KEY, JSON.stringify(safe));
     log("ok", "OK: ghcfg saved");
-
     return safe;
   }
 
   function headers(cfg) {
     const h = { "Accept": "application/vnd.github+json" };
-    if (cfg.token) {
-      h["Authorization"] = "token " + cfg.token;
-    }
+    if (cfg.token) h["Authorization"] = "token " + cfg.token;
     return h;
   }
 
@@ -130,6 +119,17 @@
     catch { return bin; }
   }
 
+  function guessType(path) {
+    const p = String(path || "");
+    if (p.endsWith(".js")) return "application/javascript; charset=utf-8";
+    if (p.endsWith(".css")) return "text/css; charset=utf-8";
+    if (p.endsWith(".html")) return "text/html; charset=utf-8";
+    if (p.endsWith(".json")) return "application/json; charset=utf-8";
+    if (p.endsWith(".svg")) return "image/svg+xml; charset=utf-8";
+    if (p.endsWith(".txt")) return "text/plain; charset=utf-8";
+    return "text/plain; charset=utf-8";
+  }
+
   function assertValidBundleJSON(txt, where) {
     let j;
     try { j = JSON.parse(txt); }
@@ -181,9 +181,8 @@
     if (j && j.git_url) {
       const blobTxt = await ghFetch(j.git_url, cfg, { method: "GET" });
       const blob = safeParse(blobTxt, null);
-      if (!blob?.content) {
-        throw new Error("Blob inválido");
-      }
+      if (!blob?.content) throw new Error("Blob inválido");
+
       const decoded = decodeB64Utf8(blob.content);
       assertValidBundleJSON(decoded, "git_url");
       log("info", "GitHub: pull ok (git_url)");
@@ -235,28 +234,163 @@
     return { ok: true };
   }
 
+  // =========================================================
+  // PATCH: Export FULL snapshot from overrides (not only cached bundle)
+  // =========================================================
+  function isPlainObject(x) {
+    return !!x && typeof x === "object" && !Array.isArray(x);
+  }
+
+  function normalizePath(p) {
+    let x = String(p || "").trim();
+    if (!x) return "";
+    x = x.replace(/^\/+/, "");
+    return x;
+  }
+
+  function buildBundleFromFiles(filesArr) {
+    const files = (filesArr || [])
+      .map((f) => {
+        const path = normalizePath(f?.path || f?.name || "");
+        if (!path) return null;
+        const content = (f?.content != null) ? String(f.content) : "";
+        const contentType = String(f?.contentType || f?.type || guessType(path));
+        return { path, content, contentType };
+      })
+      .filter(Boolean);
+
+    return {
+      version: "rcf_bundle_v1",
+      ts: Date.now(),
+      files
+    };
+  }
+
+  function tryExportSnapshotFiles() {
+    // 1) Prefer explicit snapshot module if exists
+    try {
+      const snap = window.RCF_SNAPSHOT;
+      if (snap && typeof snap.take === "function") {
+        const r = snap.take();
+        if (r && Array.isArray(r.files)) return r.files;
+      }
+      if (snap && typeof snap.export === "function") {
+        const r = snap.export();
+        if (r && Array.isArray(r.files)) return r.files;
+      }
+    } catch {}
+
+    // 2) Look for common override export APIs
+    try {
+      const o = window.RCF_VFS_OVERRIDES;
+      if (o) {
+        if (typeof o.exportOverrides === "function") {
+          const r = o.exportOverrides();
+          if (Array.isArray(r)) return r;
+          if (r && Array.isArray(r.files)) return r.files;
+          if (isPlainObject(r)) {
+            // maybe {path: {content, contentType}}
+            const out = [];
+            for (const [k, v] of Object.entries(r)) {
+              const path = normalizePath(k);
+              if (!path) continue;
+              if (typeof v === "string") out.push({ path, content: v, contentType: guessType(path) });
+              else if (isPlainObject(v)) out.push({ path, content: String(v.content ?? v.text ?? v.body ?? ""), contentType: String(v.contentType || v.type || guessType(path)) });
+              else out.push({ path, content: String(v ?? ""), contentType: guessType(path) });
+            }
+            return out;
+          }
+        }
+
+        if (typeof o.dump === "function") {
+          const r = o.dump();
+          if (Array.isArray(r)) return r;
+          if (r && Array.isArray(r.files)) return r.files;
+          if (isPlainObject(r)) {
+            const out = [];
+            for (const [k, v] of Object.entries(r)) {
+              const path = normalizePath(k);
+              if (!path) continue;
+              if (typeof v === "string") out.push({ path, content: v, contentType: guessType(path) });
+              else if (isPlainObject(v)) out.push({ path, content: String(v.content ?? v.text ?? v.body ?? ""), contentType: String(v.contentType || v.type || guessType(path)) });
+              else out.push({ path, content: String(v ?? ""), contentType: guessType(path) });
+            }
+            return out;
+          }
+        }
+
+        // Try known properties: overrides / map / entries
+        const maybeMap =
+          o.overrides ||
+          o.map ||
+          o.entries ||
+          o._overrides ||
+          o._map;
+
+        if (isPlainObject(maybeMap)) {
+          const out = [];
+          for (const [k, v] of Object.entries(maybeMap)) {
+            const path = normalizePath(k);
+            if (!path) continue;
+            if (typeof v === "string") out.push({ path, content: v, contentType: guessType(path) });
+            else if (isPlainObject(v)) out.push({ path, content: String(v.content ?? v.text ?? v.body ?? ""), contentType: String(v.contentType || v.type || guessType(path)) });
+            else out.push({ path, content: String(v ?? ""), contentType: guessType(path) });
+          }
+          return out;
+        }
+      }
+    } catch {}
+
+    // 3) As a last resort, check generic VFS
+    try {
+      const v = window.RCF_VFS;
+      if (v && typeof v.exportOverrides === "function") {
+        const r = v.exportOverrides();
+        if (Array.isArray(r)) return r;
+        if (r && Array.isArray(r.files)) return r.files;
+      }
+    } catch {}
+
+    return null;
+  }
+
   async function pushMotherBundle(cfgIn) {
     const cfg = saveConfig(cfgIn || loadConfig());
 
+    // ✅ NEW: export FULL snapshot from overrides (what is really applied)
+    const snapFiles = tryExportSnapshotFiles();
+    if (Array.isArray(snapFiles) && snapFiles.length > 0) {
+      const bundleObj = buildBundleFromFiles(snapFiles);
+      const bundleTxt = JSON.stringify(bundleObj);
+
+      assertValidBundleJSON(bundleTxt, "pushMotherBundle(snapshot)");
+      log("ok", "pushMotherBundle: exported snapshot", { filesCount: bundleObj.files.length });
+
+      await push(cfg, bundleTxt);
+      log("ok", "GitHub: pushMotherBundle ok");
+      return { ok: true, filesCount: bundleObj.files.length, source: "snapshot" };
+    }
+
+    // Fallback antigo (mantido)
     if (!window.RCF_MAE?.getLocalBundleText) {
       throw new Error("RCF_MAE.getLocalBundleText ausente");
     }
 
     const bundleTxt = await window.RCF_MAE.getLocalBundleText();
-    if (!bundleTxt) {
-      throw new Error("Bundle local vazio");
-    }
+    if (!bundleTxt) throw new Error("Bundle local vazio");
 
-    assertValidBundleJSON(bundleTxt, "pushMotherBundle");
+    assertValidBundleJSON(bundleTxt, "pushMotherBundle(fallback)");
+    const j = safeParse(bundleTxt, null);
+
+    log("warn", "pushMotherBundle: usando fallback (bundle local)", { filesCount: j?.files?.length ?? "?" });
 
     await push(cfg, bundleTxt);
-
     log("ok", "GitHub: pushMotherBundle ok");
-    return { ok: true };
+    return { ok: true, filesCount: (j?.files?.length || 0), source: "fallback_localBundle" };
   }
 
   window.RCF_GH_SYNC = {
-    __v24f: true,
+    __v24g: true,
     loadConfig,
     saveConfig,
     pull,
@@ -264,8 +398,9 @@
     pushMotherBundle
   };
 
-  log("info", "github_sync.js loaded (v2.4f)");
+  log("info", "github_sync.js loaded (v2.4g)");
 })();
+
 // ---------------------------------------------------------
 // HOTFIX: compat API (admin.github.js espera RCF_GH_SYNC.test)
 // ---------------------------------------------------------
@@ -274,10 +409,8 @@
     const GH = window.RCF_GH_SYNC;
     if (!GH || typeof GH !== "object") return;
 
-    // se já existir, não mexe
     if (typeof GH.test === "function") return;
 
-    // Testa token via GitHub API (safe: não escreve nada)
     GH.test = async function testToken(opts = {}) {
       const cfg = (() => {
         try {
