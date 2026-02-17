@@ -1,8 +1,8 @@
 /* ===========================
-   RControl Factory — /app/app.js — V8.0 PADRÃO (PATCH MINIMO: FAB + remove status-pill)
+   RControl Factory — /app/app.js — V8.0a PADRÃO (PATCH MINIMO: FAB + remove status-pill)
    - Mantém tudo do seu V8.0
-   - Remove status-pill do topo (sem quebrar safeSetStatus)
-   - Adiciona FAB (bolinha) + mini painel de ações
+   - FIX 1: remove ID duplicado (#statusText) no topo (agora é #statusTextTop)
+   - FIX 2: MAE Clear compat: aceita clearOverrides() OU clear()
    =========================== */
 
 (() => {
@@ -518,7 +518,7 @@
 
             <!-- PATCH: pill removida do topo (o CSS esconde e o statusText existe em outro lugar) -->
             <div class="status-pill" id="statusPill" style="margin-left:10px">
-              <span class="ok" id="statusText">OK ✅</span>
+              <span class="ok" id="statusTextTop">OK ✅</span>
             </div>
           </div>
 
@@ -974,14 +974,8 @@
     uiMsg("#editorOut", "✅ Arquivo salvo.");
     Logger.write("file saved:", app.slug, fname);
   }
-
-  /* ==========
-     STOP AQUI — PARTE 1/3
-     A PRÓXIMA PARTE COMEÇA EM:  // =========================================================
-                                // PIN
-     ========== */
-
-  // =========================================================
+   
+     ========== */  // =========================================================
   // PIN
   // =========================================================
   const Pin = {
@@ -2281,16 +2275,24 @@ function bindUI() {
     }
   });
 
+  // ✅ FIX 2: Clear compatível (clearOverrides OU clear)
   bindTap($("#btnMaeClear"), async () => {
     const MAE = window.RCF_MOTHER || window.RCF_MAE;
-    if (!MAE || typeof MAE.clearOverrides !== "function") {
-      uiMsg("#maintOut", "⚠️ clearOverrides() ausente (ou mãe não carregou).");
+
+    const fn =
+      (MAE && typeof MAE.clearOverrides === "function") ? MAE.clearOverrides.bind(MAE) :
+      (MAE && typeof MAE.clear === "function") ? MAE.clear.bind(MAE) :
+      null;
+
+    if (!fn) {
+      uiMsg("#maintOut", "⚠️ clearOverrides()/clear() ausente (ou mãe não carregou).");
       Logger.write("mae clear:", "missing");
       return;
     }
+
     uiMsg("#maintOut", "Limpando...");
     try {
-      await MAE.clearOverrides();
+      await fn();
       uiMsg("#maintOut", "✅ Clear acionado.");
       Logger.write("mae clear:", "ok");
     } catch (e) {
