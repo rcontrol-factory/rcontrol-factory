@@ -5,19 +5,25 @@
    - NORMALIZA paths: SOURCE OF TRUTH = /app (nunca mais escreve /index.html)
    - Timeout por arquivo + retries + progresso no injOut
    - Clear: limpa key rcf:RCF_OVERRIDES_MAP (compatível com app.js)
-   - UI monta direto no #view-settings (não precisa settingsMount)
+   - UI monta direto no ADMIN (preferência) com fallback para Settings
 
    PATCH (Fillers no Injector):
    - Painel "Fillers" com busca + lista alfabética + copiar path
    - Contadores: total | bundle_local | overrides
    - Fonte bundle_local: localStorage rcf:mother_bundle_local (rcf_bundle_v1)
    - Fonte overrides count: RCF_VFS_OVERRIDES.listOverridesSafe() (se existir) OU rcf:RCF_OVERRIDES_MAP
+
+   PATCH (Mover Fillers pro ADMIN no lugar do Log):
+   - Se encontrar bloco "Log:" no Admin, esconde o PRE e coloca Fillers no lugar
 */
 (() => {
   "use strict";
 
-  const VIEW_SETTINGS_ID = "view-settings";
   const OUT_ID = "injOut";
+
+  // Preferência: ADMIN (pra ficar tudo no lugar só)
+  const VIEW_ADMIN_ID = "view-admin";
+  const VIEW_SETTINGS_ID = "view-settings";
 
   const LS_BUNDLE_LOCAL = "rcf:mother_bundle_local";
   const LS_OVR_MAP = "rcf:RCF_OVERRIDES_MAP";
@@ -244,6 +250,7 @@
     const j = safeParse(raw, null);
     const files = Array.isArray(j?.files) ? j.files : [];
     const paths = files.map(f => String(f?.path || "").trim()).filter(Boolean);
+
     // alfabético + unique
     const uniq = Array.from(new Set(paths));
     uniq.sort((a,b) => a.localeCompare(b));
@@ -306,7 +313,7 @@
       const filtered = q ? all.filter(p => p.toLowerCase().includes(q)) : all;
 
       listEl.innerHTML = "";
-      const max = 140; // não exagera no mobile
+      const max = 140; // mobile safe
       const slice = filtered.slice(0, max);
 
       for (const p of slice){
@@ -375,14 +382,36 @@
     btnRefresh.addEventListener("click", refresh);
     searchEl.addEventListener("input", () => renderList(searchEl.value));
 
-    // init
     refresh();
   }
 
-  function renderSettings(){
-    const view = $(VIEW_SETTINGS_ID);
-    if (!view) return;
+  // ---------------------------
+  // ADMIN: colocar Fillers no lugar do "Log"
+  // ---------------------------
+  function findAdminLogPre(adminRoot){
+    try {
+      const nodes = Array.from(adminRoot.querySelectorAll("*"));
+      for (const n of nodes) {
+        const t = String(n.textContent || "").trim().toLowerCase();
+        if (t === "log:" || t === "log") {
+          // tenta pegar o próximo PRE (irmão ou no mesmo pai)
+          let pre = null;
 
+          if (n.nextElementSibling && n.nextElementSibling.tagName === "PRE") pre = n.nextElementSibling;
+
+          if (!pre && n.parentElement) {
+            const pres = Array.from(n.parentElement.querySelectorAll("pre"));
+            if (pres.length) pre = pres[0];
+          }
+
+          if (pre) return pre;
+        }
+      }
+    } catch {}
+    return null;
+  }
+
+  function renderInjectorCard(container){
     // evita duplicar
     if (document.getElementById("injInput")) return;
 
@@ -415,7 +444,7 @@
       </div>
     `;
 
-    view.appendChild(wrap);
+    container.appendChild(wrap);
 
     const input  = document.getElementById("injInput");
     const status = document.getElementById("injStatus");
@@ -459,12 +488,39 @@
       }
     });
 
-    // ✅ Fillers panel dentro do Injector
-    renderFillersPanel(wrap);
+    return wrap;
+  }
+
+  function mount(){
+    const admin = $(VIEW_ADMIN_ID);
+    const settings = $(VIEW_SETTINGS_ID);
+
+    // host preferido: ADMIN
+    const host = admin || settings;
+    if (!host) return;
+
+    // cria card do injector onde estiver o host
+    const card = renderInjectorCard(host);
+
+    // Fillers: se tiver ADMIN e achar "Log:", coloca no lugar do Log
+    if (admin) {
+      const logPre = findAdminLogPre(admin);
+      if (logPre && logPre.parentElement) {
+        try { logPre.style.display = "none"; } catch {}
+        renderFillersPanel(logPre.parentElement);
+        return;
+      }
+      // fallback: coloca dentro do card
+      renderFillersPanel(card);
+      return;
+    }
+
+    // fallback geral (Settings)
+    renderFillersPanel(card);
   }
 
   function init(){
-    try { renderSettings(); } catch (e) { console.warn("Injector UI falhou:", e); }
+    try { mount(); } catch (e) { console.warn("Injector mount falhou:", e); }
   }
 
   if (document.readyState === "loading") {
