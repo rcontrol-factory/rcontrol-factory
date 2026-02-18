@@ -7,16 +7,20 @@
    - Clear: limpa key rcf:RCF_OVERRIDES_MAP (compatível com app.js)
    - UI monta direto no #view-settings (não precisa settingsMount)
 
-   PATCH (FILLERS Explorer):
-   - Lê bundle local (rcf:mother_bundle_local + compat keys) e lista fillers/paths
-   - Ordena A→Z, mostra contador + fonte do bundle
-   - Campo de busca (lupa) + lista clicável (click copia path)
+   PATCH (Fillers no Injector):
+   - Painel "Fillers" com busca + lista alfabética + copiar path
+   - Contadores: total | bundle_local | overrides
+   - Fonte bundle_local: localStorage rcf:mother_bundle_local (rcf_bundle_v1)
+   - Fonte overrides count: RCF_VFS_OVERRIDES.listOverridesSafe() (se existir) OU rcf:RCF_OVERRIDES_MAP
 */
 (() => {
   "use strict";
 
   const VIEW_SETTINGS_ID = "view-settings";
   const OUT_ID = "injOut";
+
+  const LS_BUNDLE_LOCAL = "rcf:mother_bundle_local";
+  const LS_OVR_MAP = "rcf:RCF_OVERRIDES_MAP";
 
   function $(id){ return document.getElementById(id); }
   function nowISO(){ return new Date().toISOString(); }
@@ -28,6 +32,35 @@
 
   function safeParseJSON(txt){
     try { return JSON.parse(txt); } catch { return null; }
+  }
+
+  function safeParse(raw, fb){
+    try { return raw ? JSON.parse(raw) : fb; } catch { return fb; }
+  }
+
+  async function copyText(txt){
+    const t = String(txt || "");
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(t);
+        return true;
+      }
+    } catch {}
+    // fallback antigo
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = t;
+      ta.setAttribute("readonly", "readonly");
+      ta.style.position = "fixed";
+      ta.style.left = "-9999px";
+      ta.style.top = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      return !!ok;
+    } catch {}
+    return false;
   }
 
   // ✅ PADRÃO: MotherRoot é /app
@@ -70,7 +103,7 @@
         kind: "OVERRIDES_VFS(writeFile)",
         put: (p, c) => window.RCF_OVERRIDES_VFS.writeFile(p, c),
         clear: () => {
-          try { localStorage.removeItem("rcf:RCF_OVERRIDES_MAP"); } catch {}
+          try { localStorage.removeItem(LS_OVR_MAP); } catch {}
           return true;
         }
       };
@@ -202,183 +235,148 @@
     return { ok:true, msg };
   }
 
-  // =========================================================
-  // FILLERS EXPLORER (bundle local -> lista A-Z + busca)
-  // =========================================================
-  const BUNDLE_KEYS = [
-    "rcf:mother_bundle_local",
-    "rcf:mother_bundle",
-    "rcf:mother_bundle_json"
-  ];
-
-  function readBundleFromLS(){
-    for (const k of BUNDLE_KEYS){
-      const raw = String(localStorage.getItem(k) || "").trim();
-      if (!raw) continue;
-      const j = safeParseJSON(raw);
-      if (j && typeof j === "object" && Array.isArray(j.files)) {
-        return { ok:true, key:k, bundle:j, raw };
-      }
-    }
-    return { ok:false, key:null, bundle:null, raw:"" };
-  }
-
-  function extractPathsFromBundle(bundleObj){
-    const files = Array.isArray(bundleObj?.files) ? bundleObj.files : [];
-    const out = [];
-    for (let i = 0; i < files.length; i++){
-      const f = files[i] || {};
-      const p = String(f.path || f.name || "").trim();
-      if (!p) continue;
-      const norm = normalizeMotherPath(p);
-      if (shouldSkip(norm)) continue;
-      out.push(norm);
-    }
-    // uniq + sort A-Z
-    const uniq = Array.from(new Set(out));
+  // ---------------------------
+  // Fillers (Index + Search UI)
+  // ---------------------------
+  function readBundleLocalPaths(){
+    const raw = String(localStorage.getItem(LS_BUNDLE_LOCAL) || "").trim();
+    if (!raw) return [];
+    const j = safeParse(raw, null);
+    const files = Array.isArray(j?.files) ? j.files : [];
+    const paths = files.map(f => String(f?.path || "").trim()).filter(Boolean);
+    // alfabético + unique
+    const uniq = Array.from(new Set(paths));
     uniq.sort((a,b) => a.localeCompare(b));
     return uniq;
   }
 
-  function tryCopy(text){
-    const t = String(text || "");
-    if (!t) return false;
-
-    // clipboard api
+  async function readOverridesCount(){
+    // prefer: RCF_VFS_OVERRIDES.listOverridesSafe
     try {
-      if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
-        navigator.clipboard.writeText(t).catch(() => {});
-        return true;
+      if (window.RCF_VFS_OVERRIDES?.listOverridesSafe) {
+        const r = await window.RCF_VFS_OVERRIDES.listOverridesSafe({ allowStale:true });
+        if (r && r.ok) return Number(r.itemsCount || 0);
       }
     } catch {}
 
-    // fallback execCommand
+    // fallback: localStorage map do app.js
     try {
-      const ta = document.createElement("textarea");
-      ta.value = t;
-      ta.setAttribute("readonly", "readonly");
-      ta.style.position = "fixed";
-      ta.style.left = "-9999px";
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand("copy");
-      document.body.removeChild(ta);
-      return true;
+      const map = safeParse(localStorage.getItem(LS_OVR_MAP), null);
+      if (map && typeof map === "object") {
+        const keys = Object.keys(map);
+        return keys.length;
+      }
     } catch {}
 
-    return false;
+    return 0;
   }
 
-  function renderFillersExplorer(container){
-    if (!container) return;
-
+  function renderFillersPanel(container){
     // evita duplicar
-    if (document.getElementById("fillersBox")) return;
+    if (document.getElementById("injFillersWrap")) return;
 
-    const box = document.createElement("div");
-    box.id = "fillersBox";
-    box.className = "card";
-    box.style.marginTop = "12px";
-
-    box.innerHTML = `
-      <h2>Fillers (bundle local)</h2>
-      <p class="hint">
-        Lista dos paths do <b>mother_bundle</b> salvo no localStorage (scanner/targets).
-        <br/>Ordenado A→Z. Clique em um item para <b>copiar</b>.
-      </p>
-
-      <div class="row" style="align-items:center; gap:10px;">
-        <div style="flex:1; position:relative;">
-          <input id="fillersSearch" class="input" type="text" placeholder="🔎 Buscar filler..." style="width:100%;" />
-        </div>
-        <button id="btnFillersReload" class="btn ghost" type="button">Recarregar</button>
+    const wrap = document.createElement("div");
+    wrap.id = "injFillersWrap";
+    wrap.style.marginTop = "14px";
+    wrap.innerHTML = `
+      <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+        <div style="font-weight:900; font-size:14px;">Fillers</div>
+        <div id="injFillersMeta" style="opacity:.75; font-size:12px;">Total: 0 | bundle_local: 0 | overrides: 0</div>
+        <button id="injFillersRefresh" class="btn ghost" type="button" style="margin-left:auto;">Atualizar</button>
       </div>
 
-      <div class="hint" style="margin-top:10px;">
-        Fonte: <span id="fillersSrc">-</span> • Total: <span id="fillersCount">0</span>
+      <div style="margin-top:10px;">
+        <input id="injFillersSearch" class="input" style="width:100%;" placeholder="🔎 Pesquisar filler (ex: app/js/core/...)" />
       </div>
 
-      <div style="margin-top:10px; max-height: 260px; overflow:auto; border-radius:12px; border:1px solid rgba(255,255,255,.08); background: rgba(0,0,0,.18);">
-        <div id="fillersList" class="mono small" style="padding:10px; white-space:pre-wrap;">(vazio)</div>
-      </div>
-
-      <div class="hint" style="margin-top:10px;">
-        Dica: se o total estiver <b>1</b> mas você sabe que tem mais, então o bundle local ainda não foi atualizado — o scanner vai ler exatamente isso aqui.
-      </div>
+      <div id="injFillersList" style="margin-top:10px; display:flex; flex-direction:column; gap:8px;"></div>
     `;
 
-    container.appendChild(box);
+    container.appendChild(wrap);
 
-    const elSrc = document.getElementById("fillersSrc");
-    const elCount = document.getElementById("fillersCount");
-    const elList = document.getElementById("fillersList");
-    const elSearch = document.getElementById("fillersSearch");
+    const metaEl = document.getElementById("injFillersMeta");
+    const listEl = document.getElementById("injFillersList");
+    const searchEl = document.getElementById("injFillersSearch");
+    const btnRefresh = document.getElementById("injFillersRefresh");
 
     let all = [];
 
-    function renderList(filterText){
-      const q = String(filterText || "").trim().toLowerCase();
-      const items = q
-        ? all.filter(p => p.toLowerCase().includes(q))
-        : all;
+    function renderList(filter){
+      const q = String(filter || "").trim().toLowerCase();
+      const filtered = q ? all.filter(p => p.toLowerCase().includes(q)) : all;
 
-      elCount.textContent = String(items.length);
+      listEl.innerHTML = "";
+      const max = 140; // não exagera no mobile
+      const slice = filtered.slice(0, max);
 
-      if (!items.length) {
-        elList.textContent = "(vazio)";
-        return;
+      for (const p of slice){
+        const row = document.createElement("div");
+        row.style.cssText = `
+          display:flex; align-items:center; gap:10px;
+          padding:10px 12px;
+          border-radius: 12px;
+          border: 1px solid rgba(255,255,255,.10);
+          background: rgba(0,0,0,.18);
+        `;
+
+        const left = document.createElement("div");
+        left.style.cssText = "flex:1; min-width:0; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size:12px; opacity:.92; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;";
+        left.textContent = p;
+
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "btn ghost";
+        btn.textContent = "copiar";
+        btn.style.padding = "8px 10px";
+
+        btn.addEventListener("click", async () => {
+          const ok = await copyText(p);
+          try { window.RCF_LOGGER?.push?.(ok ? "ok" : "warn", ok ? `copiado ✅ ${p}` : `copy falhou: ${p}`); } catch {}
+          if (ok) setOut(`✅ Copiado:\n${p}`);
+          else setOut(`⚠️ Não consegui copiar (iOS bloqueou).\nPath:\n${p}`);
+        });
+
+        row.appendChild(left);
+        row.appendChild(btn);
+        listEl.appendChild(row);
       }
 
-      // render com linhas clicáveis
-      elList.innerHTML = items.map(p => {
-        const safe = p.replace(/</g, "&lt;").replace(/>/g, "&gt;");
-        return `<div class="fillItem" data-p="${safe}" style="padding:6px 4px; border-bottom:1px solid rgba(255,255,255,.06); cursor:pointer;">${safe}</div>`;
-      }).join("");
-
-      // bind clicks
-      const nodes = elList.querySelectorAll(".fillItem");
-      nodes.forEach(n => {
-        n.addEventListener("click", () => {
-          const p = n.getAttribute("data-p") || "";
-          tryCopy(p);
-          setOut(`📋 Copiado: ${p}`);
-          try { window.RCF_LOGGER?.push?.("ok", `fillers copy: ${p}`); } catch {}
-        }, { passive:true });
-      });
-    }
-
-    function reload(){
-      const r = readBundleFromLS();
-      if (!r.ok) {
-        all = [];
-        elSrc.textContent = "(nenhum bundle encontrado)";
-        elCount.textContent = "0";
-        elList.textContent = "(vazio)";
-        return;
+      if (filtered.length > max) {
+        const more = document.createElement("div");
+        more.style.cssText = "opacity:.7; font-size:12px; margin-top:6px;";
+        more.textContent = `Mostrando ${max}/${filtered.length}. Refine a busca pra achar mais rápido.`;
+        listEl.appendChild(more);
       }
 
-      const paths = extractPathsFromBundle(r.bundle);
-      all = paths;
-
-      const srcTxt = `${r.key} (files=${Array.isArray(r.bundle?.files) ? r.bundle.files.length : 0})`;
-      elSrc.textContent = srcTxt;
-
-      renderList(elSearch.value || "");
+      if (!filtered.length) {
+        const empty = document.createElement("div");
+        empty.style.cssText = "opacity:.7; font-size:12px; padding:10px 2px;";
+        empty.textContent = "Nenhum filler encontrado (pela busca atual).";
+        listEl.appendChild(empty);
+      }
     }
 
-    // debounce simples
-    let t = null;
-    elSearch.addEventListener("input", () => {
-      clearTimeout(t);
-      t = setTimeout(() => renderList(elSearch.value || ""), 120);
-    }, { passive:true });
+    async function refresh(){
+      try {
+        const bundlePaths = readBundleLocalPaths();
+        const overridesCount = await readOverridesCount();
 
-    document.getElementById("btnFillersReload").addEventListener("click", () => {
-      reload();
-      setOut("✅ Fillers recarregados.");
-    });
+        all = bundlePaths;
+        const total = all.length;
 
-    reload();
+        metaEl.textContent = `Total: ${total} | bundle_local: ${bundlePaths.length} | overrides: ${overridesCount}`;
+        renderList(searchEl.value);
+      } catch (e) {
+        metaEl.textContent = "Total: 0 | bundle_local: 0 | overrides: 0";
+        setOut(`⚠️ Fillers refresh falhou: ${e?.message || e}`);
+      }
+    }
+
+    btnRefresh.addEventListener("click", refresh);
+    searchEl.addEventListener("input", () => renderList(searchEl.value));
+
+    // init
+    refresh();
   }
 
   function renderSettings(){
@@ -461,8 +459,8 @@
       }
     });
 
-    // ✅ NOVO: fillers explorer (bundle local) dentro do Settings
-    renderFillersExplorer(view);
+    // ✅ Fillers panel dentro do Injector
+    renderFillersPanel(wrap);
   }
 
   function init(){
