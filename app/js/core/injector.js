@@ -6,6 +6,11 @@
    - Timeout por arquivo + retries + progresso no injOut
    - Clear: limpa key rcf:RCF_OVERRIDES_MAP (compatível com app.js)
    - UI monta direto no #view-settings (não precisa settingsMount)
+
+   PATCH (FILLERS Explorer):
+   - Lê bundle local (rcf:mother_bundle_local + compat keys) e lista fillers/paths
+   - Ordena A→Z, mostra contador + fonte do bundle
+   - Campo de busca (lupa) + lista clicável (click copia path)
 */
 (() => {
   "use strict";
@@ -197,6 +202,185 @@
     return { ok:true, msg };
   }
 
+  // =========================================================
+  // FILLERS EXPLORER (bundle local -> lista A-Z + busca)
+  // =========================================================
+  const BUNDLE_KEYS = [
+    "rcf:mother_bundle_local",
+    "rcf:mother_bundle",
+    "rcf:mother_bundle_json"
+  ];
+
+  function readBundleFromLS(){
+    for (const k of BUNDLE_KEYS){
+      const raw = String(localStorage.getItem(k) || "").trim();
+      if (!raw) continue;
+      const j = safeParseJSON(raw);
+      if (j && typeof j === "object" && Array.isArray(j.files)) {
+        return { ok:true, key:k, bundle:j, raw };
+      }
+    }
+    return { ok:false, key:null, bundle:null, raw:"" };
+  }
+
+  function extractPathsFromBundle(bundleObj){
+    const files = Array.isArray(bundleObj?.files) ? bundleObj.files : [];
+    const out = [];
+    for (let i = 0; i < files.length; i++){
+      const f = files[i] || {};
+      const p = String(f.path || f.name || "").trim();
+      if (!p) continue;
+      const norm = normalizeMotherPath(p);
+      if (shouldSkip(norm)) continue;
+      out.push(norm);
+    }
+    // uniq + sort A-Z
+    const uniq = Array.from(new Set(out));
+    uniq.sort((a,b) => a.localeCompare(b));
+    return uniq;
+  }
+
+  function tryCopy(text){
+    const t = String(text || "");
+    if (!t) return false;
+
+    // clipboard api
+    try {
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+        navigator.clipboard.writeText(t).catch(() => {});
+        return true;
+      }
+    } catch {}
+
+    // fallback execCommand
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = t;
+      ta.setAttribute("readonly", "readonly");
+      ta.style.position = "fixed";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+      return true;
+    } catch {}
+
+    return false;
+  }
+
+  function renderFillersExplorer(container){
+    if (!container) return;
+
+    // evita duplicar
+    if (document.getElementById("fillersBox")) return;
+
+    const box = document.createElement("div");
+    box.id = "fillersBox";
+    box.className = "card";
+    box.style.marginTop = "12px";
+
+    box.innerHTML = `
+      <h2>Fillers (bundle local)</h2>
+      <p class="hint">
+        Lista dos paths do <b>mother_bundle</b> salvo no localStorage (scanner/targets).
+        <br/>Ordenado A→Z. Clique em um item para <b>copiar</b>.
+      </p>
+
+      <div class="row" style="align-items:center; gap:10px;">
+        <div style="flex:1; position:relative;">
+          <input id="fillersSearch" class="input" type="text" placeholder="🔎 Buscar filler..." style="width:100%;" />
+        </div>
+        <button id="btnFillersReload" class="btn ghost" type="button">Recarregar</button>
+      </div>
+
+      <div class="hint" style="margin-top:10px;">
+        Fonte: <span id="fillersSrc">-</span> • Total: <span id="fillersCount">0</span>
+      </div>
+
+      <div style="margin-top:10px; max-height: 260px; overflow:auto; border-radius:12px; border:1px solid rgba(255,255,255,.08); background: rgba(0,0,0,.18);">
+        <div id="fillersList" class="mono small" style="padding:10px; white-space:pre-wrap;">(vazio)</div>
+      </div>
+
+      <div class="hint" style="margin-top:10px;">
+        Dica: se o total estiver <b>1</b> mas você sabe que tem mais, então o bundle local ainda não foi atualizado — o scanner vai ler exatamente isso aqui.
+      </div>
+    `;
+
+    container.appendChild(box);
+
+    const elSrc = document.getElementById("fillersSrc");
+    const elCount = document.getElementById("fillersCount");
+    const elList = document.getElementById("fillersList");
+    const elSearch = document.getElementById("fillersSearch");
+
+    let all = [];
+
+    function renderList(filterText){
+      const q = String(filterText || "").trim().toLowerCase();
+      const items = q
+        ? all.filter(p => p.toLowerCase().includes(q))
+        : all;
+
+      elCount.textContent = String(items.length);
+
+      if (!items.length) {
+        elList.textContent = "(vazio)";
+        return;
+      }
+
+      // render com linhas clicáveis
+      elList.innerHTML = items.map(p => {
+        const safe = p.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        return `<div class="fillItem" data-p="${safe}" style="padding:6px 4px; border-bottom:1px solid rgba(255,255,255,.06); cursor:pointer;">${safe}</div>`;
+      }).join("");
+
+      // bind clicks
+      const nodes = elList.querySelectorAll(".fillItem");
+      nodes.forEach(n => {
+        n.addEventListener("click", () => {
+          const p = n.getAttribute("data-p") || "";
+          tryCopy(p);
+          setOut(`📋 Copiado: ${p}`);
+          try { window.RCF_LOGGER?.push?.("ok", `fillers copy: ${p}`); } catch {}
+        }, { passive:true });
+      });
+    }
+
+    function reload(){
+      const r = readBundleFromLS();
+      if (!r.ok) {
+        all = [];
+        elSrc.textContent = "(nenhum bundle encontrado)";
+        elCount.textContent = "0";
+        elList.textContent = "(vazio)";
+        return;
+      }
+
+      const paths = extractPathsFromBundle(r.bundle);
+      all = paths;
+
+      const srcTxt = `${r.key} (files=${Array.isArray(r.bundle?.files) ? r.bundle.files.length : 0})`;
+      elSrc.textContent = srcTxt;
+
+      renderList(elSearch.value || "");
+    }
+
+    // debounce simples
+    let t = null;
+    elSearch.addEventListener("input", () => {
+      clearTimeout(t);
+      t = setTimeout(() => renderList(elSearch.value || ""), 120);
+    }, { passive:true });
+
+    document.getElementById("btnFillersReload").addEventListener("click", () => {
+      reload();
+      setOut("✅ Fillers recarregados.");
+    });
+
+    reload();
+  }
+
   function renderSettings(){
     const view = $(VIEW_SETTINGS_ID);
     if (!view) return;
@@ -276,6 +460,9 @@
         setOut(`❌ Falhou: ${e?.message || e}`);
       }
     });
+
+    // ✅ NOVO: fillers explorer (bundle local) dentro do Settings
+    renderFillersExplorer(view);
   }
 
   function init(){
