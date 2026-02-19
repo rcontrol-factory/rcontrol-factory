@@ -6,6 +6,7 @@
    - Mantém: FAB + painel, status pill oculto, Injector SAFE, Agent, Diagnostics, SW tools
    - PATCH (RCF UI SLOTS + UI REGISTRY + FIX statusText DUP):
      - Slots oficiais no Admin (admin.top / admin.integrations / admin.logs / admin.injector)
+     - Slots oficiais no Agent/Generator/Settings (agent.actions/tools, generator.actions/tools, settings.security.actions)
      - window.RCF_UI registry estável + data-rcf-* padronizado
      - Remove ID duplicado #statusText (top vira #statusTextTop)
      - Admin: injLog colapsado por padrão + toggle mostrar/esconder
@@ -54,13 +55,25 @@
         version: "v1",
         _lastRefreshAt: 0,
         slots: {
+          // Admin (já existia)
           "admin.top": "#rcfAdminSlotTop",
           "admin.integrations": "#rcfAdminSlotIntegrations",
           "admin.logs": "#rcfAdminSlotLogs",
           "admin.injector": "#admin-injector",
+
+          // Tools / views
           "tools.drawer": "#toolsDrawer",
           "logs.view": "#view-logs",
           "admin.view": "#view-admin",
+
+          // NEW: Agent / Generator / Settings (para módulos plugar botões sem caçar)
+          "agent.actions": "#rcfAgentSlotActions",
+          "agent.tools": "#rcfAgentSlotTools",
+          "generator.actions": "#rcfGenSlotActions",
+          "generator.tools": "#rcfGenSlotTools",
+          "settings.security.actions": "#rcfSettingsSecurityActions",
+
+          // Status
           "status.text": "#statusText",       // source of truth (drawer)
           "status.text.top": "#statusTextTop" // opcional (topbar)
         },
@@ -715,10 +728,18 @@
           <section class="view card" id="view-generator" data-rcf-view="generator">
             <h1>Generator</h1>
             <p class="hint">Gera ZIP do app selecionado (stub por enquanto).</p>
-            <div class="row">
-              <button class="btn ok" id="btnGenZip" type="button" data-rcf-action="gen.zip">Build ZIP</button>
-              <button class="btn ghost" id="btnGenPreview" type="button" data-rcf-action="gen.preview">Preview</button>
+
+            <!-- ✅ SLOT FIXO: Generator Actions (para módulos plugar botões) -->
+            <div id="rcfGenSlotActions" data-rcf-slot="generator.actions">
+              <div class="row">
+                <button class="btn ok" id="btnGenZip" type="button" data-rcf-action="gen.zip">Build ZIP</button>
+                <button class="btn ghost" id="btnGenPreview" type="button" data-rcf-action="gen.preview">Preview</button>
+              </div>
             </div>
+
+            <!-- ✅ SLOT FIXO: Generator Tools (extra UI) -->
+            <div id="rcfGenSlotTools" data-rcf-slot="generator.tools"></div>
+
             <pre class="mono" id="genOut">Pronto.</pre>
           </section>
 
@@ -732,6 +753,12 @@
               <button class="btn ghost" id="btnAgentHelp" type="button" data-rcf-action="agent.help">Ajuda</button>
             </div>
 
+            <!-- ✅ SLOT FIXO: Agent Actions (zip_vault/agent_zip_bridge vão plugar aqui) -->
+            <div id="rcfAgentSlotActions" data-rcf-slot="agent.actions"></div>
+
+            <!-- ✅ SLOT FIXO: Agent Tools (extra UI) -->
+            <div id="rcfAgentSlotTools" data-rcf-slot="agent.tools"></div>
+
             <pre class="mono" id="agentOut">Pronto.</pre>
           </section>
 
@@ -741,6 +768,10 @@
             <div class="card" id="settings-security" data-rcf-panel="settings.security">
               <h2>Segurança</h2>
               <p class="hint">Define um PIN para liberar ações críticas no Admin.</p>
+
+              <!-- ✅ SLOT FIXO: Security Actions (se algum módulo quiser botão aqui) -->
+              <div id="rcfSettingsSecurityActions" data-rcf-slot="settings.security.actions"></div>
+
               <div class="row">
                 <input id="pinInput" placeholder="Definir PIN (4-8 dígitos)" inputmode="numeric" />
                 <button class="btn ok" id="btnPinSave" type="button" data-rcf-action="pin.save">Salvar PIN</button>
