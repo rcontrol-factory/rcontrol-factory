@@ -1,237 +1,269 @@
-/* =========================================================
-  RControl Factory — js/core/preview_runner.js (PADRÃO v1.1)
-  - Preview instantâneo do app-filho (abre nova aba)
-  - Exporta bundle/build (JSON) do app ativo
-  - NÃO depende do publish/API (só runtime local)
-  - iOS safe tap + init guard
-  - Clipboard robusto (await) + fallback no genOut
-  - Revoke object URL (evita leak)
-========================================================= */
-
-(function () {
+/* RCF — PREVIEW_RUNNER PATCH (v1.2b SAFE) — insert at JS_EOF
+   - FIX: revoke blob URLs (anti leak)
+   - FIX: normalize refs ./file /file
+*/
+(() => {
   "use strict";
 
-  if (window.RCF_PREVIEW_RUNNER && window.RCF_PREVIEW_RUNNER.__v11) return;
+  try {
+    if (window.__RCF_PREVIEW_PATCHED_v12__) return;
+    window.__RCF_PREVIEW_PATCHED_v12__ = true;
 
-  const $ = (id) => document.getElementById(id);
-
-  // ---------- iOS safe tap ----------
-  const TAP_GUARD_MS = 450;
-  let _lastTapAt = 0;
-
-  function bindTap(el, fn) {
-    if (!el) return;
-
-    const handler = async (e) => {
-      const now = Date.now();
-      if (now - _lastTapAt < TAP_GUARD_MS) {
-        try { e.preventDefault(); e.stopPropagation(); } catch {}
-        return;
-      }
-      _lastTapAt = now;
-
-      try { e.preventDefault(); e.stopPropagation(); } catch {}
-      try { await fn(e); } catch (err) {
-        log("err", "PREVIEW error :: " + (err?.message || String(err)));
-        uiOut("genOut", "❌ Erro: " + (err?.message || String(err)));
-      }
+    const log = (...a) => {
+      try {
+        (window.RCF_LOGGER?.push?.("INFO", a.map(x => String(x)).join(" ")) ||
+         window.RCF_LOGGER?.push?.("LOG",  a.map(x => String(x)).join(" ")));
+      } catch {}
+      try { console.log("[RCF_PREVIEW]", ...a); } catch {}
     };
 
-    try {
-      el.style.pointerEvents = "auto";
-      el.style.touchAction = "manipulation";
-      el.style.webkitTapHighlightColor = "transparent";
-    } catch {}
+    const errlog = (...a) => {
+      try { window.RCF_LOGGER?.push?.("ERR", a.map(x => String(x)).join(" ")); } catch {}
+      try { console.error("[RCF_PREVIEW]", ...a); } catch {}
+    };
 
-    el.addEventListener("touchend", handler, { passive: false, capture: true });
-    el.addEventListener("click", handler, { passive: false, capture: true });
-  }
+    const $ = (sel, root = document) => root.querySelector(sel);
 
-  function log(level, msg) {
-    try { window.RCF_LOGGER?.push?.(level, msg); } catch {}
-    try {
-      if (window.RCF && typeof window.RCF.log === "function") window.RCF.log(msg);
-      else console.log("[RCF PREVIEW]", level, msg);
-    } catch {}
-  }
-
-  function uiOut(id, text) {
-    const el = $(id);
-    if (el) el.textContent = String(text ?? "");
-  }
-
-  // ---------- Leitura robusta do app ativo ----------
-  // 1) window.RCF.state
-  // 2) localStorage rcf:apps + rcf:active
-  function getFactoryStateFallback() {
-    const prefix = "rcf:";
-    const safeJson = (s, fb) => { try { return JSON.parse(s); } catch { return fb; } };
-
-    const apps = safeJson(localStorage.getItem(prefix + "apps") || "[]", []);
-    const active = safeJson(localStorage.getItem(prefix + "active") || "{}", {});
-    return { apps, active };
-  }
-
-  function getActiveAppObject() {
-    // 1) prefer API exposta
-    try {
-      const st = window.RCF && window.RCF.state;
-      if (st && Array.isArray(st.apps) && st.active && st.active.appSlug) {
-        const app = st.apps.find(a => a.slug === st.active.appSlug) || null;
-        return { app, active: st.active };
-      }
-    } catch {}
-
-    // 2) fallback storage
-    const st2 = getFactoryStateFallback();
-    const slug = st2.active?.appSlug || null;
-    const app2 = slug ? (st2.apps.find(a => a.slug === slug) || null) : null;
-    return { app: app2, active: st2.active || {} };
-  }
-
-  function normalizeFiles(app) {
-    const files = (app && app.files && typeof app.files === "object") ? app.files : {};
-    const out = {};
-    for (const k of Object.keys(files)) out[k] = String(files[k] ?? "");
-    return out;
-  }
-
-  // ---------- Build HTML do Preview ----------
-  function buildPreviewHTML(app) {
-    const files = normalizeFiles(app);
-
-    const html = files["index.html"] || files["/index.html"] || "";
-    const css = files["styles.css"] || files["/styles.css"] || "";
-    const js  = files["app.js"] || files["/app.js"] || "";
-
-    let outHtml = String(html || "").trim();
-
-    if (!outHtml) {
-      outHtml = `<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <title>${escapeHtml(app?.name || "Preview")}</title>
-  <style>${css}</style>
-</head>
-<body>
-  <h1 style="font-family:system-ui">Preview: ${escapeHtml(app?.name || "")}</h1>
-  <div id="root"></div>
-  <script>${js}<\/script>
-</body>
-</html>`;
-      return outHtml;
+    function getActiveAppFromState() {
+      const st = window.RCF?.state || window.RCF_STATE || null;
+      const apps = st?.apps || [];
+      const slug = st?.active?.appSlug || st?.active?.slug || null;
+      if (!slug) return null;
+      return apps.find(a => a?.slug === slug) || null;
     }
 
-    // remove refs externos típicos
-    outHtml = outHtml
-      .replace(/<script\s+[^>]*src=["']app\.js["'][^>]*>\s*<\/script>/gi, "")
-      .replace(/<link\s+[^>]*href=["']styles\.css["'][^>]*>/gi, "");
-
-    // injeta CSS
-    if (css) {
-      if (outHtml.includes("</head>")) outHtml = outHtml.replace("</head>", `<style>${css}</style>\n</head>`);
-      else outHtml = `<style>${css}</style>\n` + outHtml;
+    function safeHTML(s) {
+      return String(s ?? "").replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
     }
 
-    // injeta JS
-    if (js) {
-      if (outHtml.includes("</body>")) outHtml = outHtml.replace("</body>", `<script>${js}<\/script>\n</body>`);
-      else outHtml = outHtml + `\n<script>${js}<\/script>\n`;
+    // --- FIX: normalize path keys ---
+    function normKey(k) {
+      let x = String(k || "").trim();
+      if (!x) return "";
+      x = x.replace(/\\/g, "/");
+      x = x.replace(/^[.]\//, ""); // ./file
+      x = x.replace(/^\/+/, "");   // /file
+      x = x.split("#")[0].split("?")[0];
+      return x;
     }
 
-    return outHtml;
-  }
-
-  function escapeHtml(s) {
-    return String(s).replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
-  }
-
-  // ---------- ações ----------
-  async function doPreview() {
-    const { app } = getActiveAppObject();
-    if (!app) {
-      uiOut("genOut", "⚠️ Sem app ativo. Crie um app e selecione.");
-      return;
-    }
-
-    const html = buildPreviewHTML(app);
-    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-
-    const w = window.open(url, "_blank", "noopener,noreferrer");
-    uiOut("genOut", `✅ Preview aberto: ${app.slug}`);
-
-    log("ok", "PREVIEW aberto: " + app.slug);
-
-    // evita leak de blob URLs
-    setTimeout(() => {
-      try { URL.revokeObjectURL(url); } catch {}
-      try { if (w && w.closed) {} } catch {}
-    }, 4000);
-  }
-
-  async function exportBundleJSON() {
-    const { app } = getActiveAppObject();
-    if (!app) {
-      uiOut("genOut", "⚠️ Sem app ativo. Crie um app e selecione.");
-      return;
-    }
-
-    const payload = {
-      meta: {
-        kind: "rcf-app-bundle",
-        slug: app.slug,
-        name: app.name,
-        createdAt: new Date().toISOString()
+    // --- leak guard ---
+    const BlobPool = {
+      urls: [],
+      reset() {
+        const list = this.urls.slice(0);
+        this.urls = [];
+        for (const u of list) {
+          try { URL.revokeObjectURL(u); } catch {}
+        }
       },
-      files: normalizeFiles(app)
+      track(u) {
+        try { this.urls.push(u); } catch {}
+        return u;
+      }
     };
 
-    const txt = JSON.stringify(payload, null, 2);
+    function buildBlobMap(files) {
+      BlobPool.reset();
 
-    // tenta copiar (iOS pode bloquear, então tem fallback)
-    let copied = false;
-    try {
-      if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
-        await navigator.clipboard.writeText(txt);
-        copied = true;
+      const map = {};
+      for (const [name, content] of Object.entries(files || {})) {
+        const key = normKey(name);
+        if (!key) continue;
+
+        const lower = key.toLowerCase();
+        let type = "text/plain";
+        if (lower.endsWith(".html")) type = "text/html";
+        else if (lower.endsWith(".css")) type = "text/css";
+        else if (lower.endsWith(".js")) type = "text/javascript";
+        else if (lower.endsWith(".json")) type = "application/json";
+        else if (lower.endsWith(".pdf")) type = "application/pdf";
+
+        const blob = new Blob([String(content ?? "")], { type });
+        const url = BlobPool.track(URL.createObjectURL(blob));
+
+        map[key] = url;
       }
-    } catch {}
-
-    if (copied) {
-      uiOut("genOut", "✅ Bundle exportado e copiado (clipboard).");
-    } else {
-      // fallback: deixa o JSON no genOut pra copiar manual
-      uiOut("genOut", txt);
-      log("warn", "Clipboard bloqueado no iOS — JSON enviado para genOut (copie manual).");
+      return map;
     }
 
-    log("ok", "EXPORT bundle: " + app.slug);
+    function rewriteIndexHtml(indexHtml, blobMap) {
+      let html = String(indexHtml ?? "");
+
+      const replaceAttr = (attr) => {
+        html = html.replace(
+          new RegExp(`${attr}\\s*=\\s*"(.*?)"`, "gi"),
+          (m, v) => {
+            const raw = String(v || "").trim();
+            if (!raw) return m;
+
+            const key = normKey(raw);
+            if (blobMap[key]) return `${attr}="${blobMap[key]}"`;
+
+            return m;
+          }
+        );
+      };
+
+      replaceAttr("src");
+      replaceAttr("href");
+
+      return html;
+    }
+
+    function ensureOverlay() {
+      let ov = $("#rcfPreviewOverlay");
+      if (ov) return ov;
+
+      ov = document.createElement("div");
+      ov.id = "rcfPreviewOverlay";
+      ov.style.cssText = [
+        "position:fixed;inset:0;z-index:999999;",
+        "background:rgba(0,0,0,.62);backdrop-filter:blur(6px);",
+        "display:none;align-items:center;justify-content:center;padding:14px;"
+      ].join("");
+
+      ov.innerHTML = `
+        <div id="rcfPreviewCard" style="width:min(980px,96vw);height:min(760px,92vh);background:rgba(10,14,22,.96);border:1px solid rgba(255,255,255,.12);border-radius:16px;overflow:hidden;display:flex;flex-direction:column">
+          <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.10)">
+            <div style="font-weight:900;color:#fff">Preview Sandbox</div>
+            <div id="rcfPreviewMeta" style="margin-left:auto;font-size:12px;opacity:.85;color:#fff;max-width:55%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></div>
+            <button id="rcfPreviewReload" type="button" style="padding:8px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.06);color:#fff;font-weight:800">Reload</button>
+            <button id="rcfPreviewClose" type="button" style="padding:8px 10px;border-radius:999px;border:0;background:#ef4444;color:#fff;font-weight:900">Close</button>
+          </div>
+
+          <div style="display:flex;gap:10px;flex:1;min-height:0">
+            <div style="width:260px;max-width:40%;border-right:1px solid rgba(255,255,255,.10);padding:10px;overflow:auto;color:#fff">
+              <div style="font-weight:900;margin-bottom:8px">Logs</div>
+              <pre id="rcfPreviewLog" style="white-space:pre-wrap;word-break:break-word;background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.10);border-radius:12px;padding:10px;min-height:120px"></pre>
+              <div style="opacity:.75;font-size:12px;margin-top:10px">
+                SAFE: se quebrar, fecha sozinho e não trava a Factory.
+              </div>
+            </div>
+
+            <div style="flex:1;min-width:0;display:flex;flex-direction:column">
+              <iframe id="rcfPreviewFrame" title="RCF Preview" style="border:0;flex:1;width:100%;background:#fff"></iframe>
+            </div>
+          </div>
+        </div>
+      `;
+
+      document.body.appendChild(ov);
+
+      ov.addEventListener("pointerdown", (ev) => {
+        try { if (ev.target === ov) closePreview(); } catch {}
+      }, { passive: true });
+
+      $("#rcfPreviewClose")?.addEventListener("click", () => closePreview(), { passive: true });
+      $("#rcfPreviewReload")?.addEventListener("click", () => {
+        try { window.RCF_PREVIEW?.open?.({ reload: true }); } catch {}
+      }, { passive: true });
+
+      return ov;
+    }
+
+    function pushPreviewLog(line) {
+      try {
+        const pre = $("#rcfPreviewLog");
+        if (!pre) return;
+        pre.textContent = (pre.textContent ? pre.textContent + "\n" : "") + String(line || "");
+      } catch {}
+    }
+
+    function closePreview() {
+      try {
+        const ov = $("#rcfPreviewOverlay");
+        if (ov) ov.style.display = "none";
+      } catch {}
+      // FIX: revoke blobs on close
+      try { BlobPool.reset(); } catch {}
+    }
+
+    async function openPreview(opts = {}) {
+      const ov = ensureOverlay();
+      const frame = $("#rcfPreviewFrame");
+      const meta = $("#rcfPreviewMeta");
+      const logBox = $("#rcfPreviewLog");
+
+      try { if (logBox) logBox.textContent = ""; } catch {}
+
+      try {
+        const app = getActiveAppFromState();
+        if (!app) {
+          pushPreviewLog("⚠️ Nenhum app ativo. Selecione um app no Dashboard primeiro.");
+          if (meta) meta.textContent = "Sem app ativo";
+          ov.style.display = "flex";
+          if (frame) frame.srcdoc = `<h1 style="font-family:system-ui;padding:18px">Sem app ativo</h1>`;
+          return { ok: false, err: "no_active_app" };
+        }
+
+        const files = app.files || {};
+        const indexHtml =
+          files["index.html"] || files["/index.html"] || files["app/index.html"] || "";
+
+        if (!indexHtml) {
+          pushPreviewLog("⚠️ App ativo não tem index.html.");
+          if (meta) meta.textContent = `${app.name} (${app.slug})`;
+          ov.style.display = "flex";
+          if (frame) frame.srcdoc = `<h1 style="font-family:system-ui;padding:18px">App sem index.html</h1>`;
+          return { ok: false, err: "missing_index" };
+        }
+
+        const blobMap = buildBlobMap(files);
+        const html = rewriteIndexHtml(indexHtml, blobMap);
+
+        if (meta) meta.textContent = `${app.name} (${app.slug}) • files=${Object.keys(files).length}`;
+        pushPreviewLog("✅ Preview montado (sandbox).");
+        pushPreviewLog("Dica: se um arquivo não carregar, revise refs (src/href) no index.html.");
+
+        ov.style.display = "flex";
+        if (frame) frame.srcdoc = html;
+
+        return { ok: true };
+      } catch (e) {
+        errlog("preview fail:", e?.message || e);
+        pushPreviewLog("❌ Erro no Preview: " + (e?.message || e));
+        try {
+          ov.style.display = "flex";
+          if (frame) frame.srcdoc = `<pre style="font-family:ui-monospace,Menlo,monospace;padding:18px">${safeHTML(String(e?.stack || e?.message || e))}</pre>`;
+        } catch {}
+        return { ok: false, err: String(e?.message || e) };
+      }
+    }
+
+    // API global
+    window.RCF_PREVIEW = window.RCF_PREVIEW || {};
+    window.RCF_PREVIEW.open = openPreview;
+    window.RCF_PREVIEW.close = closePreview;
+
+    function bindPreviewButtons() {
+      const candidates = [
+        "#btnGenPreview",
+        '[data-rcf-action="gen.preview"]',
+        "#btnPreview",
+        '[data-rcf-action="preview.open"]'
+      ];
+
+      for (const sel of candidates) {
+        const el = $(sel);
+        if (!el || el.__rcfPreviewBound__) continue;
+        el.__rcfPreviewBound__ = true;
+
+        el.addEventListener("click", (ev) => {
+          try { ev.preventDefault(); ev.stopPropagation(); } catch {}
+          openPreview({});
+        }, { passive: false });
+
+        log("preview hook ok:", sel);
+      }
+    }
+
+    bindPreviewButtons();
+    setTimeout(bindPreviewButtons, 800);
+    setTimeout(bindPreviewButtons, 2000);
+
+    log("PREVIEW patch installed ✅ v1.2b");
+  } catch (e) {
+    try { console.error("RCF preview patch fatal:", e); } catch {}
   }
-
-  // ---------- bind ----------
-  function init() {
-    const btnPreview = $("btnGenPreview");
-    const btnExport  = $("btnGenZip"); // reaproveitado
-
-    bindTap(btnPreview, doPreview);
-    bindTap(btnExport, exportBundleJSON);
-
-    try {
-      if (btnExport) btnExport.textContent = "Export Build (bundle)";
-      if (btnPreview) btnPreview.textContent = "Preview App";
-    } catch {}
-
-    log("ok", "PREVIEW_RUNNER v1.1 carregado ✅");
-  }
-
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", init, { once: true });
-  } else {
-    init();
-  }
-
-  window.RCF_PREVIEW_RUNNER = { __v11: true };
 })();
