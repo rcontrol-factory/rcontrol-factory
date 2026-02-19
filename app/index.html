@@ -1,3 +1,10 @@
+<!-- FILE: /app/index.html
+     RControl Factory — index.html (vCLEAN-1+ENGINE + VENDOR ZIP)
+     PATCH:
+     - adiciona vendor loader do JSZip
+     - adiciona vendor_health.js
+     - adiciona zip_vault.js (import ZIP + PDFs)
+-->
 <!doctype html>
 <html lang="pt-BR">
 <head>
@@ -56,6 +63,12 @@
           "./js/core/logger.js",
           "./js/core/stability_guard.js",
           "./js/core/storage.js",
+
+          /* ✅ VENDOR: JSZip + health + Zip Vault (ZIP/PDF import) */
+          "./vendor/jszip.min.js",
+          "./js/core/vendor_health.js",
+          "./js/core/zip_vault.js",
+
           "./js/core/github_sync.js",
           "./js/core/vfs_overrides.js",
           "./js/core/vfs_shim.js",
