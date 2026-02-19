@@ -1,10 +1,8 @@
 <!-- FILE: /app/index.html
-     RControl Factory — index.html (vCLEAN-1+ENGINE + VENDOR ZIP)
+     RControl Factory — index.html (vCLEAN-1+ENGINE + VENDOR ZIP + AGENT ZIP)
      PATCH:
-     - remove "./vendor/jszip.min.js" (não existe)
-     - adiciona "./js/core/vendor_loader.js" (carrega JSZip local OU CDN)
-     - mantém vendor_health.js
-     - mantém zip_vault.js (import ZIP + PDFs)
+     - mantém vendor_loader.js + vendor_health.js + zip_vault.js
+     - adiciona agent_zip_bridge.js (import ZIP pro Agent)
 -->
 <!doctype html>
 <html lang="pt-BR">
@@ -21,7 +19,7 @@
   <link rel="stylesheet" href="./styles.css" />
 
   <!-- (Opcional) ajuda a ver que o index novo entrou -->
-  <meta name="rcf-index" content="vCLEAN-1+ENGINE+VENDORZIP" />
+  <meta name="rcf-index" content="vCLEAN-1+ENGINE+VENDORZIP+AGENTZIP" />
 </head>
 
 <body>
@@ -69,6 +67,9 @@
           "./js/core/vendor_loader.js",
           "./js/core/vendor_health.js",
           "./js/core/zip_vault.js",
+
+          /* ✅ AGENT: Import ZIP (Replit Agent) -> KV (IDB/local fallback) */
+          "./js/core/agent_zip_bridge.js",
 
           "./js/core/github_sync.js",
           "./js/core/vfs_overrides.js",
