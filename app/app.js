@@ -1,6 +1,7 @@
 /* FILE: app/app.js
-   RControl Factory — /app/app.js — V8.0 PADRÃO (CLEAN + FIX "Unexpected token ===")
+   RControl Factory — /app/app.js — V8.0 PADRÃO (CLEAN + UI READY BUS)
    - Arquivo completo (1 peça) pra copiar/colar
+   - ✅ ADD: UI READY BUS (notifyUIReady) 1x após installRCFUIRegistry()
    - ✅ Remove qualquer separador "=====" fora de comentário (causa Unexpected token '===')
    - ✅ Compat MAE: aceita clear() OU clearOverrides()
    - Mantém: FAB + painel, status pill oculto, Injector SAFE, Agent, Diagnostics, SW tools
@@ -142,6 +143,46 @@
     } catch {
       return null;
     }
+  }
+
+  // =========================================================
+  // UI READY BUS (permite módulos que carregaram antes reinjetarem)
+  // =========================================================
+  function notifyUIReady() {
+    try { window.__RCF_UI_READY__ = true; } catch {}
+
+    // evento padrão
+    try {
+      window.dispatchEvent(new CustomEvent("RCF:UI_READY", {
+        detail: { ts: Date.now() }
+      }));
+    } catch {}
+
+    // hooks de compat (não quebra se não existir)
+    const tries = [
+      ["RCF_ZIP_VAULT", "mountUI"],
+      ["RCF_ZIP_VAULT", "mount"],
+      ["RCF_ZIP_VAULT", "injectUI"],
+      ["RCF_ZIP_VAULT", "inject"],
+      ["RCF_ZIP_VAULT", "init"],
+      ["RCF_AGENT_ZIP_BRIDGE", "mountUI"],
+      ["RCF_AGENT_ZIP_BRIDGE", "mount"],
+      ["RCF_AGENT_ZIP_BRIDGE", "init"]
+    ];
+
+    let called = 0;
+    for (const [objName, fnName] of tries) {
+      try {
+        const obj = window[objName];
+        const fn = obj && obj[fnName];
+        if (typeof fn === "function") {
+          fn.call(obj, { ui: window.RCF_UI });
+          called++;
+        }
+      } catch {}
+    }
+
+    try { window.RCF_LOGGER?.push?.("INFO", `UI_READY fired ✅ reinject_called=${called}`); } catch {}
   }
 
   // =========================================================
@@ -2580,6 +2621,9 @@
 
     // registry refresh
     try { window.RCF_UI?.refresh?.(); } catch {}
+
+    // ✅ NEW: UI READY BUS — dispara após UI/slots existirem
+    try { notifyUIReady(); } catch {}
   }
 
   // =========================================================
