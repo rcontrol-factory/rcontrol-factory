@@ -1,7 +1,8 @@
 /* =========================================================
-  RControl Factory — app/js/core/storage.js (V2.1 SAFE)
+  RControl Factory — app/js/core/storage.js (V2.1 SAFE + BIN)
   - localStorage wrapper
-  - IndexedDB KV simples (com fallback automático)
+  - IndexedDB KV simples (com fallback automático p/ JSON)
+  - ✅ BINÁRIOS (PDF/Blob/ArrayBuffer) = IDB ONLY (sem fallback)
   - Prefixo padrão: rcf:
   - iOS/Safari robusto
 ========================================================= */
@@ -19,6 +20,29 @@
 
   function log(level, msg) {
     try { window.RCF_LOGGER?.push?.(level, msg); } catch {}
+  }
+
+  // --------------------------------------------------------
+  // helpers: detectar binários (não podem ir pro localStorage)
+  // --------------------------------------------------------
+  function isBinaryValue(v) {
+    try {
+      if (v == null) return false;
+      if (typeof Blob !== "undefined" && v instanceof Blob) return true;
+      if (typeof ArrayBuffer !== "undefined" && v instanceof ArrayBuffer) return true;
+      if (typeof Uint8Array !== "undefined" && v instanceof Uint8Array) return true;
+      if (typeof Int8Array !== "undefined" && v instanceof Int8Array) return true;
+      if (typeof Uint16Array !== "undefined" && v instanceof Uint16Array) return true;
+      if (typeof Uint32Array !== "undefined" && v instanceof Uint32Array) return true;
+      if (typeof Int16Array !== "undefined" && v instanceof Int16Array) return true;
+      if (typeof Int32Array !== "undefined" && v instanceof Int32Array) return true;
+      if (typeof Float32Array !== "undefined" && v instanceof Float32Array) return true;
+      if (typeof Float64Array !== "undefined" && v instanceof Float64Array) return true;
+      if (typeof DataView !== "undefined" && v instanceof DataView) return true;
+      return false;
+    } catch {
+      return false;
+    }
   }
 
   // --------------------------------------------------------
@@ -104,7 +128,6 @@
   // --------------------------------------------------------
   // STORAGE API
   // --------------------------------------------------------
-
   const Storage = {
 
     prefix: PREFIX,
@@ -123,7 +146,7 @@
       try {
         localStorage.setItem(this.prefix + key, JSON.stringify(value));
       } catch (e) {
-        log("warn", "localStorage.set fail: " + e?.message);
+        log("warn", "localStorage.set fail: " + (e?.message || String(e)));
       }
     },
 
@@ -146,11 +169,21 @@
     },
 
     // ----------------------------------------------------
-    // Async KV (IDB com fallback automático)
+    // Async KV (IDB com fallback automático p/ JSON)
     // ----------------------------------------------------
-
     async put(key, value) {
       const fullKey = this.prefix + key;
+
+      // ✅ Binários: nunca tentam fallback localStorage
+      if (isBinaryValue(value)) {
+        try {
+          await idbPut(fullKey, value);
+          return true;
+        } catch (e) {
+          log("warn", "IDB putBin falhou (sem fallback): " + (e?.message || String(e)));
+          return false;
+        }
+      }
 
       try {
         await idbPut(fullKey, value);
@@ -158,6 +191,7 @@
       } catch (e) {
         log("warn", "IDB put falhou, fallback localStorage");
         try {
+          // fallback seguro p/ JSON
           localStorage.setItem(fullKey, JSON.stringify(value));
           return true;
         } catch {
@@ -196,6 +230,42 @@
         } catch {
           return false;
         }
+      }
+    },
+
+    // ----------------------------------------------------
+    // ✅ BIN API (IDB ONLY) — ideal para PDF/Blob/buffer
+    // ----------------------------------------------------
+    async putBin(key, blobOrBuffer) {
+      const fullKey = this.prefix + key;
+      try {
+        await idbPut(fullKey, blobOrBuffer);
+        return true;
+      } catch (e) {
+        log("warn", "putBin falhou (IDB-only): " + (e?.message || String(e)));
+        return false;
+      }
+    },
+
+    async getBin(key) {
+      const fullKey = this.prefix + key;
+      try {
+        const v = await idbGet(fullKey);
+        return v == null ? null : v;
+      } catch (e) {
+        log("warn", "getBin falhou (IDB-only): " + (e?.message || String(e)));
+        return null;
+      }
+    },
+
+    async delBin(key) {
+      const fullKey = this.prefix + key;
+      try {
+        await idbDel(fullKey);
+        return true;
+      } catch (e) {
+        log("warn", "delBin falhou (IDB-only): " + (e?.message || String(e)));
+        return false;
       }
     }
   };
