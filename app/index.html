@@ -1,9 +1,10 @@
 <!-- FILE: /app/index.html
      RControl Factory — index.html (vCLEAN-1+ENGINE + VENDOR ZIP)
      PATCH:
-     - adiciona vendor loader do JSZip
-     - adiciona vendor_health.js
-     - adiciona zip_vault.js (import ZIP + PDFs)
+     - remove "./vendor/jszip.min.js" (não existe)
+     - adiciona "./js/core/vendor_loader.js" (carrega JSZip local OU CDN)
+     - mantém vendor_health.js
+     - mantém zip_vault.js (import ZIP + PDFs)
 -->
 <!doctype html>
 <html lang="pt-BR">
@@ -20,7 +21,7 @@
   <link rel="stylesheet" href="./styles.css" />
 
   <!-- (Opcional) ajuda a ver que o index novo entrou -->
-  <meta name="rcf-index" content="vCLEAN-1+ENGINE" />
+  <meta name="rcf-index" content="vCLEAN-1+ENGINE+VENDORZIP" />
 </head>
 
 <body>
@@ -64,8 +65,8 @@
           "./js/core/stability_guard.js",
           "./js/core/storage.js",
 
-          /* ✅ VENDOR: JSZip + health + Zip Vault (ZIP/PDF import) */
-          "./vendor/jszip.min.js",
+          /* ✅ VENDOR: Loader (JSZip local OU CDN) + health + Zip Vault (ZIP/PDF import) */
+          "./js/core/vendor_loader.js",
           "./js/core/vendor_health.js",
           "./js/core/zip_vault.js",
 
