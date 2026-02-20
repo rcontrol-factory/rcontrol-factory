@@ -1,17 +1,13 @@
 /* FILE: /app/js/core/zip_vault.js
-   RControl Factory — js/core/zip_vault.js — v1.0a SAFE (ZIP VAULT + PDF/ASSET no IDB)
-   Objetivo:
-   - Importar ZIP grande sem travar (iPhone safe)
-   - Guardar arquivos PESADOS (PDF/IMG/etc) no IndexedDB (Blob)
-   - Guardar índice leve no localStorage (meta)
-   - UI dentro do VIEW "Agente" (para virar o “Replit-like Agent workspace”)
-   Dependência:
-   - JSZip (window.JSZip). Se não existir, o módulo tenta carregar de paths locais comuns.
+   RControl Factory — js/core/zip_vault.js — v1.0b SAFE
+   PATCH:
+   - Loader-safe: aceita /app/vendor/jszip.min.js como "loader" e aguarda JSZip aparecer.
+   - Nunca injeta HTML (bloqueio forte) e nunca quebra a Factory.
 */
 (function () {
   "use strict";
 
-  if (window.RCF_ZIP_VAULT && window.RCF_ZIP_VAULT.__v10a) return;
+  if (window.RCF_ZIP_VAULT && window.RCF_ZIP_VAULT.__v10b) return;
 
   const PREFIX = "rcf:";
   const LS_INDEX_KEY = PREFIX + "vault:index";
@@ -60,40 +56,44 @@
   }
 
   // =========================================================
-  // HTML / JS detection (PATCH HARD)
+  // HTML / JS detection (HARD)
   // =========================================================
   function looksLikeHTML(code) {
     const raw = String(code || "");
     const head = raw.trim().slice(0, 900).toLowerCase();
 
-    // começa com tag
     if (head.startsWith("<")) return true;
-
-    // tags típicas
     if (/<\s*(!doctype|html|head|body|script|meta|link|style|title)\b/i.test(head)) return true;
     if (/<\/\s*(html|head|body|script|style)\s*>/i.test(head)) return true;
 
-    // SPA fallback comum
-    if (head.includes("text/html")) return true;
-
-    // fingerprint do seu próprio site (quando CF devolve index)
+    // fingerprint do site (fallback/redirect de Pages)
     if (raw.includes("RControl Factory") || raw.includes("Factory interna")) return true;
 
     return false;
   }
 
-  function looksLikeJSZip(code) {
+  function looksLikeJSZipOrLoader(code) {
     const raw = String(code || "");
-    if (!raw || raw.length < 2000) return false;
-
-    // JSZip UMD/min normalmente contém "JSZip"
-    // (bem mais confiável do que procurar "zip" genérico)
-    if (!raw.includes("JSZip")) return false;
-
-    // se tiver cara de HTML em qualquer lugar do começo, descarta
+    if (!raw || raw.length < 1200) return false;
     if (looksLikeHTML(raw)) return false;
 
-    return true;
+    // Aceita a lib (contém JSZip) OU o loader (marcador do seu vendor)
+    if (raw.includes("JSZip")) return true;
+    if (raw.includes("__RCF_JSZIP_LOADER__")) return true;
+
+    return false;
+  }
+
+  async function waitFor(condFn, msTotal, stepMs) {
+    const total = Math.max(0, Number(msTotal) || 0);
+    const step = Math.max(20, Number(stepMs) || 80);
+    const t0 = Date.now();
+
+    while ((Date.now() - t0) < total) {
+      try { if (condFn()) return true; } catch {}
+      await new Promise(r => setTimeout(r, step));
+    }
+    try { return !!condFn(); } catch { return false; }
   }
 
   // =========================================================
@@ -204,7 +204,7 @@
 
   function getCfg() {
     return safeJsonParse(localStorage.getItem(LS_CFG_KEY) || "{}", {
-      keepTextCacheMax: 180000, // ~180kb: cache textual opcional (não trava)
+      keepTextCacheMax: 180000,
       autoMountUI: true
     });
   }
@@ -216,7 +216,7 @@
   }
 
   // =========================================================
-  // JSZip loader (HARD SAFE)
+  // JSZip loader (LOADER-SAFE)
   // =========================================================
   async function ensureJSZip() {
     if (window.JSZip) return true;
@@ -235,33 +235,38 @@
 
         const code = await res.text();
 
-        // PATCH HARD: não injeta se não for JSZip real
-        if (!looksLikeJSZip(code)) {
+        // Nunca injeta HTML/fallback
+        if (!looksLikeJSZipOrLoader(code)) {
           log("WARN", "JSZip loader: conteúdo inválido (provável HTML/fallback) em " + src + " (skip).");
           continue;
         }
 
-        // só agora injeta (seguro)
+        // Injeta (pode ser lib OU loader)
         const s = document.createElement("script");
         s.setAttribute("data-rcf", "jszip-inline");
         s.textContent = code;
-
-        // IMPORTANTE: se aqui der erro, é porque ainda assim veio JS inválido
-        // (mas com o filtro acima, a chance fica praticamente zero)
         document.head.appendChild(s);
 
-        if (window.JSZip) {
-          log("OK", "JSZip carregado via " + src);
+        // Se for loader, o JSZip pode aparecer depois (CDN)
+        const ok = await waitFor(
+          () => !!window.JSZip,
+          8000,   // até 8s (primeira vez pode demorar)
+          120
+        );
+
+        if (ok) {
+          log("OK", "JSZip disponível ✅ via " + src);
           return true;
-        } else {
-          try { s.remove(); } catch {}
         }
+
+        // Se não apareceu, não remove (evita loop/instabilidade). Só loga e tenta próximo.
+        log("WARN", "JSZip ainda não apareceu após aguardar (src=" + src + "). Tentando próximo…");
       } catch (e) {
         log("WARN", "JSZip loader: falha lendo " + src + " :: " + (e?.message || e));
       }
     }
 
-    log("ERR", "JSZip ausente. Adicione jszip.min.js em /app/vendor/jszip.min.js (recomendado).");
+    log("ERR", "JSZip ausente. Garanta /app/vendor/jszip.min.js acessível (JS) e com internet 1x pro CDN cachear.");
     return false;
   }
 
@@ -269,7 +274,7 @@
   // Vault core
   // =========================================================
   const Vault = {
-    __v10a: true,
+    __v10b: true,
     _lock: false,
     _job: null,
 
@@ -312,7 +317,7 @@
 
       try {
         const okZip = await ensureJSZip();
-        if (!okZip) throw new Error("JSZip não carregou (adicione jszip.min.js local).");
+        if (!okZip) throw new Error("JSZip não carregou (verifique /app/vendor/jszip.min.js).");
 
         if (!file) throw new Error("Arquivo ZIP ausente.");
         const ab = await file.arrayBuffer();
@@ -662,7 +667,7 @@
   }
 
   window.RCF_ZIP_VAULT = {
-    __v10a: true,
+    __v10b: true,
     mount: () => UI.mount(),
     importZip: (file) => Vault.importZipFile(file),
     list: () => Vault.index(),
@@ -679,5 +684,5 @@
     tryMountLoop();
   }
 
-  log("OK", "zip_vault.js ready ✅ (v1.0a)");
+  log("OK", "zip_vault.js ready ✅ (v1.0b)");
 })();
