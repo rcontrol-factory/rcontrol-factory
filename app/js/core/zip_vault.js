@@ -1,30 +1,22 @@
 /* FILE: /app/js/core/zip_vault.js
-   RControl Factory — js/core/zip_vault.js — v1.0e SAFE (PATCHED FULL)
-   PATCH APLICADO (SEM “ACRESCENTAR COISINHA” POR FORA — arquivo completo pronto):
-
-   ✅ FIX #1 (VAULT SUMINDO):
-   - UI.mount() agora monta em SLOT robusto via RCF_UI.getSlot(...)
-   - Fallbacks por data-rcf-slot e ids comuns
-   - Não depende mais de view-agent / view-admin
-
-   ✅ FIX #2 (COMPAT com agent_zip_bridge):
-   - window.RCF_ZIP_VAULT.get agora retorna Promise com {ab,size,mime,path}
-     (o bridge usa await, então fica compatível e previsível)
-   - Mantém list() sync
-
-   (Todo o resto foi mantido igual ao seu v1.0e)
+   RControl Factory — js/core/zip_vault.js — v1.0f SAFE (FULL FIX: "VAULT SUMIU")
+   OBJETIVO:
+   - VAULT ZIP Import (PDF safe) via IndexedDB (ArrayBuffer)
+   - UI SEMPRE aparece: tenta SLOT -> view-agent -> view ativo -> #app fallback
+   - Mantém AUTO ZIP->APP pack (pequenos) + restore packs
 */
+
 (function () {
   "use strict";
 
-  if (window.RCF_ZIP_VAULT && window.RCF_ZIP_VAULT.__v10e) return;
+  if (window.RCF_ZIP_VAULT && window.RCF_ZIP_VAULT.__v10f) return;
 
   const PREFIX = "rcf:";
   const LS_INDEX_KEY = PREFIX + "vault:index";
   const LS_LAST_KEY  = PREFIX + "vault:last";
   const LS_CFG_KEY   = PREFIX + "vault:cfg";
 
-  // ✅ NOVO: pack p/ auto-template (pequenos)
+  // pack p/ auto-template (pequenos)
   const LS_APP_INDEX = PREFIX + "vault:app:index"; // array {id,jobId,name,title,createdAt,bytes,count}
   const LS_APP_KEY   = (id) => PREFIX + "vault:app:" + id;
 
@@ -39,10 +31,7 @@
 
   function log(level, msg) {
     try { window.RCF_LOGGER?.push?.(level, msg); } catch {}
-    try {
-      if (window.RCF && typeof window.RCF.log === "function") window.RCF.log(msg);
-      else console.log("[RCF_VAULT]", level, msg);
-    } catch {}
+    try { console.log("[RCF_VAULT]", level, msg); } catch {}
   }
 
   function nowISO() { return new Date().toISOString(); }
@@ -192,9 +181,8 @@
     return safeJsonParse(localStorage.getItem(LS_CFG_KEY) || "{}", {
       keepTextCacheMax: 180000,
       autoMountUI: true,
-      // ✅ NOVO
       autoZipToApp: true,
-      autoZipMaxBytesLS: 900000, // ~0.9MB (seguro p/ iOS)
+      autoZipMaxBytesLS: 900000,
       autoSelectGenerator: true
     });
   }
@@ -313,7 +301,7 @@
   }
 
   // =========================================================
-  // ✅ AUTO ZIP -> APP (template dinâmico)
+  // AUTO ZIP -> APP pack (pequenos)
   // =========================================================
   function readAppIndex() {
     return safeJsonParse(localStorage.getItem(LS_APP_INDEX) || "[]", []);
@@ -439,7 +427,7 @@
   // Vault core (IDB salva bytes, não Blob)
   // =========================================================
   const Vault = {
-    __v10e: true,
+    __v10f: true,
     _lock: false,
     _job: null,
 
@@ -590,9 +578,6 @@
     }
   };
 
-  // =========================================================
-  // ✅ AUTO ZIP -> APP helper
-  // =========================================================
   const AutoZipToApp = {
     async fromJob(meta) {
       const cfg = getCfg();
@@ -600,7 +585,6 @@
 
       if (max > 0 && (Number(meta.bytes) || 0) > max) {
         log("WARN", "ZIP->APP: ZIP grande demais p/ localStorage. bytes=" + meta.bytes + " max=" + max);
-        log("WARN", "ZIP->APP: mande um ZIP menor (ou depois eu integro via Engine/Builder).");
         return { ok:false, err:"zip_too_big" };
       }
 
@@ -639,7 +623,6 @@
 
       const mfTitle = tryParseManifestTitle(filesPack);
       const title = mfTitle || (meta.name ? String(meta.name).replace(/\.zip$/i, "") : "ZIP App");
-
       const templateId = "zipapp-" + String(meta.jobId).replace(/[^a-zA-Z0-9_-]/g, "");
 
       const pack = {
@@ -656,9 +639,7 @@
         files: filesPack
       };
 
-      try { localStorage.setItem(LS_APP_KEY(templateId), safeJsonStringify(pack)); } catch (e) {
-        log("WARN", "ZIP->APP: não salvou pack no localStorage: " + (e?.message || e));
-      }
+      try { localStorage.setItem(LS_APP_KEY(templateId), safeJsonStringify(pack)); } catch {}
 
       try {
         const idx = readAppIndex();
@@ -679,9 +660,8 @@
 
       if (okReg) {
         log("OK", "ZIP->APP pronto ✅ template=" + templateId + " title=" + title);
-        try { window.RCF_LOGGER?.push?.("OK", "ZIP->APP ✅ template=" + templateId); } catch {}
       } else {
-        log("WARN", "ZIP->APP: registry não disponível ainda (template_registry não carregou?)");
+        log("WARN", "ZIP->APP: registry não disponível ainda");
       }
 
       if (cfg.autoSelectGenerator) {
@@ -715,35 +695,61 @@
   };
 
   // =========================================================
-  // UI (PATCHED: mount em SLOT robusto)
+  // UI — FIX DEFINITIVO: acha o lugar certo SEM depender do index
   // =========================================================
+  function findMountPoint() {
+    // 1) slots (preferência)
+    try {
+      const ui = window.RCF_UI;
+      if (ui && typeof ui.getSlot === "function") {
+        const slot =
+          ui.getSlot("agent.tools") ||
+          ui.getSlot("agent.actions") ||
+          ui.getSlot("generator.tools") ||
+          ui.getSlot("admin.tools") ||
+          ui.getSlot("admin.integrations");
+        if (slot) return slot;
+      }
+    } catch {}
+
+    // 2) data-rcf-slot
+    const bySlot =
+      document.querySelector('[data-rcf-slot="agent.tools"]') ||
+      document.querySelector('[data-rcf-slot="agent.actions"]') ||
+      document.querySelector('[data-rcf-slot="generator.tools"]') ||
+      document.querySelector('[data-rcf-slot="admin.tools"]') ||
+      document.querySelector('[data-rcf-slot="admin.integrations"]');
+    if (bySlot) return bySlot;
+
+    // 3) containers de view (agente)
+    const agent =
+      document.getElementById("view-agent") ||
+      document.querySelector('[data-rcf-view="agent"]') ||
+      document.querySelector('[data-view="agent"]') ||
+      document.querySelector('#agentView') ||
+      null;
+    if (agent) return agent;
+
+    // 4) “view ativa”
+    const active =
+      document.querySelector(".view.active") ||
+      document.querySelector('[data-rcf-view].active') ||
+      document.querySelector('[aria-hidden="false"][data-rcf-view]') ||
+      null;
+    if (active) return active;
+
+    // 5) fallback final
+    return document.getElementById("app") || document.body;
+  }
+
   const UI = {
     _mounted: false,
 
     mount() {
       if (this._mounted) return true;
 
-      // ✅ PATCH: monta em SLOT robusto (não depende de view-agent/admin)
-      const slot =
-        (window.RCF_UI && typeof window.RCF_UI.getSlot === "function"
-          ? (window.RCF_UI.getSlot("generator.tools") ||
-             window.RCF_UI.getSlot("agent.tools") ||
-             window.RCF_UI.getSlot("agent.actions") ||
-             window.RCF_UI.getSlot("admin.integrations") ||
-             window.RCF_UI.getSlot("admin.tools"))
-          : null) ||
-        document.querySelector('[data-rcf-slot="generator.tools"]') ||
-        document.querySelector('[data-rcf-slot="agent.tools"]') ||
-        document.querySelector('[data-rcf-slot="agent.actions"]') ||
-        document.querySelector('[data-rcf-slot="admin.integrations"]') ||
-        document.querySelector('[data-rcf-slot="admin.tools"]') ||
-        document.getElementById("rcfGenSlotTools") ||
-        document.getElementById("rcfAgentSlotTools") ||
-        document.getElementById("rcfAgentSlotActions") ||
-        document.getElementById("rcfAdminSlotIntegrations") ||
-        null;
-
-      if (!slot) return false;
+      const root = findMountPoint();
+      if (!root) return false;
 
       if (document.getElementById("rcfVaultCard")) {
         this._mounted = true;
@@ -787,12 +793,14 @@
         </div>
       `;
 
-      slot.appendChild(card);
+      root.appendChild(card);
 
       this._mounted = true;
       this.bind();
       this.renderList();
       this._progress();
+
+      log("OK", "UI mount ✅ root=" + (root.id || root.getAttribute?.("data-rcf-slot") || root.getAttribute?.("data-rcf-view") || root.tagName));
       return true;
     },
 
@@ -1007,23 +1015,24 @@
     const ok = UI.mount();
     if (ok) return;
 
-    setTimeout(() => { try { UI.mount(); } catch {} }, 800);
-    setTimeout(() => { try { UI.mount(); } catch {} }, 2000);
+    setTimeout(() => { try { UI.mount(); } catch {} }, 600);
+    setTimeout(() => { try { UI.mount(); } catch {} }, 1400);
+    setTimeout(() => { try { UI.mount(); } catch {} }, 2600);
   }
 
   function restoreZipAppsLoop() {
     try { AutoZipToApp.restorePacks(); } catch {}
-    setTimeout(() => { try { AutoZipToApp.restorePacks(); } catch {} }, 1400);
-    setTimeout(() => { try { AutoZipToApp.restorePacks(); } catch {} }, 3200);
+    setTimeout(() => { try { AutoZipToApp.restorePacks(); } catch {} }, 900);
+    setTimeout(() => { try { AutoZipToApp.restorePacks(); } catch {} }, 2200);
   }
 
   window.RCF_ZIP_VAULT = {
-    __v10e: true,
+    __v10f: true,
     mount: () => UI.mount(),
     importZip: (file) => Vault.importZipFile(file),
     list: () => Vault.index(),
 
-    // ✅ PATCH: get compat retorna {ab,size,mime,path} (Promise)
+    // compat com agent_zip_bridge (await)
     get: async (path) => {
       const rec = await Vault.getFile(path);
       if (!rec) return null;
@@ -1052,5 +1061,5 @@
     restoreZipAppsLoop();
   }
 
-  log("OK", "zip_vault.js ready ✅ (v1.0e PATCHED)");
+  log("OK", "zip_vault.js ready ✅ (v1.0f)");
 })();
