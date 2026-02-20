@@ -1,14 +1,13 @@
 /* FILE: /app/js/core/zip_vault.js
-   RControl Factory — js/core/zip_vault.js — v1.0b SAFE
-   PATCH:
-   - ✅ Anti-HTML injection (evita "Unexpected identifier 'Factory'")
-   - ✅ Suporta JSZip LOADER assíncrono (aguarda window.JSZip aparecer)
-   - Mantém: Vault IDB + Index LS + UI Agent
+   RControl Factory — js/core/zip_vault.js — v1.0c SAFE
+   FIX:
+   - ensureJSZip robusto: rejeita HTML + fallback CDN via <script src>
+   - evita "Unexpected identifier 'Factory'" (quando vinha index.html)
 */
 (function () {
   "use strict";
 
-  if (window.RCF_ZIP_VAULT && window.RCF_ZIP_VAULT.__v10b) return;
+  if (window.RCF_ZIP_VAULT && window.RCF_ZIP_VAULT.__v10c) return;
 
   const PREFIX = "rcf:";
   const LS_INDEX_KEY = PREFIX + "vault:index";
@@ -178,33 +177,63 @@
   }
 
   // =========================================================
-  // JSZip loader (sem web externo; tenta caminhos locais)
-  // PATCH: anti-HTML + aguarda loader async expor window.JSZip
+  // JSZip loader (ROBUSTO)
   // =========================================================
-  function looksLikeHTML(code) {
-    const s = String(code || "").trim().slice(0, 400).toLowerCase();
+  function looksLikeHTML(txt) {
+    const s = String(txt || "").trim().slice(0, 300).toLowerCase();
     return (
-      s.startsWith("<!doctype") || s.startsWith("<html") ||
-      s.includes("<head") || s.includes("<body") ||
-      s.includes("rcontrol factory") // sinal clássico do teu index/erro
+      s.startsWith("<!doctype") ||
+      s.startsWith("<html") ||
+      s.includes("<head") ||
+      s.includes("<body") ||
+      s.includes("rcontrol factory")
     );
   }
 
-  function waitForJSZip(msTotal = 3200) {
-    const start = Date.now();
+  function injectInlineScript(code, tag) {
+    try {
+      const s = document.createElement("script");
+      s.setAttribute("data-rcf", tag || "inline");
+      s.textContent = String(code || "");
+      document.head.appendChild(s);
+      return true;
+    } catch (e) {
+      log("ERR", "inject falhou: " + (e?.message || e));
+      return false;
+    }
+  }
+
+  function loadScriptSrc(src, timeoutMs) {
     return new Promise((resolve) => {
-      const tick = () => {
-        if (window.JSZip && typeof window.JSZip.loadAsync === "function") return resolve(true);
-        if ((Date.now() - start) >= msTotal) return resolve(false);
-        setTimeout(tick, 120);
-      };
-      tick();
+      try {
+        const s = document.createElement("script");
+        s.async = true;
+        s.src = src;
+        s.crossOrigin = "anonymous";
+
+        let done = false;
+        const finish = (ok) => {
+          if (done) return;
+          done = true;
+          try { s.remove(); } catch {}
+          resolve(!!ok);
+        };
+
+        const t = setTimeout(() => finish(false), timeoutMs || 8000);
+        s.onload = () => { clearTimeout(t); finish(true); };
+        s.onerror = () => { clearTimeout(t); finish(false); };
+
+        document.head.appendChild(s);
+      } catch {
+        resolve(false);
+      }
     });
   }
 
   async function ensureJSZip() {
-    if (window.JSZip && typeof window.JSZip.loadAsync === "function") return true;
+    if (window.JSZip) return true;
 
+    // 1) tenta caminhos locais (VFS/Pages)
     const candidates = [
       "/app/vendor/jszip.min.js",
       "/vendor/jszip.min.js",
@@ -217,42 +246,43 @@
         const res = await fetch(src, { cache: "no-store" });
         if (!res.ok) continue;
 
+        const ct = String(res.headers.get("content-type") || "").toLowerCase();
         const code = await res.text();
-        if (!code || code.length < 200) continue;
 
-        if (looksLikeHTML(code)) {
+        if (!code || code.length < 2000) continue;
+
+        // se veio HTML (fallback do Pages), NÃO injeta
+        if (ct.includes("text/html") || looksLikeHTML(code)) {
           log("WARN", "JSZip fetch retornou HTML (não vou injetar): " + src);
           continue;
         }
 
-        // injeta
-        const s = document.createElement("script");
-        s.setAttribute("data-rcf-vendor", "jszip");
-        s.textContent = code;
-        document.head.appendChild(s);
-
-        // aguarda loader async / exposição de JSZip
-        const ok = await waitForJSZip(3200);
-        if (ok) {
-          log("OK", "JSZip disponível ✅ via " + src);
+        const ok = injectInlineScript(code, "jszip:" + src);
+        if (ok && window.JSZip) {
+          log("OK", "JSZip carregado via " + src);
           return true;
         }
-
-        // se não expôs, tenta próximo candidato
-        log("WARN", "Script injetado mas JSZip ainda não apareceu (pode ser loader lento). src=" + src);
-      } catch (e) {
-        // segue tentando outros
-      }
+      } catch {}
     }
 
-    // última chance: se algum loader foi injetado e está baixando, espera mais um pouco
-    const okLate = await waitForJSZip(4500);
-    if (okLate) {
-      log("OK", "JSZip apareceu ✅ (late)");
-      return true;
+    // 2) fallback CDN seguro (sem depender do arquivo existir no Pages)
+    const cdnList = [
+      "https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js",
+      "https://unpkg.com/jszip@3.10.1/dist/jszip.min.js"
+    ];
+
+    for (const url of cdnList) {
+      try {
+        log("INFO", "Tentando JSZip via CDN… " + url);
+        const ok = await loadScriptSrc(url, 9000);
+        if (ok && window.JSZip) {
+          log("OK", "JSZip carregado via CDN ✅");
+          return true;
+        }
+      } catch {}
     }
 
-    log("ERR", "JSZip ausente. Garanta /app/vendor/jszip.min.js (loader ou lib) e internet 1x se for CDN.");
+    log("ERR", "JSZip ausente. Garanta internet 1x (CDN) ou arquivo local real em /app/vendor/jszip.min.js.");
     return false;
   }
 
@@ -260,7 +290,7 @@
   // Vault core
   // =========================================================
   const Vault = {
-    __v10b: true,
+    __v10c: true,
     _lock: false,
     _job: null,
 
@@ -303,7 +333,7 @@
 
       try {
         const okZip = await ensureJSZip();
-        if (!okZip) throw new Error("JSZip não carregou (verifique /app/vendor/jszip.min.js).");
+        if (!okZip) throw new Error("JSZip não carregou (verifique internet 1x ou arquivo local).");
 
         if (!file) throw new Error("Arquivo ZIP ausente.");
         const ab = await file.arrayBuffer();
@@ -340,21 +370,17 @@
           await idbPut(key, rec);
           importedKeys.push(key);
 
-          const meta = {
-            path: rp,
-            mime,
-            size,
+          idxMap.set(rp, {
+            path: rp, mime, size,
             importedAt: startedAt,
             source: rec.source,
             jobId
-          };
-          idxMap.set(rp, meta);
+          });
 
           this._job.done = i + 1;
           this._job.bytes += size;
 
           if ((i % 18) === 0) await new Promise(r => setTimeout(r, 0));
-
           UI._progress();
         }
 
@@ -370,7 +396,6 @@
 
       } catch (e) {
         try { for (const k of importedKeys) { try { await idbDel(k); } catch {} } } catch {}
-
         log("ERR", "VAULT import fail :: " + (e?.message || e));
         return { ok: false, err: (e?.message || String(e)) };
 
@@ -661,7 +686,7 @@
   }
 
   window.RCF_ZIP_VAULT = {
-    __v10b: true,
+    __v10c: true,
     mount: () => UI.mount(),
     importZip: (file) => Vault.importZipFile(file),
     list: () => Vault.index(),
@@ -678,5 +703,5 @@
     tryMountLoop();
   }
 
-  log("OK", "zip_vault.js ready ✅ (v1.0b)");
+  log("OK", "zip_vault.js ready ✅ (v1.0c)");
 })();
