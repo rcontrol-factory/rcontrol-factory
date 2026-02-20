@@ -1,19 +1,27 @@
 /* FILE: /app/js/core/zip_vault.js
-   RControl Factory — js/core/zip_vault.js — v1.0d SAFE
+   RControl Factory — js/core/zip_vault.js — v1.0e SAFE
    FIXES:
    - JSZip loader robusto (rejeita HTML + fallback CDN via <script src>)
    - iOS SAFARI: IndexedDB não armazena Blob/File confiável -> salva ArrayBuffer (bytes) no IDB
    - Viewer reconstrói Blob a partir dos bytes
+   - ✅ NOVO: AUTO-ZIP -> APP (gera template dinamicamente no RCF_TEMPLATE_REGISTRY)
+     - Após importar ZIP, cria um template "zipapp-<jobId>" com os arquivos do ZIP
+     - Salva um pack leve no localStorage (para ZIPs pequenos)
+     - Tenta auto-selecionar no Generator (best-effort)
 */
 (function () {
   "use strict";
 
-  if (window.RCF_ZIP_VAULT && window.RCF_ZIP_VAULT.__v10d) return;
+  if (window.RCF_ZIP_VAULT && window.RCF_ZIP_VAULT.__v10e) return;
 
   const PREFIX = "rcf:";
   const LS_INDEX_KEY = PREFIX + "vault:index";
   const LS_LAST_KEY  = PREFIX + "vault:last";
   const LS_CFG_KEY   = PREFIX + "vault:cfg";
+
+  // ✅ NOVO: pack p/ auto-template (pequenos)
+  const LS_APP_INDEX = PREFIX + "vault:app:index"; // array {id,jobId,name,title,createdAt,bytes,count}
+  const LS_APP_KEY   = (id) => PREFIX + "vault:app:" + id;
 
   const IDB_DB = "RCF_VAULT_DB";
   const IDB_VER = 1;
@@ -55,7 +63,8 @@
     const s = String(p || "").toLowerCase();
     return (
       s.endsWith(".js") || s.endsWith(".json") || s.endsWith(".css") ||
-      s.endsWith(".html") || s.endsWith(".htm") || s.endsWith(".md") || s.endsWith(".txt")
+      s.endsWith(".html") || s.endsWith(".htm") || s.endsWith(".md") || s.endsWith(".txt") ||
+      s.endsWith(".ts") || s.endsWith(".tsx") || s.endsWith(".jsx") || s.endsWith(".env") || s.endsWith(".gitignore")
     );
   }
 
@@ -177,7 +186,11 @@
   function getCfg() {
     return safeJsonParse(localStorage.getItem(LS_CFG_KEY) || "{}", {
       keepTextCacheMax: 180000,
-      autoMountUI: true
+      autoMountUI: true,
+      // ✅ NOVO
+      autoZipToApp: true,
+      autoZipMaxBytesLS: 900000, // ~0.9MB (seguro p/ iOS)
+      autoSelectGenerator: true
     });
   }
 
@@ -295,10 +308,143 @@
   }
 
   // =========================================================
+  // ✅ AUTO ZIP -> APP (template dinâmico)
+  // =========================================================
+  function readAppIndex() {
+    return safeJsonParse(localStorage.getItem(LS_APP_INDEX) || "[]", []);
+  }
+  function writeAppIndex(list) {
+    try { localStorage.setItem(LS_APP_INDEX, safeJsonStringify(list || [])); } catch {}
+  }
+
+  function stripCommonRoot(paths) {
+    const arr = (paths || []).map(p => normPath(p)).filter(Boolean);
+    if (!arr.length) return { root:"", out:arr };
+    const parts0 = arr[0].split("/");
+    let k = 0;
+    for (; k < parts0.length; k++) {
+      const seg = parts0[k];
+      if (!seg) break;
+      if (!arr.every(p => (p.split("/")[k] === seg))) break;
+    }
+    // root só vale se for pasta (>=1 seg) e não remover arquivo único
+    const root = (k > 0) ? parts0.slice(0, k).join("/") : "";
+    if (!root) return { root:"", out:arr };
+    const out = arr.map(p => p.startsWith(root + "/") ? p.slice(root.length + 1) : p);
+    return { root, out };
+  }
+
+  function abToText(ab) {
+    try {
+      const u8 = ab ? new Uint8Array(ab) : new Uint8Array();
+      return new TextDecoder("utf-8", { fatal: false }).decode(u8);
+    } catch {
+      return "";
+    }
+  }
+
+  function abToBase64(ab) {
+    try {
+      const u8 = new Uint8Array(ab || new ArrayBuffer(0));
+      let s = "";
+      const CHUNK = 0x8000;
+      for (let i = 0; i < u8.length; i += CHUNK) {
+        s += String.fromCharCode.apply(null, Array.from(u8.slice(i, i + CHUNK)));
+      }
+      return btoa(s);
+    } catch {
+      return "";
+    }
+  }
+
+  function tryParseManifestTitle(filesMap) {
+    // procura manifest.json na raiz
+    const key = Object.keys(filesMap || {}).find(k => String(k).toLowerCase() === "manifest.json");
+    if (!key) return "";
+    try {
+      const mf = filesMap[key];
+      if (!mf) return "";
+      const txt = (mf.enc === "utf8") ? mf.data : "";
+      const o = safeJsonParse(txt, null);
+      if (!o) return "";
+      return String(o.name || o.short_name || "").trim();
+    } catch {
+      return "";
+    }
+  }
+
+  function registerZipAsTemplate(pack) {
+    try {
+      const REG = window.RCF_TEMPLATE_REGISTRY;
+      if (!REG || typeof REG.add !== "function") return false;
+
+      const tplId = String(pack.templateId || "");
+      if (!tplId) return false;
+
+      // evita duplicar
+      if (REG.get && REG.get(tplId)) return true;
+
+      REG.add(tplId, {
+        title: pack.title || ("ZIP App: " + (pack.name || tplId)),
+        files(spec) {
+          // devolve os arquivos já prontos (strings/base64)
+          const out = {};
+          const files = pack.files || {};
+          for (const p of Object.keys(files)) {
+            const f = files[p];
+            if (!f) continue;
+            if (f.enc === "utf8") out[p] = String(f.data || "");
+            else if (f.enc === "base64") {
+              // deixa como data url? (engine atual normalmente espera texto; bin é raro)
+              // guardamos como base64 puro para futuras evoluções
+              out[p] = String(f.data || "");
+            } else {
+              out[p] = String(f.data || "");
+            }
+          }
+          return out;
+        }
+      });
+
+      log("OK", "ZIP->APP: template registrado ✅ id=" + tplId);
+      try { window.dispatchEvent(new CustomEvent("RCF:TEMPLATES_UPDATED", { detail: { id: tplId } })); } catch {}
+      return true;
+    } catch (e) {
+      log("WARN", "ZIP->APP: register template falhou: " + (e?.message || e));
+      return false;
+    }
+  }
+
+  function tryAutoSelectGenerator(templateId) {
+    try {
+      // tenta achar qualquer <select> que pareça ser de template
+      const sels = Array.from(document.querySelectorAll("select"));
+      const target = sels.find(s => {
+        const id = (s.id || "").toLowerCase();
+        const nm = (s.getAttribute("name") || "").toLowerCase();
+        return id.includes("tpl") || id.includes("template") || nm.includes("tpl") || nm.includes("template");
+      }) || null;
+
+      if (!target) return false;
+
+      const opt = Array.from(target.options || []).find(o => String(o.value) === String(templateId));
+      if (!opt) return false;
+
+      target.value = templateId;
+      try { target.dispatchEvent(new Event("change", { bubbles: true })); } catch {}
+      try { target.dispatchEvent(new Event("input", { bubbles: true })); } catch {}
+      log("OK", "ZIP->APP: generator auto-select ✅ " + templateId);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // =========================================================
   // Vault core (IDB salva bytes, não Blob)
   // =========================================================
   const Vault = {
-    __v10d: true,
+    __v10e: true,
     _lock: false,
     _job: null,
 
@@ -320,13 +466,10 @@
       if (!rec) return null;
 
       try {
-        // compat antigo (se algum item antigo tiver blob)
         if (rec.blob) return URL.createObjectURL(rec.blob);
-
         const mime = rec.mime || mimeByPath(path);
         const ab = rec.ab;
         if (!ab) return null;
-
         const blob = new Blob([ab], { type: mime });
         return URL.createObjectURL(blob);
       } catch {
@@ -369,6 +512,9 @@
         const idx = readIndex();
         const idxMap = new Map(idx.map(it => [String(it.path), it]));
 
+        // ✅ para AUTO-ZIP->APP: vamos coletar paths do job
+        const jobPaths = [];
+
         for (let i = 0; i < files.length; i++) {
           const rp = normPath(files[i].relativePath);
           const entry = files[i].entry;
@@ -384,7 +530,7 @@
             path: rp,
             mime,
             size,
-            ab, // <-- bytes
+            ab,
             source: "zip:" + String(file.name || "import"),
             importedAt: startedAt,
             jobId
@@ -392,6 +538,7 @@
 
           await idbPut(key, rec);
           importedKeys.push(key);
+          jobPaths.push(rp);
 
           idxMap.set(rp, {
             path: rp,
@@ -417,6 +564,24 @@
         } catch {}
 
         log("OK", `VAULT import ok ✅ files=${files.length} bytes=${this._job.bytes}`);
+
+        // ✅ AUTO ZIP -> APP (template)
+        try {
+          const cfg = getCfg();
+          if (cfg.autoZipToApp) {
+            await AutoZipToApp.fromJob({
+              jobId,
+              startedAt,
+              name: file.name || "",
+              bytes: this._job.bytes,
+              count: files.length,
+              paths: jobPaths
+            });
+          }
+        } catch (e) {
+          log("WARN", "AUTO ZIP->APP falhou (não trava): " + (e?.message || e));
+        }
+
         return { ok: true, jobId, count: files.length, bytes: this._job.bytes };
 
       } catch (e) {
@@ -429,6 +594,140 @@
         this._job = null;
         UI._progress();
         UI.renderList();
+      }
+    }
+  };
+
+  // =========================================================
+  // ✅ AUTO ZIP -> APP helper
+  // =========================================================
+  const AutoZipToApp = {
+    async fromJob(meta) {
+      const cfg = getCfg();
+      const max = Number(cfg.autoZipMaxBytesLS || 0) || 0;
+
+      // só faz pack local se for "pequeno" (pra não quebrar iOS LS)
+      if (max > 0 && (Number(meta.bytes) || 0) > max) {
+        log("WARN", "ZIP->APP: ZIP grande demais p/ localStorage. bytes=" + meta.bytes + " max=" + max);
+        log("WARN", "ZIP->APP: mande um ZIP menor (ou depois eu integro via Engine/Builder).");
+        return { ok:false, err:"zip_too_big" };
+      }
+
+      // pega só os arquivos desse job
+      const all = Vault.index();
+      const jobList = all.filter(it => it && it.jobId === meta.jobId).map(it => it.path);
+
+      // strip pasta raiz comum (ex: timesheet-lite/* -> *)
+      const stripped = stripCommonRoot(jobList);
+      const root = stripped.root;
+      const paths = stripped.out;
+
+      const filesPack = {};
+      let packBytesApprox = 0;
+
+      for (let i = 0; i < paths.length; i++) {
+        const p2 = paths[i];
+        const realPath = root ? (root + "/" + p2) : p2;
+
+        const rec = await Vault.getFile(realPath);
+        if (!rec || !rec.ab) continue;
+
+        const mime = rec.mime || mimeByPath(p2);
+        const isText = isTextByMimeOrPath(mime, p2);
+
+        if (isText) {
+          const txt = abToText(rec.ab);
+          filesPack[p2] = { enc:"utf8", mime, data: txt };
+          packBytesApprox += (txt ? txt.length : 0);
+        } else {
+          const b64 = abToBase64(rec.ab);
+          filesPack[p2] = { enc:"base64", mime, data: b64 };
+          packBytesApprox += (b64 ? b64.length : 0);
+        }
+
+        if ((i % 20) === 0) await new Promise(r => setTimeout(r, 0));
+      }
+
+      // tenta pegar título do manifest
+      const mfTitle = tryParseManifestTitle(filesPack);
+      const title = mfTitle || (meta.name ? String(meta.name).replace(/\.zip$/i, "") : "ZIP App");
+
+      const templateId = "zipapp-" + String(meta.jobId).replace(/[^a-zA-Z0-9_-]/g, "");
+
+      const pack = {
+        kind: "rcf-zipapp-pack",
+        templateId,
+        jobId: meta.jobId,
+        name: meta.name || "",
+        title,
+        createdAt: nowISO(),
+        bytes: meta.bytes || 0,
+        count: meta.count || 0,
+        approxLS: packBytesApprox,
+        root,
+        files: filesPack
+      };
+
+      // salva pack
+      try { localStorage.setItem(LS_APP_KEY(templateId), safeJsonStringify(pack)); } catch (e) {
+        log("WARN", "ZIP->APP: não salvou pack no localStorage: " + (e?.message || e));
+        // ainda tenta registrar direto via memória (pack já existe)
+      }
+
+      // atualiza índice
+      try {
+        const idx = readAppIndex();
+        const next = idx.filter(x => x && x.id !== templateId);
+        next.unshift({
+          id: templateId,
+          jobId: meta.jobId,
+          name: pack.name,
+          title: pack.title,
+          createdAt: pack.createdAt,
+          bytes: pack.bytes,
+          count: pack.count
+        });
+        writeAppIndex(next.slice(0, 30));
+      } catch {}
+
+      // registra template no registry (se existir)
+      const okReg = registerZipAsTemplate(pack);
+
+      if (okReg) {
+        log("OK", "ZIP->APP pronto ✅ template=" + templateId + " title=" + title);
+        try { window.RCF_LOGGER?.push?.("OK", "ZIP->APP ✅ template=" + templateId); } catch {}
+      } else {
+        log("WARN", "ZIP->APP: registry não disponível ainda (template_registry não carregou?)");
+      }
+
+      // tenta auto-select generator
+      if (cfg.autoSelectGenerator) {
+        setTimeout(() => { try { tryAutoSelectGenerator(templateId); } catch {} }, 650);
+        setTimeout(() => { try { tryAutoSelectGenerator(templateId); } catch {} }, 1600);
+      }
+
+      return { ok:true, templateId, title };
+    },
+
+    // permite re-registrar packs no boot (se registry carregar depois)
+    restorePacks() {
+      try {
+        const idx = readAppIndex();
+        if (!idx || !idx.length) return 0;
+        let ok = 0;
+        for (const it of idx) {
+          const id = it && it.id ? String(it.id) : "";
+          if (!id) continue;
+          const raw = localStorage.getItem(LS_APP_KEY(id)) || "";
+          const pack = safeJsonParse(raw, null);
+          if (pack && pack.templateId) {
+            if (registerZipAsTemplate(pack)) ok++;
+          }
+        }
+        if (ok) log("OK", "ZIP->APP restore ✅ templates=" + ok);
+        return ok;
+      } catch {
+        return 0;
       }
     }
   };
@@ -463,7 +762,7 @@
       card.style.marginTop = "12px";
       card.innerHTML = `
         <h2 style="margin-top:0">VAULT • ZIP Import (PDF safe)</h2>
-        <div class="hint">Importa ZIP grande e guarda PDFs/Assets no IndexedDB (sem travar).</div>
+        <div class="hint">Importa ZIP e guarda no IndexedDB. ✅ Auto ZIP→App (vira template no Generator quando pequeno).</div>
 
         <div class="row" style="flex-wrap:wrap;align-items:center;margin-top:10px">
           <input id="rcfVaultZipInput" type="file" accept=".zip" style="max-width:340px" />
@@ -534,7 +833,7 @@
             if (!f) return UI.out("⚠️ Selecione um .zip primeiro.");
             UI.out("Importando… (não feche a aba)");
             const r = await Vault.importZipFile(f);
-            if (r.ok) UI.out(`✅ Import OK • files=${r.count} • ${(r.bytes / (1024*1024)).toFixed(1)}MB`);
+            if (r.ok) UI.out(`✅ Import OK • files=${r.count} • ${(r.bytes / (1024*1024)).toFixed(1)}MB\n✅ Se for pequeno, virou APP/Template automaticamente.`);
             else UI.out("❌ Falhou: " + (r.err || "erro"));
           } catch (e) {
             UI.out("❌ Erro: " + (e?.message || e));
@@ -558,7 +857,7 @@
         btnClear.__bound = true;
         btnClear.addEventListener("click", async () => {
           try {
-            const ok = confirm("Clear Vault? (apaga PDFs/Assets do IDB)");
+            const ok = confirm("Clear Vault? (apaga arquivos do IDB)");
             if (!ok) return;
             await Vault.clearAll();
             UI.renderList();
@@ -716,8 +1015,15 @@
     setTimeout(() => { try { UI.mount(); } catch {} }, 2000);
   }
 
+  // ✅ restore packs depois que template_registry carregar
+  function restoreZipAppsLoop() {
+    try { AutoZipToApp.restorePacks(); } catch {}
+    setTimeout(() => { try { AutoZipToApp.restorePacks(); } catch {} }, 1400);
+    setTimeout(() => { try { AutoZipToApp.restorePacks(); } catch {} }, 3200);
+  }
+
   window.RCF_ZIP_VAULT = {
-    __v10d: true,
+    __v10e: true,
     mount: () => UI.mount(),
     importZip: (file) => Vault.importZipFile(file),
     list: () => Vault.index(),
@@ -725,14 +1031,20 @@
     openURL: (path) => Vault.openAsObjectURL(path),
     clearAll: () => Vault.clearAll(),
     cfgGet: () => getCfg(),
-    cfgSet: (p) => setCfg(p)
+    cfgSet: (p) => setCfg(p),
+    // ✅ helper
+    zipToAppRestore: () => AutoZipToApp.restorePacks()
   };
 
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", () => { tryMountLoop(); }, { once: true });
+    document.addEventListener("DOMContentLoaded", () => {
+      tryMountLoop();
+      restoreZipAppsLoop();
+    }, { once: true });
   } else {
     tryMountLoop();
+    restoreZipAppsLoop();
   }
 
-  log("OK", "zip_vault.js ready ✅ (v1.0d)");
+  log("OK", "zip_vault.js ready ✅ (v1.0e)");
 })();
