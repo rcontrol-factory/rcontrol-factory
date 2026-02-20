@@ -1,7 +1,7 @@
 /* FILE: /app/js/engine/template_registry.js
-   RControl Factory — template_registry.js — v1.1 (add timesheet-lite)
+   RControl Factory — template_registry.js — v1.2 (timesheet-lite + LOGIN 2 users)
    - Mantém pwa-base
-   - Adiciona template: timesheet-lite (timesheet semanal + histórico mensal + export PDF via print)
+   - Adiciona/atualiza template: timesheet-lite (login 2 usuários + semana + mês + PDF via print)
 */
 (() => {
   "use strict";
@@ -58,13 +58,18 @@ body{margin:0;padding:18px;font-family:system-ui;background:#0b1020;color:#fff}
     }
   });
 
-  // ✅ Template: Timesheet Lite (semana + mês + PDF via print)
+  // ✅ Template: Timesheet Lite (LOGIN 2 users + semana + mês + PDF via print)
   TemplateRegistry.add("timesheet-lite", {
-    title: "Timesheet Lite (Horas + PDF)",
+    title: "Timesheet Lite (Login 2 usuários • Horas + PDF)",
     files(spec) {
       const appName = (spec && spec.name) ? String(spec.name) : "Timesheet Lite";
       const theme = (spec && spec.themeColor) ? String(spec.themeColor) : "#0b1020";
-      const owner = (spec && (spec.ownerName || spec.userName)) ? String(spec.ownerName || spec.userName) : "Usuário";
+
+      // defaults (você pode editar depois nas configs do app)
+      const defaultUser1 = (spec && (spec.user1Name || spec.ownerName)) ? String(spec.user1Name || spec.ownerName) : "Mateus";
+      const defaultUser2 = (spec && (spec.user2Name || spec.brotherName)) ? String(spec.user2Name || spec.brotherName) : "Irmão";
+      const defaultPin1  = (spec && spec.user1Pin) ? String(spec.user1Pin) : "1111";
+      const defaultPin2  = (spec && spec.user2Pin) ? String(spec.user2Pin) : "2222";
 
       return {
         "index.html": `<!doctype html>
@@ -83,17 +88,46 @@ body{margin:0;padding:18px;font-family:system-ui;background:#0b1020;color:#fff}
       <div class="dot"></div>
       <div class="t">
         <div class="title">${appName}</div>
-        <div class="sub">Horas semanais • histórico mensal • PDF</div>
+        <div class="sub">Login (2 usuários) • horas semanais • histórico mensal • PDF</div>
       </div>
     </div>
-    <button class="btn ghost" id="btnSettings" type="button">⚙️</button>
+    <button class="btn ghost" id="btnSettings" type="button" title="Configurações">⚙️</button>
   </header>
 
   <main class="wrap">
-    <section class="card">
+
+    <!-- LOGIN -->
+    <section class="card" id="loginCard">
+      <div class="row">
+        <div class="big">Entrar</div>
+        <div class="spacer"></div>
+        <div class="pill" id="loginHint">Escolha o usuário e digite o PIN</div>
+      </div>
+
+      <div class="row" style="gap:10px;flex-wrap:wrap;margin-top:10px">
+        <div class="field" style="min-width:220px;flex:1">
+          <div class="label">Usuário</div>
+          <select id="loginUser"></select>
+        </div>
+        <div class="field" style="min-width:160px">
+          <div class="label">PIN</div>
+          <input id="loginPin" type="password" inputmode="numeric" placeholder="ex: 1234" />
+        </div>
+        <div class="field" style="min-width:160px;align-self:flex-end">
+          <button class="btn ok" id="btnLogin" type="button">Entrar</button>
+        </div>
+      </div>
+
+      <div class="hint" style="margin-top:8px">
+        Dica: você pode mudar nomes e PINs em Configurações (⚙️).
+      </div>
+    </section>
+
+    <!-- APP -->
+    <section class="card" id="appCard" style="display:none">
       <div class="row">
         <div class="col">
-          <div class="label">Usuário</div>
+          <div class="label">Usuário logado</div>
           <div class="big" id="who">—</div>
         </div>
         <div class="col right">
@@ -104,6 +138,12 @@ body{margin:0;padding:18px;font-family:system-ui;background:#0b1020;color:#fff}
             <button class="btn ghost" id="btnNextWeek" type="button">▶</button>
           </div>
         </div>
+      </div>
+
+      <div class="row" style="margin-top:10px;gap:10px;flex-wrap:wrap">
+        <button class="btn ghost" id="btnLogout" type="button">Sair</button>
+        <div class="spacer"></div>
+        <div class="pill" id="weekTotal">Total: 0.00h</div>
       </div>
 
       <div class="hr"></div>
@@ -135,21 +175,14 @@ body{margin:0;padding:18px;font-family:system-ui;background:#0b1020;color:#fff}
         <button class="btn ok" id="btnAdd" type="button">+ Adicionar</button>
         <button class="btn ghost" id="btnClearWeek" type="button">Limpar semana</button>
         <div class="spacer"></div>
-        <div class="pill" id="weekTotal">Total: 0.00h</div>
-      </div>
-    </section>
-
-    <section class="card">
-      <div class="row">
-        <div class="big">Entradas da semana</div>
-        <div class="spacer"></div>
         <button class="btn ghost" id="btnPDF" type="button">Gerar PDF</button>
       </div>
-      <div class="hint">Dica iPhone: ao abrir o “PDF”, toque em compartilhar → imprimir → salvar PDF.</div>
+
+      <div class="hint">iPhone: ao abrir o relatório → compartilhar → imprimir → salvar PDF.</div>
       <div class="list" id="listWeek"></div>
     </section>
 
-    <section class="card">
+    <section class="card" id="monthCard" style="display:none">
       <div class="row">
         <div class="big">Histórico mensal</div>
         <div class="spacer"></div>
@@ -162,6 +195,7 @@ body{margin:0;padding:18px;font-family:system-ui;background:#0b1020;color:#fff}
       <div class="list" id="listMonth"></div>
     </section>
 
+    <!-- SETTINGS -->
     <section class="card" id="settings" style="display:none">
       <div class="row">
         <div class="big">Configurações</div>
@@ -169,23 +203,40 @@ body{margin:0;padding:18px;font-family:system-ui;background:#0b1020;color:#fff}
         <button class="btn danger" id="btnCloseSettings" type="button">Fechar</button>
       </div>
 
+      <div class="hr"></div>
+
       <div class="row" style="gap:10px;flex-wrap:wrap;margin-top:10px">
         <div class="field" style="flex:1;min-width:220px">
-          <div class="label">Nome do usuário (aparece no PDF)</div>
-          <input id="cfgOwner" type="text" />
+          <div class="label">Usuário 1 (nome)</div>
+          <input id="cfgU1Name" type="text" />
         </div>
-        <div class="field" style="flex:1;min-width:220px">
-          <div class="label">Empresa/Equipe (opcional)</div>
-          <input id="cfgTeam" type="text" placeholder="ex: Santana Services" />
+        <div class="field" style="min-width:180px">
+          <div class="label">Usuário 1 (PIN)</div>
+          <input id="cfgU1Pin" type="password" inputmode="numeric" placeholder="ex: 1111" />
         </div>
       </div>
 
       <div class="row" style="gap:10px;flex-wrap:wrap;margin-top:10px">
         <div class="field" style="flex:1;min-width:220px">
+          <div class="label">Usuário 2 (nome)</div>
+          <input id="cfgU2Name" type="text" />
+        </div>
+        <div class="field" style="min-width:180px">
+          <div class="label">Usuário 2 (PIN)</div>
+          <input id="cfgU2Pin" type="password" inputmode="numeric" placeholder="ex: 2222" />
+        </div>
+      </div>
+
+      <div class="row" style="gap:10px;flex-wrap:wrap;margin-top:10px">
+        <div class="field" style="flex:1;min-width:220px">
+          <div class="label">Empresa/Equipe (opcional)</div>
+          <input id="cfgTeam" type="text" placeholder="ex: Santana Services" />
+        </div>
+        <div class="field" style="flex:1;min-width:220px">
           <div class="label">Pagamento por hora (opcional)</div>
           <input id="cfgRate" type="number" inputmode="decimal" min="0" step="0.5" placeholder="ex: 35" />
         </div>
-        <div class="field" style="flex:1;min-width:220px">
+        <div class="field" style="min-width:160px">
           <div class="label">Moeda</div>
           <select id="cfgCurrency">
             <option value="USD">USD</option>
@@ -203,6 +254,7 @@ body{margin:0;padding:18px;font-family:system-ui;background:#0b1020;color:#fff}
 
       <pre class="mono small" id="out" style="margin-top:10px">Pronto.</pre>
     </section>
+
   </main>
 
   <script src="./app.js"></script>
@@ -310,13 +362,27 @@ input,select{
 self.addEventListener("activate", (e)=>{ e.waitUntil(self.clients.claim()); });
 self.addEventListener("fetch", (e)=>{ /* offline-lite */ });`,
 
-        "app.js": `/* Timesheet Lite — v1.0 (offline localStorage) */
+        "app.js": `/* Timesheet Lite — v1.1 (LOGIN 2 users) — offline localStorage
+   - Dados separados por usuário (u1/u2)
+   - PDF via window.print (iPhone: compartilhar → imprimir → salvar PDF)
+*/
 (() => {
   "use strict";
 
   const LS = {
     cfg: "ts:cfg",
-    weeks: "ts:weeks" // map { [weekKey]: { entries:[], updatedAt } }
+    weeksPrefix: "ts:weeks:", // + userId
+    session: "ts:session"     // { userId, at }
+  };
+
+  const DEFAULTS = {
+    team: "",
+    rate: "",
+    currency: "USD",
+    users: [
+      { id: "u1", name: "${defaultUser1}", pin: "${defaultPin1}" },
+      { id: "u2", name: "${defaultUser2}", pin: "${defaultPin2}" }
+    ]
   };
 
   const $ = (id) => document.getElementById(id);
@@ -324,20 +390,16 @@ self.addEventListener("fetch", (e)=>{ /* offline-lite */ });`,
   function safeParse(s, fb) { try { return JSON.parse(s); } catch { return fb; } }
   function safeStr(o) { try { return JSON.stringify(o); } catch { return "{}"; } }
 
+  function pad2(n){ return String(n).padStart(2,"0"); }
+
   function todayISO() {
     const d = new Date();
-    const yyyy = d.getFullYear();
-    const mm = String(d.getMonth()+1).padStart(2,"0");
-    const dd = String(d.getDate()).padStart(2,"0");
-    return yyyy + "-" + mm + "-" + dd;
+    return d.getFullYear() + "-" + pad2(d.getMonth()+1) + "-" + pad2(d.getDate());
   }
-
-  function pad2(n){ return String(n).padStart(2,"0"); }
 
   function toMinutes(hhmm) {
     if (!hhmm) return null;
-    const s = String(hhmm);
-    const parts = s.split(":");
+    const parts = String(hhmm).split(":");
     if (parts.length < 2) return null;
     const h = Number(parts[0] || 0);
     const m = Number(parts[1] || 0);
@@ -368,12 +430,11 @@ self.addEventListener("fetch", (e)=>{ /* offline-lite */ });`,
   }
 
   function weekStartEnd(weekKey) {
-    // weekKey: YYYY-W##
     const m = String(weekKey).match(/^(\\d{4})-W(\\d{2})$/);
     if (!m) return null;
     const year = Number(m[1]);
     const week = Number(m[2]);
-    // ISO week -> Monday
+
     const simple = new Date(Date.UTC(year, 0, 1 + (week - 1) * 7));
     const dow = simple.getUTCDay();
     const ISOweekStart = new Date(simple);
@@ -389,32 +450,53 @@ self.addEventListener("fetch", (e)=>{ /* offline-lite */ });`,
   }
 
   function loadCfg() {
-    const fb = { ownerName: "${owner}", team: "", rate: "", currency: "USD" };
-    return Object.assign(fb, safeParse(localStorage.getItem(LS.cfg) || "{}", {}));
+    const raw = safeParse(localStorage.getItem(LS.cfg) || "{}", {});
+    const cfg = Object.assign({}, DEFAULTS, raw || {});
+    if (!Array.isArray(cfg.users) || cfg.users.length < 2) cfg.users = DEFAULTS.users.slice();
+    // normaliza ids
+    cfg.users = cfg.users.slice(0,2).map((u,i)=>({
+      id: (u && u.id) ? String(u.id) : ("u"+(i+1)),
+      name: (u && u.name) ? String(u.name) : ("Usuário "+(i+1)),
+      pin: (u && u.pin) ? String(u.pin) : (i===0 ? "1111":"2222")
+    }));
+    cfg.team = String(cfg.team || "");
+    cfg.rate = String(cfg.rate || "");
+    cfg.currency = String(cfg.currency || "USD");
+    return cfg;
   }
 
   function saveCfg(cfg) {
     try { localStorage.setItem(LS.cfg, safeStr(cfg)); } catch {}
   }
 
-  function loadWeeks() {
-    return safeParse(localStorage.getItem(LS.weeks) || "{}", {});
+  function sessionGet() {
+    return safeParse(localStorage.getItem(LS.session) || "null", null);
+  }
+  function sessionSet(userId) {
+    try { localStorage.setItem(LS.session, safeStr({ userId, at: Date.now() })); } catch {}
+  }
+  function sessionClear() {
+    try { localStorage.removeItem(LS.session); } catch {}
   }
 
-  function saveWeeks(map) {
-    try { localStorage.setItem(LS.weeks, safeStr(map || {})); } catch {}
+  function weeksKey(userId) { return LS.weeksPrefix + String(userId || "u1"); }
+
+  function loadWeeks(userId) {
+    return safeParse(localStorage.getItem(weeksKey(userId)) || "{}", {});
+  }
+  function saveWeeks(userId, map) {
+    try { localStorage.setItem(weeksKey(userId), safeStr(map || {})); } catch {}
   }
 
-  function getWeek(weekKey) {
-    const all = loadWeeks();
+  function getWeek(userId, weekKey) {
+    const all = loadWeeks(userId);
     const w = all[weekKey] || { entries: [], updatedAt: "" };
     return { all, week: w };
   }
-
-  function setWeek(weekKey, weekObj, all) {
-    const map = all || loadWeeks();
+  function setWeek(userId, weekKey, weekObj, all) {
+    const map = all || loadWeeks(userId);
     map[weekKey] = weekObj;
-    saveWeeks(map);
+    saveWeeks(userId, map);
   }
 
   function weekTotalHours(entries) {
@@ -423,36 +505,51 @@ self.addEventListener("fetch", (e)=>{ /* offline-lite */ });`,
 
   function moneyFmt(currency, n) {
     const v = Number(n) || 0;
-    try {
-      return new Intl.NumberFormat(undefined, { style: "currency", currency }).format(v);
-    } catch {
-      return currency + " " + v.toFixed(2);
-    }
+    try { return new Intl.NumberFormat(undefined, { style: "currency", currency }).format(v); }
+    catch { return currency + " " + v.toFixed(2); }
+  }
+
+  function escapeHtml(s) {
+    return String(s ?? "").replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
   }
 
   // UI state
   let cfg = loadCfg();
   let currentWeek = isoWeekKey(new Date());
+  let userId = null;
 
-  function setOut(t) {
-    const el = $("out");
-    if (el) el.textContent = String(t ?? "");
+  function renderLogin() {
+    const sel = $("loginUser");
+    sel.innerHTML = "";
+    for (const u of cfg.users) {
+      const opt = document.createElement("option");
+      opt.value = u.id;
+      opt.textContent = u.name;
+      sel.appendChild(opt);
+    }
+    $("loginPin").value = "";
+  }
+
+  function showLogin(show) {
+    $("loginCard").style.display = show ? "block" : "none";
+    $("appCard").style.display = show ? "none" : "block";
+    $("monthCard").style.display = show ? "none" : "block";
   }
 
   function renderHeader() {
-    $("who").textContent = cfg.ownerName || "—";
+    const u = cfg.users.find(x => x.id === userId) || cfg.users[0];
+    $("who").textContent = u ? u.name : "—";
     const se = weekStartEnd(currentWeek);
     $("weekLabel").textContent = se ? (currentWeek + " • " + se.start + " → " + se.end) : currentWeek;
   }
 
   function renderWeek() {
-    const { all, week } = getWeek(currentWeek);
+    const { all, week } = getWeek(userId, currentWeek);
     const list = $("listWeek");
     list.innerHTML = "";
 
     const entries = Array.isArray(week.entries) ? week.entries.slice() : [];
-    // ordena por data + start
-    entries.sort((a,b) => String(a.date||"").localeCompare(String(b.date||"")) || String(a.start||"").localeCompare(String(b.start||"")));
+    entries.sort((a,b)=>String(a.date||"").localeCompare(String(b.date||"")) || String(a.start||"").localeCompare(String(b.start||"")));
 
     const total = weekTotalHours(entries);
     $("weekTotal").textContent = "Total: " + total.toFixed(2) + "h";
@@ -482,10 +579,10 @@ self.addEventListener("fetch", (e)=>{ /* offline-lite */ });`,
       div.querySelector('[data-act="del"]').addEventListener("click", () => {
         const ok = confirm("Apagar esta entrada?");
         if (!ok) return;
-        const { all: a2, week: w2 } = getWeek(currentWeek);
+        const { all: a2, week: w2 } = getWeek(userId, currentWeek);
         w2.entries = (w2.entries || []).filter(x => x.id !== e.id);
         w2.updatedAt = new Date().toISOString();
-        setWeek(currentWeek, w2, a2);
+        setWeek(userId, currentWeek, w2, a2);
         renderWeek();
         renderMonth();
       });
@@ -496,7 +593,6 @@ self.addEventListener("fetch", (e)=>{ /* offline-lite */ });`,
         $("inEnd").value = e.end || "";
         $("inBreak").value = String(Number(e.breakMin)||0);
         $("inNote").value = e.note || "";
-        // marca id pra substituir no add
         $("btnAdd").setAttribute("data-edit-id", e.id);
         $("btnAdd").textContent = "Salvar edição";
         window.scrollTo({ top: 0, behavior: "smooth" });
@@ -537,18 +633,14 @@ self.addEventListener("fetch", (e)=>{ /* offline-lite */ });`,
     const list = $("listMonth");
     list.innerHTML = "";
 
-    const all = loadWeeks();
+    const all = loadWeeks(userId);
     const keys = Object.keys(all || {});
     const rows = [];
 
     for (const wk of keys) {
       const se = weekStartEnd(wk);
       if (!se) continue;
-      // week belongs to month if start OR end in that month
-      const inMonth =
-        String(se.start).slice(0,7) === monthKey ||
-        String(se.end).slice(0,7) === monthKey;
-
+      const inMonth = String(se.start).slice(0,7) === monthKey || String(se.end).slice(0,7) === monthKey;
       if (!inMonth) continue;
 
       const entries = (all[wk] && Array.isArray(all[wk].entries)) ? all[wk].entries : [];
@@ -556,7 +648,7 @@ self.addEventListener("fetch", (e)=>{ /* offline-lite */ });`,
       rows.push({ wk, se, totalH, count: entries.length });
     }
 
-    rows.sort((a,b) => String(a.wk).localeCompare(String(b.wk)));
+    rows.sort((a,b)=>String(a.wk).localeCompare(String(b.wk)));
 
     const monthTotal = rows.reduce((a,r)=>a+(Number(r.totalH)||0),0);
     $("monthTotal").textContent = "Mês: " + monthTotal.toFixed(2) + "h";
@@ -588,10 +680,6 @@ self.addEventListener("fetch", (e)=>{ /* offline-lite */ });`,
     }
   }
 
-  function escapeHtml(s) {
-    return String(s ?? "").replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
-  }
-
   function addOrEdit() {
     const date = String($("inDate").value || "").trim();
     const start = String($("inStart").value || "").trim();
@@ -603,18 +691,16 @@ self.addEventListener("fetch", (e)=>{ /* offline-lite */ });`,
     if (!start || !end) { alert("Preencha início e fim."); return; }
 
     const h = hoursBetween(start, end, breakMin);
-    if (h <= 0) { alert("Horas inválidas (fim deve ser maior que início, e break não pode zerar tudo)."); return; }
+    if (h <= 0) { alert("Horas inválidas (fim > início, e break não pode zerar tudo)."); return; }
 
-    const { all, week } = getWeek(currentWeek);
+    const { all, week } = getWeek(userId, currentWeek);
     const arr = Array.isArray(week.entries) ? week.entries : [];
 
     const editId = $("btnAdd").getAttribute("data-edit-id") || "";
 
     if (editId) {
       const idx = arr.findIndex(x => x && x.id === editId);
-      if (idx >= 0) {
-        arr[idx] = Object.assign({}, arr[idx], { date, start, end, breakMin, note, hours: h });
-      }
+      if (idx >= 0) arr[idx] = Object.assign({}, arr[idx], { date, start, end, breakMin, note, hours: h });
       $("btnAdd").removeAttribute("data-edit-id");
       $("btnAdd").textContent = "+ Adicionar";
     } else {
@@ -623,9 +709,8 @@ self.addEventListener("fetch", (e)=>{ /* offline-lite */ });`,
 
     week.entries = arr;
     week.updatedAt = new Date().toISOString();
-    setWeek(currentWeek, week, all);
+    setWeek(userId, currentWeek, week, all);
 
-    // reset inputs (mantém data)
     $("inStart").value = "";
     $("inEnd").value = "";
     $("inBreak").value = "";
@@ -638,16 +723,15 @@ self.addEventListener("fetch", (e)=>{ /* offline-lite */ });`,
   function clearWeek() {
     const ok = confirm("Limpar TODAS as entradas desta semana?");
     if (!ok) return;
-    const { all, week } = getWeek(currentWeek);
+    const { all, week } = getWeek(userId, currentWeek);
     week.entries = [];
     week.updatedAt = new Date().toISOString();
-    setWeek(currentWeek, week, all);
+    setWeek(userId, currentWeek, week, all);
     renderWeek();
     renderMonth();
   }
 
   function shiftWeek(delta) {
-    // delta in weeks
     const se = weekStartEnd(currentWeek);
     if (!se) return;
     const d = new Date(se.start + "T00:00:00Z");
@@ -660,23 +744,32 @@ self.addEventListener("fetch", (e)=>{ /* offline-lite */ });`,
   function showSettings(show) {
     $("settings").style.display = show ? "block" : "none";
     if (show) {
-      $("cfgOwner").value = cfg.ownerName || "";
+      $("cfgU1Name").value = cfg.users[0].name || "";
+      $("cfgU1Pin").value = cfg.users[0].pin || "";
+      $("cfgU2Name").value = cfg.users[1].name || "";
+      $("cfgU2Pin").value = cfg.users[1].pin || "";
       $("cfgTeam").value = cfg.team || "";
       $("cfgRate").value = cfg.rate || "";
       $("cfgCurrency").value = cfg.currency || "USD";
-      setOut("Pronto.");
+      $("out").textContent = "Pronto.";
       window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
     }
   }
 
   function saveSettings() {
-    cfg.ownerName = String($("cfgOwner").value || "").trim() || cfg.ownerName;
+    cfg.users[0].name = String($("cfgU1Name").value || "").trim() || cfg.users[0].name;
+    cfg.users[0].pin  = String($("cfgU1Pin").value || "").trim() || cfg.users[0].pin;
+    cfg.users[1].name = String($("cfgU2Name").value || "").trim() || cfg.users[1].name;
+    cfg.users[1].pin  = String($("cfgU2Pin").value || "").trim() || cfg.users[1].pin;
+
     cfg.team = String($("cfgTeam").value || "").trim();
     cfg.rate = String($("cfgRate").value || "").trim();
     cfg.currency = String($("cfgCurrency").value || "USD");
+
     saveCfg(cfg);
+    renderLogin();
     renderHeader();
-    setOut("✅ Salvo.");
+    $("out").textContent = "✅ Salvo.";
     alert("Salvo ✅");
   }
 
@@ -685,7 +778,8 @@ self.addEventListener("fetch", (e)=>{ /* offline-lite */ });`,
       kind: "timesheet-lite-backup",
       exportedAt: new Date().toISOString(),
       cfg: loadCfg(),
-      weeks: loadWeeks()
+      weeks_u1: loadWeeks("u1"),
+      weeks_u2: loadWeeks("u2")
     };
     const blob = new Blob([safeStr(data)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -694,7 +788,7 @@ self.addEventListener("fetch", (e)=>{ /* offline-lite */ });`,
     a.download = "timesheet-backup.json";
     a.click();
     setTimeout(() => { try { URL.revokeObjectURL(url); } catch {} }, 2000);
-    setOut("✅ Backup exportado.");
+    $("out").textContent = "✅ Backup exportado.";
   }
 
   function importBackup() {
@@ -708,40 +802,48 @@ self.addEventListener("fetch", (e)=>{ /* offline-lite */ });`,
         const txt = await f.text();
         const data = safeParse(txt, null);
         if (!data || data.kind !== "timesheet-lite-backup") throw new Error("Arquivo inválido");
+
         if (data.cfg) localStorage.setItem(LS.cfg, safeStr(data.cfg));
-        if (data.weeks) localStorage.setItem(LS.weeks, safeStr(data.weeks));
+        if (data.weeks_u1) localStorage.setItem(LS.weeksPrefix + "u1", safeStr(data.weeks_u1));
+        if (data.weeks_u2) localStorage.setItem(LS.weeksPrefix + "u2", safeStr(data.weeks_u2));
+
         cfg = loadCfg();
-        renderHeader();
-        renderWeek();
-        renderMonth();
-        setOut("✅ Backup importado.");
+        renderLogin();
+        if (userId) {
+          renderHeader();
+          renderWeek();
+          renderMonth();
+        }
+        $("out").textContent = "✅ Backup importado.";
         alert("Importado ✅");
       } catch (e) {
         alert("Falhou: " + (e?.message || e));
-        setOut("❌ Import falhou.");
+        $("out").textContent = "❌ Import falhou.";
       }
     };
     inp.click();
   }
 
   function nukeAll() {
-    const ok = confirm("APAGAR TUDO? (config + semanas)");
+    const ok = confirm("APAGAR TUDO? (cfg + semanas u1/u2)");
     if (!ok) return;
     try {
       localStorage.removeItem(LS.cfg);
-      localStorage.removeItem(LS.weeks);
+      localStorage.removeItem(LS.weeksPrefix + "u1");
+      localStorage.removeItem(LS.weeksPrefix + "u2");
+      localStorage.removeItem(LS.session);
     } catch {}
     cfg = loadCfg();
-    currentWeek = isoWeekKey(new Date());
-    renderHeader();
-    renderWeek();
-    renderMonthPick();
-    renderMonth();
-    setOut("✅ Tudo apagado.");
+    userId = null;
+    showLogin(true);
+    renderLogin();
+    $("out").textContent = "✅ Tudo apagado.";
   }
 
   function buildPrintableHTML(weekKey) {
-    const { week } = getWeek(weekKey);
+    const u = cfg.users.find(x => x.id === userId) || cfg.users[0];
+    const uName = u ? (u.name || "") : "";
+    const { week } = getWeek(userId, weekKey);
     const entries = Array.isArray(week.entries) ? week.entries.slice() : [];
     entries.sort((a,b)=>String(a.date||"").localeCompare(String(b.date||"")) || String(a.start||"").localeCompare(String(b.start||"")));
 
@@ -761,7 +863,7 @@ self.addEventListener("fetch", (e)=>{ /* offline-lite */ });`,
         <td>\${escapeHtml(e.note||"")}</td>
       </tr>\`).join("");
 
-    const title = (cfg.team ? cfg.team + " — " : "") + (cfg.ownerName || "Timesheet");
+    const title = (cfg.team ? cfg.team + " — " : "") + (uName || "Timesheet");
     return \`<!doctype html>
 <html>
 <head>
@@ -785,7 +887,7 @@ self.addEventListener("fetch", (e)=>{ /* offline-lite */ });`,
 <body>
   <h1>\${escapeHtml(title)}</h1>
   <p class="sub">Semana \${escapeHtml(weekKey)} • \${se ? (escapeHtml(se.start) + " → " + escapeHtml(se.end)) : ""}</p>
-  <p class="meta"><b>Usuário:</b> \${escapeHtml(cfg.ownerName||"")} \${cfg.team ? (" • <b>Equipe:</b> " + escapeHtml(cfg.team)) : ""}</p>
+  <p class="meta"><b>Usuário:</b> \${escapeHtml(uName)} \${cfg.team ? (" • <b>Equipe:</b> " + escapeHtml(cfg.team)) : ""}</p>
 
   <table>
     <thead>
@@ -801,8 +903,7 @@ self.addEventListener("fetch", (e)=>{ /* offline-lite */ });`,
     \${rate>0 ? ("<div><b>Rate:</b> " + escapeHtml(String(rate)) + " " + escapeHtml(cfg.currency||"USD") + " • <b>Total:</b> " + escapeHtml(moneyFmt(cfg.currency||"USD", amount)) + "</div>") : ""}
   </div>
 
-  <div class="hint">Dica: no iPhone, toque em compartilhar → imprimir → salvar como PDF.</div>
-
+  <div class="hint">iPhone: compartilhar → imprimir → salvar PDF.</div>
   <script>setTimeout(()=>{ try{ window.print(); }catch(e){} }, 350);</script>
 </body>
 </html>\`;
@@ -818,12 +919,46 @@ self.addEventListener("fetch", (e)=>{ /* offline-lite */ });`,
   }
 
   function initDefaults() {
-    // defaults inputs
     $("inDate").value = todayISO();
     $("inBreak").value = "0";
   }
 
+  function doLogin() {
+    const pick = String($("loginUser").value || "u1");
+    const pin = String($("loginPin").value || "").trim();
+
+    const u = cfg.users.find(x => x.id === pick);
+    if (!u) { alert("Usuário inválido"); return; }
+    if (!pin || pin !== String(u.pin || "")) {
+      alert("PIN incorreto.");
+      return;
+    }
+
+    userId = u.id;
+    sessionSet(userId);
+    showLogin(false);
+
+    renderHeader();
+    renderMonthPick();
+    initDefaults();
+    renderWeek();
+    renderMonth();
+  }
+
+  function doLogout() {
+    userId = null;
+    sessionClear();
+    showLogin(true);
+    renderLogin();
+    $("loginPin").value = "";
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
   function bind() {
+    $("btnLogin").addEventListener("click", doLogin, { passive: true });
+    $("loginPin").addEventListener("keydown", (e) => { if (e.key === "Enter") doLogin(); });
+
+    $("btnLogout").addEventListener("click", doLogout, { passive: true });
     $("btnAdd").addEventListener("click", addOrEdit, { passive: true });
     $("btnClearWeek").addEventListener("click", clearWeek, { passive: true });
     $("btnPrevWeek").addEventListener("click", () => shiftWeek(-1), { passive: true });
@@ -842,12 +977,21 @@ self.addEventListener("fetch", (e)=>{ /* offline-lite */ });`,
 
   function boot() {
     cfg = loadCfg();
-    renderMonthPick();
-    renderHeader();
-    initDefaults();
     bind();
-    renderWeek();
-    renderMonth();
+    renderLogin();
+
+    const sess = sessionGet();
+    if (sess && sess.userId && cfg.users.some(u => u.id === sess.userId)) {
+      userId = sess.userId;
+      showLogin(false);
+      renderHeader();
+      renderMonthPick();
+      initDefaults();
+      renderWeek();
+      renderMonth();
+    } else {
+      showLogin(true);
+    }
   }
 
   if (document.readyState === "loading") {
