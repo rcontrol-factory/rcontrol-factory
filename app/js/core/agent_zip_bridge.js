@@ -1,14 +1,21 @@
+/* FILE: /app/js/core/agent_zip_bridge.js
 /* =========================================================
   RControl Factory — /app/js/core/agent_zip_bridge.js (v1.0 SAFE)
   Objetivo:
   - Importar ZIP (ex.: Replit Agent) e salvar no KV (IDB/local fallback)
   - Expor API pro "Agent" usar como base de arquivos/knowledge
   - iOS safe + fail-safe (nunca trava a Factory)
+
+  PATCH (compat + UI READY):
+  - ✅ Exporta também window.RCF_AGENT_ZIP_BRIDGE (alias) — o app.js chama esse nome
+  - ✅ Escuta RCF:UI_READY e monta o ZIP_VAULT quando ele existir (corrige reinject_called=0)
 ========================================================= */
 (function () {
   "use strict";
 
+  // Já carregado?
   if (window.RCF_AGENT_ZIP && window.RCF_AGENT_ZIP.__v10) return;
+  if (window.RCF_AGENT_ZIP_BRIDGE && window.RCF_AGENT_ZIP_BRIDGE.__v10) return;
 
   const KEY_LAST = "agent_zip:last";
 
@@ -189,13 +196,67 @@
     }
   }
 
-  // Export global API
-  window.RCF_AGENT_ZIP = {
+  // =========================================================
+  // UI READY / VAULT reinject (corrige ordem de load)
+  // =========================================================
+  function tryMountVaultUI(reason) {
+    try {
+      const V = window.RCF_ZIP_VAULT;
+      if (V && typeof V.mount === "function") {
+        const ok = V.mount();
+        if (ok) {
+          try { window.RCF_LOGGER?.push?.("OK", `AGENT_ZIP_BRIDGE: vault mounted ✅ (${reason || "auto"})`); } catch {}
+          return true;
+        }
+      }
+    } catch {}
+    return false;
+  }
+
+  function mountUI() {
+    // tentativa imediata
+    if (tryMountVaultUI("mountUI")) return true;
+
+    // re-tentativas leves (iPhone safe)
+    setTimeout(() => { tryMountVaultUI("retry 800ms"); }, 800);
+    setTimeout(() => { tryMountVaultUI("retry 2000ms"); }, 2000);
+    return false;
+  }
+
+  function onUIReady() {
+    // UI_READY pode acontecer antes deste módulo ou antes do zip_vault
+    mountUI();
+  }
+
+  // escuta evento padrão do app.js
+  try {
+    window.addEventListener("RCF:UI_READY", () => onUIReady(), { passive: true });
+  } catch {}
+
+  // se já está pronto, tenta já
+  try {
+    if (window.__RCF_UI_READY__) {
+      onUIReady();
+    }
+  } catch {}
+
+  // =========================================================
+  // Export global API (mantém RCF_AGENT_ZIP + adiciona alias BRIDGE)
+  // =========================================================
+  const API = {
     __v10: true,
     importZip,
     getLast,
-    clearLast
+    clearLast,
+
+    // compat hooks chamados pelo app.js (notifyUIReady)
+    mountUI,
+    mount: mountUI,
+    init: mountUI
   };
+
+  window.RCF_AGENT_ZIP = API;
+  window.RCF_AGENT_ZIP_BRIDGE = API;
 
   log("OK", "agent_zip_bridge.js ready ✅ (v1.0)");
 })();
