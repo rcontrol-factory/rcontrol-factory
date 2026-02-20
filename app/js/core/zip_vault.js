@@ -1,30 +1,27 @@
 /* FILE: /app/js/core/zip_vault.js
-   RControl Factory — js/core/zip_vault.js — v1.0f SAFE (FULL FIX: "VAULT SUMIU")
-   OBJETIVO:
-   - VAULT ZIP Import (PDF safe) via IndexedDB (ArrayBuffer)
-   - UI SEMPRE aparece: tenta SLOT -> view-agent -> view ativo -> #app fallback
-   - Mantém AUTO ZIP->APP pack (pequenos) + restore packs
+   RControl Factory — js/core/zip_vault.js — v1.0g SAFE (FIX DEFINITIVO: "VAULT SUMIU")
+   FIX:
+   - ✅ FORÇA UI.mount() sempre (mesmo se rcf:vault:cfg autoMountUI=false)
+   - ✅ Monta também no evento RCF:UI_READY (depois que app.js cria slots/UI)
+   - Mantém: IDB ArrayBuffer, Viewer, Auto ZIP->APP pack (pequenos) + restore packs
 */
 
 (function () {
   "use strict";
 
-  if (window.RCF_ZIP_VAULT && window.RCF_ZIP_VAULT.__v10f) return;
+  if (window.RCF_ZIP_VAULT && window.RCF_ZIP_VAULT.__v10g) return;
 
   const PREFIX = "rcf:";
   const LS_INDEX_KEY = PREFIX + "vault:index";
   const LS_LAST_KEY  = PREFIX + "vault:last";
   const LS_CFG_KEY   = PREFIX + "vault:cfg";
 
-  // pack p/ auto-template (pequenos)
-  const LS_APP_INDEX = PREFIX + "vault:app:index"; // array {id,jobId,name,title,createdAt,bytes,count}
+  const LS_APP_INDEX = PREFIX + "vault:app:index";
   const LS_APP_KEY   = (id) => PREFIX + "vault:app:" + id;
 
   const IDB_DB = "RCF_VAULT_DB";
   const IDB_VER = 1;
   const IDB_STORE = "files";
-
-  const $ = (sel, root = document) => root.querySelector(sel);
 
   const safeJsonParse = (s, fb) => { try { return JSON.parse(s); } catch { return fb; } };
   const safeJsonStringify = (o) => { try { return JSON.stringify(o); } catch { return String(o); } };
@@ -72,7 +69,7 @@
   }
 
   // =========================================================
-  // IDB (SAFE)
+  // IDB
   // =========================================================
   let __db = null;
   let __opening = null;
@@ -87,16 +84,10 @@
 
         req.onupgradeneeded = () => {
           const db = req.result;
-          if (!db.objectStoreNames.contains(IDB_STORE)) {
-            db.createObjectStore(IDB_STORE);
-          }
+          if (!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE);
         };
 
-        req.onsuccess = () => {
-          __db = req.result;
-          resolve(__db);
-        };
-
+        req.onsuccess = () => { __db = req.result; resolve(__db); };
         req.onerror = () => reject(req.error || new Error("IDB open failed"));
       } catch (e) {
         reject(e);
@@ -115,9 +106,7 @@
         const rq = st.put(val, key);
         rq.onsuccess = () => resolve(true);
         rq.onerror = () => reject(rq.error);
-      } catch (e) {
-        reject(e);
-      }
+      } catch (e) { reject(e); }
     });
   }
 
@@ -130,9 +119,7 @@
         const rq = st.get(key);
         rq.onsuccess = () => resolve(rq.result);
         rq.onerror = () => reject(rq.error);
-      } catch (e) {
-        reject(e);
-      }
+      } catch (e) { reject(e); }
     });
   }
 
@@ -145,9 +132,7 @@
         const rq = st.delete(key);
         rq.onsuccess = () => resolve(true);
         rq.onerror = () => reject(rq.error);
-      } catch (e) {
-        reject(e);
-      }
+      } catch (e) { reject(e); }
     });
   }
 
@@ -160,33 +145,32 @@
         const rq = st.clear();
         rq.onsuccess = () => resolve(true);
         rq.onerror = () => reject(rq.error);
-      } catch (e) {
-        reject(e);
-      }
+      } catch (e) { reject(e); }
     });
   }
 
   // =========================================================
-  // Index (localStorage leve)
+  // localStorage index/cfg
   // =========================================================
   function readIndex() {
     return safeJsonParse(localStorage.getItem(LS_INDEX_KEY) || "[]", []);
   }
-
   function writeIndex(list) {
     try { localStorage.setItem(LS_INDEX_KEY, safeJsonStringify(list || [])); } catch {}
   }
 
   function getCfg() {
-    return safeJsonParse(localStorage.getItem(LS_CFG_KEY) || "{}", {
+    // ✅ merge forte: sempre injeta defaults
+    const cur = safeJsonParse(localStorage.getItem(LS_CFG_KEY) || "{}", {});
+    const def = {
       keepTextCacheMax: 180000,
       autoMountUI: true,
       autoZipToApp: true,
       autoZipMaxBytesLS: 900000,
       autoSelectGenerator: true
-    });
+    };
+    return Object.assign(def, cur || {});
   }
-
   function setCfg(patch) {
     const cfg = Object.assign(getCfg(), patch || {});
     try { localStorage.setItem(LS_CFG_KEY, safeJsonStringify(cfg)); } catch {}
@@ -194,17 +178,11 @@
   }
 
   // =========================================================
-  // JSZip loader (ROBUSTO)
+  // JSZip loader (robusto)
   // =========================================================
   function looksLikeHTML(txt) {
     const s = String(txt || "").trim().slice(0, 300).toLowerCase();
-    return (
-      s.startsWith("<!doctype") ||
-      s.startsWith("<html") ||
-      s.includes("<head") ||
-      s.includes("<body") ||
-      s.includes("rcontrol factory")
-    );
+    return s.startsWith("<!doctype") || s.startsWith("<html") || s.includes("<head") || s.includes("<body") || s.includes("rcontrol factory");
   }
 
   function injectInlineScript(code, tag) {
@@ -241,9 +219,7 @@
         s.onerror = () => { clearTimeout(t); finish(false); };
 
         document.head.appendChild(s);
-      } catch {
-        resolve(false);
-      }
+      } catch { resolve(false); }
     });
   }
 
@@ -264,7 +240,6 @@
 
         const ct = String(res.headers.get("content-type") || "").toLowerCase();
         const code = await res.text();
-
         if (!code || code.length < 2000) continue;
 
         if (ct.includes("text/html") || looksLikeHTML(code)) {
@@ -301,14 +276,10 @@
   }
 
   // =========================================================
-  // AUTO ZIP -> APP pack (pequenos)
+  // AUTO ZIP->APP pack
   // =========================================================
-  function readAppIndex() {
-    return safeJsonParse(localStorage.getItem(LS_APP_INDEX) || "[]", []);
-  }
-  function writeAppIndex(list) {
-    try { localStorage.setItem(LS_APP_INDEX, safeJsonStringify(list || [])); } catch {}
-  }
+  function readAppIndex() { return safeJsonParse(localStorage.getItem(LS_APP_INDEX) || "[]", []); }
+  function writeAppIndex(list) { try { localStorage.setItem(LS_APP_INDEX, safeJsonStringify(list || [])); } catch {} }
 
   function stripCommonRoot(paths) {
     const arr = (paths || []).map(p => normPath(p)).filter(Boolean);
@@ -327,14 +298,9 @@
   }
 
   function abToText(ab) {
-    try {
-      const u8 = ab ? new Uint8Array(ab) : new Uint8Array();
-      return new TextDecoder("utf-8", { fatal: false }).decode(u8);
-    } catch {
-      return "";
-    }
+    try { return new TextDecoder("utf-8", { fatal:false }).decode(new Uint8Array(ab || new ArrayBuffer(0))); }
+    catch { return ""; }
   }
-
   function abToBase64(ab) {
     try {
       const u8 = new Uint8Array(ab || new ArrayBuffer(0));
@@ -344,9 +310,7 @@
         s += String.fromCharCode.apply(null, Array.from(u8.slice(i, i + CHUNK)));
       }
       return btoa(s);
-    } catch {
-      return "";
-    }
+    } catch { return ""; }
   }
 
   function tryParseManifestTitle(filesMap) {
@@ -354,14 +318,10 @@
     if (!key) return "";
     try {
       const mf = filesMap[key];
-      if (!mf) return "";
-      const txt = (mf.enc === "utf8") ? mf.data : "";
+      const txt = (mf && mf.enc === "utf8") ? mf.data : "";
       const o = safeJsonParse(txt, null);
-      if (!o) return "";
-      return String(o.name || o.short_name || "").trim();
-    } catch {
-      return "";
-    }
+      return o ? String(o.name || o.short_name || "").trim() : "";
+    } catch { return ""; }
   }
 
   function registerZipAsTemplate(pack) {
@@ -371,20 +331,17 @@
 
       const tplId = String(pack.templateId || "");
       if (!tplId) return false;
-
       if (REG.get && REG.get(tplId)) return true;
 
       REG.add(tplId, {
         title: pack.title || ("ZIP App: " + (pack.name || tplId)),
-        files(spec) {
+        files() {
           const out = {};
           const files = pack.files || {};
           for (const p of Object.keys(files)) {
             const f = files[p];
             if (!f) continue;
-            if (f.enc === "utf8") out[p] = String(f.data || "");
-            else if (f.enc === "base64") out[p] = String(f.data || "");
-            else out[p] = String(f.data || "");
+            out[p] = String(f.data || "");
           }
           return out;
         }
@@ -407,182 +364,23 @@
         const nm = (s.getAttribute("name") || "").toLowerCase();
         return id.includes("tpl") || id.includes("template") || nm.includes("tpl") || nm.includes("template");
       }) || null;
-
       if (!target) return false;
 
       const opt = Array.from(target.options || []).find(o => String(o.value) === String(templateId));
       if (!opt) return false;
 
       target.value = templateId;
-      try { target.dispatchEvent(new Event("change", { bubbles: true })); } catch {}
-      try { target.dispatchEvent(new Event("input", { bubbles: true })); } catch {}
+      try { target.dispatchEvent(new Event("change", { bubbles:true })); } catch {}
+      try { target.dispatchEvent(new Event("input", { bubbles:true })); } catch {}
       log("OK", "ZIP->APP: generator auto-select ✅ " + templateId);
       return true;
-    } catch {
-      return false;
-    }
+    } catch { return false; }
   }
-
-  // =========================================================
-  // Vault core (IDB salva bytes, não Blob)
-  // =========================================================
-  const Vault = {
-    __v10f: true,
-    _lock: false,
-    _job: null,
-
-    index() {
-      const list = readIndex();
-      list.sort((a, b) => String(a.path).localeCompare(String(b.path)));
-      return list;
-    },
-
-    async getFile(path) {
-      const p = normPath(path);
-      const key = "file:" + p;
-      const rec = await idbGet(key);
-      return rec || null;
-    },
-
-    async openAsObjectURL(path) {
-      const rec = await this.getFile(path);
-      if (!rec) return null;
-
-      try {
-        if (rec.blob) return URL.createObjectURL(rec.blob);
-        const mime = rec.mime || mimeByPath(path);
-        const ab = rec.ab;
-        if (!ab) return null;
-        const blob = new Blob([ab], { type: mime });
-        return URL.createObjectURL(blob);
-      } catch {
-        return null;
-      }
-    },
-
-    async clearAll() {
-      await idbClearAll();
-      writeIndex([]);
-      try { localStorage.removeItem(LS_LAST_KEY); } catch {}
-      log("OK", "VAULT clearAll ✅");
-      return true;
-    },
-
-    async importZipFile(file) {
-      if (this._lock) return { ok: false, err: "locked" };
-      this._lock = true;
-
-      const jobId = "job_" + Date.now();
-      const startedAt = nowISO();
-      const importedKeys = [];
-
-      this._job = { id: jobId, startedAt, name: file?.name || "(zip)", total: 0, done: 0, bytes: 0 };
-
-      try {
-        const okZip = await ensureJSZip();
-        if (!okZip) throw new Error("JSZip não carregou (verifique internet 1x ou arquivo local).");
-
-        if (!file) throw new Error("Arquivo ZIP ausente.");
-        const zipBuf = await file.arrayBuffer();
-
-        const zip = await window.JSZip.loadAsync(zipBuf);
-        const entries = [];
-        zip.forEach((relativePath, entry) => { entries.push({ relativePath, entry }); });
-
-        const files = entries.filter(x => x && x.entry && !x.entry.dir);
-        this._job.total = files.length;
-
-        const idx = readIndex();
-        const idxMap = new Map(idx.map(it => [String(it.path), it]));
-
-        const jobPaths = [];
-
-        for (let i = 0; i < files.length; i++) {
-          const rp = normPath(files[i].relativePath);
-          const entry = files[i].entry;
-
-          const mime = mimeByPath(rp);
-
-          const ab = await entry.async("arraybuffer");
-          const size = ab ? ab.byteLength : 0;
-
-          const key = "file:" + rp;
-          const rec = {
-            path: rp,
-            mime,
-            size,
-            ab,
-            source: "zip:" + String(file.name || "import"),
-            importedAt: startedAt,
-            jobId
-          };
-
-          await idbPut(key, rec);
-          importedKeys.push(key);
-          jobPaths.push(rp);
-
-          idxMap.set(rp, {
-            path: rp,
-            mime,
-            size,
-            importedAt: startedAt,
-            source: rec.source,
-            jobId
-          });
-
-          this._job.done = i + 1;
-          this._job.bytes += size;
-
-          if ((i % 14) === 0) await new Promise(r => setTimeout(r, 0));
-          UI._progress();
-        }
-
-        writeIndex(Array.from(idxMap.values()));
-        try {
-          localStorage.setItem(LS_LAST_KEY, safeJsonStringify({
-            jobId, startedAt, name: file.name || "", count: files.length, bytes: this._job.bytes
-          }));
-        } catch {}
-
-        log("OK", `VAULT import ok ✅ files=${files.length} bytes=${this._job.bytes}`);
-
-        try {
-          const cfg = getCfg();
-          if (cfg.autoZipToApp) {
-            await AutoZipToApp.fromJob({
-              jobId,
-              startedAt,
-              name: file.name || "",
-              bytes: this._job.bytes,
-              count: files.length,
-              paths: jobPaths
-            });
-          }
-        } catch (e) {
-          log("WARN", "AUTO ZIP->APP falhou (não trava): " + (e?.message || e));
-        }
-
-        return { ok: true, jobId, count: files.length, bytes: this._job.bytes };
-
-      } catch (e) {
-        try { for (const k of importedKeys) { try { await idbDel(k); } catch {} } } catch {}
-        log("ERR", "VAULT import fail :: " + (e?.message || e));
-        return { ok: false, err: (e?.message || String(e)) };
-
-      } finally {
-        this._lock = false;
-        this._job = null;
-        UI._progress();
-        UI.renderList();
-      }
-    }
-  };
 
   const AutoZipToApp = {
     async fromJob(meta) {
       const cfg = getCfg();
       const max = Number(cfg.autoZipMaxBytesLS || 0) || 0;
-
       if (max > 0 && (Number(meta.bytes) || 0) > max) {
         log("WARN", "ZIP->APP: ZIP grande demais p/ localStorage. bytes=" + meta.bytes + " max=" + max);
         return { ok:false, err:"zip_too_big" };
@@ -590,33 +388,22 @@
 
       const all = Vault.index();
       const jobList = all.filter(it => it && it.jobId === meta.jobId).map(it => it.path);
-
       const stripped = stripCommonRoot(jobList);
       const root = stripped.root;
       const paths = stripped.out;
 
       const filesPack = {};
-      let packBytesApprox = 0;
-
       for (let i = 0; i < paths.length; i++) {
         const p2 = paths[i];
         const realPath = root ? (root + "/" + p2) : p2;
-
         const rec = await Vault.getFile(realPath);
         if (!rec || !rec.ab) continue;
 
         const mime = rec.mime || mimeByPath(p2);
         const isText = isTextByMimeOrPath(mime, p2);
 
-        if (isText) {
-          const txt = abToText(rec.ab);
-          filesPack[p2] = { enc:"utf8", mime, data: txt };
-          packBytesApprox += (txt ? txt.length : 0);
-        } else {
-          const b64 = abToBase64(rec.ab);
-          filesPack[p2] = { enc:"base64", mime, data: b64 };
-          packBytesApprox += (b64 ? b64.length : 0);
-        }
+        if (isText) filesPack[p2] = { enc:"utf8", mime, data: abToText(rec.ab) };
+        else filesPack[p2] = { enc:"base64", mime, data: abToBase64(rec.ab) };
 
         if ((i % 20) === 0) await new Promise(r => setTimeout(r, 0));
       }
@@ -634,7 +421,6 @@
         createdAt: nowISO(),
         bytes: meta.bytes || 0,
         count: meta.count || 0,
-        approxLS: packBytesApprox,
         root,
         files: filesPack
       };
@@ -644,25 +430,13 @@
       try {
         const idx = readAppIndex();
         const next = idx.filter(x => x && x.id !== templateId);
-        next.unshift({
-          id: templateId,
-          jobId: meta.jobId,
-          name: pack.name,
-          title: pack.title,
-          createdAt: pack.createdAt,
-          bytes: pack.bytes,
-          count: pack.count
-        });
+        next.unshift({ id: templateId, jobId: meta.jobId, name: pack.name, title: pack.title, createdAt: pack.createdAt, bytes: pack.bytes, count: pack.count });
         writeAppIndex(next.slice(0, 30));
       } catch {}
 
       const okReg = registerZipAsTemplate(pack);
-
-      if (okReg) {
-        log("OK", "ZIP->APP pronto ✅ template=" + templateId + " title=" + title);
-      } else {
-        log("WARN", "ZIP->APP: registry não disponível ainda");
-      }
+      if (okReg) log("OK", "ZIP->APP pronto ✅ template=" + templateId + " title=" + title);
+      else log("WARN", "ZIP->APP: registry não disponível ainda");
 
       if (cfg.autoSelectGenerator) {
         setTimeout(() => { try { tryAutoSelectGenerator(templateId); } catch {} }, 650);
@@ -682,23 +456,139 @@
           if (!id) continue;
           const raw = localStorage.getItem(LS_APP_KEY(id)) || "";
           const pack = safeJsonParse(raw, null);
-          if (pack && pack.templateId) {
-            if (registerZipAsTemplate(pack)) ok++;
-          }
+          if (pack && pack.templateId) if (registerZipAsTemplate(pack)) ok++;
         }
         if (ok) log("OK", "ZIP->APP restore ✅ templates=" + ok);
         return ok;
-      } catch {
-        return 0;
+      } catch { return 0; }
+    }
+  };
+
+  // =========================================================
+  // Vault core
+  // =========================================================
+  const Vault = {
+    __v10g: true,
+    _lock: false,
+    _job: null,
+
+    index() {
+      const list = readIndex();
+      list.sort((a, b) => String(a.path).localeCompare(String(b.path)));
+      return list;
+    },
+
+    async getFile(path) {
+      const p = normPath(path);
+      return (await idbGet("file:" + p)) || null;
+    },
+
+    async openAsObjectURL(path) {
+      const rec = await this.getFile(path);
+      if (!rec) return null;
+      try {
+        const mime = rec.mime || mimeByPath(path);
+        const ab = rec.ab;
+        if (!ab) return null;
+        const blob = new Blob([ab], { type: mime });
+        return URL.createObjectURL(blob);
+      } catch { return null; }
+    },
+
+    async clearAll() {
+      await idbClearAll();
+      writeIndex([]);
+      try { localStorage.removeItem(LS_LAST_KEY); } catch {}
+      log("OK", "VAULT clearAll ✅");
+      return true;
+    },
+
+    async importZipFile(file) {
+      if (this._lock) return { ok:false, err:"locked" };
+      this._lock = true;
+
+      const jobId = "job_" + Date.now();
+      const startedAt = nowISO();
+      const importedKeys = [];
+      this._job = { id: jobId, startedAt, name: file?.name || "(zip)", total: 0, done: 0, bytes: 0 };
+
+      try {
+        const okZip = await ensureJSZip();
+        if (!okZip) throw new Error("JSZip não carregou (internet 1x ou arquivo local).");
+        if (!file) throw new Error("Arquivo ZIP ausente.");
+
+        const zipBuf = await file.arrayBuffer();
+        const zip = await window.JSZip.loadAsync(zipBuf);
+
+        const entries = [];
+        zip.forEach((relativePath, entry) => { entries.push({ relativePath, entry }); });
+
+        const files = entries.filter(x => x && x.entry && !x.entry.dir);
+        this._job.total = files.length;
+
+        const idx = readIndex();
+        const idxMap = new Map(idx.map(it => [String(it.path), it]));
+        const jobPaths = [];
+
+        for (let i = 0; i < files.length; i++) {
+          const rp = normPath(files[i].relativePath);
+          const entry = files[i].entry;
+          const mime = mimeByPath(rp);
+          const ab = await entry.async("arraybuffer");
+          const size = ab ? ab.byteLength : 0;
+
+          const key = "file:" + rp;
+          const rec = { path: rp, mime, size, ab, source: "zip:" + String(file.name || "import"), importedAt: startedAt, jobId };
+
+          await idbPut(key, rec);
+          importedKeys.push(key);
+          jobPaths.push(rp);
+
+          idxMap.set(rp, { path: rp, mime, size, importedAt: startedAt, source: rec.source, jobId });
+
+          this._job.done = i + 1;
+          this._job.bytes += size;
+
+          if ((i % 14) === 0) await new Promise(r => setTimeout(r, 0));
+          UI._progress();
+        }
+
+        writeIndex(Array.from(idxMap.values()));
+        try { localStorage.setItem(LS_LAST_KEY, safeJsonStringify({ jobId, startedAt, name: file.name || "", count: files.length, bytes: this._job.bytes })); } catch {}
+
+        log("OK", `VAULT import ok ✅ files=${files.length} bytes=${this._job.bytes}`);
+
+        try {
+          const cfg = getCfg();
+          if (cfg.autoZipToApp) {
+            await AutoZipToApp.fromJob({ jobId, startedAt, name: file.name || "", bytes: this._job.bytes, count: files.length, paths: jobPaths });
+          }
+        } catch (e) {
+          log("WARN", "AUTO ZIP->APP falhou (não trava): " + (e?.message || e));
+        }
+
+        return { ok:true, jobId, count: files.length, bytes: this._job.bytes };
+      } catch (e) {
+        try { for (const k of importedKeys) { try { await idbDel(k); } catch {} } } catch {}
+        log("ERR", "VAULT import fail :: " + (e?.message || e));
+        return { ok:false, err:(e?.message || String(e)) };
+      } finally {
+        this._lock = false;
+        this._job = null;
+        UI._progress();
+        UI.renderList();
       }
     }
   };
 
   // =========================================================
-  // UI — FIX DEFINITIVO: acha o lugar certo SEM depender do index
+  // UI (FORÇA aparecer)
   // =========================================================
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
+  }
+
   function findMountPoint() {
-    // 1) slots (preferência)
     try {
       const ui = window.RCF_UI;
       if (ui && typeof ui.getSlot === "function") {
@@ -712,34 +602,14 @@
       }
     } catch {}
 
-    // 2) data-rcf-slot
-    const bySlot =
+    return (
       document.querySelector('[data-rcf-slot="agent.tools"]') ||
       document.querySelector('[data-rcf-slot="agent.actions"]') ||
-      document.querySelector('[data-rcf-slot="generator.tools"]') ||
-      document.querySelector('[data-rcf-slot="admin.tools"]') ||
-      document.querySelector('[data-rcf-slot="admin.integrations"]');
-    if (bySlot) return bySlot;
-
-    // 3) containers de view (agente)
-    const agent =
-      document.getElementById("view-agent") ||
       document.querySelector('[data-rcf-view="agent"]') ||
-      document.querySelector('[data-view="agent"]') ||
-      document.querySelector('#agentView') ||
-      null;
-    if (agent) return agent;
-
-    // 4) “view ativa”
-    const active =
-      document.querySelector(".view.active") ||
-      document.querySelector('[data-rcf-view].active') ||
-      document.querySelector('[aria-hidden="false"][data-rcf-view]') ||
-      null;
-    if (active) return active;
-
-    // 5) fallback final
-    return document.getElementById("app") || document.body;
+      document.getElementById("view-agent") ||
+      document.getElementById("app") ||
+      document.body
+    );
   }
 
   const UI = {
@@ -764,7 +634,7 @@
       card.style.marginTop = "12px";
       card.innerHTML = `
         <h2 style="margin-top:0">VAULT • ZIP Import (PDF safe)</h2>
-        <div class="hint">Importa ZIP e guarda no IndexedDB. ✅ Auto ZIP→App (vira template no Generator quando pequeno).</div>
+        <div class="hint">Importa ZIP e guarda no IndexedDB (iOS safe). ✅</div>
 
         <div class="row" style="flex-wrap:wrap;align-items:center;margin-top:10px">
           <input id="rcfVaultZipInput" type="file" accept=".zip" style="max-width:340px" />
@@ -814,9 +684,8 @@
       if (!st) return;
       const idx = Vault.index();
       const j = Vault._job;
-      if (j) {
-        st.textContent = `importando… ${j.done}/${j.total} • ${(j.bytes / (1024*1024)).toFixed(1)}MB`;
-      } else {
+      if (j) st.textContent = `importando… ${j.done}/${j.total} • ${(j.bytes / (1024*1024)).toFixed(1)}MB`;
+      else {
         const totalBytes = idx.reduce((a, it) => a + (Number(it.size) || 0), 0);
         st.textContent = `files=${idx.length} • ${(totalBytes / (1024*1024)).toFixed(1)}MB`;
       }
@@ -837,7 +706,7 @@
             if (!f) return UI.out("⚠️ Selecione um .zip primeiro.");
             UI.out("Importando… (não feche a aba)");
             const r = await Vault.importZipFile(f);
-            if (r.ok) UI.out(`✅ Import OK • files=${r.count} • ${(r.bytes / (1024*1024)).toFixed(1)}MB\n✅ Se for pequeno, virou APP/Template automaticamente.`);
+            if (r.ok) UI.out(`✅ Import OK • files=${r.count} • ${(r.bytes / (1024*1024)).toFixed(1)}MB`);
             else UI.out("❌ Falhou: " + (r.err || "erro"));
           } catch (e) {
             UI.out("❌ Erro: " + (e?.message || e));
@@ -875,9 +744,7 @@
 
       if (filter && !filter.__bound) {
         filter.__bound = true;
-        filter.addEventListener("input", () => {
-          UI.renderList();
-        }, { passive: true });
+        filter.addEventListener("input", () => UI.renderList(), { passive: true });
       }
 
       const vClose = document.getElementById("rcfVaultViewerClose");
@@ -929,14 +796,6 @@
         box.appendChild(row);
       }
 
-      if (filtered.length > LIMIT) {
-        const more = document.createElement("div");
-        more.className = "hint";
-        more.style.marginTop = "8px";
-        more.textContent = `... (${filtered.length - LIMIT} mais — refine o filtro)`;
-        box.appendChild(more);
-      }
-
       UI._progress();
     },
 
@@ -950,28 +809,16 @@
         UI.out("Abrindo…");
 
         const url = await Vault.openAsObjectURL(path);
-        if (!url) {
-          UI.out("❌ Não consegui abrir (bytes/url).");
-          return;
-        }
+        if (!url) return UI.out("❌ Não consegui abrir (bytes/url).");
 
         title.textContent = path;
         frame.setAttribute("data-url", url);
 
         const mime = mimeByPath(path);
-
-        if (mime === "application/pdf" || mime.startsWith("image/")) {
-          frame.src = url;
-        } else {
+        if (mime === "application/pdf" || mime.startsWith("image/")) frame.src = url;
+        else {
           const rec = await Vault.getFile(path);
-          const ab = rec?.ab;
-          let text = "";
-          try {
-            const u8 = ab ? new Uint8Array(ab) : new Uint8Array();
-            text = new TextDecoder("utf-8", { fatal: false }).decode(u8);
-          } catch {
-            text = "(não foi possível decodificar como texto)";
-          }
+          const text = abToText(rec?.ab);
           frame.srcdoc = `<pre style="white-space:pre-wrap;word-break:break-word;padding:14px;font-family:ui-monospace,Menlo,monospace">${escapeHtml(text.slice(0, 250000))}</pre>`;
         }
 
@@ -994,9 +841,7 @@
         frame.src = "about:blank";
         frame.srcdoc = "";
 
-        if (url && url.startsWith("blob:")) {
-          try { URL.revokeObjectURL(url); } catch {}
-        }
+        if (url && url.startsWith("blob:")) { try { URL.revokeObjectURL(url); } catch {} }
 
         viewer.style.display = "none";
         UI.out("Fechado.");
@@ -1004,20 +849,17 @@
     }
   };
 
-  function escapeHtml(s) {
-    return String(s).replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
-  }
-
-  function tryMountLoop() {
-    const cfg = getCfg();
-    if (!cfg.autoMountUI) return;
-
-    const ok = UI.mount();
-    if (ok) return;
-
-    setTimeout(() => { try { UI.mount(); } catch {} }, 600);
-    setTimeout(() => { try { UI.mount(); } catch {} }, 1400);
-    setTimeout(() => { try { UI.mount(); } catch {} }, 2600);
+  // =========================================================
+  // BOOT: FORÇA mount + hooks
+  // =========================================================
+  function forceMountNow(tag) {
+    try {
+      const ok = UI.mount();
+      if (ok) log("OK", "VAULT mount OK ✅ via " + tag);
+      else log("WARN", "VAULT mount pending… via " + tag);
+    } catch (e) {
+      log("WARN", "VAULT mount erro via " + tag + " :: " + (e?.message || e));
+    }
   }
 
   function restoreZipAppsLoop() {
@@ -1027,23 +869,15 @@
   }
 
   window.RCF_ZIP_VAULT = {
-    __v10f: true,
+    __v10g: true,
     mount: () => UI.mount(),
     importZip: (file) => Vault.importZipFile(file),
     list: () => Vault.index(),
-
-    // compat com agent_zip_bridge (await)
     get: async (path) => {
       const rec = await Vault.getFile(path);
       if (!rec) return null;
-      return {
-        ab: rec.ab || null,
-        size: Number(rec.size) || (rec.ab ? rec.ab.byteLength : 0),
-        mime: rec.mime || mimeByPath(path),
-        path: rec.path || path
-      };
+      return { ab: rec.ab || null, size: Number(rec.size) || (rec.ab ? rec.ab.byteLength : 0), mime: rec.mime || mimeByPath(path), path: rec.path || path };
     },
-
     openURL: (path) => Vault.openAsObjectURL(path),
     clearAll: () => Vault.clearAll(),
     cfgGet: () => getCfg(),
@@ -1051,15 +885,31 @@
     zipToAppRestore: () => AutoZipToApp.restorePacks()
   };
 
+  // ✅ monta já
+  forceMountNow("immediate");
+
+  // ✅ monta também quando UI estiver pronta (slots criados)
+  try {
+    window.addEventListener("RCF:UI_READY", () => {
+      forceMountNow("RCF:UI_READY");
+      setTimeout(() => forceMountNow("RCF:UI_READY+700ms"), 700);
+      setTimeout(() => forceMountNow("RCF:UI_READY+1800ms"), 1800);
+    });
+  } catch {}
+
+  // ✅ DOM fallback
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", () => {
-      tryMountLoop();
+      forceMountNow("DOMContentLoaded");
+      setTimeout(() => forceMountNow("DOMContentLoaded+700ms"), 700);
+      setTimeout(() => forceMountNow("DOMContentLoaded+1800ms"), 1800);
       restoreZipAppsLoop();
     }, { once: true });
   } else {
-    tryMountLoop();
+    setTimeout(() => forceMountNow("readyState+350ms"), 350);
+    setTimeout(() => forceMountNow("readyState+1200ms"), 1200);
     restoreZipAppsLoop();
   }
 
-  log("OK", "zip_vault.js ready ✅ (v1.0f)");
+  log("OK", "zip_vault.js ready ✅ (v1.0g)");
 })();
