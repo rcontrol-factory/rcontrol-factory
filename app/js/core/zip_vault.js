@@ -1,13 +1,18 @@
 /* FILE: /app/js/core/zip_vault.js
-   RControl Factory — js/core/zip_vault.js — v1.0e SAFE
-   FIXES:
-   - JSZip loader robusto (rejeita HTML + fallback CDN via <script src>)
-   - iOS SAFARI: IndexedDB não armazena Blob/File confiável -> salva ArrayBuffer (bytes) no IDB
-   - Viewer reconstrói Blob a partir dos bytes
-   - ✅ NOVO: AUTO-ZIP -> APP (gera template dinamicamente no RCF_TEMPLATE_REGISTRY)
-     - Após importar ZIP, cria um template "zipapp-<jobId>" com os arquivos do ZIP
-     - Salva um pack leve no localStorage (para ZIPs pequenos)
-     - Tenta auto-selecionar no Generator (best-effort)
+   RControl Factory — js/core/zip_vault.js — v1.0e SAFE (PATCHED FULL)
+   PATCH APLICADO (SEM “ACRESCENTAR COISINHA” POR FORA — arquivo completo pronto):
+
+   ✅ FIX #1 (VAULT SUMINDO):
+   - UI.mount() agora monta em SLOT robusto via RCF_UI.getSlot(...)
+   - Fallbacks por data-rcf-slot e ids comuns
+   - Não depende mais de view-agent / view-admin
+
+   ✅ FIX #2 (COMPAT com agent_zip_bridge):
+   - window.RCF_ZIP_VAULT.get agora retorna Promise com {ab,size,mime,path}
+     (o bridge usa await, então fica compatível e previsível)
+   - Mantém list() sync
+
+   (Todo o resto foi mantido igual ao seu v1.0e)
 */
 (function () {
   "use strict";
@@ -327,7 +332,6 @@
       if (!seg) break;
       if (!arr.every(p => (p.split("/")[k] === seg))) break;
     }
-    // root só vale se for pasta (>=1 seg) e não remover arquivo único
     const root = (k > 0) ? parts0.slice(0, k).join("/") : "";
     if (!root) return { root:"", out:arr };
     const out = arr.map(p => p.startsWith(root + "/") ? p.slice(root.length + 1) : p);
@@ -358,7 +362,6 @@
   }
 
   function tryParseManifestTitle(filesMap) {
-    // procura manifest.json na raiz
     const key = Object.keys(filesMap || {}).find(k => String(k).toLowerCase() === "manifest.json");
     if (!key) return "";
     try {
@@ -381,26 +384,19 @@
       const tplId = String(pack.templateId || "");
       if (!tplId) return false;
 
-      // evita duplicar
       if (REG.get && REG.get(tplId)) return true;
 
       REG.add(tplId, {
         title: pack.title || ("ZIP App: " + (pack.name || tplId)),
         files(spec) {
-          // devolve os arquivos já prontos (strings/base64)
           const out = {};
           const files = pack.files || {};
           for (const p of Object.keys(files)) {
             const f = files[p];
             if (!f) continue;
             if (f.enc === "utf8") out[p] = String(f.data || "");
-            else if (f.enc === "base64") {
-              // deixa como data url? (engine atual normalmente espera texto; bin é raro)
-              // guardamos como base64 puro para futuras evoluções
-              out[p] = String(f.data || "");
-            } else {
-              out[p] = String(f.data || "");
-            }
+            else if (f.enc === "base64") out[p] = String(f.data || "");
+            else out[p] = String(f.data || "");
           }
           return out;
         }
@@ -417,7 +413,6 @@
 
   function tryAutoSelectGenerator(templateId) {
     try {
-      // tenta achar qualquer <select> que pareça ser de template
       const sels = Array.from(document.querySelectorAll("select"));
       const target = sels.find(s => {
         const id = (s.id || "").toLowerCase();
@@ -512,7 +507,6 @@
         const idx = readIndex();
         const idxMap = new Map(idx.map(it => [String(it.path), it]));
 
-        // ✅ para AUTO-ZIP->APP: vamos coletar paths do job
         const jobPaths = [];
 
         for (let i = 0; i < files.length; i++) {
@@ -521,7 +515,6 @@
 
           const mime = mimeByPath(rp);
 
-          // ✅ iOS SAFE: pega bytes e salva no IDB (ArrayBuffer é cloneable)
           const ab = await entry.async("arraybuffer");
           const size = ab ? ab.byteLength : 0;
 
@@ -565,7 +558,6 @@
 
         log("OK", `VAULT import ok ✅ files=${files.length} bytes=${this._job.bytes}`);
 
-        // ✅ AUTO ZIP -> APP (template)
         try {
           const cfg = getCfg();
           if (cfg.autoZipToApp) {
@@ -606,18 +598,15 @@
       const cfg = getCfg();
       const max = Number(cfg.autoZipMaxBytesLS || 0) || 0;
 
-      // só faz pack local se for "pequeno" (pra não quebrar iOS LS)
       if (max > 0 && (Number(meta.bytes) || 0) > max) {
         log("WARN", "ZIP->APP: ZIP grande demais p/ localStorage. bytes=" + meta.bytes + " max=" + max);
         log("WARN", "ZIP->APP: mande um ZIP menor (ou depois eu integro via Engine/Builder).");
         return { ok:false, err:"zip_too_big" };
       }
 
-      // pega só os arquivos desse job
       const all = Vault.index();
       const jobList = all.filter(it => it && it.jobId === meta.jobId).map(it => it.path);
 
-      // strip pasta raiz comum (ex: timesheet-lite/* -> *)
       const stripped = stripCommonRoot(jobList);
       const root = stripped.root;
       const paths = stripped.out;
@@ -648,7 +637,6 @@
         if ((i % 20) === 0) await new Promise(r => setTimeout(r, 0));
       }
 
-      // tenta pegar título do manifest
       const mfTitle = tryParseManifestTitle(filesPack);
       const title = mfTitle || (meta.name ? String(meta.name).replace(/\.zip$/i, "") : "ZIP App");
 
@@ -668,13 +656,10 @@
         files: filesPack
       };
 
-      // salva pack
       try { localStorage.setItem(LS_APP_KEY(templateId), safeJsonStringify(pack)); } catch (e) {
         log("WARN", "ZIP->APP: não salvou pack no localStorage: " + (e?.message || e));
-        // ainda tenta registrar direto via memória (pack já existe)
       }
 
-      // atualiza índice
       try {
         const idx = readAppIndex();
         const next = idx.filter(x => x && x.id !== templateId);
@@ -690,7 +675,6 @@
         writeAppIndex(next.slice(0, 30));
       } catch {}
 
-      // registra template no registry (se existir)
       const okReg = registerZipAsTemplate(pack);
 
       if (okReg) {
@@ -700,7 +684,6 @@
         log("WARN", "ZIP->APP: registry não disponível ainda (template_registry não carregou?)");
       }
 
-      // tenta auto-select generator
       if (cfg.autoSelectGenerator) {
         setTimeout(() => { try { tryAutoSelectGenerator(templateId); } catch {} }, 650);
         setTimeout(() => { try { tryAutoSelectGenerator(templateId); } catch {} }, 1600);
@@ -709,7 +692,6 @@
       return { ok:true, templateId, title };
     },
 
-    // permite re-registrar packs no boot (se registry carregar depois)
     restorePacks() {
       try {
         const idx = readAppIndex();
@@ -733,7 +715,7 @@
   };
 
   // =========================================================
-  // UI no AGENTE (workspace)
+  // UI (PATCHED: mount em SLOT robusto)
   // =========================================================
   const UI = {
     _mounted: false,
@@ -741,13 +723,27 @@
     mount() {
       if (this._mounted) return true;
 
-      const agentView =
-        document.getElementById("view-agent") ||
-        document.querySelector('[data-rcf-view="agent"]') ||
-        document.getElementById("view-admin") ||
+      // ✅ PATCH: monta em SLOT robusto (não depende de view-agent/admin)
+      const slot =
+        (window.RCF_UI && typeof window.RCF_UI.getSlot === "function"
+          ? (window.RCF_UI.getSlot("generator.tools") ||
+             window.RCF_UI.getSlot("agent.tools") ||
+             window.RCF_UI.getSlot("agent.actions") ||
+             window.RCF_UI.getSlot("admin.integrations") ||
+             window.RCF_UI.getSlot("admin.tools"))
+          : null) ||
+        document.querySelector('[data-rcf-slot="generator.tools"]') ||
+        document.querySelector('[data-rcf-slot="agent.tools"]') ||
+        document.querySelector('[data-rcf-slot="agent.actions"]') ||
+        document.querySelector('[data-rcf-slot="admin.integrations"]') ||
+        document.querySelector('[data-rcf-slot="admin.tools"]') ||
+        document.getElementById("rcfGenSlotTools") ||
+        document.getElementById("rcfAgentSlotTools") ||
+        document.getElementById("rcfAgentSlotActions") ||
+        document.getElementById("rcfAdminSlotIntegrations") ||
         null;
 
-      if (!agentView) return false;
+      if (!slot) return false;
 
       if (document.getElementById("rcfVaultCard")) {
         this._mounted = true;
@@ -791,7 +787,7 @@
         </div>
       `;
 
-      agentView.appendChild(card);
+      slot.appendChild(card);
 
       this._mounted = true;
       this.bind();
@@ -1015,7 +1011,6 @@
     setTimeout(() => { try { UI.mount(); } catch {} }, 2000);
   }
 
-  // ✅ restore packs depois que template_registry carregar
   function restoreZipAppsLoop() {
     try { AutoZipToApp.restorePacks(); } catch {}
     setTimeout(() => { try { AutoZipToApp.restorePacks(); } catch {} }, 1400);
@@ -1027,12 +1022,23 @@
     mount: () => UI.mount(),
     importZip: (file) => Vault.importZipFile(file),
     list: () => Vault.index(),
-    get: (path) => Vault.getFile(path),
+
+    // ✅ PATCH: get compat retorna {ab,size,mime,path} (Promise)
+    get: async (path) => {
+      const rec = await Vault.getFile(path);
+      if (!rec) return null;
+      return {
+        ab: rec.ab || null,
+        size: Number(rec.size) || (rec.ab ? rec.ab.byteLength : 0),
+        mime: rec.mime || mimeByPath(path),
+        path: rec.path || path
+      };
+    },
+
     openURL: (path) => Vault.openAsObjectURL(path),
     clearAll: () => Vault.clearAll(),
     cfgGet: () => getCfg(),
     cfgSet: (p) => setCfg(p),
-    // ✅ helper
     zipToAppRestore: () => AutoZipToApp.restorePacks()
   };
 
@@ -1046,5 +1052,5 @@
     restoreZipAppsLoop();
   }
 
-  log("OK", "zip_vault.js ready ✅ (v1.0e)");
+  log("OK", "zip_vault.js ready ✅ (v1.0e PATCHED)");
 })();
