@@ -1,8 +1,9 @@
 /* FILE: /app/js/core/zip_vault.js
    RControl Factory — js/core/zip_vault.js — v1.0b SAFE
    PATCH:
-   - Loader-safe: aceita /app/vendor/jszip.min.js como "loader" e aguarda JSZip aparecer.
-   - Nunca injeta HTML (bloqueio forte) e nunca quebra a Factory.
+   - ✅ Anti-HTML injection (evita "Unexpected identifier 'Factory'")
+   - ✅ Suporta JSZip LOADER assíncrono (aguarda window.JSZip aparecer)
+   - Mantém: Vault IDB + Index LS + UI Agent
 */
 (function () {
   "use strict";
@@ -17,6 +18,8 @@
   const IDB_DB = "RCF_VAULT_DB";
   const IDB_VER = 1;
   const IDB_STORE = "files";
+
+  const $ = (sel, root = document) => root.querySelector(sel);
 
   const safeJsonParse = (s, fb) => { try { return JSON.parse(s); } catch { return fb; } };
   const safeJsonStringify = (o) => { try { return JSON.stringify(o); } catch { return String(o); } };
@@ -53,47 +56,6 @@
     x = x.replace(/^\/+/, "");
     x = x.replace(/\/{2,}/g, "/");
     return x;
-  }
-
-  // =========================================================
-  // HTML / JS detection (HARD)
-  // =========================================================
-  function looksLikeHTML(code) {
-    const raw = String(code || "");
-    const head = raw.trim().slice(0, 900).toLowerCase();
-
-    if (head.startsWith("<")) return true;
-    if (/<\s*(!doctype|html|head|body|script|meta|link|style|title)\b/i.test(head)) return true;
-    if (/<\/\s*(html|head|body|script|style)\s*>/i.test(head)) return true;
-
-    // fingerprint do site (fallback/redirect de Pages)
-    if (raw.includes("RControl Factory") || raw.includes("Factory interna")) return true;
-
-    return false;
-  }
-
-  function looksLikeJSZipOrLoader(code) {
-    const raw = String(code || "");
-    if (!raw || raw.length < 1200) return false;
-    if (looksLikeHTML(raw)) return false;
-
-    // Aceita a lib (contém JSZip) OU o loader (marcador do seu vendor)
-    if (raw.includes("JSZip")) return true;
-    if (raw.includes("__RCF_JSZIP_LOADER__")) return true;
-
-    return false;
-  }
-
-  async function waitFor(condFn, msTotal, stepMs) {
-    const total = Math.max(0, Number(msTotal) || 0);
-    const step = Math.max(20, Number(stepMs) || 80);
-    const t0 = Date.now();
-
-    while ((Date.now() - t0) < total) {
-      try { if (condFn()) return true; } catch {}
-      await new Promise(r => setTimeout(r, step));
-    }
-    try { return !!condFn(); } catch { return false; }
   }
 
   // =========================================================
@@ -216,10 +178,32 @@
   }
 
   // =========================================================
-  // JSZip loader (LOADER-SAFE)
+  // JSZip loader (sem web externo; tenta caminhos locais)
+  // PATCH: anti-HTML + aguarda loader async expor window.JSZip
   // =========================================================
+  function looksLikeHTML(code) {
+    const s = String(code || "").trim().slice(0, 400).toLowerCase();
+    return (
+      s.startsWith("<!doctype") || s.startsWith("<html") ||
+      s.includes("<head") || s.includes("<body") ||
+      s.includes("rcontrol factory") // sinal clássico do teu index/erro
+    );
+  }
+
+  function waitForJSZip(msTotal = 3200) {
+    const start = Date.now();
+    return new Promise((resolve) => {
+      const tick = () => {
+        if (window.JSZip && typeof window.JSZip.loadAsync === "function") return resolve(true);
+        if ((Date.now() - start) >= msTotal) return resolve(false);
+        setTimeout(tick, 120);
+      };
+      tick();
+    });
+  }
+
   async function ensureJSZip() {
-    if (window.JSZip) return true;
+    if (window.JSZip && typeof window.JSZip.loadAsync === "function") return true;
 
     const candidates = [
       "/app/vendor/jszip.min.js",
@@ -234,39 +218,41 @@
         if (!res.ok) continue;
 
         const code = await res.text();
+        if (!code || code.length < 200) continue;
 
-        // Nunca injeta HTML/fallback
-        if (!looksLikeJSZipOrLoader(code)) {
-          log("WARN", "JSZip loader: conteúdo inválido (provável HTML/fallback) em " + src + " (skip).");
+        if (looksLikeHTML(code)) {
+          log("WARN", "JSZip fetch retornou HTML (não vou injetar): " + src);
           continue;
         }
 
-        // Injeta (pode ser lib OU loader)
+        // injeta
         const s = document.createElement("script");
-        s.setAttribute("data-rcf", "jszip-inline");
+        s.setAttribute("data-rcf-vendor", "jszip");
         s.textContent = code;
         document.head.appendChild(s);
 
-        // Se for loader, o JSZip pode aparecer depois (CDN)
-        const ok = await waitFor(
-          () => !!window.JSZip,
-          8000,   // até 8s (primeira vez pode demorar)
-          120
-        );
-
+        // aguarda loader async / exposição de JSZip
+        const ok = await waitForJSZip(3200);
         if (ok) {
           log("OK", "JSZip disponível ✅ via " + src);
           return true;
         }
 
-        // Se não apareceu, não remove (evita loop/instabilidade). Só loga e tenta próximo.
-        log("WARN", "JSZip ainda não apareceu após aguardar (src=" + src + "). Tentando próximo…");
+        // se não expôs, tenta próximo candidato
+        log("WARN", "Script injetado mas JSZip ainda não apareceu (pode ser loader lento). src=" + src);
       } catch (e) {
-        log("WARN", "JSZip loader: falha lendo " + src + " :: " + (e?.message || e));
+        // segue tentando outros
       }
     }
 
-    log("ERR", "JSZip ausente. Garanta /app/vendor/jszip.min.js acessível (JS) e com internet 1x pro CDN cachear.");
+    // última chance: se algum loader foi injetado e está baixando, espera mais um pouco
+    const okLate = await waitForJSZip(4500);
+    if (okLate) {
+      log("OK", "JSZip apareceu ✅ (late)");
+      return true;
+    }
+
+    log("ERR", "JSZip ausente. Garanta /app/vendor/jszip.min.js (loader ou lib) e internet 1x se for CDN.");
     return false;
   }
 
@@ -354,19 +340,21 @@
           await idbPut(key, rec);
           importedKeys.push(key);
 
-          idxMap.set(rp, {
+          const meta = {
             path: rp,
             mime,
             size,
             importedAt: startedAt,
             source: rec.source,
             jobId
-          });
+          };
+          idxMap.set(rp, meta);
 
           this._job.done = i + 1;
           this._job.bytes += size;
 
           if ((i % 18) === 0) await new Promise(r => setTimeout(r, 0));
+
           UI._progress();
         }
 
@@ -382,6 +370,7 @@
 
       } catch (e) {
         try { for (const k of importedKeys) { try { await idbDel(k); } catch {} } } catch {}
+
         log("ERR", "VAULT import fail :: " + (e?.message || e));
         return { ok: false, err: (e?.message || String(e)) };
 
@@ -533,7 +522,9 @@
 
       if (filter && !filter.__bound) {
         filter.__bound = true;
-        filter.addEventListener("input", () => { UI.renderList(); }, { passive: true });
+        filter.addEventListener("input", () => {
+          UI.renderList();
+        }, { passive: true });
       }
 
       const vClose = document.getElementById("rcfVaultViewerClose");
@@ -606,7 +597,10 @@
         UI.out("Abrindo…");
 
         const url = await Vault.openAsObjectURL(path);
-        if (!url) return UI.out("❌ Não consegui abrir (blob/url).");
+        if (!url) {
+          UI.out("❌ Não consegui abrir (blob/url).");
+          return;
+        }
 
         title.textContent = path;
         frame.setAttribute("data-url", url);
