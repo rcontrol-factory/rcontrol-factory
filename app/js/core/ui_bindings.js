@@ -1,15 +1,8 @@
-/* =========================================================
-  RControl Factory — core/ui_bindings.js (LOGS HARD SCOPE v1.2.5)
-  ✅ FIX: logs NUNCA aparecem fora da aba Logs (hard scope)
-  + ✅ NOVO: Daily Check-up (pipeline)
-     - MAE update (PASSIVO: baixa+salva, NÃO aplica)
-     - Diagnostics (stability check)
-     - Resultado: APROVADO/REPROVADO
-     - Apply Saved manual (só se PASS)
-  - iOS-safe tap guard
-  - logger fallback LS
-  - Diagnostics autoinstall
-  - Observer: ao mudar view, re-aplica regras de logs
+/* FILE: /app/js/core/ui_bindings.js
+   RControl Factory — core/ui_bindings.js (LOGS HARD SCOPE v1.2.6)
+   ✅ Mantém tudo do v1.2.5
+   ✅ NOVO: bindGenerator() — Build ZIP + Preview usando RCF_BUILDER + template_registry
+   - Não quebra se a UI não tiver os elementos (safe)
 ========================================================= */
 
 (function () {
@@ -206,7 +199,6 @@
     return info.join("\n");
   }
 
-  // ✅ NOVO: retorna {pass,text,summary}
   async function runStabilityAndGetResult() {
     const D = window.RCF_DIAGNOSTICS;
     if (D && typeof D.installAll === "function" && typeof D.runStabilityCheck === "function") {
@@ -220,17 +212,13 @@
         return { ok:false, pass:false, text: "ERRO: runStabilityCheck falhou: " + safeText(e && e.message ? e.message : e), summary:null, raw:null };
       }
     }
-    // fallback: não dá pra garantir pass/fail
     const text = await runStabilityAndGetText();
     return { ok:true, pass:false, text, summary:null, raw:null, warn:"diagnostics sem summary.pass" };
   }
 
   // ---------- pipeline (Daily Check-up) ----------
   async function runMaeUpdatePassive() {
-    if (!window.RCF_MAE?.updateFromGitHub) {
-      throw new Error("RCF_MAE.updateFromGitHub ausente");
-    }
-    // por padrão seu v2.3d já é PASSIVO (salva e não aplica)
+    if (!window.RCF_MAE?.updateFromGitHub) throw new Error("RCF_MAE.updateFromGitHub ausente");
     return await window.RCF_MAE.updateFromGitHub({
       onProgress: (p) => {
         try {
@@ -253,19 +241,6 @@
     });
   }
 
-  function formatPipelineReport(step, payload) {
-    const lines = [];
-    lines.push("=========================================================");
-    lines.push("RCF — DAILY CHECK-UP (PIPELINE)");
-    lines.push("=========================================================");
-    lines.push("Step: " + step);
-    if (payload) {
-      try { lines.push("Info: " + JSON.stringify(payload)); } catch {}
-    }
-    lines.push("=========================================================");
-    return lines.join("\n");
-  }
-
   async function dailyCheckup(outEl) {
     const ctx = getCtx();
     ctx.lastPipelineAt = Date.now();
@@ -277,10 +252,8 @@
       setTopStatus("Daily Check-up: baixando bundle…");
       if (out) setBoxText(out, "Daily Check-up: iniciando…");
 
-      // 1) MAE update PASSIVO
       const mae = await runMaeUpdatePassive();
 
-      // 2) Diagnostics stability
       setTopStatus("Daily Check-up: stability check…");
       const diag = await runStabilityAndGetResult();
 
@@ -349,11 +322,9 @@
 
   // ---------- UI inject (pipeline buttons) ----------
   function findAdminButtonRow() {
-    // tenta achar a “linha” onde já ficam os botões do Admin
     const diagBtn = $("btnAdminDiag");
     if (diagBtn && diagBtn.parentElement) return diagBtn.parentElement;
 
-    // fallback: procura um container que tenha vários botões perto do adminOut
     const out = $("adminOut");
     if (out) {
       let p = out.parentElement;
@@ -371,7 +342,6 @@
     b.type = "button";
     b.id = id;
     b.textContent = text;
-    // tenta herdar classe de algum botão existente
     const any = document.querySelector("button");
     try { if (any && any.className) b.className = any.className; } catch {}
     return b;
@@ -383,7 +353,6 @@
 
     if (!$("btnDailyCheckup")) {
       const b = makeBtn("btnDailyCheckup", "Daily Check-up");
-      // tenta inserir perto do diag
       const ref = $("btnAdminDiag") || row.querySelector("button");
       try { (ref || row).insertAdjacentElement("afterend", b); }
       catch { row.appendChild(b); }
@@ -408,6 +377,154 @@
     } catch {}
   }
 
+  // ---------- Generator (NEW) ----------
+  function findFirst(ids) {
+    for (const id of ids) {
+      const el = $(id);
+      if (el) return el;
+    }
+    return null;
+  }
+
+  function getGenOutEl() {
+    return findFirst(["genOut", "generatorOut", "genBox", "genPreviewBox", "genPre", "previewOut", "outGen"]);
+  }
+
+  function ensureTemplatePickerNear(buttonEl) {
+    const existing = document.querySelector("#genTemplate, #templatePick, #tplPick, select[data-rcf='template']");
+    if (existing) return existing;
+
+    if (!buttonEl || !buttonEl.parentElement) return null;
+
+    const sel = document.createElement("select");
+    sel.id = "genTemplate";
+    sel.setAttribute("data-rcf", "template");
+    try { sel.className = (buttonEl.className || "").replace(/\bbtn\b/g, "").trim(); } catch {}
+    sel.style.minWidth = "240px";
+
+    // tenta colocar antes do botão Build
+    try { buttonEl.insertAdjacentElement("beforebegin", sel); }
+    catch { buttonEl.parentElement.appendChild(sel); }
+
+    return sel;
+  }
+
+  function fillTemplatePicker(sel) {
+    const R = window.RCF_TEMPLATE_REGISTRY;
+    if (!sel || !R || typeof R.list !== "function" || typeof R.get !== "function") return false;
+
+    const list = R.list();
+    sel.innerHTML = "";
+    for (const id of list) {
+      const tpl = R.get(id);
+      const opt = document.createElement("option");
+      opt.value = id;
+      opt.textContent = (tpl && tpl.title) ? (tpl.title + " — " + id) : id;
+      sel.appendChild(opt);
+    }
+
+    // default: timesheet-lite se existir
+    if (list.includes("timesheet-lite")) sel.value = "timesheet-lite";
+    else sel.value = list[0] || "pwa-base";
+
+    return true;
+  }
+
+  async function generatorBuildZip() {
+    const out = getGenOutEl();
+    const buildBtn = findFirst(["btnGenBuildZip", "btnBuildZip", "btnGenZip", "btnGeneratorBuild"]);
+    const previewBtn = findFirst(["btnGenPreview", "btnPreview", "btnGeneratorPreview"]); // seu log mostra #btnGenPreview
+
+    const picker = document.querySelector("#genTemplate, #templatePick, #tplPick, select[data-rcf='template']");
+    const tplId = picker ? String(picker.value || "pwa-base") : "pwa-base";
+
+    try {
+      setTopStatus("Generator: gerando ZIP…");
+      if (out) setBoxText(out, "Gerando ZIP… template=" + tplId);
+
+      const B = window.RCF_BUILDER;
+      if (!B || typeof B.buildZip !== "function") throw new Error("RCF_BUILDER.buildZip ausente (builder.js).");
+
+      const spec = {
+        name: (tplId === "timesheet-lite") ? "Timesheet Lite" : "Meu App",
+        themeColor: "#0b1020"
+      };
+
+      const r = await B.buildZip({ templateId: tplId, spec, filename: spec.name });
+      if (!r || !r.ok || !r.blob) throw new Error("buildZip não retornou blob.");
+
+      // download
+      B.downloadBlob(r.blob, r.filename);
+
+      // opcional: se tiver VAULT com API de import por blob
+      try {
+        const V = window.RCF_ZIP_VAULT;
+        const importFn =
+          V?.importBlob || V?.importZipBlob || V?.import || V?.saveBlob || null;
+
+        if (typeof importFn === "function") {
+          await importFn.call(V, r.blob, r.filename, { templateId: tplId, spec });
+        }
+      } catch {}
+
+      const msg = "ZIP OK ✅ files=" + (r.filesCount || "?") + " bytes=" + (r.bytes || "?") + " (" + tplId + ")";
+      if (out) setBoxText(out, msg);
+      setTopStatus("Generator: ZIP OK ✅");
+      setTimeout(() => setTopStatus("OK ✅"), 900);
+    } catch (e) {
+      const msg = "ERR Generator ZIP: " + safeText(e && e.message ? e.message : e);
+      if (out) setBoxText(out, msg);
+      setTopStatus("Generator: ERRO ❌");
+      setTimeout(() => setTopStatus("OK ✅"), 900);
+    }
+  }
+
+  function generatorPreview() {
+    const out = getGenOutEl();
+    const picker = document.querySelector("#genTemplate, #templatePick, #tplPick, select[data-rcf='template']");
+    const tplId = picker ? String(picker.value || "pwa-base") : "pwa-base";
+
+    try {
+      const B = window.RCF_BUILDER;
+      if (!B || typeof B.buildPreviewHTML !== "function") throw new Error("RCF_BUILDER.buildPreviewHTML ausente.");
+
+      const spec = {
+        name: (tplId === "timesheet-lite") ? "Timesheet Lite" : "Meu App",
+        themeColor: "#0b1020"
+      };
+
+      const html = B.buildPreviewHTML(tplId, spec);
+
+      // mostra texto no box (não injeta iframe pra não dar BO em iOS)
+      if (out) setBoxText(out, "Preview pronto ✅ (index.html) — template=" + tplId + "\n\n" + html.slice(0, 1200) + (html.length > 1200 ? "\n\n...(cortado)" : ""));
+      setTopStatus("Preview: OK ✅");
+      setTimeout(() => setTopStatus("OK ✅"), 900);
+    } catch (e) {
+      const msg = "ERR Preview: " + safeText(e && e.message ? e.message : e);
+      if (out) setBoxText(out, msg);
+      setTopStatus("Preview: ERRO ❌");
+      setTimeout(() => setTopStatus("OK ✅"), 900);
+    }
+  }
+
+  function bindGenerator() {
+    // seus logs já mostram hook do preview: #btnGenPreview
+    const btnPreview = findFirst(["btnGenPreview", "btnPreview", "btnGeneratorPreview"]);
+    const btnBuild = findFirst(["btnGenBuildZip", "btnBuildZip", "btnGenZip", "btnGeneratorBuild"]);
+
+    // se ainda não existe o id do Build, não quebra
+    const picker = ensureTemplatePickerNear(btnBuild || btnPreview);
+    try { fillTemplatePicker(picker); } catch {}
+
+    if (btnBuild) bindTap(btnBuild, async () => await generatorBuildZip());
+    if (btnPreview) bindTap(btnPreview, () => generatorPreview());
+
+    if (btnBuild || btnPreview) {
+      loggerPush("log", "Generator bind OK ✅ (ui_bindings v1.2.6)");
+    }
+  }
+
+  // ---------- existing binds ----------
   function bindAgent() {
     const input = $("agentCmd");
     const out = $("agentOut");
@@ -440,7 +557,6 @@
     if (btnApply) bindTap(btnApply, () => patchApplyAll(out));
     if (btnDiscard) bindTap(btnDiscard, () => patchClear(out));
 
-    // pipeline buttons
     ensurePipelineButtons();
     updateApplyButtonEnabled();
 
@@ -537,25 +653,29 @@
     bindDiagnosticsView();
     bindLogsView();
 
+    // ✅ NEW
+    bindGenerator();
+
     enforceLogsScopeNow();
 
-    // Observer: quando trocar view, reaplica + tenta reinjetar pipeline buttons
     try {
       const obs = new MutationObserver(() => {
         enforceLogsScopeNow();
         try { ensurePipelineButtons(); updateApplyButtonEnabled(); } catch {}
+        try { bindGenerator(); } catch {}
       });
       obs.observe(document.body, { attributes: true, attributeFilter: ["data-view", "class"] });
     } catch {}
 
-    // expõe helpers (produtividade)
     window.RCF_UI_BINDINGS = {
-      __v125: true,
+      __v126: true,
       dailyCheckup: async () => await dailyCheckup($("adminOut") || $("diagOut")),
       applySavedManual: async () => await applySavedManual(),
+      generatorBuildZip: async () => await generatorBuildZip(),
+      generatorPreview: () => generatorPreview()
     };
 
-    loggerPush("log", "core/ui_bindings.js carregado ✅ (v1.2.5 HARD LOGS SCOPE + PIPELINE)");
+    loggerPush("log", "core/ui_bindings.js carregado ✅ (v1.2.6 HARD LOGS + PIPELINE + GENERATOR)");
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
