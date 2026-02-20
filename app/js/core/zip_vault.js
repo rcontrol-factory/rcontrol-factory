@@ -1,13 +1,14 @@
 /* FILE: /app/js/core/zip_vault.js
-   RControl Factory — js/core/zip_vault.js — v1.0c SAFE
-   FIX:
-   - ensureJSZip robusto: rejeita HTML + fallback CDN via <script src>
-   - evita "Unexpected identifier 'Factory'" (quando vinha index.html)
+   RControl Factory — js/core/zip_vault.js — v1.0d SAFE
+   FIXES:
+   - JSZip loader robusto (rejeita HTML + fallback CDN via <script src>)
+   - iOS SAFARI: IndexedDB não armazena Blob/File confiável -> salva ArrayBuffer (bytes) no IDB
+   - Viewer reconstrói Blob a partir dos bytes
 */
 (function () {
   "use strict";
 
-  if (window.RCF_ZIP_VAULT && window.RCF_ZIP_VAULT.__v10c) return;
+  if (window.RCF_ZIP_VAULT && window.RCF_ZIP_VAULT.__v10d) return;
 
   const PREFIX = "rcf:";
   const LS_INDEX_KEY = PREFIX + "vault:index";
@@ -46,6 +47,16 @@
     if (s.endsWith(".js")) return "text/javascript";
     if (s.endsWith(".txt") || s.endsWith(".md")) return "text/plain";
     return "application/octet-stream";
+  }
+
+  function isTextByMimeOrPath(mime, p) {
+    const m = String(mime || "").toLowerCase();
+    if (m.startsWith("text/")) return true;
+    const s = String(p || "").toLowerCase();
+    return (
+      s.endsWith(".js") || s.endsWith(".json") || s.endsWith(".css") ||
+      s.endsWith(".html") || s.endsWith(".htm") || s.endsWith(".md") || s.endsWith(".txt")
+    );
   }
 
   function normPath(p) {
@@ -233,7 +244,6 @@
   async function ensureJSZip() {
     if (window.JSZip) return true;
 
-    // 1) tenta caminhos locais (VFS/Pages)
     const candidates = [
       "/app/vendor/jszip.min.js",
       "/vendor/jszip.min.js",
@@ -251,7 +261,6 @@
 
         if (!code || code.length < 2000) continue;
 
-        // se veio HTML (fallback do Pages), NÃO injeta
         if (ct.includes("text/html") || looksLikeHTML(code)) {
           log("WARN", "JSZip fetch retornou HTML (não vou injetar): " + src);
           continue;
@@ -265,7 +274,6 @@
       } catch {}
     }
 
-    // 2) fallback CDN seguro (sem depender do arquivo existir no Pages)
     const cdnList = [
       "https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js",
       "https://unpkg.com/jszip@3.10.1/dist/jszip.min.js"
@@ -287,10 +295,10 @@
   }
 
   // =========================================================
-  // Vault core
+  // Vault core (IDB salva bytes, não Blob)
   // =========================================================
   const Vault = {
-    __v10c: true,
+    __v10d: true,
     _lock: false,
     _job: null,
 
@@ -309,8 +317,21 @@
 
     async openAsObjectURL(path) {
       const rec = await this.getFile(path);
-      if (!rec || !rec.blob) return null;
-      try { return URL.createObjectURL(rec.blob); } catch { return null; }
+      if (!rec) return null;
+
+      try {
+        // compat antigo (se algum item antigo tiver blob)
+        if (rec.blob) return URL.createObjectURL(rec.blob);
+
+        const mime = rec.mime || mimeByPath(path);
+        const ab = rec.ab;
+        if (!ab) return null;
+
+        const blob = new Blob([ab], { type: mime });
+        return URL.createObjectURL(blob);
+      } catch {
+        return null;
+      }
     },
 
     async clearAll() {
@@ -336,9 +357,9 @@
         if (!okZip) throw new Error("JSZip não carregou (verifique internet 1x ou arquivo local).");
 
         if (!file) throw new Error("Arquivo ZIP ausente.");
-        const ab = await file.arrayBuffer();
+        const zipBuf = await file.arrayBuffer();
 
-        const zip = await window.JSZip.loadAsync(ab);
+        const zip = await window.JSZip.loadAsync(zipBuf);
         const entries = [];
         zip.forEach((relativePath, entry) => { entries.push({ relativePath, entry }); });
 
@@ -353,15 +374,17 @@
           const entry = files[i].entry;
 
           const mime = mimeByPath(rp);
-          const blob = await entry.async("blob");
-          const size = blob?.size || 0;
+
+          // ✅ iOS SAFE: pega bytes e salva no IDB (ArrayBuffer é cloneable)
+          const ab = await entry.async("arraybuffer");
+          const size = ab ? ab.byteLength : 0;
 
           const key = "file:" + rp;
           const rec = {
             path: rp,
             mime,
             size,
-            blob,
+            ab, // <-- bytes
             source: "zip:" + String(file.name || "import"),
             importedAt: startedAt,
             jobId
@@ -371,7 +394,9 @@
           importedKeys.push(key);
 
           idxMap.set(rp, {
-            path: rp, mime, size,
+            path: rp,
+            mime,
+            size,
             importedAt: startedAt,
             source: rec.source,
             jobId
@@ -380,7 +405,7 @@
           this._job.done = i + 1;
           this._job.bytes += size;
 
-          if ((i % 18) === 0) await new Promise(r => setTimeout(r, 0));
+          if ((i % 14) === 0) await new Promise(r => setTimeout(r, 0));
           UI._progress();
         }
 
@@ -623,7 +648,7 @@
 
         const url = await Vault.openAsObjectURL(path);
         if (!url) {
-          UI.out("❌ Não consegui abrir (blob/url).");
+          UI.out("❌ Não consegui abrir (bytes/url).");
           return;
         }
 
@@ -631,13 +656,19 @@
         frame.setAttribute("data-url", url);
 
         const mime = mimeByPath(path);
+
         if (mime === "application/pdf" || mime.startsWith("image/")) {
           frame.src = url;
         } else {
           const rec = await Vault.getFile(path);
-          const blob = rec?.blob;
+          const ab = rec?.ab;
           let text = "";
-          try { text = await blob.text(); } catch { text = "(não foi possível ler como texto)"; }
+          try {
+            const u8 = ab ? new Uint8Array(ab) : new Uint8Array();
+            text = new TextDecoder("utf-8", { fatal: false }).decode(u8);
+          } catch {
+            text = "(não foi possível decodificar como texto)";
+          }
           frame.srcdoc = `<pre style="white-space:pre-wrap;word-break:break-word;padding:14px;font-family:ui-monospace,Menlo,monospace">${escapeHtml(text.slice(0, 250000))}</pre>`;
         }
 
@@ -686,7 +717,7 @@
   }
 
   window.RCF_ZIP_VAULT = {
-    __v10c: true,
+    __v10d: true,
     mount: () => UI.mount(),
     importZip: (file) => Vault.importZipFile(file),
     list: () => Vault.index(),
@@ -703,5 +734,5 @@
     tryMountLoop();
   }
 
-  log("OK", "zip_vault.js ready ✅ (v1.0c)");
+  log("OK", "zip_vault.js ready ✅ (v1.0d)");
 })();
