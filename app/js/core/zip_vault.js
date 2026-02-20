@@ -370,16 +370,39 @@
   const UI = {
     _mounted: false,
 
-    mount() {
+    _resolveHost(ctx) {
+      try {
+        // Prefer slots oficiais via registry (novo padrão)
+        const R = (ctx && ctx.ui) ? ctx.ui : window.RCF_UI;
+        if (R && typeof R.getSlot === "function") {
+          return (
+            R.getSlot("agent.tools") ||
+            R.getSlot("agent.actions") ||
+            R.getSlot("generator.tools") ||
+            R.getSlot("admin.integrations") ||
+            null
+          );
+        }
+      } catch {}
+
+      // Fallbacks antigos (não quebra)
+      try {
+        return (
+          document.getElementById("view-agent") ||
+          document.querySelector('[data-rcf-view="agent"]') ||
+          document.getElementById("view-admin") ||
+          null
+        );
+      } catch {
+        return null;
+      }
+    },
+
+    mount(ctx) {
       if (this._mounted) return true;
 
-      const agentView =
-        document.getElementById("view-agent") ||
-        document.querySelector('[data-rcf-view="agent"]') ||
-        document.getElementById("view-admin") || // fallback
-        null;
-
-      if (!agentView) return false;
+      const host = this._resolveHost(ctx);
+      if (!host) return false;
 
       // já existe?
       if (document.getElementById("rcfVaultCard")) {
@@ -424,8 +447,8 @@
         </div>
       `;
 
-      // coloca no final do Agente (workspace)
-      agentView.appendChild(card);
+      // coloca no host resolvido (slot/agent/admin)
+      host.appendChild(card);
 
       this._mounted = true;
       this.bind();
@@ -639,24 +662,34 @@
   }
 
   // =========================================================
-  // Auto-mount (Agent workspace)
+  // Auto-mount (Agent workspace) + compat UI_READY BUS
   // =========================================================
-  function tryMountLoop() {
+  function tryMountLoop(ctx) {
     const cfg = getCfg();
     if (!cfg.autoMountUI) return;
 
     // tenta montar já e mais tarde (UI pode demorar)
-    const ok = UI.mount();
+    const ok = UI.mount(ctx);
     if (ok) return;
 
-    setTimeout(() => { try { UI.mount(); } catch {} }, 800);
-    setTimeout(() => { try { UI.mount(); } catch {} }, 2000);
+    setTimeout(() => { try { UI.mount(ctx); } catch {} }, 800);
+    setTimeout(() => { try { UI.mount(ctx); } catch {} }, 2000);
+  }
+
+  function mountUI(ctx) {
+    try {
+      tryMountLoop(ctx || { ui: window.RCF_UI });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   // API global
   window.RCF_ZIP_VAULT = {
     __v10a: true,
-    mount: () => UI.mount(),
+    mountUI: (ctx) => mountUI(ctx),
+    mount: (ctx) => UI.mount(ctx),
     importZip: (file) => Vault.importZipFile(file),
     list: () => Vault.index(),
     get: (path) => Vault.getFile(path),
@@ -666,10 +699,21 @@
     cfgSet: (p) => setCfg(p)
   };
 
+  // Se o UI_READY já aconteceu antes do módulo carregar, monta agora.
+  try {
+    if (window.__RCF_UI_READY__) {
+      mountUI({ ui: window.RCF_UI });
+    } else {
+      window.addEventListener("RCF:UI_READY", (ev) => {
+        try { mountUI(ev?.detail || { ui: window.RCF_UI }); } catch {}
+      }, { passive: true });
+    }
+  } catch {}
+
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", () => { tryMountLoop(); }, { once: true });
+    document.addEventListener("DOMContentLoaded", () => { tryMountLoop({ ui: window.RCF_UI }); }, { once: true });
   } else {
-    tryMountLoop();
+    tryMountLoop({ ui: window.RCF_UI });
   }
 
   log("OK", "zip_vault.js ready ✅ (v1.0a)");
