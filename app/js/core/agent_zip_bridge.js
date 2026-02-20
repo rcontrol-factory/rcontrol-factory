@@ -1,262 +1,322 @@
 /* FILE: /app/js/core/agent_zip_bridge.js
-/* =========================================================
-  RControl Factory — /app/js/core/agent_zip_bridge.js (v1.0 SAFE)
-  Objetivo:
-  - Importar ZIP (ex.: Replit Agent) e salvar no KV (IDB/local fallback)
-  - Expor API pro "Agent" usar como base de arquivos/knowledge
-  - iOS safe + fail-safe (nunca trava a Factory)
+   RControl Factory — core/agent_zip_bridge.js — v1.0 SAFE
+   OBJETIVO:
+   - Transformar ZIP (importado no RCF_ZIP_VAULT) em APP dentro do Storage (rcf:apps)
+   - Monta UI no slot agent.actions (usa RCF_UI + evento RCF:UI_READY)
+   - iOS safe: usa ArrayBuffer -> TextDecoder para texto, e base64 DataURL para binários
+   - Atualiza lista com location.reload() (sem depender de funções internas do app.js)
+*/
 
-  PATCH (compat + UI READY):
-  - ✅ Exporta também window.RCF_AGENT_ZIP_BRIDGE (alias) — o app.js chama esse nome
-  - ✅ Escuta RCF:UI_READY e monta o ZIP_VAULT quando ele existir (corrige reinject_called=0)
-========================================================= */
 (function () {
   "use strict";
 
-  // Já carregado?
-  if (window.RCF_AGENT_ZIP && window.RCF_AGENT_ZIP.__v10) return;
   if (window.RCF_AGENT_ZIP_BRIDGE && window.RCF_AGENT_ZIP_BRIDGE.__v10) return;
 
-  const KEY_LAST = "agent_zip:last";
+  const PREFIX = "rcf:";
+  const KEY_APPS = PREFIX + "apps";
 
-  const log = (level, msg) => {
+  const safeJsonParse = (s, fb) => { try { return JSON.parse(s); } catch { return fb; } };
+  const safeJsonStringify = (o) => { try { return JSON.stringify(o); } catch { return String(o); } };
+
+  function log(level, msg) {
     try { window.RCF_LOGGER?.push?.(level, msg); } catch {}
-    try { console.log("[RCF/AGENT_ZIP]", level, msg); } catch {}
-  };
-
-  function nowISO() {
-    try { return new Date().toISOString(); } catch { return String(Date.now()); }
+    try { console.log("[RCF_AGENT_ZIP_BRIDGE]", level, msg); } catch {}
   }
 
-  function guessMime(path) {
-    const p = String(path || "").toLowerCase();
-    if (p.endsWith(".html")) return "text/html";
-    if (p.endsWith(".css")) return "text/css";
-    if (p.endsWith(".js")) return "text/javascript";
-    if (p.endsWith(".json")) return "application/json";
-    if (p.endsWith(".md")) return "text/markdown";
-    if (p.endsWith(".txt")) return "text/plain";
-    if (p.endsWith(".png")) return "image/png";
-    if (p.endsWith(".jpg") || p.endsWith(".jpeg")) return "image/jpeg";
-    if (p.endsWith(".webp")) return "image/webp";
-    if (p.endsWith(".svg")) return "image/svg+xml";
-    if (p.endsWith(".pdf")) return "application/pdf";
+  function nowISO() { return new Date().toISOString(); }
+
+  function slugify(str) {
+    return String(str || "")
+      .trim()
+      .toLowerCase()
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+  }
+
+  function mimeByPath(p) {
+    const s = String(p || "").toLowerCase();
+    if (s.endsWith(".pdf")) return "application/pdf";
+    if (s.endsWith(".png")) return "image/png";
+    if (s.endsWith(".jpg") || s.endsWith(".jpeg")) return "image/jpeg";
+    if (s.endsWith(".webp")) return "image/webp";
+    if (s.endsWith(".svg")) return "image/svg+xml";
+    if (s.endsWith(".json")) return "application/json";
+    if (s.endsWith(".css")) return "text/css";
+    if (s.endsWith(".html") || s.endsWith(".htm")) return "text/html";
+    if (s.endsWith(".js")) return "text/javascript";
+    if (s.endsWith(".txt") || s.endsWith(".md")) return "text/plain";
     return "application/octet-stream";
   }
 
-  function isProbablyText(mime, path) {
-    if (String(mime || "").startsWith("text/")) return true;
-    const p = String(path || "").toLowerCase();
+  function isTextByMimeOrPath(mime, p) {
+    const m = String(mime || "").toLowerCase();
+    if (m.startsWith("text/")) return true;
+    const s = String(p || "").toLowerCase();
     return (
-      p.endsWith(".js") || p.endsWith(".json") || p.endsWith(".css") ||
-      p.endsWith(".html") || p.endsWith(".md") || p.endsWith(".txt") ||
-      p.endsWith(".ts") || p.endsWith(".tsx") || p.endsWith(".jsx") ||
-      p.endsWith(".env") || p.endsWith(".gitignore") || p.endsWith(".replit")
+      s.endsWith(".js") || s.endsWith(".json") || s.endsWith(".css") ||
+      s.endsWith(".html") || s.endsWith(".htm") || s.endsWith(".md") || s.endsWith(".txt") || s.endsWith(".svg")
     );
   }
 
-  function pickFile() {
-    return new Promise((resolve) => {
-      try {
-        const inp = document.createElement("input");
-        inp.type = "file";
-        inp.accept = ".zip,application/zip";
-        inp.style.position = "fixed";
-        inp.style.left = "-9999px";
-        inp.style.top = "-9999px";
-        document.body.appendChild(inp);
-
-        inp.onchange = () => {
-          const f = inp.files && inp.files[0] ? inp.files[0] : null;
-          try { inp.remove(); } catch {}
-          resolve(f);
-        };
-
-        inp.click();
-      } catch (e) {
-        log("ERR", "file picker fail: " + (e?.message || e));
-        resolve(null);
-      }
-    });
+  function getApps() {
+    return safeJsonParse(localStorage.getItem(KEY_APPS) || "[]", []);
   }
 
-  async function ensureDeps() {
+  function setApps(list) {
+    try { localStorage.setItem(KEY_APPS, safeJsonStringify(list || [])); } catch {}
+  }
+
+  function pickZipNameFromVault() {
     try {
-      // vendor loader opcional
-      if (window.RCF_VENDOR?.ensureJSZip) {
-        await window.RCF_VENDOR.ensureJSZip();
-      }
-      if (!window.JSZip || typeof window.JSZip.loadAsync !== "function") {
-        throw new Error("JSZip ausente");
-      }
-      if (!window.RCF_STORAGE || typeof window.RCF_STORAGE.put !== "function") {
-        throw new Error("RCF_STORAGE.put ausente");
-      }
-      return true;
-    } catch (e) {
-      log("ERR", "deps fail: " + (e?.message || e));
-      return false;
+      const last = localStorage.getItem("rcf:vault:last");
+      const o = safeJsonParse(last || "{}", {});
+      const n = (o && o.name) ? String(o.name) : "";
+      return n.replace(/\.zip$/i, "") || "ZIP App";
+    } catch {
+      return "ZIP App";
     }
   }
 
-  async function importZip() {
+  function arrayBufferToBase64(ab) {
     try {
-      log("INFO", "importZip: iniciando…");
-
-      const ok = await ensureDeps();
-      if (!ok) return { ok: false, err: "deps_missing" };
-
-      const file = await pickFile();
-      if (!file) {
-        log("WARN", "importZip: cancelado");
-        return { ok: false, err: "canceled" };
+      const u8 = new Uint8Array(ab);
+      let s = "";
+      const CHUNK = 0x8000;
+      for (let i = 0; i < u8.length; i += CHUNK) {
+        s += String.fromCharCode.apply(null, u8.subarray(i, i + CHUNK));
       }
-
-      const buf = await file.arrayBuffer();
-      const zip = await window.JSZip.loadAsync(buf);
-
-      const filesOut = {};
-      let count = 0;
-      let bytesApprox = 0;
-
-      const entries = Object.keys(zip.files || {});
-      for (const name of entries) {
-        const entry = zip.files[name];
-        if (!entry || entry.dir) continue;
-
-        const mime = guessMime(name);
-        const isText = isProbablyText(mime, name);
-
-        try {
-          if (isText) {
-            const txt = await entry.async("string");
-            filesOut[name] = { enc: "utf8", mime, data: txt };
-            bytesApprox += (txt ? txt.length : 0);
-          } else {
-            // bin -> base64 (para não quebrar IDB com Blob)
-            const b64 = await entry.async("base64");
-            filesOut[name] = { enc: "base64", mime, data: b64 };
-            bytesApprox += (b64 ? b64.length : 0);
-          }
-          count++;
-        } catch (e) {
-          log("WARN", "falha lendo entry: " + name + " :: " + (e?.message || e));
-        }
-      }
-
-      const payload = {
-        meta: {
-          kind: "rcf-agent-zip",
-          name: file.name,
-          size: file.size || 0,
-          importedAt: nowISO(),
-          filesCount: count,
-          approxBytes: bytesApprox
-        },
-        files: filesOut
-      };
-
-      const saved = await window.RCF_STORAGE.put(KEY_LAST, payload);
-
-      if (saved) {
-        log("OK", "ZIP importado ✅ name=" + file.name + " files=" + count);
-        try { window.RCF_LOGGER?.push?.("OK", "AGENT_ZIP saved ✅ files=" + count); } catch {}
-        return { ok: true, files: count, name: file.name };
-      }
-
-      log("ERR", "falha ao salvar no KV");
-      return { ok: false, err: "save_failed" };
-
-    } catch (e) {
-      log("ERR", "importZip fail: " + (e?.message || e));
-      return { ok: false, err: String(e?.message || e) };
+      return btoa(s);
+    } catch {
+      return "";
     }
   }
 
-  async function getLast() {
+  function decodeText(ab) {
     try {
-      if (!window.RCF_STORAGE?.getAsync) throw new Error("RCF_STORAGE.getAsync ausente");
-      const v = await window.RCF_STORAGE.getAsync(KEY_LAST, null);
-      return v || null;
-    } catch (e) {
-      log("WARN", "getLast fail: " + (e?.message || e));
-      return null;
+      const u8 = ab ? new Uint8Array(ab) : new Uint8Array();
+      return new TextDecoder("utf-8", { fatal: false }).decode(u8);
+    } catch {
+      return "";
     }
   }
 
-  async function clearLast() {
-    try {
-      if (!window.RCF_STORAGE?.delAsync) throw new Error("RCF_STORAGE.delAsync ausente");
-      await window.RCF_STORAGE.delAsync(KEY_LAST);
-      log("OK", "AGENT_ZIP cleared ✅");
-      return true;
-    } catch (e) {
-      log("WARN", "clearLast fail: " + (e?.message || e));
-      return false;
+  async function buildFilesFromVaultIndex(opts) {
+    const V = window.RCF_ZIP_VAULT;
+    if (!V || typeof V.list !== "function" || typeof V.get !== "function") {
+      throw new Error("RCF_ZIP_VAULT não disponível (zip_vault.js não carregou).");
     }
+
+    const idx = V.list() || [];
+    if (!idx.length) throw new Error("Vault vazio. Importe um ZIP primeiro.");
+
+    const files = {};
+    let countText = 0, countBin = 0, bytes = 0;
+
+    // Opcional: remover prefixo de pasta raiz comum (ex: "meuapp/")
+    const stripRoot = !!(opts && opts.stripRootFolder);
+    let rootPrefix = "";
+    if (stripRoot) {
+      // tenta detectar pasta raiz comum
+      const parts = idx.map(it => String(it.path || "").split("/")[0]).filter(Boolean);
+      const first = parts[0] || "";
+      const allSame = first && parts.every(p => p === first);
+      if (allSame) rootPrefix = first + "/";
+    }
+
+    for (const it of idx) {
+      const path0 = String(it.path || "");
+      if (!path0) continue;
+
+      const path = rootPrefix && path0.startsWith(rootPrefix) ? path0.slice(rootPrefix.length) : path0;
+      if (!path) continue;
+
+      const mime = it.mime || mimeByPath(path);
+      const rec = await V.get(path0); // pega no path original (com prefixo se tiver)
+      const ab = rec && rec.ab ? rec.ab : null;
+      const size = rec && rec.size ? Number(rec.size) : (ab ? ab.byteLength : 0);
+      bytes += (size || 0);
+
+      if (ab && isTextByMimeOrPath(mime, path)) {
+        files[path] = decodeText(ab);
+        countText++;
+      } else if (ab) {
+        const b64 = arrayBufferToBase64(ab);
+        files[path] = `data:${mime};base64,${b64}`;
+        countBin++;
+      } else {
+        // sem bytes? guarda placeholder
+        files[path] = "";
+        countText++;
+      }
+    }
+
+    return { files, meta: { countText, countBin, bytes, total: countText + countBin, rootPrefix } };
+  }
+
+  async function zipToApp(options) {
+    const opts = options && typeof options === "object" ? options : {};
+    const defaultName = pickZipNameFromVault();
+
+    const name = String(opts.name || defaultName || "ZIP App").trim() || "ZIP App";
+    const slug = String(opts.slug || slugify(name)).trim() || slugify(name) || ("zip-" + Date.now());
+    const template = String(opts.template || "zip-import").trim() || "zip-import";
+
+    const apps = getApps();
+    if (apps.some(a => String(a.slug) === slug)) {
+      throw new Error("Slug já existe: " + slug);
+    }
+
+    log("INFO", "zipToApp: montando files do Vault…");
+    const built = await buildFilesFromVaultIndex({ stripRootFolder: opts.stripRootFolder !== false });
+
+    // garante index.html (se não tiver, cria um básico)
+    if (!built.files["index.html"]) {
+      built.files["index.html"] =
+        `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${name}</title></head><body><h1>${name}</h1><p>ZIP importado ✅</p></body></html>`;
+    }
+
+    const app = {
+      name,
+      slug,
+      createdAt: nowISO(),
+      template,
+      files: built.files,
+      zipMeta: built.meta
+    };
+
+    apps.push(app);
+    setApps(apps);
+
+    log("OK", `ZIP→APP ok ✅ slug=${slug} files=${built.meta.total} bytes=${built.meta.bytes}`);
+    try { window.RCF_LOGGER?.push?.("OK", `ZIP→APP ✅ ${slug} files=${built.meta.total}`); } catch {}
+
+    // para atualizar UI (sem depender de função interna do app.js)
+    if (opts.reload !== false) {
+      setTimeout(() => { try { location.reload(); } catch {} }, 250);
+    }
+
+    return { ok: true, app, meta: built.meta };
   }
 
   // =========================================================
-  // UI READY / VAULT reinject (corrige ordem de load)
+  // UI mount no Agent (slot agent.actions)
   // =========================================================
-  function tryMountVaultUI(reason) {
+  function getSlotEl() {
     try {
-      const V = window.RCF_ZIP_VAULT;
-      if (V && typeof V.mount === "function") {
-        const ok = V.mount();
-        if (ok) {
-          try { window.RCF_LOGGER?.push?.("OK", `AGENT_ZIP_BRIDGE: vault mounted ✅ (${reason || "auto"})`); } catch {}
-          return true;
-        }
+      const ui = window.RCF_UI;
+      if (ui && typeof ui.getSlot === "function") {
+        const s = ui.getSlot("agent.actions");
+        if (s) return s;
       }
     } catch {}
-    return false;
+    return document.getElementById("rcfAgentSlotActions") || document.querySelector('[data-rcf-slot="agent.actions"]') || null;
   }
 
   function mountUI() {
-    // tentativa imediata
-    if (tryMountVaultUI("mountUI")) return true;
+    const slot = getSlotEl();
+    if (!slot) return false;
 
-    // re-tentativas leves (iPhone safe)
-    setTimeout(() => { tryMountVaultUI("retry 800ms"); }, 800);
-    setTimeout(() => { tryMountVaultUI("retry 2000ms"); }, 2000);
-    return false;
-  }
+    if (document.getElementById("rcfZipToAppCard")) return true;
 
-  function onUIReady() {
-    // UI_READY pode acontecer antes deste módulo ou antes do zip_vault
-    mountUI();
-  }
+    const card = document.createElement("div");
+    card.className = "card";
+    card.id = "rcfZipToAppCard";
+    card.style.marginTop = "12px";
+    card.innerHTML = `
+      <h2 style="margin-top:0">ZIP → APP</h2>
+      <div class="hint">Converte o ZIP importado no VAULT em um app salvo na Factory.</div>
 
-  // escuta evento padrão do app.js
-  try {
-    window.addEventListener("RCF:UI_READY", () => onUIReady(), { passive: true });
-  } catch {}
+      <div class="row" style="flex-wrap:wrap;align-items:center;margin-top:10px">
+        <input id="rcfZipToAppName" placeholder="Nome do App (opcional)" style="min-width:220px;flex:1" />
+        <input id="rcfZipToAppSlug" placeholder="Slug (opcional)" style="min-width:180px;flex:1" />
+        <button class="btn ok" id="rcfZipToAppBtn" type="button">Criar App do ZIP</button>
+      </div>
 
-  // se já está pronto, tenta já
-  try {
-    if (window.__RCF_UI_READY__) {
-      onUIReady();
+      <div class="row" style="flex-wrap:wrap;align-items:center;margin-top:10px">
+        <button class="btn ghost" id="rcfZipToAppStats" type="button">Ver stats do Vault</button>
+        <button class="btn danger" id="rcfZipToAppReload" type="button">Recarregar</button>
+      </div>
+
+      <pre class="mono small" id="rcfZipToAppOut" style="margin-top:10px">Pronto.</pre>
+    `;
+
+    slot.appendChild(card);
+
+    const out = document.getElementById("rcfZipToAppOut");
+    const setOut = (t) => { try { if (out) out.textContent = String(t ?? ""); } catch {} };
+
+    const btn = document.getElementById("rcfZipToAppBtn");
+    const btnStats = document.getElementById("rcfZipToAppStats");
+    const btnReload = document.getElementById("rcfZipToAppReload");
+
+    const inpName = document.getElementById("rcfZipToAppName");
+    const inpSlug = document.getElementById("rcfZipToAppSlug");
+
+    if (btn && !btn.__bound) {
+      btn.__bound = true;
+      btn.addEventListener("click", async () => {
+        try {
+          setOut("Criando app do ZIP…");
+          const name = String(inpName?.value || "").trim();
+          const slug = String(inpSlug?.value || "").trim();
+          const r = await zipToApp({ name: name || undefined, slug: slug || undefined, stripRootFolder: true, reload: true });
+          setOut(`✅ OK: ${r.app.slug}\nfiles=${r.meta.total} (text=${r.meta.countText} bin=${r.meta.countBin})\nbytes=${r.meta.bytes}`);
+        } catch (e) {
+          setOut("❌ Falhou: " + (e?.message || e));
+        }
+      }, { passive: true });
     }
-  } catch {}
 
-  // =========================================================
-  // Export global API (mantém RCF_AGENT_ZIP + adiciona alias BRIDGE)
-  // =========================================================
-  const API = {
+    if (btnStats && !btnStats.__bound) {
+      btnStats.__bound = true;
+      btnStats.addEventListener("click", () => {
+        try {
+          const idx = window.RCF_ZIP_VAULT?.list?.() || [];
+          const totalBytes = idx.reduce((a, it) => a + (Number(it.size) || 0), 0);
+          setOut(`VAULT stats:\nfiles=${idx.length}\nMB=${(totalBytes/(1024*1024)).toFixed(1)}\nex: ${idx.slice(0, 8).map(x => x.path).join("\n")}${idx.length>8 ? "\n...(mais)" : ""}`);
+        } catch (e) {
+          setOut("❌ stats erro: " + (e?.message || e));
+        }
+      }, { passive: true });
+    }
+
+    if (btnReload && !btnReload.__bound) {
+      btnReload.__bound = true;
+      btnReload.addEventListener("click", () => { try { location.reload(); } catch {} }, { passive: true });
+    }
+
+    setOut("Pronto. ✅ Importe ZIP no VAULT e depois clique 'Criar App do ZIP'.");
+    return true;
+  }
+
+  function mountLoop() {
+    const ok = mountUI();
+    if (ok) return;
+    setTimeout(() => { try { mountUI(); } catch {} }, 700);
+    setTimeout(() => { try { mountUI(); } catch {} }, 1700);
+  }
+
+  // expõe
+  window.RCF_AGENT_ZIP_BRIDGE = {
     __v10: true,
-    importZip,
-    getLast,
-    clearLast,
-
-    // compat hooks chamados pelo app.js (notifyUIReady)
-    mountUI,
-    mount: mountUI,
-    init: mountUI
+    mountUI: () => mountUI(),
+    zipToApp: (opts) => zipToApp(opts)
   };
 
-  window.RCF_AGENT_ZIP = API;
-  window.RCF_AGENT_ZIP_BRIDGE = API;
+  // auto-mount: usa o seu UI READY BUS (app.js)
+  try {
+    window.addEventListener("RCF:UI_READY", () => {
+      try { mountLoop(); } catch {}
+    });
+  } catch {}
+
+  // fallback
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", () => { try { mountLoop(); } catch {} }, { once: true });
+  } else {
+    mountLoop();
+  }
 
   log("OK", "agent_zip_bridge.js ready ✅ (v1.0)");
 })();
