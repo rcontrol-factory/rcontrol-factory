@@ -149,7 +149,11 @@
   // UI READY BUS (permite módulos que carregaram antes reinjetarem)
   // =========================================================
   function notifyUIReady() {
-    try { window.__RCF_UI_READY__ = true; } catch {}
+    // ✅ 1x only
+    try {
+      if (window.__RCF_UI_READY__ === true) return;
+      window.__RCF_UI_READY__ = true;
+    } catch {}
 
     // evento padrão
     try {
@@ -2621,9 +2625,6 @@
 
     // registry refresh
     try { window.RCF_UI?.refresh?.(); } catch {}
-
-    // ✅ NEW: UI READY BUS — dispara após UI/slots existirem
-    try { notifyUIReady(); } catch {}
   }
 
   // =========================================================
@@ -2638,6 +2639,9 @@
 
       // PATCH: Registry (depois do shell existir)
       installRCFUIRegistry();
+
+      // ✅ NEW: UI READY BUS — 1x após registry (slots já existem no shell)
+      try { notifyUIReady(); } catch {}
 
       bindUI();
       hydrateUIFromState();
