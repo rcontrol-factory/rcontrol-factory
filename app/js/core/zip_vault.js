@@ -22,8 +22,6 @@
   const IDB_VER = 1;
   const IDB_STORE = "files";
 
-  const $ = (sel, root = document) => root.querySelector(sel);
-
   const safeJsonParse = (s, fb) => { try { return JSON.parse(s); } catch { return fb; } };
   const safeJsonStringify = (o) => { try { return JSON.stringify(o); } catch { return String(o); } };
 
@@ -61,25 +59,41 @@
     return x;
   }
 
+  // =========================================================
+  // HTML / JS detection (PATCH HARD)
+  // =========================================================
   function looksLikeHTML(code) {
-    const s = String(code || "").trim().slice(0, 500).toLowerCase();
-    return (
-      s.startsWith("<!doctype") ||
-      s.startsWith("<html") ||
-      s.includes("<head") ||
-      s.includes("<body") ||
-      s.includes("<title") ||
-      s.includes("text/html")
-    );
+    const raw = String(code || "");
+    const head = raw.trim().slice(0, 900).toLowerCase();
+
+    // começa com tag
+    if (head.startsWith("<")) return true;
+
+    // tags típicas
+    if (/<\s*(!doctype|html|head|body|script|meta|link|style|title)\b/i.test(head)) return true;
+    if (/<\/\s*(html|head|body|script|style)\s*>/i.test(head)) return true;
+
+    // SPA fallback comum
+    if (head.includes("text/html")) return true;
+
+    // fingerprint do seu próprio site (quando CF devolve index)
+    if (raw.includes("RControl Factory") || raw.includes("Factory interna")) return true;
+
+    return false;
   }
 
   function looksLikeJSZip(code) {
-    const s = String(code || "");
-    // heurística bem leve: não garante 100%, mas evita injetar HTML/SPAs
-    return (
-      s.length > 2000 &&
-      (s.includes("JSZip") || s.includes("loadAsync") || s.includes("zip"))
-    );
+    const raw = String(code || "");
+    if (!raw || raw.length < 2000) return false;
+
+    // JSZip UMD/min normalmente contém "JSZip"
+    // (bem mais confiável do que procurar "zip" genérico)
+    if (!raw.includes("JSZip")) return false;
+
+    // se tiver cara de HTML em qualquer lugar do começo, descarta
+    if (looksLikeHTML(raw)) return false;
+
+    return true;
   }
 
   // =========================================================
@@ -202,7 +216,7 @@
   }
 
   // =========================================================
-  // JSZip loader (blindado: não injeta HTML por engano)
+  // JSZip loader (HARD SAFE)
   // =========================================================
   async function ensureJSZip() {
     if (window.JSZip) return true;
@@ -219,42 +233,32 @@
         const res = await fetch(src, { cache: "no-store" });
         if (!res.ok) continue;
 
-        const ct = (res.headers && res.headers.get) ? (res.headers.get("content-type") || "") : "";
         const code = await res.text();
 
-        // PATCH: evita injetar HTML/fallback SPA como JS (causava: Unexpected identifier 'Factory')
-        if (looksLikeHTML(code)) {
-          log("WARN", "JSZip loader: ignorando HTML em " + src + " (provável fallback/SPA).");
-          continue;
-        }
-
-        // se o servidor manda content-type estranho, ainda assim validamos conteúdo
+        // PATCH HARD: não injeta se não for JSZip real
         if (!looksLikeJSZip(code)) {
-          log("WARN", "JSZip loader: conteúdo não parece JSZip em " + src + " (skip).");
+          log("WARN", "JSZip loader: conteúdo inválido (provável HTML/fallback) em " + src + " (skip).");
           continue;
         }
 
+        // só agora injeta (seguro)
         const s = document.createElement("script");
         s.setAttribute("data-rcf", "jszip-inline");
         s.textContent = code;
 
-        try {
-          document.head.appendChild(s);
-        } catch (e) {
-          // appendChild foi onde você caiu no Safe Mode
-          log("ERR", "JSZip loader: appendChild falhou em " + src + " :: " + (e?.message || e));
-          try { s.remove(); } catch {}
-          continue;
-        }
+        // IMPORTANTE: se aqui der erro, é porque ainda assim veio JS inválido
+        // (mas com o filtro acima, a chance fica praticamente zero)
+        document.head.appendChild(s);
 
         if (window.JSZip) {
-          log("OK", "JSZip carregado via " + src + (ct ? (" (" + ct + ")") : ""));
+          log("OK", "JSZip carregado via " + src);
           return true;
         } else {
-          // se não subiu, remove e tenta o próximo
           try { s.remove(); } catch {}
         }
-      } catch {}
+      } catch (e) {
+        log("WARN", "JSZip loader: falha lendo " + src + " :: " + (e?.message || e));
+      }
     }
 
     log("ERR", "JSZip ausente. Adicione jszip.min.js em /app/vendor/jszip.min.js (recomendado).");
@@ -271,7 +275,6 @@
 
     index() {
       const list = readIndex();
-      // ordena por path
       list.sort((a, b) => String(a.path).localeCompare(String(b.path)));
       return list;
     },
@@ -286,16 +289,10 @@
     async openAsObjectURL(path) {
       const rec = await this.getFile(path);
       if (!rec || !rec.blob) return null;
-      try {
-        const url = URL.createObjectURL(rec.blob);
-        return url;
-      } catch {
-        return null;
-      }
+      try { return URL.createObjectURL(rec.blob); } catch { return null; }
     },
 
     async clearAll() {
-      // limpa IDB + index
       await idbClearAll();
       writeIndex([]);
       try { localStorage.removeItem(LS_LAST_KEY); } catch {}
@@ -309,7 +306,7 @@
 
       const jobId = "job_" + Date.now();
       const startedAt = nowISO();
-      const importedKeys = []; // rollback safety
+      const importedKeys = [];
 
       this._job = { id: jobId, startedAt, name: file?.name || "(zip)", total: 0, done: 0, bytes: 0 };
 
@@ -324,24 +321,17 @@
         const entries = [];
         zip.forEach((relativePath, entry) => { entries.push({ relativePath, entry }); });
 
-        // filtra arquivos (não diretórios)
         const files = entries.filter(x => x && x.entry && !x.entry.dir);
         this._job.total = files.length;
 
-        // índice atual
         const idx = readIndex();
         const idxMap = new Map(idx.map(it => [String(it.path), it]));
 
-        // import SAFE por lotes
         for (let i = 0; i < files.length; i++) {
           const rp = normPath(files[i].relativePath);
           const entry = files[i].entry;
 
-          // Heurística: mantém baixo risco no iPhone -> usa blob para tudo
           const mime = mimeByPath(rp);
-
-          // PDF/IMG/BIN => blob (sempre)
-          // Textos => blob também, mas podemos cachear um preview pequeno (opcional)
           const blob = await entry.async("blob");
           const size = blob?.size || 0;
 
@@ -356,32 +346,25 @@
             jobId
           };
 
-          // escreve no IDB
           await idbPut(key, rec);
           importedKeys.push(key);
 
-          // atualiza index leve
-          const meta = {
+          idxMap.set(rp, {
             path: rp,
             mime,
             size,
             importedAt: startedAt,
             source: rec.source,
             jobId
-          };
-
-          idxMap.set(rp, meta);
+          });
 
           this._job.done = i + 1;
           this._job.bytes += size;
 
-          // yield pra não travar
           if ((i % 18) === 0) await new Promise(r => setTimeout(r, 0));
-
           UI._progress();
         }
 
-        // salva index
         writeIndex(Array.from(idxMap.values()));
         try {
           localStorage.setItem(LS_LAST_KEY, safeJsonStringify({
@@ -393,11 +376,7 @@
         return { ok: true, jobId, count: files.length, bytes: this._job.bytes };
 
       } catch (e) {
-        // rollback SAFE (apaga o que entrou nesse job)
-        try {
-          for (const k of importedKeys) { try { await idbDel(k); } catch {} }
-        } catch {}
-
+        try { for (const k of importedKeys) { try { await idbDel(k); } catch {} } } catch {}
         log("ERR", "VAULT import fail :: " + (e?.message || e));
         return { ok: false, err: (e?.message || String(e)) };
 
@@ -422,12 +401,11 @@
       const agentView =
         document.getElementById("view-agent") ||
         document.querySelector('[data-rcf-view="agent"]') ||
-        document.getElementById("view-admin") || // fallback
+        document.getElementById("view-admin") ||
         null;
 
       if (!agentView) return false;
 
-      // já existe?
       if (document.getElementById("rcfVaultCard")) {
         this._mounted = true;
         this.bind();
@@ -470,7 +448,6 @@
         </div>
       `;
 
-      // coloca no final do Agente (workspace)
       agentView.appendChild(card);
 
       this._mounted = true;
@@ -551,12 +528,9 @@
 
       if (filter && !filter.__bound) {
         filter.__bound = true;
-        filter.addEventListener("input", () => {
-          UI.renderList();
-        }, { passive: true });
+        filter.addEventListener("input", () => { UI.renderList(); }, { passive: true });
       }
 
-      // viewer
       const vClose = document.getElementById("rcfVaultViewerClose");
       const vOpen  = document.getElementById("rcfVaultViewerOpen");
 
@@ -593,7 +567,6 @@
         return;
       }
 
-      // limita itens na tela (iPhone safe)
       const LIMIT = 220;
       const show = filtered.slice(0, LIMIT);
 
@@ -628,20 +601,15 @@
         UI.out("Abrindo…");
 
         const url = await Vault.openAsObjectURL(path);
-        if (!url) {
-          UI.out("❌ Não consegui abrir (blob/url).");
-          return;
-        }
+        if (!url) return UI.out("❌ Não consegui abrir (blob/url).");
 
         title.textContent = path;
         frame.setAttribute("data-url", url);
 
-        // PDF / IMG abre normal no iframe
         const mime = mimeByPath(path);
         if (mime === "application/pdf" || mime.startsWith("image/")) {
           frame.src = url;
         } else {
-          // texto: mostra como pre
           const rec = await Vault.getFile(path);
           const blob = rec?.blob;
           let text = "";
@@ -665,11 +633,9 @@
         const url = frame.getAttribute("data-url") || "";
         frame.removeAttribute("data-url");
 
-        // limpa
         frame.src = "about:blank";
         frame.srcdoc = "";
 
-        // revoke URL (evita leak)
         if (url && url.startsWith("blob:")) {
           try { URL.revokeObjectURL(url); } catch {}
         }
@@ -684,14 +650,10 @@
     return String(s).replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
   }
 
-  // =========================================================
-  // Auto-mount (Agent workspace)
-  // =========================================================
   function tryMountLoop() {
     const cfg = getCfg();
     if (!cfg.autoMountUI) return;
 
-    // tenta montar já e mais tarde (UI pode demorar)
     const ok = UI.mount();
     if (ok) return;
 
@@ -699,7 +661,6 @@
     setTimeout(() => { try { UI.mount(); } catch {} }, 2000);
   }
 
-  // API global
   window.RCF_ZIP_VAULT = {
     __v10a: true,
     mount: () => UI.mount(),
