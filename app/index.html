@@ -8,6 +8,12 @@
      FIX (BOTÃO SUMINDO):
      - zip_vault.js + agent_zip_bridge.js AGORA carregam DEPOIS do app.js
        (porque o app.js cria os slots/UI onde o zip_vault injeta botões)
+
+     DEGRAU 3 (AUTO EXTRA-MODULES):
+     - ✅ Auto-installer SAFE: injeta 2 extra modules no rcf:boot:extra_modules
+       ./js/core/agent_tools_panel.js
+       ./js/core/agent_scanmap.js
+     - ✅ Reload automático 1x (sem loop) só quando mudar
 -->
 <!doctype html>
 <html lang="pt-BR">
@@ -24,7 +30,7 @@
   <link rel="stylesheet" href="./styles.css" />
 
   <!-- (Opcional) ajuda a ver que o index novo entrou -->
-  <meta name="rcf-index" content="vCLEAN-1+ENGINE+VENDORZIP" />
+  <meta name="rcf-index" content="vCLEAN-1+ENGINE+VENDORZIP+EXTRAS3" />
 </head>
 
 <body>
@@ -40,6 +46,7 @@
     - NÃO captura logs (logger.js oficial manda pro Storage/UI)
     - Evita SW register duplicado
     - ✅ Evita BOOT duplicado do index (iOS/SW edge cases)
+    - ✅ DEGRAU 3: garante extra_modules (tools_panel + scanmap)
   ========================================================== -->
   <script>
     (function () {
@@ -60,8 +67,69 @@
         });
       }
 
+      // =========================================================
+      // DEGRAU 3 — AUTO EXTRA MODULES (SAFE + 1 reload)
+      // =========================================================
+      function ensureExtraModules(){
+        const KEY = "rcf:boot:extra_modules";
+        const GUARD = "rcf:extra_modules_installed:v1";
+        const MUST = [
+          "./js/core/agent_tools_panel.js",
+          "./js/core/agent_scanmap.js"
+        ];
+
+        // evita loop de reload
+        try {
+          if (sessionStorage.getItem(GUARD) === "1") return { changed:false, already:true };
+        } catch {}
+
+        let cur = [];
+        try {
+          const raw = localStorage.getItem(KEY);
+          const j = raw ? JSON.parse(raw) : [];
+          cur = Array.isArray(j) ? j : [];
+        } catch {
+          cur = [];
+        }
+
+        // normaliza strings
+        const norm = (p) => String(p || "").trim();
+        const set = new Set(cur.map(norm).filter(Boolean));
+
+        let changed = false;
+        for (const p of MUST) {
+          const x = norm(p);
+          if (!set.has(x)) { set.add(x); changed = true; }
+        }
+
+        if (changed) {
+          const next = Array.from(set).sort((a,b)=>a.localeCompare(b));
+          try { localStorage.setItem(KEY, JSON.stringify(next)); } catch {}
+          try { sessionStorage.setItem(GUARD, "1"); } catch {}
+          return { changed:true, list: next };
+        }
+
+        // marcou como ok (sem precisar reload)
+        try { sessionStorage.setItem(GUARD, "1"); } catch {}
+        return { changed:false, list: Array.from(set) };
+      }
+
       async function boot(){
         log("BOOT: starting… base=", document.baseURI);
+
+        // ✅ roda antes de qualquer coisa que dependa do boot extra
+        try {
+          const r = ensureExtraModules();
+          if (r && r.changed) {
+            log("DEGRAU3: extra_modules atualizado -> reload 1x", r.list || []);
+            // 1 reload só (SAFE)
+            try { location.reload(); return; } catch {}
+          } else {
+            log("DEGRAU3: extra_modules ok");
+          }
+        } catch (e) {
+          log("DEGRAU3: falhou (ignorado)", (e && e.message) ? e.message : e);
+        }
 
         // =========================================================
         // 1) CORE + ENGINE (antes do app.js)
