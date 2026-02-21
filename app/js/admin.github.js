@@ -1,21 +1,24 @@
-/* RControl Factory — /app/js/admin.github.js (PADRÃO) — v2.7d
-   PATCH sobre v2.7c:
-   - ✅ FIX: não deixa owner/repo virar vazio (merge com cfg salvo)
-   - ✅ FIX: antes de Test/Pull/Push salva cfg “merged” (garante ghcfg completo)
-   - Mantém MAE clear robusto
-
-   PATCH (Fillers UI):
-   - ✅ Adiciona seção "Fillers" no modal GitHub (admin)
-   - ✅ Lista alfabética + busca (🔎) + refresh
-   - ✅ Fonte: mother_bundle_local + VFS overrides (se disponível)
+/* FILE: /app/js/admin.github.js
+   RControl Factory — /app/js/admin.github.js (PADRÃO) — v2.8a
+   BASE: v2.7d (seu arquivo completo)
+   ADD (PWA LINKS / PAGES):
+   - ✅ Seção "PWA Links (Cloudflare Pages)" no modal GitHub
+   - ✅ Gera link público com ?who= (ex: Gabriel) e copia pro clipboard
+   - ✅ Abre link em nova aba
+   - ✅ (Opcional) dispara Deploy Hook (Cloudflare Pages) via POST (se você colar o hook)
+   OBS: isso NÃO publica arquivos no Pages sozinho (isso fica pro próximo passo: Push app files).
 */
+
 (() => {
   "use strict";
 
-  if (window.RCF_ADMIN_GH && window.RCF_ADMIN_GH.__v27d) return;
+  if (window.RCF_ADMIN_GH && window.RCF_ADMIN_GH.__v28a) return;
 
   const UI_OPEN_KEY = "rcf:ghui:open";
   const LS_CFG_KEY  = "rcf:ghcfg";
+
+  // ✅ NOVO: Pages cfg (para links/Deploy Hook)
+  const LS_PAGES_KEY = "rcf:pagescfg";
 
   const log = (lvl, msg) => {
     try { window.RCF_LOGGER?.push?.(lvl, msg); } catch {}
@@ -50,6 +53,23 @@
     };
     localStorage.setItem(LS_CFG_KEY, JSON.stringify(safe));
     return safe;
+  }
+
+  // ✅ PAGES CFG
+  function getPagesCfg(){
+    const d = safeParse(localStorage.getItem(LS_PAGES_KEY), {}) || {};
+    return {
+      baseUrl: String(d.baseUrl || "").trim(),          // ex: https://timesheet-lite.pages.dev/
+      deployHook: String(d.deployHook || "").trim(),    // ex: https://api.cloudflare.com/client/v4/pages/webhooks/deploy_hooks/...
+      whoParam: String(d.whoParam || "who").trim(),     // padrão: who
+      whoDefault: String(d.whoDefault || "Gabriel").trim()
+    };
+  }
+  function savePagesCfg(patch){
+    const cur = getPagesCfg();
+    const next = Object.assign({}, cur, patch || {});
+    try { localStorage.setItem(LS_PAGES_KEY, JSON.stringify(next)); } catch {}
+    return next;
   }
 
   // ✅ Fix iOS: não forçar click() em touchend
@@ -189,6 +209,56 @@
           <button id="btnMaeClear" type="button" style="padding:10px 12px; border-radius:999px; border:1px solid rgba(255,180,80,.25); background: rgba(255,180,80,.10); color:#fff;">MAE clear</button>
         </div>
 
+        <!-- ✅ NOVO: PWA Links / Pages -->
+        <div style="
+          margin-top:14px;
+          padding-top:12px;
+          border-top: 1px solid rgba(255,255,255,.10);
+        ">
+          <div style="display:flex; align-items:center; gap:10px;">
+            <div style="font-weight:900; font-size:14px; color:#eafff4;">PWA Links (Cloudflare Pages)</div>
+            <div style="font-size:12px; color: rgba(255,255,255,.65);">gera link pro Gabriel instalar no iPhone</div>
+          </div>
+
+          <div style="margin-top:10px; display:flex; gap:10px; flex-wrap:wrap;">
+            <div style="flex:1; min-width:220px;">
+              <div style="font-size:12px; color: rgba(255,255,255,.65); margin-bottom:6px;">Base URL (Pages)</div>
+              <input id="pgBaseUrl" style="width:100%; padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,.12); background: rgba(0,0,0,.25); color:#fff;"
+                placeholder="https://timesheet-lite.pages.dev/" />
+            </div>
+            <div style="width:160px; min-width:150px;">
+              <div style="font-size:12px; color: rgba(255,255,255,.65); margin-bottom:6px;">Param</div>
+              <input id="pgWhoParam" style="width:100%; padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,.12); background: rgba(0,0,0,.25); color:#fff;"
+                placeholder="who" />
+            </div>
+            <div style="width:190px; min-width:160px;">
+              <div style="font-size:12px; color: rgba(255,255,255,.65); margin-bottom:6px;">Nome (default)</div>
+              <input id="pgWhoName" style="width:100%; padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,.12); background: rgba(0,0,0,.25); color:#fff;"
+                placeholder="Gabriel" />
+            </div>
+          </div>
+
+          <div style="margin-top:10px; display:flex; gap:10px; flex-wrap:wrap;">
+            <button id="btnPgSave" type="button" style="padding:10px 12px; border-radius:999px; border:1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.08); color:#fff;">Salvar Pages cfg</button>
+            <button id="btnPgCopyBase" type="button" style="padding:10px 12px; border-radius:999px; border:1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.08); color:#fff;">Copiar Base</button>
+            <button id="btnPgCopyWho" type="button" style="padding:10px 12px; border-radius:999px; border:1px solid rgba(60,255,170,.25); background: rgba(60,255,170,.10); color:#eafff4;">Copiar Link do Nome</button>
+            <button id="btnPgOpenWho" type="button" style="padding:10px 12px; border-radius:999px; border:1px solid rgba(255,180,80,.25); background: rgba(255,180,80,.10); color:#fff;">Abrir Link</button>
+          </div>
+
+          <div style="margin-top:10px; display:flex; gap:10px; flex-wrap:wrap;">
+            <div style="flex:1; min-width:220px;">
+              <div style="font-size:12px; color: rgba(255,255,255,.65); margin-bottom:6px;">Deploy Hook (opcional)</div>
+              <input id="pgDeployHook" style="width:100%; padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,.12); background: rgba(0,0,0,.25); color:#fff;"
+                placeholder="https://api.cloudflare.com/client/v4/pages/webhooks/deploy_hooks/..." />
+            </div>
+            <button id="btnPgDeploy" type="button" style="align-self:flex-end;padding:10px 12px; border-radius:999px; border:1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.08); color:#fff;">Disparar Deploy</button>
+          </div>
+
+          <div style="margin-top:8px; color: rgba(255,255,255,.55); font-size: 11px; line-height:1.35;">
+            Como o Gabriel usa: abrir link no Safari → Share → <b>Add to Home Screen</b>.
+          </div>
+        </div>
+
         <!-- ✅ Fillers UI -->
         <div style="
           margin-top:14px;
@@ -304,6 +374,20 @@
     // preencher ao criar
     fillInputs(getCfg());
 
+    // ✅ preencher Pages cfg
+    function fillPagesInputs(){
+      const p = getPagesCfg();
+      const base = document.getElementById("pgBaseUrl");
+      const hook = document.getElementById("pgDeployHook");
+      const prm  = document.getElementById("pgWhoParam");
+      const who  = document.getElementById("pgWhoName");
+      if (base) base.value = p.baseUrl || "";
+      if (hook) hook.value = p.deployHook || "";
+      if (prm)  prm.value  = p.whoParam || "who";
+      if (who)  who.value  = p.whoDefault || "Gabriel";
+    }
+    fillPagesInputs();
+
     let busy = false;
     const lock = async (fn) => {
       if (busy) return;
@@ -337,7 +421,6 @@
       let x = String(p || "").trim();
       if (!x) return "";
       x = x.replace(/^\/+/, "");
-      // manter padrão "app/..." pra UI (sem quebrar nada)
       return x;
     }
 
@@ -372,7 +455,6 @@
         const O = window.RCF_VFS_OVERRIDES;
         if (!O) return { ok:false, paths: [], from: "overrides", err: "RCF_VFS_OVERRIDES ausente" };
 
-        // prefer safe (nunca throw)
         if (typeof O.listOverridesSafe === "function") {
           const r = await O.listOverridesSafe({ allowStale:true });
           const res = r?.res || null;
@@ -471,7 +553,6 @@
         }
       } catch {}
 
-      // fallback antigo
       try {
         const ta = document.createElement("textarea");
         ta.value = t;
@@ -524,7 +605,6 @@
 
       listEl.innerHTML = rows;
 
-      // handler click (delegation simples)
       try {
         Array.from(listEl.querySelectorAll(".rcfFillerRow")).forEach((row) => {
           row.addEventListener("click", () => {
@@ -554,6 +634,89 @@
     // carregar logo que criar
     try { refreshFillers(); } catch {}
 
+    // ✅ NOVO: PAGES UI wiring
+    function normalizeBaseUrl(u){
+      let x = String(u || "").trim();
+      if (!x) return "";
+      // garante https
+      if (!/^https?:\/\//i.test(x)) x = "https://" + x;
+      // garante trailing slash
+      if (!x.endsWith("/")) x += "/";
+      return x;
+    }
+
+    function buildWhoLink(){
+      const base = normalizeBaseUrl(el("pgBaseUrl")?.value || "");
+      const prm  = String(el("pgWhoParam")?.value || "who").trim() || "who";
+      const who  = String(el("pgWhoName")?.value || "Gabriel").trim() || "Gabriel";
+      if (!base) return "";
+      const sep = base.includes("?") ? "&" : "?";
+      return base + sep + encodeURIComponent(prm) + "=" + encodeURIComponent(who);
+    }
+
+    el("btnPgSave")?.addEventListener("click", () => {
+      const baseUrl = normalizeBaseUrl(el("pgBaseUrl")?.value || "");
+      const deployHook = String(el("pgDeployHook")?.value || "").trim();
+      const whoParam = String(el("pgWhoParam")?.value || "who").trim() || "who";
+      const whoDefault = String(el("pgWhoName")?.value || "Gabriel").trim() || "Gabriel";
+
+      savePagesCfg({ baseUrl, deployHook, whoParam, whoDefault });
+      setGHOut("OK: pagescfg saved ✅");
+    });
+
+    el("btnPgCopyBase")?.addEventListener("click", () => {
+      const base = normalizeBaseUrl(el("pgBaseUrl")?.value || "");
+      if (!base) return setGHOut("WARN: preencha Base URL (Pages).");
+      const ok = tryCopy(base);
+      setGHOut(ok ? ("OK: copied base -> " + base) : ("INFO: base -> " + base));
+    });
+
+    el("btnPgCopyWho")?.addEventListener("click", () => {
+      const link = buildWhoLink();
+      if (!link) return setGHOut("WARN: preencha Base URL (Pages).");
+      const ok = tryCopy(link);
+      setGHOut(ok ? ("OK: copied link -> " + link) : ("INFO: link -> " + link));
+    });
+
+    el("btnPgOpenWho")?.addEventListener("click", () => {
+      const link = buildWhoLink();
+      if (!link) return setGHOut("WARN: preencha Base URL (Pages).");
+      try {
+        window.open(link, "_blank", "noopener,noreferrer");
+        setGHOut("OK: opened -> " + link);
+      } catch {
+        setGHOut("INFO: link -> " + link);
+      }
+    });
+
+    el("btnPgDeploy")?.addEventListener("click", () => lock(async () => {
+      const hook = String(el("pgDeployHook")?.value || "").trim();
+      if (!hook) return setGHOut("WARN: cole o Deploy Hook do Cloudflare Pages (opcional).");
+
+      setGHOut("Deploy: disparando…");
+      try {
+        // Pages Deploy Hook: POST simples
+        const res = await fetch(hook, { method: "POST", mode: "cors" }).catch(() => null);
+        if (res && res.ok) {
+          setGHOut("OK: deploy hook disparado ✅");
+        } else {
+          // alguns hooks respondem sem CORS/ok visível no browser
+          setGHOut("INFO: deploy hook enviado (resposta pode ser bloqueada por CORS). ✅");
+        }
+      } catch (e) {
+        setGHOut("INFO: deploy hook enviado (ou bloqueado por CORS). " + (e?.message || e));
+      }
+      // salva hook/base atual
+      try {
+        savePagesCfg({
+          baseUrl: normalizeBaseUrl(el("pgBaseUrl")?.value || ""),
+          deployHook: hook,
+          whoParam: String(el("pgWhoParam")?.value || "who").trim() || "who",
+          whoDefault: String(el("pgWhoName")?.value || "Gabriel").trim() || "Gabriel"
+        });
+      } catch {}
+    }));
+
     document.getElementById("btnSaveCfg").addEventListener("click", () => {
       const cfg = readInputsMerged();
       saveCfg(cfg);
@@ -564,7 +727,7 @@
     document.getElementById("btnTestToken").addEventListener("click", () => lock(async () => {
       try {
         const cfg = readInputsMerged();
-        saveCfg(cfg); // ✅ garante owner/repo/path antes do test
+        saveCfg(cfg);
 
         setGHOut("Testando token…");
         if (!window.RCF_GH_SYNC?.test) throw new Error("RCF_GH_SYNC.test ausente");
@@ -581,7 +744,7 @@
     document.getElementById("btnPull").addEventListener("click", () => lock(async () => {
       try {
         const cfg = readInputsMerged();
-        saveCfg(cfg); // ✅ garante owner/repo/path antes do pull
+        saveCfg(cfg);
 
         setGHOut("Pull…");
         if (!window.RCF_GH_SYNC?.pull) throw new Error("RCF_GH_SYNC.pull ausente");
@@ -598,7 +761,7 @@
     document.getElementById("btnPushMother").addEventListener("click", () => lock(async () => {
       try {
         const cfg = readInputsMerged();
-        saveCfg(cfg); // ✅ garante owner/repo/path antes do push
+        saveCfg(cfg);
 
         setGHOut("Push Mother Bundle…");
         if (!window.RCF_GH_SYNC?.pushMotherBundle) throw new Error("RCF_GH_SYNC.pushMotherBundle ausente");
@@ -660,6 +823,19 @@
       document.getElementById("ghBranch").value = cfg.branch || "main";
       document.getElementById("ghPath").value = cfg.path || "app/import/mother_bundle.json";
       document.getElementById("ghToken").value = cfg.token || "";
+    } catch {}
+
+    // ✅ restore pages cfg toda vez que abrir
+    try {
+      const p = getPagesCfg();
+      const base = document.getElementById("pgBaseUrl");
+      const hook = document.getElementById("pgDeployHook");
+      const prm  = document.getElementById("pgWhoParam");
+      const who  = document.getElementById("pgWhoName");
+      if (base) base.value = p.baseUrl || "";
+      if (hook) hook.value = p.deployHook || "";
+      if (prm)  prm.value  = p.whoParam || "who";
+      if (who)  who.value  = p.whoDefault || "Gabriel";
     } catch {}
   }
 
@@ -736,7 +912,7 @@
     window.addEventListener("popstate",  () => { try { ensureGitHubButton(); } catch {} });
   }
 
-  window.RCF_ADMIN_GH = { __v27d: true, boot, openModal, closeModal };
+  window.RCF_ADMIN_GH = { __v28a: true, boot, openModal, closeModal };
 
   if (document.readyState === "loading") {
     window.addEventListener("DOMContentLoaded", boot, { once:true });
@@ -744,5 +920,5 @@
     boot();
   }
 
-  log("ok", "admin.github.js ready ✅ (v2.7d)");
+  log("ok", "admin.github.js ready ✅ (v2.8a)");
 })();
