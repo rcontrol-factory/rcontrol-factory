@@ -1,21 +1,21 @@
 /* FILE: /app/js/core/agent_tools_panel.js
-   RControl Factory — Agent Tools Panel — v1.0 SAFE
-   - ✅ UI no Agent (slot rcfAgentSlotTools)
-   - ✅ Gerencia localStorage rcf:boot:extra_modules (sem console)
-   - ✅ 1-clique: habilita ScanMap
+   RControl Factory — Tools Panel — v1.1 ADMIN FIXED (SAFE)
+   - ✅ UI FIXA no ADMIN (slot: admin.integrations → admin.top → fallback body)
+   - ✅ Gerencia localStorage rcf:boot:extra_modules (sem quebrar)
+   - ✅ 1-clique: habilita ScanMap (mantém compat)
    - SAFE: try/catch, não quebra tela
 */
 (() => {
   "use strict";
 
   try {
-    if (window.RCF_AGENT_TOOLS && window.RCF_AGENT_TOOLS.__v10) return;
+    if (window.RCF_AGENT_TOOLS && window.RCF_AGENT_TOOLS.__v11) return;
 
     const LS_KEY = "rcf:boot:extra_modules";
 
     const log = (lvl, msg) => {
       try { window.RCF_LOGGER?.push?.(lvl, msg); } catch {}
-      try { console.log("[AGENT_TOOLS]", lvl, msg); } catch {}
+      try { console.log("[TOOLS_PANEL]", lvl, msg); } catch {}
     };
 
     const $ = (sel, root=document) => root.querySelector(sel);
@@ -33,24 +33,32 @@
       return clean;
     }
 
-    function hasExtra(path){
-      const list = readExtras();
-      return list.includes(path);
-    }
-
     function addExtra(path){
       const list = readExtras();
       if (!list.includes(path)) list.push(path);
       return writeExtras(list);
     }
 
-    function removeExtra(path){
-      const list = readExtras().filter(x => x !== path);
-      return writeExtras(list);
+    function pickHost(){
+      try {
+        const ui = window.RCF_UI;
+        const h1 = ui?.getSlot?.("admin.integrations");
+        if (h1) return h1;
+
+        const h2 = ui?.getSlot?.("admin.top");
+        if (h2) return h2;
+
+        const h3 = document.getElementById("rcfAdminSlotIntegrations") || document.getElementById("rcfAdminSlotTop");
+        if (h3) return h3;
+
+        return document.body;
+      } catch {
+        return document.body;
+      }
     }
 
     function ensureUI(){
-      const host = document.getElementById("rcfAgentSlotTools") || document.body;
+      const host = pickHost();
       if (!host) return null;
 
       let box = document.getElementById("rcfAgentToolsPanel");
@@ -68,7 +76,7 @@
 
       box.innerHTML = `
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-          <div style="font-weight:900;color:#fff">Agent Tools</div>
+          <div style="font-weight:900;color:#fff">Admin Tools</div>
           <div id="rcfAgentToolsStatus" style="font-size:12px;opacity:.85;color:#fff">—</div>
           <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
             <button id="btnAT_EnableScanMap" type="button" style="padding:8px 10px;border-radius:999px;border:1px solid rgba(60,255,170,.25);background:rgba(60,255,170,.10);color:#eafff4;font-weight:900">Enable ScanMap</button>
@@ -139,12 +147,19 @@
     function boot(){
       ensureUI();
       refreshStatus();
-      setTimeout(refreshStatus, 600);
-      setTimeout(refreshStatus, 1800);
-      log("OK", "agent_tools_panel.js ready ✅ (v1.0)");
+      setTimeout(refreshStatus, 650);
+      setTimeout(refreshStatus, 1900);
+      log("OK", "tools_panel ready ✅ (v1.1 ADMIN FIXED)");
     }
 
-    window.RCF_AGENT_TOOLS = { __v10:true, readExtras, writeExtras };
+    window.RCF_AGENT_TOOLS = { __v11:true, readExtras, writeExtras };
+
+    // reforça montagem pós UI_READY
+    try {
+      window.addEventListener("RCF:UI_READY", () => {
+        try { ensureUI(); refreshStatus(); } catch {}
+      }, { passive:true });
+    } catch {}
 
     if (document.readyState === "loading") {
       window.addEventListener("DOMContentLoaded", boot, { once:true });
@@ -153,6 +168,6 @@
     }
 
   } catch (e) {
-    try { console.error("agent_tools_panel fatal:", e); } catch {}
+    try { console.error("tools_panel fatal:", e); } catch {}
   }
 })();
