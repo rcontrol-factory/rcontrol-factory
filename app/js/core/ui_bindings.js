@@ -1,8 +1,10 @@
 /* FILE: /app/js/core/ui_bindings.js
-   RControl Factory — core/ui_bindings.js (LOGS HARD SCOPE v1.2.6)
-   ✅ Mantém tudo do v1.2.5
-   ✅ NOVO: bindGenerator() — Build ZIP + Preview usando RCF_BUILDER + template_registry
-   - Não quebra se a UI não tiver os elementos (safe)
+   RControl Factory — core/ui_bindings.js (LOGS HARD SCOPE v1.2.7)
+   ✅ Mantém tudo do v1.2.6
+   ✅ NOVO (DEGRAU 3): Apps Selection FIX
+      - botão "Selecionar" agora grava activeSlug e NÃO deixa o Timesheet "travar" o preview
+      - persistência em localStorage + state (RCF.state/RCF_STATE)
+      - logs claros: ACTIVE set slug=...
 ========================================================= */
 
 (function () {
@@ -402,7 +404,6 @@
     try { sel.className = (buttonEl.className || "").replace(/\bbtn\b/g, "").trim(); } catch {}
     sel.style.minWidth = "240px";
 
-    // tenta colocar antes do botão Build
     try { buttonEl.insertAdjacentElement("beforebegin", sel); }
     catch { buttonEl.parentElement.appendChild(sel); }
 
@@ -423,7 +424,6 @@
       sel.appendChild(opt);
     }
 
-    // default: timesheet-lite se existir
     if (list.includes("timesheet-lite")) sel.value = "timesheet-lite";
     else sel.value = list[0] || "pwa-base";
 
@@ -432,9 +432,6 @@
 
   async function generatorBuildZip() {
     const out = getGenOutEl();
-    const buildBtn = findFirst(["btnGenBuildZip", "btnBuildZip", "btnGenZip", "btnGeneratorBuild"]);
-    const previewBtn = findFirst(["btnGenPreview", "btnPreview", "btnGeneratorPreview"]); // seu log mostra #btnGenPreview
-
     const picker = document.querySelector("#genTemplate, #templatePick, #tplPick, select[data-rcf='template']");
     const tplId = picker ? String(picker.value || "pwa-base") : "pwa-base";
 
@@ -453,15 +450,11 @@
       const r = await B.buildZip({ templateId: tplId, spec, filename: spec.name });
       if (!r || !r.ok || !r.blob) throw new Error("buildZip não retornou blob.");
 
-      // download
       B.downloadBlob(r.blob, r.filename);
 
-      // opcional: se tiver VAULT com API de import por blob
       try {
         const V = window.RCF_ZIP_VAULT;
-        const importFn =
-          V?.importBlob || V?.importZipBlob || V?.import || V?.saveBlob || null;
-
+        const importFn = V?.importBlob || V?.importZipBlob || V?.import || V?.saveBlob || null;
         if (typeof importFn === "function") {
           await importFn.call(V, r.blob, r.filename, { templateId: tplId, spec });
         }
@@ -495,7 +488,6 @@
 
       const html = B.buildPreviewHTML(tplId, spec);
 
-      // mostra texto no box (não injeta iframe pra não dar BO em iOS)
       if (out) setBoxText(out, "Preview pronto ✅ (index.html) — template=" + tplId + "\n\n" + html.slice(0, 1200) + (html.length > 1200 ? "\n\n...(cortado)" : ""));
       setTopStatus("Preview: OK ✅");
       setTimeout(() => setTopStatus("OK ✅"), 900);
@@ -508,11 +500,9 @@
   }
 
   function bindGenerator() {
-    // seus logs já mostram hook do preview: #btnGenPreview
     const btnPreview = findFirst(["btnGenPreview", "btnPreview", "btnGeneratorPreview"]);
     const btnBuild = findFirst(["btnGenBuildZip", "btnBuildZip", "btnGenZip", "btnGeneratorBuild"]);
 
-    // se ainda não existe o id do Build, não quebra
     const picker = ensureTemplatePickerNear(btnBuild || btnPreview);
     try { fillTemplatePicker(picker); } catch {}
 
@@ -520,8 +510,181 @@
     if (btnPreview) bindTap(btnPreview, () => generatorPreview());
 
     if (btnBuild || btnPreview) {
-      loggerPush("log", "Generator bind OK ✅ (ui_bindings v1.2.6)");
+      loggerPush("log", "Generator bind OK ✅ (ui_bindings v1.2.7)");
     }
+  }
+
+  // =========================================================
+  // ✅ DEGRAU 3 — APPS SELECTION FIX (delegação)
+  // =========================================================
+  function looksLikeSlug(s) {
+    const x = String(s || "").trim();
+    if (!x) return false;
+    if (x.length < 3) return false;
+    // slug típico: letras/números/hífen/underscore
+    return /^[a-z0-9][a-z0-9\-_]{2,}$/i.test(x);
+  }
+
+  function findSlugInCard(card) {
+    if (!card) return "";
+
+    // 1) data attrs
+    const attrs = ["data-app-slug", "data-slug", "data-app", "data-id"];
+    for (const a of attrs) {
+      try {
+        const v = card.getAttribute(a);
+        if (v && looksLikeSlug(v)) return String(v).trim();
+      } catch {}
+    }
+
+    // 2) elementos comuns
+    const probes = [
+      "[data-app-slug]",
+      "[data-slug]",
+      ".appSlug",
+      ".slug",
+      ".muted",
+      "small",
+      "code",
+      "p",
+      "div",
+      "span"
+    ];
+
+    for (const sel of probes) {
+      try {
+        const els = card.querySelectorAll(sel);
+        for (const el of els) {
+          const t = String(el?.textContent || "").trim();
+          // pega a linha mais “slug-like”
+          const lines = t.split("\n").map(s => s.trim()).filter(Boolean);
+          for (const line of lines) {
+            if (looksLikeSlug(line) && line.includes("-")) return line;
+          }
+          if (looksLikeSlug(t) && t.includes("-")) return t;
+        }
+      } catch {}
+    }
+
+    // 3) fallback: varre todo texto do card e tenta achar algo slug-like
+    try {
+      const txt = String(card.textContent || "");
+      const tokens = txt.split(/\s+/).map(s => s.trim()).filter(Boolean);
+      for (const tok of tokens) {
+        const clean = tok.replace(/[^\w\-]/g, "");
+        if (looksLikeSlug(clean) && clean.includes("-")) return clean;
+      }
+    } catch {}
+
+    return "";
+  }
+
+  function setActiveSlugEverywhere(slug) {
+    const s = String(slug || "").trim();
+    if (!s) return false;
+
+    // 1) state
+    try {
+      if (window.RCF?.state) {
+        window.RCF.state.active = window.RCF.state.active || {};
+        window.RCF.state.active.appSlug = s;
+        window.RCF.state.active.slug = s;
+      }
+    } catch {}
+
+    try {
+      const st = getCtx();
+      st.active = st.active || {};
+      st.active.appSlug = s;
+      st.active.slug = s;
+    } catch {}
+
+    // 2) localStorage (as chaves que preview_runner já tenta ler)
+    const keys = [
+      "rcf:active:app",
+      "rcf:active:slug",
+      "rcf:activeAppSlug",
+      "rcf:lastAppSlug"
+    ];
+    for (const k of keys) {
+      try { localStorage.setItem(k, s); } catch {}
+    }
+
+    // marca “user selected” (útil pra debugar / futuros guards)
+    try { localStorage.setItem("rcf:userSelectedAt", String(Date.now())); } catch {}
+
+    return true;
+  }
+
+  function tryRefreshUI() {
+    // não inventa arquitetura: só tenta refresh se já existir
+    const fns = [
+      window.RCF?.render,
+      window.RCF?.refresh,
+      window.RCF?.ui?.render,
+      window.RCF?.ui?.refresh,
+      window.RCF_UI?.render,
+      window.RCF_UI?.refresh
+    ];
+    for (const fn of fns) {
+      if (typeof fn === "function") {
+        try { fn(); return true; } catch {}
+      }
+    }
+    return false;
+  }
+
+  function bindAppsSelectionDelegation() {
+    if (window.__RCF_APPS_SELECT_BOUND__) return;
+    window.__RCF_APPS_SELECT_BOUND__ = true;
+
+    const handler = (ev) => {
+      try {
+        const t = ev.target;
+        if (!t) return;
+
+        const btn = t.closest ? t.closest("button, a, [role='button']") : null;
+        if (!btn) return;
+
+        const txt = String(btn.textContent || "").trim().toLowerCase();
+        const action = String(btn.getAttribute("data-rcf-action") || "").trim().toLowerCase();
+        const id = String(btn.id || "").trim().toLowerCase();
+
+        const isSelect =
+          txt === "selecionar" ||
+          txt.includes("selecionar") ||
+          action.includes("select") ||
+          action.includes("app.select") ||
+          id.includes("select");
+
+        if (!isSelect) return;
+
+        const card = btn.closest ? btn.closest("[data-app-card], [data-app], .card, .appCard, li, .item, .row, div") : null;
+        const slug = findSlugInCard(card || btn.parentElement);
+
+        if (!slug) {
+          loggerPush("WARN", "APP SELECT: não consegui achar slug no card.");
+          return;
+        }
+
+        // impede que handlers antigos façam bagunça
+        try { ev.preventDefault(); ev.stopPropagation(); } catch {}
+
+        const ok = setActiveSlugEverywhere(slug);
+        if (ok) {
+          loggerPush("INFO", "ACTIVE set ✅ slug=" + slug);
+          setTopStatus("App ativo: " + slug);
+          setTimeout(() => setTopStatus("OK ✅"), 900);
+          tryRefreshUI();
+        }
+      } catch {}
+    };
+
+    // captura (pega antes do resto)
+    document.addEventListener("click", handler, { capture: true, passive: false });
+    document.addEventListener("touchend", handler, { capture: true, passive: false });
+
+    loggerPush("log", "Apps select bind OK ✅ (delegation)");
   }
 
   // ---------- existing binds ----------
@@ -656,6 +819,9 @@
     // ✅ NEW
     bindGenerator();
 
+    // ✅ DEGRAU 3
+    bindAppsSelectionDelegation();
+
     enforceLogsScopeNow();
 
     try {
@@ -663,19 +829,23 @@
         enforceLogsScopeNow();
         try { ensurePipelineButtons(); updateApplyButtonEnabled(); } catch {}
         try { bindGenerator(); } catch {}
+        // mantém o bind do select vivo mesmo com re-render
+        try { bindAppsSelectionDelegation(); } catch {}
       });
       obs.observe(document.body, { attributes: true, attributeFilter: ["data-view", "class"] });
     } catch {}
 
     window.RCF_UI_BINDINGS = {
-      __v126: true,
+      __v127: true,
       dailyCheckup: async () => await dailyCheckup($("adminOut") || $("diagOut")),
       applySavedManual: async () => await applySavedManual(),
       generatorBuildZip: async () => await generatorBuildZip(),
-      generatorPreview: () => generatorPreview()
+      generatorPreview: () => generatorPreview(),
+      // expõe helper (útil se você quiser testar no console)
+      setActiveAppSlug: (slug) => setActiveSlugEverywhere(slug)
     };
 
-    loggerPush("log", "core/ui_bindings.js carregado ✅ (v1.2.6 HARD LOGS + PIPELINE + GENERATOR)");
+    loggerPush("log", "core/ui_bindings.js carregado ✅ (v1.2.7 HARD LOGS + PIPELINE + GENERATOR + APPS SELECT)");
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
