@@ -1,19 +1,23 @@
-/* RControl Factory — /app/sw.js (PADRÃO) — v1.1
-   - Overrides via CacheStorage (rápido e simples)
+/* RControl Factory — /app/sw.js (PADRÃO) — v1.2 (iOS CACHE HARDEN)
+   - Mantém Overrides via CacheStorage (rcf_overrides_v1)
    - RPC (MessageChannel):
      - RCF_OVERRIDE_PUT   {path, content, contentType}
      - RCF_OVERRIDE_CLEAR {}
      - RCF_OVERRIDE_LIST  {}
      - RCF_OVERRIDE_DEL   {path}
-   - Fetch: se existir override, serve ele antes do network
+     - RCF_SW_PING        {}
+   - Fetch:
+     1) Se existir override, serve ele antes do network
+     2) Senão: para HTML/JS/CSS/JSON -> fetch com cache:"no-store" (anti iOS stale)
    - Normaliza paths: aceita /app/... e converte para /...
    - Clear robusto (iOS): tenta delete do cache + fallback por entries (batch)
 */
 (() => {
   "use strict";
 
-  const OVERRIDE_CACHE = "rcf_overrides_v1";
-  const VERSION = "v1.1";
+  const OVERRIDE_CACHE = "rcf_overrides_v1"; // NÃO muda (pra não perder overrides)
+  const VERSION = "v1.2";
+  const BUILD_ID = "2026-02-22"; // troque quando quiser “ver” versão ao vivo
 
   function normPath(input) {
     let p = String(input || "").trim();
@@ -41,9 +45,33 @@
   }
 
   function makeKeyUrl(path) {
-    // Guarda o override com uma URL absoluta (CacheStorage funciona melhor assim)
     const p = normPath(path);
     return new URL(p, self.location.origin).toString();
+  }
+
+  function isCoreAsset(pathname) {
+    const p = String(pathname || "").toLowerCase();
+    return (
+      p === "/" ||
+      p.endsWith(".html") ||
+      p.endsWith(".js") ||
+      p.endsWith(".css") ||
+      p.endsWith(".json") ||
+      p.endsWith(".txt") ||
+      p.endsWith("/sw.js") ||
+      p === "/sw.js"
+    );
+  }
+
+  async function fetchNoStore(req) {
+    // ✅ iOS harden: força network sem usar cache HTTP
+    try {
+      const r = new Request(req, { cache: "no-store" });
+      return await fetch(r);
+    } catch {
+      // fallback
+      return await fetch(req);
+    }
   }
 
   async function putOverride(path, content, contentType) {
@@ -118,35 +146,49 @@
   self.addEventListener("activate", (event) => {
     event.waitUntil((async () => {
       try { await self.clients.claim(); } catch {}
+      // opcional: melhora navegação em alguns browsers
+      try { await self.registration.navigationPreload?.enable?.(); } catch {}
     })());
   });
 
-  // ✅ responder overrides primeiro
+  // ✅ responder overrides primeiro; senão, anti-cache pra core assets
   self.addEventListener("fetch", (event) => {
     const req = event.request;
     if (!req || req.method !== "GET") return;
 
     const url = new URL(req.url);
-
-    // só no mesmo origin
     if (url.origin !== self.location.origin) return;
 
     event.respondWith((async () => {
+      // 1) OVERRIDE FIRST
       try {
         const cache = await caches.open(OVERRIDE_CACHE);
 
-        // tenta pela chave normalizada primeiro (mais consistente)
         const keyUrl = makeKeyUrl(url.pathname);
         let hit = await cache.match(keyUrl, { ignoreSearch: true });
         if (hit) return hit;
 
-        // tenta match direto (caso algum put tenha usado req)
         hit = await cache.match(req, { ignoreSearch: true });
         if (hit) return hit;
       } catch {}
 
-      // fallback: network normal
-      return fetch(req);
+      // 2) NETWORK (iOS harden for core assets)
+      try {
+        if (isCoreAsset(url.pathname) || req.mode === "navigate") {
+          return await fetchNoStore(req);
+        }
+        return await fetch(req);
+      } catch (e) {
+        // 3) última chance: tenta cache nativo (se existir)
+        try {
+          const cached = await caches.match(req);
+          if (cached) return cached;
+        } catch {}
+        return new Response("Offline / fetch failed", {
+          status: 503,
+          headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" }
+        });
+      }
     })());
   });
 
@@ -166,32 +208,38 @@
       try {
         if (msg.type === "RCF_OVERRIDE_PUT") {
           const r = await putOverride(msg.path, msg.content, msg.contentType);
-          reply({ type: "RCF_OVERRIDE_PUT_OK", ...r, path: normPath(msg.path), v: VERSION });
+          reply({ type: "RCF_OVERRIDE_PUT_OK", ...r, path: normPath(msg.path), v: VERSION, build: BUILD_ID });
           return;
         }
 
         if (msg.type === "RCF_OVERRIDE_DEL") {
           const r = await delOverride(msg.path);
-          reply({ type: "RCF_OVERRIDE_DEL_OK", ...r, v: VERSION });
+          reply({ type: "RCF_OVERRIDE_DEL_OK", ...r, v: VERSION, build: BUILD_ID });
           return;
         }
 
         if (msg.type === "RCF_OVERRIDE_LIST") {
           const r = await listOverrides();
-          reply({ type: "RCF_OVERRIDE_LIST_OK", ...r, v: VERSION });
+          reply({ type: "RCF_OVERRIDE_LIST_OK", ...r, v: VERSION, build: BUILD_ID });
           return;
         }
 
         if (msg.type === "RCF_OVERRIDE_CLEAR") {
           const r = await clearOverrides();
           if (!r.ok) throw new Error(r.error || "clear failed");
-          reply({ type: "RCF_OVERRIDE_CLEAR_OK", ...r, v: VERSION });
+          reply({ type: "RCF_OVERRIDE_CLEAR_OK", ...r, v: VERSION, build: BUILD_ID });
           return;
         }
 
-        reply({ type: "RCF_SW_NOP", ok: true, v: VERSION });
+        // ✅ Diagnóstico rápido: confirma versão ativa do SW
+        if (msg.type === "RCF_SW_PING") {
+          reply({ type: "RCF_SW_PING_OK", ok: true, v: VERSION, build: BUILD_ID, cache: OVERRIDE_CACHE });
+          return;
+        }
+
+        reply({ type: "RCF_SW_NOP", ok: true, v: VERSION, build: BUILD_ID });
       } catch (e) {
-        reply({ type: (msg.type || "RCF_SW") + "_ERR", error: String(e?.message || e), v: VERSION });
+        reply({ type: (msg.type || "RCF_SW") + "_ERR", error: String(e?.message || e), v: VERSION, build: BUILD_ID });
       }
     })();
   });
