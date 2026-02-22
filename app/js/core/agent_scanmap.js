@@ -1,8 +1,9 @@
 /* FILE: /app/js/core/agent_scanmap.js
-   RControl Factory — agent_scanmap.js — v1.0 SAFE
+   RControl Factory — scanmap.js — v1.1 ADMIN FIXED (SAFE)
    Objetivo: Factory “saber onde tá cada coisa” (mapa)
+   - ✅ UI FIXA no ADMIN (slot: admin.integrations → admin.top → fallback body)
    - ✅ Coleta: scripts[src], links[href], overrides (se houver), mother_bundle_local, fillers (GH_SYNC.listFillers)
-   - ✅ UI no Agent (slot rcfAgentSlotTools): Scan / Copy JSON / Copy Summary
+   - ✅ Botões: Scan / Copy JSON / Copy Summary
    - ✅ Salva localStorage: rcf:scanmap:v1
    - SAFE: nunca quebra tela, tudo em try/catch
 */
@@ -10,7 +11,7 @@
   "use strict";
 
   try {
-    if (window.RCF_SCANMAP && window.RCF_SCANMAP.__v10) return;
+    if (window.RCF_SCANMAP && window.RCF_SCANMAP.__v11) return;
 
     const LS_KEY = "rcf:scanmap:v1";
 
@@ -234,11 +235,32 @@
       catch { return null; }
     }
 
-    // ---------------- UI (Agent Slot) ----------------
+    // ---------------- UI (ADMIN FIXED) ----------------
     const $ = (sel, root=document) => root.querySelector(sel);
 
+    function pickHost(){
+      try {
+        // ✅ FIXO NO ADMIN: primeiro no slot de integrations (nobre)
+        const ui = window.RCF_UI;
+        const h1 = ui?.getSlot?.("admin.integrations");
+        if (h1) return h1;
+
+        // fallback: topo do admin
+        const h2 = ui?.getSlot?.("admin.top");
+        if (h2) return h2;
+
+        // fallback direto por id
+        const h3 = document.getElementById("rcfAdminSlotIntegrations") || document.getElementById("rcfAdminSlotTop");
+        if (h3) return h3;
+
+        return document.body;
+      } catch {
+        return document.body;
+      }
+    }
+
     function ensureUI(){
-      const host = document.getElementById("rcfAgentSlotTools") || document.body;
+      const host = pickHost();
       if (!host) return null;
 
       let box = document.getElementById("rcfScanMapBox");
@@ -270,6 +292,7 @@
       try { host.appendChild(box); } catch { document.body.appendChild(box); }
 
       $("#btnScanNow", box)?.addEventListener("click", () => runScan({}), { passive:true });
+
       $("#btnScanCopySummary", box)?.addEventListener("click", () => {
         const last = getLast();
         const txt = last ? buildSummary(last) : "Sem scan ainda.";
@@ -333,18 +356,27 @@
     // ---------- Boot ----------
     function boot(){
       try { ensureUI(); } catch {}
+
       // auto scan leve (não agressivo)
-      setTimeout(() => { runScan({}).catch(()=>{}); }, 600);
-      setTimeout(() => { runScan({}).catch(()=>{}); }, 2200);
-      log("OK", "agent_scanmap.js ready ✅ (v1.0)");
+      setTimeout(() => { runScan({}).catch(()=>{}); }, 700);
+      setTimeout(() => { runScan({}).catch(()=>{}); }, 2300);
+
+      log("OK", "scanmap ready ✅ (v1.1 ADMIN FIXED)");
     }
 
     // API global
     window.RCF_SCANMAP = {
-      __v10: true,
+      __v11: true,
       run: runScan,
       getLast
     };
+
+    // Se o app já tem UI registry, tenta montar assim que UI_READY disparar
+    try {
+      window.addEventListener("RCF:UI_READY", () => {
+        try { ensureUI(); } catch {}
+      }, { passive:true });
+    } catch {}
 
     if (document.readyState === "loading") {
       window.addEventListener("DOMContentLoaded", boot, { once:true });
