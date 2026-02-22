@@ -2,15 +2,10 @@
    RControl Factory — /app/app.js — V8.0 PADRÃO (CLEAN + UI READY BUS)
    - Arquivo completo (1 peça) pra copiar/colar
    - ✅ ADD: UI READY BUS (notifyUIReady) 1x após installRCFUIRegistry()
-   - ✅ Remove qualquer separador "=====" fora de comentário (causa Unexpected token '===')
    - ✅ Compat MAE: aceita clear() OU clearOverrides()
-   - Mantém: FAB + painel, status pill oculto, Injector SAFE, Agent, Diagnostics, SW tools
-   - PATCH (RCF UI SLOTS + UI REGISTRY + FIX statusText DUP):
-     - Slots oficiais no Admin (admin.top / admin.integrations / admin.logs / admin.injector)
-     - Slots oficiais no Agent/Generator/Settings (agent.actions/tools, generator.actions/tools, settings.security.actions)
-     - window.RCF_UI registry estável + data-rcf-* padronizado
-     - Remove ID duplicado #statusText (top vira #statusTextTop)
-     - Admin: injLog colapsado por padrão + toggle mostrar/esconder
+   - ✅ FIX: Preview/Timesheet preso na frente -> teardownPreviewHard() + hook no setView()
+   - ✅ ADD: Dashboard -> botão APAGAR app + deleteApp()
+   - ✅ FIX: Generator buttons no app.js passam controle pro core/ui_bindings.js se existir
 */
 
 (() => {
@@ -983,8 +978,86 @@
 
   function refreshLogsViews() { Logger._mirrorUI(Logger.getAll()); }
 
+  // =========================================================
+  // PREVIEW TEARDOWN (anti overlay preso / timesheet na frente)
+  // =========================================================
+  function teardownPreviewHard() {
+    try {
+      const PR = window.RCF_PREVIEW_RUNNER || window.PREVIEW_RUNNER || null;
+      const fn = PR?.destroy || PR?.teardown || PR?.unmount || PR?.stop || null;
+      if (typeof fn === "function") { try { fn.call(PR); } catch {} }
+    } catch {}
+
+    // remove iframes comuns de preview
+    try {
+      const ifr = Array.from(document.querySelectorAll("iframe"));
+      for (const el of ifr) {
+        const id = (el.id || "").toLowerCase();
+        const cls = (el.className || "").toString().toLowerCase();
+        const src = (el.src || "").toLowerCase();
+        const looksPreview =
+          id.includes("preview") || cls.includes("preview") ||
+          src.includes("preview") || src.includes("sandbox") ||
+          src.includes("timesheet");
+        if (looksPreview) {
+          try { el.src = "about:blank"; } catch {}
+          try { el.remove(); } catch {}
+        }
+      }
+    } catch {}
+
+    // remove overlays suspeitos cobrindo tela
+    try {
+      const vw = Math.max(document.documentElement.clientWidth, window.innerWidth || 0);
+      const vh = Math.max(document.documentElement.clientHeight, window.innerHeight || 0);
+
+      const all = Array.from(document.querySelectorAll("body *"));
+      let removed = 0;
+
+      for (const el of all) {
+        if (!el || el === document.body) continue;
+
+        const cs = getComputedStyle(el);
+        if (!cs) continue;
+
+        const pos = cs.position;
+        if (pos !== "fixed" && pos !== "absolute") continue;
+
+        const zi = parseInt(cs.zIndex || "0", 10);
+        if (!Number.isFinite(zi) || zi < 80) continue;
+
+        const r = el.getBoundingClientRect();
+        const area = Math.max(0, r.width) * Math.max(0, r.height);
+        if (area < (vw * vh * 0.25)) continue;
+
+        // não mexe nos painéis da própria UI
+        if (el.id === "toolsDrawer" || el.id === "rcfFabPanel" || el.id === "rcfFab") continue;
+
+        try { el.remove(); removed++; } catch {}
+        if (removed >= 6) break;
+      }
+
+      if (removed) Logger.write("preview teardown:", "removed overlays=", removed);
+    } catch {}
+
+    // normaliza scroll/pointer
+    try {
+      document.documentElement.style.overflow = "";
+      document.body.style.overflow = "";
+      document.body.style.pointerEvents = "";
+    } catch {}
+  }
+
   function setView(name) {
     if (!name) return;
+
+    // ✅ FIX: ao sair/entrar do generator, mata overlay/preview preso
+    try {
+      const prev = State.active.view;
+      if (prev === "generator" && name !== "generator") teardownPreviewHard();
+      if (name === "generator") teardownPreviewHard();
+    } catch {}
+
     State.active.view = name;
     saveAll();
 
@@ -1067,6 +1140,35 @@
     if (typeof app.files !== "object") app.files = {};
   }
 
+  function deleteApp(slug) {
+    const s = slugify(slug);
+    if (!s) return false;
+
+    const app = State.apps.find(a => a.slug === s);
+    if (!app) return false;
+
+    const ok = confirm(`Apagar o app "${app.name}" (${app.slug})?\n\nIsso não tem volta.`);
+    if (!ok) return false;
+
+    State.apps = State.apps.filter(a => a.slug !== s);
+
+    if (State.active.appSlug === s) {
+      State.active.appSlug = null;
+      State.active.file = null;
+      const text = $("#activeAppText");
+      if (text) textContentSafe(text, "Sem app ativo ✅");
+    }
+
+    saveAll();
+    renderAppsList();
+    renderFilesList();
+
+    uiMsg("#editorOut", "✅ App apagado.");
+    Logger.write("app deleted:", s);
+
+    return true;
+  }
+
   function renderAppsList() {
     const box = $("#appsList");
     if (!box) return;
@@ -1088,6 +1190,7 @@
         <div class="row">
           <button class="btn small" data-act="select" data-slug="${escapeAttr(app.slug)}" type="button">Selecionar</button>
           <button class="btn small" data-act="edit" data-slug="${escapeAttr(app.slug)}" type="button">Editor</button>
+          <button class="btn small danger" data-act="delete" data-slug="${escapeAttr(app.slug)}" type="button">Apagar</button>
         </div>
       `;
       box.appendChild(row);
@@ -1097,6 +1200,10 @@
     $$('[data-act="edit"]', box).forEach(btn => bindTap(btn, () => {
       setActiveApp(btn.getAttribute("data-slug"));
       setView("editor");
+    }));
+    $$('[data-act="delete"]', box).forEach(btn => bindTap(btn, () => {
+      const slug = btn.getAttribute("data-slug");
+      deleteApp(slug);
     }));
   }
 
@@ -2120,12 +2227,10 @@
       if (!cmd) return this._out("Comando vazio. Use: help");
       const lower = cmd.toLowerCase();
 
-      // base
       if (lower === "help") return this._out(this.help());
       if (lower === "list") return this._out(this.list());
       if (lower === "show") return this._out(this.show());
 
-      // open view
       if (lower.startsWith("open ")) {
         const target = lower.replace("open ", "").trim();
         const map = {
@@ -2146,7 +2251,6 @@
         return this._out(`OK. view=${v}`);
       }
 
-      // create/select
       if (lower.startsWith("create ")) {
         const rest = cmd.replace(/^create\s+/i, "").trim();
         const qm = rest.match(/^"([^"]+)"\s*([a-z0-9-]+)?/i);
@@ -2163,7 +2267,6 @@
         return this._out(ok ? `OK. selecionado: ${slug}` : `Falhou: ${slug}`);
       }
 
-      // FASE A
       if (lower === "scan") {
         safeSetStatus("Scan…");
         syncFabStatusText();
@@ -2201,7 +2304,6 @@
         return this._out(await this._find(q));
       }
 
-      // Injector CLI
       if (lower.startsWith("inj mode ")) {
         const mode = cmd.replace(/^inj\s+mode\s+/i, "").trim().toUpperCase();
         if (!["INSERT","REPLACE","DELETE"].includes(mode)) return this._out("⚠️ modos: INSERT | REPLACE | DELETE");
@@ -2253,7 +2355,6 @@
         return this._out(r.ok ? "✅ rollback ok" : "❌ rollback falhou");
       }
 
-      // ENGINE build
       if (lower.startsWith("build ")) {
         const rest = cmd.replace(/^build\s+/i, "").trim();
         const qm = rest.match(/^"([^"]+)"\s*(.*)$/);
@@ -2357,8 +2458,18 @@
       uiMsg("#editorOut", "⚠️ Arquivo resetado (limpo).");
     });
 
-    bindTap($("#btnGenZip"), () => uiMsg("#genOut", "ZIP (stub)."));
-    bindTap($("#btnGenPreview"), () => uiMsg("#genOut", "Preview (stub)."));
+    // ✅ FIX: Generator delega pro core/ui_bindings.js (se existir) pra não competir
+    bindTap($("#btnGenZip"), async () => {
+      const U = window.RCF_UI_BINDINGS;
+      if (U?.generatorBuildZip) return await U.generatorBuildZip();
+      uiMsg("#genOut", "ZIP: ui_bindings não está pronto.");
+    });
+
+    bindTap($("#btnGenPreview"), () => {
+      const U = window.RCF_UI_BINDINGS;
+      if (U?.generatorPreview) return U.generatorPreview();
+      uiMsg("#genOut", "Preview: ui_bindings não está pronto.");
+    });
 
     bindTap($("#btnAgentRun"), () => Agent.route($("#agentCmd")?.value || ""));
     bindTap($("#btnAgentHelp"), () => uiMsg("#agentOut", Agent.help()));
