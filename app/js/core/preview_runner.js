@@ -1,12 +1,10 @@
 /* FILE: /app/js/core/preview_runner.js
    RControl Factory — core/preview_runner.js — v1.3 STUDIO (SAFE)
-   OBJETIVO:
-   - Preview grande (tipo Replit), sem “telinha fininha”
-   - Logs viram Drawer (toggle), não roubam espaço do app
-   - Botão "Open Clean" (abre preview standalone: ./preview.html?app=<slug>)
-   - Fix: normalize refs ./file e /file
-   - Fix: revoke Blob URLs (anti leak)
-   - Compat: tenta descobrir app ativo por RCF.state / RCF_STATE / localStorage (fallback)
+   PATCH v1.3s (DEGRAU 3):
+   - ✅ Storage Namespacing por appSlug (evita apps “misturarem” horas/config no mesmo domínio)
+   - ✅ Snapshot por app (salva/restaura estado ao reabrir preview)
+   - ✅ PostMessage bridge (child -> parent) para persistir snapshot no localStorage da Factory
+   - Mantém: overlay grande, drawer console, Open Clean, normalize refs, revoke blob urls
 */
 
 (() => {
@@ -149,6 +147,57 @@
   }
 
   // =========================================================
+  // SNAPSHOT STORAGE (PARENT)
+  // =========================================================
+  function snapKey(slug) {
+    return "rcf:preview:snap:" + String(slug || "").trim();
+  }
+
+  function loadSnapshot(slug) {
+    try {
+      const raw = localStorage.getItem(snapKey(slug));
+      if (!raw) return null;
+      const obj = JSON.parse(raw);
+      if (!obj || typeof obj !== "object") return null;
+      return obj;
+    } catch {
+      return null;
+    }
+  }
+
+  function saveSnapshot(slug, data) {
+    try {
+      if (!slug) return;
+      const safe = data && typeof data === "object" ? data : null;
+      if (!safe) return;
+      localStorage.setItem(snapKey(slug), JSON.stringify(safe));
+    } catch {}
+  }
+
+  // bridge: child -> parent
+  function ensureSnapBridge() {
+    if (window.__RCF_PREVIEW_SNAP_BRIDGE__) return;
+    window.__RCF_PREVIEW_SNAP_BRIDGE__ = true;
+
+    window.addEventListener("message", (ev) => {
+      try {
+        const d = ev?.data;
+        if (!d || typeof d !== "object") return;
+        if (d.type !== "RCF_PREVIEW_SNAP") return;
+
+        const slug = String(d.slug || "").trim();
+        const payload = d.data && typeof d.data === "object" ? d.data : null;
+        if (!slug || !payload) return;
+
+        saveSnapshot(slug, payload);
+        try { window.RCF_LOGGER?.push?.("INFO", `preview snapshot saved ✅ slug=${slug} keys=${Object.keys(payload).length}`); } catch {}
+      } catch {}
+    }, false);
+  }
+
+  ensureSnapBridge();
+
+  // =========================================================
   // BLOB POOL (leak guard)
   // =========================================================
   const BlobPool = {
@@ -217,6 +266,167 @@
   }
 
   // =========================================================
+  // PRELUDE INJECT (namespacing + snapshot)
+  // =========================================================
+  function injectPrelude(html, slug, snapshotObj) {
+    const appSlug = String(slug || "").trim();
+    const snap = snapshotObj && typeof snapshotObj === "object" ? snapshotObj : null;
+
+    // IMPORTANT: não mexe em chaves rcf:* (da Factory) e não mexe em chaves que já venham com prefixo
+    const prelude = `
+<script>
+(function(){
+  "use strict";
+  try { window.__RCF_APP_SLUG__ = ${JSON.stringify(appSlug)}; } catch {}
+
+  var SLUG = ${JSON.stringify(appSlug)};
+  var PREFIX = SLUG ? (SLUG + "::") : "";
+  var SNAP = ${JSON.stringify(snap || null)};
+
+  function shouldBypass(k){
+    try{
+      var s = String(k||"");
+      if (!s) return true;
+      if (!PREFIX) return false;
+      if (s.startsWith("rcf:")) return true;
+      if (s.startsWith("__RCF")) return true;
+      if (s.startsWith(PREFIX)) return true;
+      if (s.startsWith("RCF_SHARED::")) return true;
+      return false;
+    }catch{ return false; }
+  }
+
+  function kx(k){
+    try{
+      if (!PREFIX) return String(k||"");
+      var s = String(k||"");
+      if (shouldBypass(s)) return s;
+      return PREFIX + s;
+    }catch{ return String(k||""); }
+  }
+
+  function unpx(k){
+    try{
+      var s = String(k||"");
+      if (!PREFIX) return s;
+      if (s.startsWith(PREFIX)) return s.slice(PREFIX.length);
+      return s;
+    }catch{ return String(k||""); }
+  }
+
+  function patchStorage(stor){
+    try{
+      if (!stor || stor.__RCF_PATCHED__) return;
+      stor.__RCF_PATCHED__ = true;
+
+      var _get = stor.getItem.bind(stor);
+      var _set = stor.setItem.bind(stor);
+      var _rem = stor.removeItem.bind(stor);
+      var _key = stor.key.bind(stor);
+      var _clr = stor.clear.bind(stor);
+
+      stor.getItem = function(k){ return _get(kx(k)); };
+      stor.setItem = function(k,v){ return _set(kx(k), String(v)); };
+      stor.removeItem = function(k){ return _rem(kx(k)); };
+
+      // key/length precisam "filtrar" para o app
+      stor.key = function(i){
+        try{
+          var idx = Number(i)||0;
+          var list = [];
+          for (var j=0;j<stor.length;j++){
+            var kk = _key(j);
+            if (!kk) continue;
+            if (!PREFIX) { list.push(kk); continue; }
+            if (kk.startsWith(PREFIX)) list.push(kk);
+          }
+          var hit = list[idx];
+          return hit ? unpx(hit) : null;
+        }catch{ return null; }
+      };
+
+      try{
+        Object.defineProperty(stor, "length", {
+          configurable: true,
+          get: function(){
+            try{
+              if (!PREFIX) return stor.__RCF_LEN_RAW__ ?? stor.length;
+              var c=0;
+              for (var j=0;j<stor.__RCF_LEN_RAW__ ?? stor.length;j++){
+                var kk = _key(j);
+                if (kk && kk.startsWith(PREFIX)) c++;
+              }
+              return c;
+            }catch{ return stor.length; }
+          }
+        });
+      }catch{}
+
+      stor.clear = function(){
+        try{
+          if (!PREFIX) return _clr();
+          var toDel = [];
+          for (var j=0;j<stor.length;j++){
+            var kk = _key(j);
+            if (kk && kk.startsWith(PREFIX)) toDel.push(kk);
+          }
+          for (var x=0;x<toDel.length;x++) _rem(toDel[x]);
+        }catch{}
+      };
+
+      // snapshot restore (antes do app rodar)
+      try{
+        if (SNAP && typeof SNAP === "object"){
+          for (var key in SNAP){
+            if (!Object.prototype.hasOwnProperty.call(SNAP, key)) continue;
+            try { _set(kx(key), String(SNAP[key])); } catch {}
+          }
+        }
+      }catch{}
+    }catch{}
+  }
+
+  // patch localStorage + sessionStorage (só dentro do preview)
+  try { patchStorage(window.localStorage); } catch {}
+  try { patchStorage(window.sessionStorage); } catch {}
+
+  // snapshot save: envia pro parent
+  function emitSnapshot(){
+    try{
+      if (!PREFIX) return;
+      var out = {};
+      var ls = window.localStorage;
+      // varre keys reais do storage (sem usar key() patchado)
+      for (var i=0;i<ls.length;i++){
+        var rk = Object.getPrototypeOf(ls).key.call(ls, i);
+        if (!rk || !String(rk).startsWith(PREFIX)) continue;
+        var uk = unpx(rk);
+        try { out[uk] = Object.getPrototypeOf(ls).getItem.call(ls, rk); } catch {}
+      }
+      window.parent && window.parent.postMessage({ type:"RCF_PREVIEW_SNAP", slug: SLUG, data: out }, "*");
+    }catch{}
+  }
+
+  try {
+    window.addEventListener("pagehide", emitSnapshot);
+    window.addEventListener("beforeunload", emitSnapshot);
+  } catch {}
+
+})();
+</script>`.trim();
+
+    // injeta no HEAD se existir, senão no começo
+    const s = String(html || "");
+    if (/\<\/head\>/i.test(s)) {
+      return s.replace(/\<\/head\>/i, prelude + "\n</head>");
+    }
+    if (/\<body[^>]*\>/i.test(s)) {
+      return s.replace(/\<body[^>]*\>/i, (m) => m + "\n" + prelude + "\n");
+    }
+    return prelude + "\n" + s;
+  }
+
+  // =========================================================
   // UI — OVERLAY STUDIO
   // =========================================================
   function ensureOverlay() {
@@ -251,7 +461,7 @@
           <button id="rcfPreviewOpenClean" type="button" style="padding:8px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.06);color:#fff;font-weight:900">Open Clean</button>
           <button id="rcfPreviewToggleLogs" type="button" style="padding:8px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.06);color:#fff;font-weight:900">Console</button>
           <button id="rcfPreviewReload" type="button" style="padding:8px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.06);color:#fff;font-weight:900">Reload</button>
-          <button id="rcfPreviewClose" type="button" style="padding:8px 10px;border-radius:999px;border:0;background:#ef4444;color:#fff;font-weight:900">Close</button>
+          <button id="rcfPreviewClose" type="button" style="padding:8px 10px;border-radius:0;background:#ef4444;color:#fff;font-weight:900;border-radius:999px">Close</button>
         </div>
 
         <div style="display:flex;flex:1;min-height:0;position:relative">
@@ -282,6 +492,7 @@
 
             <div style="padding:10px;border-top:1px solid rgba(255,255,255,.10);color:#fff;opacity:.75;font-size:12px">
               Dica: se um arquivo não carregar, revise refs (src/href) no index.html.
+              <br/>✅ Storage isolado por app: <span style="font-weight:900">slug::key</span> + snapshot auto.
             </div>
           </div>
         </div>
@@ -344,6 +555,12 @@
   }
 
   function closePreview() {
+    // tenta provocar snapshot do child antes de fechar
+    try {
+      const frame = $("#rcfPreviewFrame");
+      frame?.contentWindow?.postMessage?.({ type: "RCF_PREVIEW_SNAP_PLEASE" }, "*");
+    } catch {}
+
     try {
       const ov = $("#rcfPreviewOverlay");
       if (ov) ov.style.display = "none";
@@ -374,6 +591,7 @@
         return { ok: false, err: "no_active_app" };
       }
 
+      const slug = String(app?.slug || "").trim();
       const files = app.files || {};
       const indexHtml =
         files["index.html"] ||
@@ -391,11 +609,21 @@
       }
 
       const blobMap = buildBlobMap(files);
-      const html = rewriteIndexHtml(indexHtml, blobMap);
+      let html = rewriteIndexHtml(indexHtml, blobMap);
 
-      if (meta) meta.textContent = `${app.name || "App"} (${app.slug || "?"}) • files=${Object.keys(files).length}`;
+      // ✅ DEGRAU 3: injeção de isolamento + snapshot
+      const snap = slug ? loadSnapshot(slug) : null;
+      html = injectPrelude(html, slug, snap);
+
+      if (meta) meta.textContent = `${app.name || "App"} (${slug || "?"}) • files=${Object.keys(files).length}`;
 
       pushPreviewLog("✅ Preview montado (sandbox).");
+      if (slug) {
+        pushPreviewLog(`✅ Storage isolado por app: prefix="${slug}::"`);
+        pushPreviewLog(`✅ Snapshot: ${snap ? "restaurado" : "vazio (primeira vez)"}`);
+      } else {
+        pushPreviewLog("⚠️ App sem slug — isolamento/snapshot ficam limitados.");
+      }
       pushPreviewLog("Dica: se um arquivo não carregar, revise refs (src/href) no index.html.");
 
       ov.style.display = "flex";
@@ -456,5 +684,5 @@
   setTimeout(bindPreviewButtons, 800);
   setTimeout(bindPreviewButtons, 2000);
 
-  log("PREVIEW runner ready ✅ v1.3 STUDIO");
+  log("PREVIEW runner ready ✅ v1.3 STUDIO + SNAPSHOT");
 })();
