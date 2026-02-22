@@ -1,10 +1,11 @@
 <!-- FILE: /app/index.html
-     RControl Factory — index.html (vCLEAN-1+ENGINE + VENDOR ZIP + PAGES LINKS + EXTRAS3)
+     RControl Factory — index.html (vCLEAN-1+ENGINE + VENDOR ZIP + PAGES LINKS + EXTRAS3 + SWVER)
      PATCH:
      - mantém DEGRAU 3 (auto extra-modules SAFE + 1 reload)
      - mantém ZIP modules carregando DEPOIS do app.js (evita botão sumir)
-     - adiciona/garante "./js/core/pages_links.js" (PWA link + abrir fora do srcdoc + deploy hook)
+     - adiciona/garante "./js/core/pages_links.js"
      - mantém base "./" e guards anti-boot duplicado
+     - ✅ SW VERSIONED REGISTER (iOS cache breaker): ./sw.js?v=BUILD
 -->
 <!doctype html>
 <html lang="pt-BR">
@@ -20,7 +21,7 @@
   <link rel="manifest" href="./manifest.json" />
   <link rel="stylesheet" href="./styles.css" />
 
-  <meta name="rcf-index" content="vCLEAN-1+ENGINE+VENDORZIP+PAGESLINKS+EXTRAS3" />
+  <meta name="rcf-index" content="vCLEAN-1+ENGINE+VENDORZIP+PAGESLINKS+EXTRAS3+SWVER" />
 </head>
 
 <body>
@@ -30,18 +31,15 @@
     <div style="padding:14px;font-family:system-ui">Carregando…</div>
   </div>
 
-  <!-- =========================================================
-    BOOT LOADER (CLEAN)
-    - NÃO cria UI/overlay (isso fica no app.js)
-    - Evita SW register duplicado
-    - ✅ Guard: evita BOOT duplicado do index (iOS/SW edge cases)
-    - ✅ DEGRAU 3: garante extra_modules (tools_panel + scanmap)
-  ========================================================== -->
   <script>
     (function () {
       // ✅ Guard: evita carregar tudo 2x em edge cases
       if (window.__RCF_INDEX_BOOTED__) return;
       window.__RCF_INDEX_BOOTED__ = true;
+
+      // ✅ BUILD do SW (troque quando quiser forçar “quebra-cache”)
+      // Dica: mude só esse valor e publique -> iPhone pega na hora.
+      const RCF_SW_BUILD = "RCF_SW_BUILD_2026_02_22_01";
 
       function log(){ try { console.log.apply(console, ["[RCF/index]"].concat([].slice.call(arguments))); } catch(e){} }
 
@@ -127,7 +125,7 @@
           "./js/core/stability_guard.js",
           "./js/core/storage.js",
 
-          /* ✅ VENDOR: Loader (JSZip local OU CDN) + health */
+          /* ✅ VENDOR */
           "./js/core/vendor_loader.js",
           "./js/core/vendor_health.js",
 
@@ -186,7 +184,6 @@
 
         // =========================================================
         // 3) ZIP/UI modules (depois do app.js)
-        //    -> garante que o zip_vault encontra o slot e injeta o botão
         // =========================================================
         const afterApp = [
           "./js/core/zip_vault.js",
@@ -204,14 +201,22 @@
           }
         }
 
-        // SW register (guard contra duplicidade)
+        // =========================================================
+        // 4) SW register (versionado) — quebra-cache iOS
+        // =========================================================
         try {
           if (!window.__RCF_SW_REGISTERED__ && "serviceWorker" in navigator) {
             window.__RCF_SW_REGISTERED__ = true;
-            navigator.serviceWorker.register("./sw.js", { scope: "./" })
-              .then(() => {
-                try { window.RCF_LOGGER?.push?.("BOOT", "sw register: ok (scope ./)"); } catch {}
-                log("sw register ok");
+
+            const swUrl = "./sw.js?v=" + encodeURIComponent(RCF_SW_BUILD);
+
+            navigator.serviceWorker.register(swUrl, { scope: "./" })
+              .then((reg) => {
+                try { window.RCF_LOGGER?.push?.("BOOT", "sw register: ok ✅ " + swUrl); } catch {}
+                log("sw register ok", swUrl);
+
+                // tenta puxar update imediatamente (ajuda no iOS)
+                try { reg.update?.(); } catch {}
               })
               .catch((e) => {
                 try { window.RCF_LOGGER?.push?.("WARN", "sw register: fail/ignored :: " + (e?.message||e)); } catch {}
