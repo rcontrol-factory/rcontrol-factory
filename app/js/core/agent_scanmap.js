@@ -1,17 +1,17 @@
 /* FILE: /app/js/core/agent_scanmap.js
-   RControl Factory — scanmap.js — v1.1 ADMIN FIXED (SAFE)
-   Objetivo: Factory “saber onde tá cada coisa” (mapa)
-   - ✅ UI FIXA no ADMIN (slot: admin.integrations → admin.top → fallback body)
-   - ✅ Coleta: scripts[src], links[href], overrides (se houver), mother_bundle_local, fillers (GH_SYNC.listFillers)
+   RControl Factory — scanmap.js — v1.2 ADMIN FIXED + HIDE (SAFE)
+   - ✅ Monta SEMPRE no ADMIN (slot: admin.integrations → admin.top)
+   - ✅ Se montar errado, MOVE pro host correto após UI_READY
+   - ✅ Some automaticamente fora da aba Admin
+   - ✅ Coleta: scripts, links, overrides, mother_bundle_local, fillers
    - ✅ Botões: Scan / Copy JSON / Copy Summary
-   - ✅ Salva localStorage: rcf:scanmap:v1
-   - SAFE: nunca quebra tela, tudo em try/catch
+   - ✅ localStorage: rcf:scanmap:v1
 */
 (() => {
   "use strict";
 
   try {
-    if (window.RCF_SCANMAP && window.RCF_SCANMAP.__v11) return;
+    if (window.RCF_SCANMAP && window.RCF_SCANMAP.__v12) return;
 
     const LS_KEY = "rcf:scanmap:v1";
 
@@ -42,7 +42,6 @@
       p = p.split("#")[0].split("?")[0];
       p = p.replace(/^(\.\/)+/, "");
       p = p.replace(/^\/+/, "");
-      // normaliza script/link do runtime pra "app/..." quando vier "js/..."
       if (p.startsWith("js/")) p = "app/" + p;
       return p;
     }
@@ -78,7 +77,6 @@
         const O = window.RCF_VFS_OVERRIDES;
         if (!O) return { ok:false, paths: [], err: "RCF_VFS_OVERRIDES ausente" };
 
-        // prefer SAFE
         if (typeof O.listOverridesSafe === "function") {
           const r = await O.listOverridesSafe({ allowStale:true });
           const res = r?.res || null;
@@ -187,7 +185,7 @@
       return lines.join("\n");
     }
 
-    async function runScan(opts = {}) {
+    async function runScan() {
       const startedAt = Date.now();
 
       const loaded = {
@@ -204,9 +202,7 @@
         version: "scanmap_v1",
         ts: Date.now(),
         tookMs: Date.now() - startedAt,
-        base: (() => {
-          try { return String(window.location.href || ""); } catch { return ""; }
-        })(),
+        base: (() => { try { return String(window.location.href || ""); } catch { return ""; } })(),
         loaded,
         overrides: { ok: !!overrides.ok, paths: overrides.paths || [], meta: overrides.meta || {}, err: overrides.err || "" },
         bundle_local: { ok: !!bundle_local.ok, paths: bundle_local.paths || [], meta: bundle_local.meta || {}, err: bundle_local.err || "" },
@@ -224,9 +220,7 @@
         fillers: (fillers.all || []).length
       });
 
-      // UI update (se existir)
       try { refreshUI(map); } catch {}
-
       return map;
     }
 
@@ -235,36 +229,54 @@
       catch { return null; }
     }
 
-    // ---------------- UI (ADMIN FIXED) ----------------
+    // ---------------- UI (ADMIN FIXED + HIDE) ----------------
     const $ = (sel, root=document) => root.querySelector(sel);
 
-    function pickHost(){
+    function isAdminActive(){
       try {
-        // ✅ FIXO NO ADMIN: primeiro no slot de integrations (nobre)
+        const v = document.getElementById("view-admin");
+        return !!(v && v.classList.contains("active"));
+      } catch {
+        return false;
+      }
+    }
+
+    function pickHostStrict(){
+      try {
         const ui = window.RCF_UI;
         const h1 = ui?.getSlot?.("admin.integrations");
         if (h1) return h1;
 
-        // fallback: topo do admin
         const h2 = ui?.getSlot?.("admin.top");
         if (h2) return h2;
 
-        // fallback direto por id
-        const h3 = document.getElementById("rcfAdminSlotIntegrations") || document.getElementById("rcfAdminSlotTop");
+        // fallback por id (somente dentro do admin)
+        const h3 = document.getElementById("rcfAdminSlotIntegrations");
         if (h3) return h3;
 
-        return document.body;
+        const h4 = document.getElementById("rcfAdminSlotTop");
+        if (h4) return h4;
+
+        // ⛔ não monta no body (evita aparecer em todas as views)
+        return null;
       } catch {
-        return document.body;
+        return null;
       }
     }
 
     function ensureUI(){
-      const host = pickHost();
+      const host = pickHostStrict();
       if (!host) return null;
 
       let box = document.getElementById("rcfScanMapBox");
-      if (box) return box;
+      if (box) {
+        // ✅ se estiver no lugar errado, move pro host correto
+        try {
+          if (box.parentElement !== host) host.appendChild(box);
+        } catch {}
+        try { syncVisibility(); } catch {}
+        return box;
+      }
 
       box = document.createElement("div");
       box.id = "rcfScanMapBox";
@@ -289,9 +301,9 @@
         <pre id="rcfScanMapOut" style="margin-top:10px;padding:10px;border-radius:12px;background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.10);color:#fff;white-space:pre-wrap;word-break:break-word;font-size:12px;max-height:220px;overflow:auto">Pronto.</pre>
       `;
 
-      try { host.appendChild(box); } catch { document.body.appendChild(box); }
+      try { host.appendChild(box); } catch {}
 
-      $("#btnScanNow", box)?.addEventListener("click", () => runScan({}), { passive:true });
+      $("#btnScanNow", box)?.addEventListener("click", () => runScan(), { passive:true });
 
       $("#btnScanCopySummary", box)?.addEventListener("click", () => {
         const last = getLast();
@@ -307,7 +319,15 @@
         try { $("#rcfScanMapOut", box).textContent = "✅ JSON copiado."; } catch {}
       }, { passive:true });
 
+      try { syncVisibility(); } catch {}
       return box;
+    }
+
+    function syncVisibility(){
+      const box = document.getElementById("rcfScanMapBox");
+      if (!box) return;
+      const show = isAdminActive();
+      box.style.display = show ? "" : "none";
     }
 
     function refreshUI(map){
@@ -321,8 +341,9 @@
         stats.textContent =
           `scripts=${map.loaded.scripts.length} • overrides=${map.overrides.paths.length} • bundle=${map.bundle_local.paths.length} • fillers=${map.fillers.all.length} • ${map.tookMs}ms`;
       }
-
       if (out) out.textContent = buildSummary(map);
+
+      try { syncVisibility(); } catch {}
     }
 
     function tryCopy(text){
@@ -353,36 +374,44 @@
       return false;
     }
 
-    // ---------- Boot ----------
-    function boot(){
+    function bootLight(){
+      // só tenta montar quando UI estiver pronta
       try { ensureUI(); } catch {}
+      try { syncVisibility(); } catch {}
 
-      // auto scan leve (não agressivo)
-      setTimeout(() => { runScan({}).catch(()=>{}); }, 700);
-      setTimeout(() => { runScan({}).catch(()=>{}); }, 2300);
+      // listeners pra esconder/mostrar quando trocar de aba
+      try {
+        document.addEventListener("click", (ev) => {
+          const t = ev.target;
+          if (!t) return;
+          const isTab = !!(t.closest && t.closest("[data-view]"));
+          if (!isTab) return;
+          setTimeout(() => { try { syncVisibility(); ensureUI(); } catch {} }, 50);
+        }, { passive:true });
+      } catch {}
 
-      log("OK", "scanmap ready ✅ (v1.1 ADMIN FIXED)");
+      // pequenas tentativas (iPhone)
+      setTimeout(() => { try { ensureUI(); syncVisibility(); } catch {} }, 500);
+      setTimeout(() => { try { ensureUI(); syncVisibility(); } catch {} }, 1600);
+
+      log("OK", "scanmap ready ✅ (v1.2 ADMIN FIX + HIDE)");
     }
 
-    // API global
     window.RCF_SCANMAP = {
-      __v11: true,
+      __v12: true,
       run: runScan,
       getLast
     };
 
-    // Se o app já tem UI registry, tenta montar assim que UI_READY disparar
+    // ✅ Só monta de verdade após UI_READY (evita cair no body)
     try {
       window.addEventListener("RCF:UI_READY", () => {
-        try { ensureUI(); } catch {}
+        try { bootLight(); } catch {}
       }, { passive:true });
     } catch {}
 
-    if (document.readyState === "loading") {
-      window.addEventListener("DOMContentLoaded", boot, { once:true });
-    } else {
-      boot();
-    }
+    // fallback: se UI_READY não vier (raríssimo), tenta depois
+    setTimeout(() => { try { bootLight(); } catch {} }, 2500);
 
   } catch (e) {
     try { console.error("RCF scanmap fatal:", e); } catch {}
