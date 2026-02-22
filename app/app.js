@@ -1,11 +1,11 @@
 /* FILE: app/app.js
    RControl Factory — /app/app.js — V8.0 PADRÃO (CLEAN + UI READY BUS)
    - Arquivo completo (1 peça) pra copiar/colar
-   - ✅ ADD: UI READY BUS (notifyUIReady) 1x após installRCFUIRegistry()
-   - ✅ Compat MAE: aceita clear() OU clearOverrides()
-   - ✅ FIX: Preview/Timesheet preso na frente -> teardownPreviewHard() + hook no setView()
-   - ✅ ADD: Dashboard -> botão APAGAR app + deleteApp()
-   - ✅ FIX: Generator buttons no app.js passam controle pro core/ui_bindings.js se existir
+   - ✅ FIX: Apps list layout (nome grande não empurra botões) + CSS ellipsis
+   - ✅ ADD: Dashboard -> botão APAGAR app + deleteApp() (confirm + ajuste active + status/log)
+   - ✅ FIX: Preview/Timesheet preso -> teardownPreviewHard() + hook ao sair do Generator
+   - ✅ FIX: Evitar duplo bind do Generator (stubs só se módulo real NÃO existir)
+   - ✅ Mantém: boot lock, stability, UI_READY bus, GitHub/MAE, engine, core externos
 */
 
 (() => {
@@ -545,6 +545,30 @@
 #rcfRoot #diffOut{ max-height: 20vh !important; }
 #rcfRoot .tools .tools-body pre{ max-height: 28vh !important; }
 
+/* PATCH: Apps list layout (nome grande não empurra botões) */
+#appsList .app-item{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+}
+#appsList .app-meta{
+  flex:1 1 auto;
+  min-width:0;
+}
+#appsList .app-name,
+#appsList .app-slug{
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+#appsList .app-actions{
+  flex:0 0 auto;
+  display:flex;
+  gap:8px;
+  align-items:center;
+}
+
 /* PATCH: FAB (bolinha) + painel */
 #rcfFab{
   position:fixed !important;
@@ -982,27 +1006,75 @@
   // PREVIEW TEARDOWN (anti overlay preso / timesheet na frente)
   // =========================================================
   function teardownPreviewHard() {
+    // PATCH: chamar teardowns conhecidos (tolerante)
+    try { window.RCF_PREVIEW?.teardown?.(); } catch {}
     try {
       const PR = window.RCF_PREVIEW_RUNNER || window.PREVIEW_RUNNER || null;
-      const fn = PR?.destroy || PR?.teardown || PR?.unmount || PR?.stop || null;
-      if (typeof fn === "function") { try { fn.call(PR); } catch {} }
+      const fns = [
+        PR?.teardown,
+        PR?.destroy,
+        PR?.stop,
+        PR?.unmount
+      ].filter(fn => typeof fn === "function");
+
+      for (const fn of fns) {
+        try { fn.call(PR); } catch {}
+      }
     } catch {}
 
-    // remove iframes comuns de preview
+    // PATCH: remover overlays comuns se existirem (id/class contendo "preview")
     try {
+      const nodes = Array.from(document.querySelectorAll("[id*='preview'], [class*='preview'], [id*='Preview'], [class*='Preview']"));
+      let removed = 0;
+      for (const el of nodes) {
+        try {
+          if (!el || el === document.body) continue;
+          if (el.id === "toolsDrawer" || el.id === "rcfFabPanel" || el.id === "rcfFab") continue;
+          el.remove();
+          removed++;
+        } catch {}
+        if (removed >= 8) break;
+      }
+    } catch {}
+
+    // PATCH: remove iframes suspeitos do preview SOMENTE se claramente overlay (fixed + z-index alto)
+    try {
+      const vw = Math.max(document.documentElement.clientWidth, window.innerWidth || 0);
+      const vh = Math.max(document.documentElement.clientHeight, window.innerHeight || 0);
       const ifr = Array.from(document.querySelectorAll("iframe"));
+      let removedIfr = 0;
+
       for (const el of ifr) {
-        const id = (el.id || "").toLowerCase();
-        const cls = (el.className || "").toString().toLowerCase();
-        const src = (el.src || "").toLowerCase();
-        const looksPreview =
-          id.includes("preview") || cls.includes("preview") ||
-          src.includes("preview") || src.includes("sandbox") ||
-          src.includes("timesheet");
-        if (looksPreview) {
+        try {
+          const id = (el.id || "").toLowerCase();
+          const cls = (el.className || "").toString().toLowerCase();
+          const src = (el.src || "").toLowerCase();
+
+          const looksPreview =
+            id.includes("preview") || cls.includes("preview") ||
+            src.includes("preview") || src.includes("sandbox") ||
+            src.includes("timesheet");
+
+          if (!looksPreview) continue;
+
+          const cs = getComputedStyle(el);
+          const pos = cs?.position || "";
+          const zi = parseInt(cs?.zIndex || "0", 10);
+          const r = el.getBoundingClientRect();
+          const area = Math.max(0, r.width) * Math.max(0, r.height);
+
+          const isOverlay =
+            (pos === "fixed") &&
+            Number.isFinite(zi) && zi >= 80 &&
+            area >= (vw * vh * 0.20);
+
+          if (!isOverlay) continue;
+
           try { el.src = "about:blank"; } catch {}
           try { el.remove(); } catch {}
-        }
+          removedIfr++;
+        } catch {}
+        if (removedIfr >= 4) break;
       }
     } catch {}
 
@@ -1046,16 +1118,18 @@
       document.body.style.overflow = "";
       document.body.style.pointerEvents = "";
     } catch {}
+
+    // PATCH: log final
+    try { Logger.write("preview:", "teardown hard (ok)"); } catch {}
   }
 
   function setView(name) {
     if (!name) return;
 
-    // ✅ FIX: ao sair/entrar do generator, mata overlay/preview preso
+    // PATCH: ao sair do generator, mata overlay/preview preso
     try {
       const prev = State.active.view;
       if (prev === "generator" && name !== "generator") teardownPreviewHard();
-      if (name === "generator") teardownPreviewHard();
     } catch {}
 
     State.active.view = name;
@@ -1166,6 +1240,10 @@
     uiMsg("#editorOut", "✅ App apagado.");
     Logger.write("app deleted:", s);
 
+    // PATCH: status requerido
+    safeSetStatus("Apagado ✅");
+    try { syncFabStatusText(); } catch {}
+
     return true;
   }
 
@@ -1182,12 +1260,14 @@
     State.apps.forEach(app => {
       const row = document.createElement("div");
       row.className = "app-item";
+
+      // PATCH: layout meta + actions (ellipsis no CSS)
       row.innerHTML = `
-        <div>
-          <div style="font-weight:800">${escapeHtml(app.name)}</div>
-          <div class="hint">${escapeHtml(app.slug)}</div>
+        <div class="app-meta">
+          <div class="app-name" style="font-weight:800">${escapeHtml(app.name)}</div>
+          <div class="app-slug hint">${escapeHtml(app.slug)}</div>
         </div>
-        <div class="row">
+        <div class="app-actions">
           <button class="btn small" data-act="select" data-slug="${escapeAttr(app.slug)}" type="button">Selecionar</button>
           <button class="btn small" data-act="edit" data-slug="${escapeAttr(app.slug)}" type="button">Editor</button>
           <button class="btn small danger" data-act="delete" data-slug="${escapeAttr(app.slug)}" type="button">Apagar</button>
@@ -2458,18 +2538,33 @@
       uiMsg("#editorOut", "⚠️ Arquivo resetado (limpo).");
     });
 
-    // ✅ FIX: Generator delega pro core/ui_bindings.js (se existir) pra não competir
-    bindTap($("#btnGenZip"), async () => {
-      const U = window.RCF_UI_BINDINGS;
-      if (U?.generatorBuildZip) return await U.generatorBuildZip();
-      uiMsg("#genOut", "ZIP: ui_bindings não está pronto.");
-    });
+    // PATCH: Evitar duplo bind do Generator (stubs só se NÃO houver módulo real)
+    try {
+      const modulePresent = !!(
+        window.RCF_PREVIEW_RUNNER ||
+        window.RCF_PREVIEW ||
+        window.RCF_ENGINE?.generator ||
+        window.RCF_UI_BINDINGS ||
+        window.__RCF_GEN_BOUND__ // flag defensivo se existir
+      );
 
-    bindTap($("#btnGenPreview"), () => {
-      const U = window.RCF_UI_BINDINGS;
-      if (U?.generatorPreview) return U.generatorPreview();
-      uiMsg("#genOut", "Preview: ui_bindings não está pronto.");
-    });
+      if (modulePresent) {
+        Logger.write("generator:", "bind skip (module present)");
+      } else {
+        // mantém stubs atuais (fallback)
+        bindTap($("#btnGenZip"), async () => {
+          const U = window.RCF_UI_BINDINGS;
+          if (U?.generatorBuildZip) return await U.generatorBuildZip();
+          uiMsg("#genOut", "ZIP: ui_bindings não está pronto.");
+        });
+
+        bindTap($("#btnGenPreview"), () => {
+          const U = window.RCF_UI_BINDINGS;
+          if (U?.generatorPreview) return U.generatorPreview();
+          uiMsg("#genOut", "Preview: ui_bindings não está pronto.");
+        });
+      }
+    } catch {}
 
     bindTap($("#btnAgentRun"), () => Agent.route($("#agentCmd")?.value || ""));
     bindTap($("#btnAgentHelp"), () => uiMsg("#agentOut", Agent.help()));
