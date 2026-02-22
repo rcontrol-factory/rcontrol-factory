@@ -1,15 +1,14 @@
 /* FILE: /app/js/core/agent_tools_panel.js
-   RControl Factory — Tools Panel — v1.1 ADMIN FIXED (SAFE)
-   - ✅ UI FIXA no ADMIN (slot: admin.integrations → admin.top → fallback body)
-   - ✅ Gerencia localStorage rcf:boot:extra_modules (sem quebrar)
-   - ✅ 1-clique: habilita ScanMap (mantém compat)
-   - SAFE: try/catch, não quebra tela
+   RControl Factory — Tools Panel — v1.2 ADMIN FIXED (SAFE)
+   - ✅ UI FIXA no ADMIN (não aparece em outras abas)
+   - ✅ Gerencia localStorage rcf:boot:extra_modules
+   - ✅ 1-clique: habilita ScanMap + Admin Scan Official Bridge
 */
 (() => {
   "use strict";
 
   try {
-    if (window.RCF_AGENT_TOOLS && window.RCF_AGENT_TOOLS.__v11) return;
+    if (window.RCF_AGENT_TOOLS && window.RCF_AGENT_TOOLS.__v12) return;
 
     const LS_KEY = "rcf:boot:extra_modules";
 
@@ -39,7 +38,16 @@
       return writeExtras(list);
     }
 
-    function pickHost(){
+    function isAdminActive(){
+      try {
+        const v = document.getElementById("view-admin");
+        return !!(v && v.classList.contains("active"));
+      } catch {
+        return false;
+      }
+    }
+
+    function pickHostStrict(){
       try {
         const ui = window.RCF_UI;
         const h1 = ui?.getSlot?.("admin.integrations");
@@ -48,21 +56,36 @@
         const h2 = ui?.getSlot?.("admin.top");
         if (h2) return h2;
 
-        const h3 = document.getElementById("rcfAdminSlotIntegrations") || document.getElementById("rcfAdminSlotTop");
+        const h3 = document.getElementById("rcfAdminSlotIntegrations");
         if (h3) return h3;
 
-        return document.body;
+        const h4 = document.getElementById("rcfAdminSlotTop");
+        if (h4) return h4;
+
+        return null; // ⛔ sem body
       } catch {
-        return document.body;
+        return null;
       }
     }
 
+    function syncVisibility(){
+      const box = document.getElementById("rcfAgentToolsPanel");
+      if (!box) return;
+      box.style.display = isAdminActive() ? "" : "none";
+    }
+
     function ensureUI(){
-      const host = pickHost();
+      const host = pickHostStrict();
       if (!host) return null;
 
       let box = document.getElementById("rcfAgentToolsPanel");
-      if (box) return box;
+      if (box) {
+        try {
+          if (box.parentElement !== host) host.appendChild(box);
+        } catch {}
+        try { syncVisibility(); } catch {}
+        return box;
+      }
 
       box = document.createElement("div");
       box.id = "rcfAgentToolsPanel";
@@ -79,7 +102,7 @@
           <div style="font-weight:900;color:#fff">Admin Tools</div>
           <div id="rcfAgentToolsStatus" style="font-size:12px;opacity:.85;color:#fff">—</div>
           <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
-            <button id="btnAT_EnableScanMap" type="button" style="padding:8px 10px;border-radius:999px;border:1px solid rgba(60,255,170,.25);background:rgba(60,255,170,.10);color:#eafff4;font-weight:900">Enable ScanMap</button>
+            <button id="btnAT_EnableScanMap" type="button" style="padding:8px 10px;border-radius:999px;border:1px solid rgba(60,255,170,.25);background:rgba(60,255,170,.10);color:#eafff4;font-weight:900">Enable Scan Oficial</button>
             <button id="btnAT_ShowExtras" type="button" style="padding:8px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.08);color:#fff;font-weight:800">Open extras list</button>
             <button id="btnAT_Reload" type="button" style="padding:8px 10px;border-radius:999px;border:0;background:#ef4444;color:#fff;font-weight:900">Reload</button>
           </div>
@@ -87,23 +110,25 @@
         <pre id="rcfAgentToolsOut" style="margin-top:10px;padding:10px;border-radius:12px;background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.10);color:#fff;white-space:pre-wrap;word-break:break-word;font-size:12px;max-height:220px;overflow:auto">Pronto.</pre>
       `;
 
-      try { host.appendChild(box); } catch { document.body.appendChild(box); }
+      try { host.appendChild(box); } catch {}
 
       $("#btnAT_EnableScanMap", box)?.addEventListener("click", () => {
         try {
-          // garante runtime também (se alguém apagar sem querer)
           addExtra("js/core/agent_runtime.js");
           addExtra("js/core/agent_scanmap.js");
+          addExtra("js/core/admin_scanmap_bridge.js");
           addExtra("js/core/agent_tools_panel.js");
 
           $("#rcfAgentToolsOut", box).textContent =
-            "✅ ScanMap habilitado.\n" +
-            "• Extras gravados em rcf:boot:extra_modules\n" +
-            "• Agora clique Reload para aplicar.";
+            "✅ Scan OFICIAL habilitado.\n" +
+            "• ScanMap (Admin)\n" +
+            "• Bridge do Injector (botão Scan OFICIAL)\n" +
+            "• Extras gravados em rcf:boot:extra_modules\n\n" +
+            "Agora clique Reload para aplicar.";
 
           refreshStatus();
         } catch (e) {
-          $("#rcfAgentToolsOut", box).textContent = "❌ Falha ao habilitar ScanMap: " + (e?.message || e);
+          $("#rcfAgentToolsOut", box).textContent = "❌ Falha: " + (e?.message || e);
         }
       }, { passive:true });
 
@@ -115,7 +140,8 @@
             (list.length ? list.map(x => "• " + x).join("\n") : "(vazio)") +
             "\n\nDetect:\n" +
             `• agent_runtime: ${!!window.RCF_AGENT_RUNTIME ? "OK" : "missing"}\n` +
-            `• scanmap: ${!!window.RCF_SCANMAP ? "OK" : "missing"}\n`;
+            `• scanmap: ${!!window.RCF_SCANMAP ? "OK" : "missing"}\n` +
+            `• bridge: ${!!window.RCF_ADMIN_SCAN_BRIDGE ? "OK" : "missing"}\n`;
           $("#rcfAgentToolsOut", box).textContent = out;
           refreshStatus();
         } catch (e) {
@@ -127,6 +153,7 @@
         try { location.reload(); } catch {}
       }, { passive:true });
 
+      try { syncVisibility(); } catch {}
       return box;
     }
 
@@ -138,34 +165,42 @@
 
       const s =
         `extras=${list.length}` +
-        ` • runtime=${window.RCF_AGENT_RUNTIME ? "OK" : "—"}` +
-        ` • scanmap=${window.RCF_SCANMAP ? "OK" : "—"}`;
+        ` • scanmap=${window.RCF_SCANMAP ? "OK" : "—"}` +
+        ` • bridge=${window.RCF_ADMIN_SCAN_BRIDGE ? "OK" : "—"}`;
 
       if (st) st.textContent = s;
+      try { syncVisibility(); } catch {}
     }
 
     function boot(){
       ensureUI();
       refreshStatus();
+
+      // atualizar quando troca de aba
+      try {
+        document.addEventListener("click", (ev) => {
+          const t = ev.target;
+          if (!t) return;
+          const isTab = !!(t.closest && t.closest("[data-view]"));
+          if (!isTab) return;
+          setTimeout(() => { try { ensureUI(); refreshStatus(); } catch {} }, 50);
+        }, { passive:true });
+      } catch {}
+
       setTimeout(refreshStatus, 650);
       setTimeout(refreshStatus, 1900);
-      log("OK", "tools_panel ready ✅ (v1.1 ADMIN FIXED)");
+      log("OK", "tools_panel ready ✅ (v1.2 ADMIN FIXED)");
     }
 
-    window.RCF_AGENT_TOOLS = { __v11:true, readExtras, writeExtras };
+    window.RCF_AGENT_TOOLS = { __v12:true, readExtras, writeExtras };
 
-    // reforça montagem pós UI_READY
     try {
       window.addEventListener("RCF:UI_READY", () => {
-        try { ensureUI(); refreshStatus(); } catch {}
+        try { boot(); } catch {}
       }, { passive:true });
     } catch {}
 
-    if (document.readyState === "loading") {
-      window.addEventListener("DOMContentLoaded", boot, { once:true });
-    } else {
-      boot();
-    }
+    setTimeout(() => { try { boot(); } catch {} }, 2500);
 
   } catch (e) {
     try { console.error("tools_panel fatal:", e); } catch {}
