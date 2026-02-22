@@ -1,17 +1,16 @@
 /* FILE: /app/js/core/agent_tools_panel.js
-   RControl Factory — Agent/Admin Tools Panel — v1.1 CLEAN (SAFE)
-   PATCH A (BOOT CLEANUP):
-   - ✅ Normaliza extras para "./js/core/..."
-   - ✅ Remove duplicados (js/... vs ./js/...)
-   - ✅ Botão "Clean extras (fix)" 1-clique
-   - ✅ Mantém Enable ScanMap / Open list / Reload
-   SAFE: try/catch, não quebra tela
+   RControl Factory — Agent/Admin Tools Panel — v1.2 STRICT (SAFE)
+   FIX:
+   - ✅ NÃO monta mais no body (remove fallback que vazava pra todas as abas)
+   - ✅ Só monta se existir o slot do ADMIN (rcfAdminSlotIntegrations ou rcfAgentSlotTools)
+   - ✅ Se mudar de aba e o slot sumir, o painel some também
+   - ✅ Mantém Clean extras / Enable Scan Oficial / Open list / Reload
 */
 (() => {
   "use strict";
 
   try {
-    if (window.RCF_AGENT_TOOLS && window.RCF_AGENT_TOOLS.__v11) return;
+    if (window.RCF_AGENT_TOOLS && window.RCF_AGENT_TOOLS.__v12) return;
 
     const LS_KEY = "rcf:boot:extra_modules";
 
@@ -19,40 +18,25 @@
 
     function safeParse(raw, fb){ try { return raw ? JSON.parse(raw) : fb; } catch { return fb; } }
 
-    // ===== PATCH A: normalização oficial =====
+    // ===== normalização oficial =====
     function normExtraPath(p){
       let x = String(p || "").trim();
       if (!x) return "";
-
-      // remove aspas / espaços estranhos
       x = x.replace(/^["']|["']$/g, "").trim();
-
-      // remove leading "./" ou "/" (vamos reconstruir depois)
       x = x.replace(/^[.\/]+/g, "");
-
-      // aceita caminhos antigos "js/core/..." ou "app/js/core/..."
       if (x.startsWith("app/")) x = x.slice(4);
       if (!x.startsWith("js/")) {
-        // se veio "core/..." tenta encaixar
         if (x.startsWith("core/")) x = "js/" + x;
       }
-
-      // padrão final: ./js/core/...
       if (x.startsWith("js/core/")) return "./" + x;
-
-      // se ainda não bateu, deixa do jeito mais seguro possível
       if (x.startsWith("js/")) return "./" + x;
-
       return "./js/core/" + x.replace(/^core\//, "");
     }
 
     function readExtras(){
       const arr = safeParse(localStorage.getItem(LS_KEY) || "[]", []);
       const list = Array.isArray(arr) ? arr : [];
-      return list
-        .map(normExtraPath)
-        .map(s => String(s || "").trim())
-        .filter(Boolean);
+      return list.map(normExtraPath).map(s => String(s || "").trim()).filter(Boolean);
     }
 
     function writeExtras(arr){
@@ -72,14 +56,7 @@
       return writeExtras(list);
     }
 
-    function removeExtra(path){
-      const p = normExtraPath(path);
-      const list = readExtras().filter(x => x !== p);
-      return writeExtras(list);
-    }
-
     function cleanExtrasOfficial(){
-      // lista oficial (PASSO A)
       const must = [
         "./js/core/agent_runtime.js",
         "./js/core/agent_scanmap.js",
@@ -89,17 +66,30 @@
       return writeExtras(must);
     }
 
-    function ensureUI(){
-      // tenta slot do Agente, se não tiver, tenta Admin integrations, senão body (SAFE)
-      const host =
+    // =========================================================
+    // STRICT HOST: só monta em slots específicos (sem body fallback)
+    // =========================================================
+    function findHostStrict(){
+      return (
         document.getElementById("rcfAgentSlotTools") ||
         document.getElementById("rcfAdminSlotIntegrations") ||
-        document.body;
+        null
+      );
+    }
 
-      if (!host) return null;
+    function ensureUI(){
+      const host = findHostStrict();
+      if (!host) return null; // ✅ STRICT: não monta fora do Admin/Agent slot
 
       let box = document.getElementById("rcfAgentToolsPanel");
-      if (box) return box;
+      if (box) {
+        // garante que está dentro do host (caso o DOM tenha sido refeito)
+        try {
+          if (box.parentNode !== host) host.appendChild(box);
+        } catch {}
+        box.style.display = "";
+        return box;
+      }
 
       box = document.createElement("div");
       box.id = "rcfAgentToolsPanel";
@@ -138,7 +128,7 @@
           style="margin-top:10px;padding:10px;border-radius:12px;background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.10);color:#fff;white-space:pre-wrap;word-break:break-word;font-size:12px;max-height:220px;overflow:auto">Pronto.</pre>
       `;
 
-      try { host.appendChild(box); } catch { try { document.body.appendChild(box); } catch {} }
+      try { host.appendChild(box); } catch { return null; }
 
       $("#btnAT_CleanExtras", box)?.addEventListener("click", () => {
         try {
@@ -156,7 +146,6 @@
 
       $("#btnAT_EnableScanMap", box)?.addEventListener("click", () => {
         try {
-          // garante runtime + scanmap + bridge + painel (padrão)
           addExtra("./js/core/agent_runtime.js");
           addExtra("./js/core/agent_scanmap.js");
           addExtra("./js/core/admin_scanmap_bridge.js");
@@ -199,35 +188,48 @@
     }
 
     function refreshStatus(){
-      const box = ensureUI();
-      if (!box) return;
-      const st = $("#rcfAgentToolsStatus", box);
-      const list = readExtras();
+      const box = document.getElementById("rcfAgentToolsPanel");
+      const host = findHostStrict();
 
+      // ✅ se não tem host (mudou de aba), esconde o painel
+      if (!host) {
+        if (box) box.style.display = "none";
+        return;
+      }
+
+      const ui = ensureUI();
+      if (!ui) return;
+
+      const st = $("#rcfAgentToolsStatus", ui);
+      const list = readExtras();
       const s =
         `extras=${list.length}` +
         ` • runtime=${window.RCF_AGENT_RUNTIME ? "OK" : "—"}` +
         ` • scanmap=${window.RCF_SCANMAP ? "OK" : "—"}` +
         ` • bridge=${window.RCF_ADMIN_SCANMAP_BRIDGE ? "OK" : "—"}`;
-
       if (st) st.textContent = s;
     }
 
     function boot(){
-      ensureUI();
+      // tenta montar; se não tiver slot ainda, só fica observando
       refreshStatus();
+
+      // ✅ acompanha mudanças de DOM (troca de abas/layout) sem vazar pro body
+      const mo = new MutationObserver(() => refreshStatus());
+      try { mo.observe(document.documentElement, { childList:true, subtree:true }); } catch {}
+
       setTimeout(refreshStatus, 600);
       setTimeout(refreshStatus, 1800);
-      try { window.RCF_LOGGER?.push?.("OK", "agent_tools_panel.js ready ✅ (v1.1 CLEAN)"); } catch {}
+
+      try { window.RCF_LOGGER?.push?.("OK", "agent_tools_panel.js ready ✅ (v1.2 STRICT)"); } catch {}
     }
 
     window.RCF_AGENT_TOOLS = {
-      __v11:true,
+      __v12:true,
       readExtras,
       writeExtras,
       cleanExtrasOfficial,
-      addExtra,
-      removeExtra
+      addExtra
     };
 
     if (document.readyState === "loading") {
