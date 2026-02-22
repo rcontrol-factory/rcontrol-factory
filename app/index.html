@@ -1,8 +1,10 @@
 <!-- FILE: /app/index.html
-     RControl Factory — index.html (vCLEAN-1+ENGINE + VENDOR ZIP + PAGES LINKS)
+     RControl Factory — index.html (vCLEAN-1+ENGINE + VENDOR ZIP + PAGES LINKS + EXTRAS3)
      PATCH:
-     - mover "./js/core/errors.js" para DEPOIS do ./app.js (garante UI/slots já existirem e volta o painel de erros)
-     - mantém o resto igual ao teu padrão
+     - mantém DEGRAU 3 (auto extra-modules SAFE + 1 reload)
+     - mantém ZIP modules carregando DEPOIS do app.js (evita botão sumir)
+     - adiciona/garante "./js/core/pages_links.js" (PWA link + abrir fora do srcdoc + deploy hook)
+     - mantém base "./" e guards anti-boot duplicado
 -->
 <!doctype html>
 <html lang="pt-BR">
@@ -12,12 +14,13 @@
   <title>RCF</title>
   <meta name="theme-color" content="#0b1020" />
 
+  <!-- PADRÃO: base relativo (Pages/subpath safe) -->
   <base href="./" />
 
   <link rel="manifest" href="./manifest.json" />
   <link rel="stylesheet" href="./styles.css" />
 
-  <meta name="rcf-index" content="vCLEAN-1+ENGINE+VENDORZIP+PAGESLINKS" />
+  <meta name="rcf-index" content="vCLEAN-1+ENGINE+VENDORZIP+PAGESLINKS+EXTRAS3" />
 </head>
 
 <body>
@@ -27,8 +30,16 @@
     <div style="padding:14px;font-family:system-ui">Carregando…</div>
   </div>
 
+  <!-- =========================================================
+    BOOT LOADER (CLEAN)
+    - NÃO cria UI/overlay (isso fica no app.js)
+    - Evita SW register duplicado
+    - ✅ Guard: evita BOOT duplicado do index (iOS/SW edge cases)
+    - ✅ DEGRAU 3: garante extra_modules (tools_panel + scanmap)
+  ========================================================== -->
   <script>
     (function () {
+      // ✅ Guard: evita carregar tudo 2x em edge cases
       if (window.__RCF_INDEX_BOOTED__) return;
       window.__RCF_INDEX_BOOTED__ = true;
 
@@ -45,14 +56,78 @@
         });
       }
 
+      // =========================================================
+      // DEGRAU 3 — AUTO EXTRA MODULES (SAFE + 1 reload)
+      // =========================================================
+      function ensureExtraModules(){
+        const KEY = "rcf:boot:extra_modules";
+        const GUARD = "rcf:extra_modules_installed:v1";
+        const MUST = [
+          "./js/core/agent_tools_panel.js",
+          "./js/core/agent_scanmap.js"
+        ];
+
+        // evita loop de reload
+        try {
+          if (sessionStorage.getItem(GUARD) === "1") return { changed:false, already:true };
+        } catch {}
+
+        let cur = [];
+        try {
+          const raw = localStorage.getItem(KEY);
+          const j = raw ? JSON.parse(raw) : [];
+          cur = Array.isArray(j) ? j : [];
+        } catch {
+          cur = [];
+        }
+
+        const norm = (p) => String(p || "").trim();
+        const set = new Set(cur.map(norm).filter(Boolean));
+
+        let changed = false;
+        for (const p of MUST) {
+          const x = norm(p);
+          if (!set.has(x)) { set.add(x); changed = true; }
+        }
+
+        const list = Array.from(set).sort((a,b)=>a.localeCompare(b));
+
+        if (changed) {
+          try { localStorage.setItem(KEY, JSON.stringify(list)); } catch {}
+          try { sessionStorage.setItem(GUARD, "1"); } catch {}
+          return { changed:true, list };
+        }
+
+        // marcou como ok (sem precisar reload)
+        try { sessionStorage.setItem(GUARD, "1"); } catch {}
+        return { changed:false, list };
+      }
+
       async function boot(){
         log("BOOT: starting… base=", document.baseURI);
 
+        // ✅ roda antes de qualquer coisa que dependa do boot extra
+        try {
+          const r = ensureExtraModules();
+          if (r && r.changed) {
+            log("DEGRAU3: extra_modules atualizado -> reload 1x", r.list || []);
+            try { location.reload(); return; } catch {}
+          } else {
+            log("DEGRAU3: extra_modules ok");
+          }
+        } catch (e) {
+          log("DEGRAU3: falhou (ignorado)", (e && e.message) ? e.message : e);
+        }
+
+        // =========================================================
+        // 1) CORE + ENGINE (antes do app.js)
+        // =========================================================
         const modules = [
           "./js/core/logger.js",
           "./js/core/stability_guard.js",
           "./js/core/storage.js",
 
+          /* ✅ VENDOR: Loader (JSZip local OU CDN) + health */
           "./js/core/vendor_loader.js",
           "./js/core/vendor_health.js",
 
@@ -60,10 +135,7 @@
           "./js/core/vfs_overrides.js",
           "./js/core/vfs_shim.js",
           "./js/core/mother_selfupdate.js",
-
-          // PATCH: errors.js movido p/ depois do app.js (garante shell/slots)
-          // "./js/core/errors.js",
-
+          "./js/core/errors.js",
           "./js/core/risk.js",
           "./js/core/snapshot.js",
           "./js/core/selfheal.js",
@@ -77,12 +149,13 @@
           "./js/core/settings_cleanup.js",
           "./js/core/injector.js",
 
+          /* ✅ ENGINE */
           "./js/engine/template_registry.js",
           "./js/engine/module_registry.js",
           "./js/engine/builder.js",
           "./js/engine/engine.js",
 
-          // ✅ PWA link + abrir certo + deploy hook
+          /* ✅ PWA Links / Pages Hook */
           "./js/core/pages_links.js",
 
           "./js/admin.github.js"
@@ -99,6 +172,9 @@
           }
         }
 
+        // =========================================================
+        // 2) app.js (cria UI/slots)
+        // =========================================================
         try {
           await loadScript("./app.js");
           try { window.RCF_LOGGER?.push?.("BOOT", "app.js loaded ✅ ./app.js"); } catch {}
@@ -108,10 +184,11 @@
           log("app.js missing/failed ❌", (e.message||e));
         }
 
-        // PATCH: carrega errors.js aqui (depois do app.js) p/ voltar UI de detecção de erros
+        // =========================================================
+        // 3) ZIP/UI modules (depois do app.js)
+        //    -> garante que o zip_vault encontra o slot e injeta o botão
+        // =========================================================
         const afterApp = [
-          "./js/core/errors.js",
-
           "./js/core/zip_vault.js",
           "./js/core/agent_zip_bridge.js"
         ];
@@ -127,6 +204,7 @@
           }
         }
 
+        // SW register (guard contra duplicidade)
         try {
           if (!window.__RCF_SW_REGISTERED__ && "serviceWorker" in navigator) {
             window.__RCF_SW_REGISTERED__ = true;
