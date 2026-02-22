@@ -1,7 +1,7 @@
 <!-- FILE: /app/index.html
      RControl Factory — index.html (vCLEAN-1+ENGINE + VENDOR ZIP + PAGES LINKS)
      PATCH:
-     - adiciona "./js/core/pages_links.js" (gera link PWA + abre fora do srcdoc + deploy hook)
+     - mover "./js/core/errors.js" para DEPOIS do ./app.js (garante UI/slots já existirem e volta o painel de erros)
      - mantém o resto igual ao teu padrão
 -->
 <!doctype html>
@@ -60,7 +60,10 @@
           "./js/core/vfs_overrides.js",
           "./js/core/vfs_shim.js",
           "./js/core/mother_selfupdate.js",
-          "./js/core/errors.js",
+
+          // PATCH: errors.js movido p/ depois do app.js (garante shell/slots)
+          // "./js/core/errors.js",
+
           "./js/core/risk.js",
           "./js/core/snapshot.js",
           "./js/core/selfheal.js",
@@ -79,7 +82,7 @@
           "./js/engine/builder.js",
           "./js/engine/engine.js",
 
-          // ✅ 3º degrau: PWA link + abrir certo + deploy hook
+          // ✅ PWA link + abrir certo + deploy hook
           "./js/core/pages_links.js",
 
           "./js/admin.github.js"
@@ -105,7 +108,10 @@
           log("app.js missing/failed ❌", (e.message||e));
         }
 
+        // PATCH: carrega errors.js aqui (depois do app.js) p/ voltar UI de detecção de erros
         const afterApp = [
+          "./js/core/errors.js",
+
           "./js/core/zip_vault.js",
           "./js/core/agent_zip_bridge.js"
         ];
