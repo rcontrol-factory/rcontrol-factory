@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>RCF • SAFE BOOT</title>
+  <meta name="theme-color" content="#0b1020" />
+  <base href="./" />
+  <link rel="manifest" href="./manifest.json" />
+  <link rel="stylesheet" href="./styles.css" />
+  <meta name="rcf-safe" content="SAFE_BOOT_2026_02_23" />
+  <style>
+    body{background:#0b1020;color:#eaf0ff;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;}
+    .rcf_safe{max-width:920px;margin:0 auto;padding:14px}
+    .rcf_card{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:16px;padding:14px;margin:12px 0}
+    .rcf_btn{border:0;border-radius:999px;padding:10px 12px;font-weight:800;margin:6px 8px 0 0}
+    .r{background:#ff4d4d;color:#111}
+    .g{background:#35d0b5;color:#111}
+    .d{background:rgba(255,255,255,.12);color:#eaf0ff;border:1px solid rgba(255,255,255,.18)}
+    pre{white-space:pre-wrap;background:rgba(0,0,0,.35);padding:10px;border-radius:12px;border:1px solid rgba(255,255,255,.10);min-height:140px}
+    code{background:rgba(255,255,255,.10);padding:2px 6px;border-radius:8px}
+  </style>
+</head>
+
+<body>
+  <noscript>Ative o JavaScript para usar o app.</noscript>
+
+  <div id="app">
+    <div class="rcf_safe">
+      <h2>RCF • SAFE BOOT</h2>
+
+      <div class="rcf_card">
+        <div><b>Objetivo:</b> sair da tela preta e recuperar o controle.</div>
+        <div style="opacity:.9;margin-top:6px">
+          Se o boot normal falhar, você ainda consegue limpar SW/cache e ver logs aqui.
+        </div>
+
+        <button class="rcf_btn r" id="u">Unregister SW</button>
+        <button class="rcf_btn r" id="c">Clear Caches</button>
+        <button class="rcf_btn d" id="k">Show SW status</button>
+        <button class="rcf_btn g" id="boot">Boot normal agora</button>
+        <button class="rcf_btn d" id="go">Abrir Factory (/app/)</button>
+      </div>
+
+      <div class="rcf_card">
+        <div><b>Log</b></div>
+        <pre id="log">starting…</pre>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  (function(){
+    const L = document.getElementById("log");
+    const log = (...a)=>{ try{ L.textContent += "\n" + a.join(" "); }catch{} };
+
+    const ts = ()=> new Date().toISOString();
+    const bust = (p)=> p + (p.includes("?") ? "&" : "?") + "cb=" + Date.now();
+
+    log("[" + ts() + "] SAFE_BOOT loaded ✅ base=" + document.baseURI);
+
+    async function unreg(){
+      try{
+        if(!("serviceWorker" in navigator)){ log("no SW support"); return; }
+        const regs = await navigator.serviceWorker.getRegistrations();
+        let ok=0;
+        for(const r of regs){ try{ if(await r.unregister()) ok++; }catch(e){} }
+        log("unregister ok=" + ok + " regs=" + regs.length);
+      }catch(e){ log("unregister err", (e && e.message) ? e.message : String(e)); }
+    }
+
+    async function clearCaches(){
+      try{
+        if(!("caches" in window)){ log("no caches API"); return; }
+        const keys = await caches.keys();
+        let del=0;
+        for(const k of keys){ try{ if(await caches.delete(k)) del++; }catch(e){} }
+        log("caches deleted=" + del + " keys=" + keys.length);
+      }catch(e){ log("caches err", (e && e.message) ? e.message : String(e)); }
+    }
+
+    async function swStatus(){
+      try{
+        const has = ("serviceWorker" in navigator);
+        log("sw supported=" + has);
+        if(!has) return;
+        log("controller=" + (!!navigator.serviceWorker.controller));
+        const regs = await navigator.serviceWorker.getRegistrations();
+        log("regs=" + regs.length);
+        for (const r of regs) {
+          try{ log(" - scope=" + (r.scope||"") ); }catch{}
+        }
+      }catch(e){ log("status err", (e && e.message) ? e.message : String(e)); }
+    }
+
+    function loadScript(src){
+      return new Promise((resolve, reject)=>{
+        const s = document.createElement("script");
+        s.src = bust(src);
+        s.async = false;
+        s.onload = ()=> resolve(src);
+        s.onerror = ()=> reject(new Error("load failed: " + src));
+        document.head.appendChild(s);
+      });
+    }
+
+    async function bootNormal(){
+      log("[" + ts() + "] bootNormal…");
+      const modules = [
+        "./js/core/logger.js",
+        "./js/core/stability_guard.js",
+        "./js/core/storage.js",
+        "./js/core/github_sync.js",
+        "./js/core/vfs_overrides.js",
+        "./js/core/vfs_shim.js",
+        "./js/core/mother_selfupdate.js",
+        "./js/core/errors.js",
+        "./js/core/ui_safety.js",
+        "./js/core/ui_compact_outputs.js",
+        "./js/core/ui_bindings.js",
+        "./js/core/doctor_scan.js",
+        "./js/core/diagnostics.js",
+        "./js/core/preview_runner.js",
+        "./js/core/injector.js",
+        "./js/engine/template_registry.js",
+        "./js/engine/module_registry.js",
+        "./js/engine/builder.js",
+        "./js/engine/engine.js",
+        "./js/core/pages_links.js",
+        "./js/admin.github.js",
+        "./app.js",
+        "./js/core/zip_vault.js",
+        "./js/core/agent_zip_bridge.js"
+      ];
+
+      for (const src of modules) {
+        try { await loadScript(src); log("loaded ✅", src); }
+        catch(e){ log("failed ❌", src, "::", (e && e.message) ? e.message : String(e)); }
+      }
+      log("[" + ts() + "] bootNormal finished.");
+    }
+
+    document.getElementById("u").onclick = unreg;
+    document.getElementById("c").onclick = clearCaches;
+    document.getElementById("k").onclick = swStatus;
+    document.getElementById("boot").onclick = bootNormal;
+    document.getElementById("go").onclick = async ()=>{
+      // emergência: tenta “desenroscar” e voltar pro app
+      await swStatus();
+      location.href = bust("./");
+    };
+
+    swStatus();
+  })();
+  </script>
+</body>
+</html>
