@@ -17,6 +17,29 @@
   window.__RCF_BOOTED__ = true;
 
   // =========================================================
+  // BOOT WATCHDOG (anti "carregando pra sempre")
+  // - Se a UI não montar em poucos segundos, abre tela controlada com instruções
+  // =========================================================
+  try {
+    setTimeout(() => {
+      try {
+        if (document.getElementById("rcfRoot")) return;
+        const msg = [
+          "UI não montou (rcfRoot ausente).",
+          "Provável causa: index.html sem <div id=\"app\">, ou SW/cache preso, ou erro antes do render.",
+          "",
+          "Ação rápida:",
+          "1) Tools -> Unregister SW",
+          "2) Tools -> Clear SW Cache",
+          "3) Recarregar"
+        ].join("\n");
+        try { Logger.write("boot watchdog:", msg); } catch {}
+        try { Stability.showErrorScreen("Boot travou", msg); } catch {}
+      } catch {}
+    }, 2800);
+  } catch {}
+
+  // =========================================================
   // CORE: Utils
   // =========================================================
   const $ = (sel, root = document) => root.querySelector(sel);
@@ -695,8 +718,18 @@
   // UI Shell + Views
   // =========================================================
   function renderShell() {
-    const root = $("#app");
-    if (!root) return;
+    // PATCH: garante root mesmo se o index.html mudou (anti tela branca "carregando...")
+    let root = $("#app");
+    if (!root) {
+      try {
+        root = document.createElement("div");
+        root.id = "app";
+        (document.body || document.documentElement).appendChild(root);
+        try { Logger.write("boot:", "created #app root fallback ✅"); } catch {}
+      } catch {
+        return;
+      }
+    }
     if ($("#rcfRoot")) return;
 
     root.innerHTML = `
@@ -2856,8 +2889,17 @@
       catch (e) { Logger.write("engine init err:", e?.message || e); }
 
       // não força SW duplicado (mas tenta auto-fix)
-      const swr = await swCheckAutoFix();
-      if (!swr.ok) Logger.write("sw warn:", swr.status, swr.detail, swr.err ? ("err=" + swr.err) : "");
+// PATCH: iOS/Safari às vezes "pendura" em register/getRegistration -> não pode travar o boot.
+// Rodamos em background + timeout curto.
+try {
+  const swr = await Promise.race([
+    swCheckAutoFix(),
+    new Promise((res) => setTimeout(() => res({ ok:false, status:"timeout", detail:"TIMEOUT 3000ms (swCheckAutoFix)" }), 3000))
+  ]);
+  if (!swr.ok) Logger.write("sw warn:", swr.status, swr.detail, swr.err ? ("err=" + swr.err) : "");
+} catch (e) {
+  Logger.write("sw warn:", "exception", e?.message || e);
+}
 
       Logger.write("RCF V8 init ok — mode:", State.cfg.mode);
       safeSetStatus("OK ✅");
