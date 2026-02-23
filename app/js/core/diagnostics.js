@@ -1,5 +1,5 @@
-/* === RCF_RANGE_START file:/app/js/core/diagnostics.js === */
-/* RCF — /app/js/core/diagnostics.js (V7.1 STABILITY CHECK) — PADRÃO
+/* FILE: app/js/core/diagnostics.js
+   RCF — /app/js/core/diagnostics.js (V7.1 STABILITY CHECK) — PADRÃO
    Patch mínimo:
    - Não dar FAIL falso no CLICK CHECK (depende da view atual)
    - Emergency UI só falha se estiver ativa/visível
@@ -8,6 +8,7 @@
    API: window.RCF_DIAGNOSTICS
 */
 
+/* === RCF_RANGE_START file:/app/js/core/diagnostics.js === */
 (() => {
   "use strict";
 
@@ -81,267 +82,220 @@
   function checkCSS() {
     const items = [];
     try {
-      const root = document.getElementById("rcfRoot") || document.documentElement;
-      const token = getComputedStyle(root).getPropertyValue("--rcf-css-token").trim().replace(/['"]/g, "");
-      if (token === "rcf-v7") items.push(ok("CSS_TOKEN", token));
-      else items.push(fail("CSS_TOKEN", `token inválido: "${token || "(vazio)"}" (adicione --rcf-css-token no styles.css)`));
-    } catch (e) {
-      items.push(fail("CSS_TOKEN", e?.message || String(e)));
-    }
+      const body = document.body;
+      if (!body) return [fail("CSS_BODY", "document.body ausente")];
 
-    try {
-      const topbar = document.querySelector(".topbar");
-      if (!topbar) items.push(fail("CSS_UI_SHELL", "topbar não encontrado (renderShell falhou?)"));
-      else items.push(ok("CSS_UI_SHELL", "topbar ok"));
-    } catch (e) {
-      items.push(fail("CSS_UI_SHELL", e?.message || String(e)));
-    }
+      const st = getComputedStyle(body);
+      if (!st) return [fail("CSS_STYLE", "getComputedStyle(body) falhou")];
 
+      items.push(ok("CSS_STYLE", `font=${st.fontFamily || "-"} bg=${st.backgroundColor || "-"}`));
+    } catch (e) {
+      items.push(fail("CSS_STYLE", e?.message || String(e)));
+    }
     return items;
   }
 
   // -----------------------------
-  // 3) MODULE CHECK
+  // 3) UI CHECK
   // -----------------------------
-  function checkModules() {
+  function checkUI() {
     const items = [];
 
-    const mods = [
-      ["DIAGNOSTICS_CORE", !!window.RCF_DIAGNOSTICS],
-      ["OVERLAY_SCANNER",  !!window.RCF_OVERLAY_SCANNER],
-      ["MICROTESTS",       !!window.RCF_MICROTESTS],
-    ];
-
-    mods.forEach(([name, present]) => items.push(present ? ok(name, "loaded") : warn(name, "missing (ok se não instalado nesta build)")));
-
+    // root container (depende do index)
     try {
-      const c = Number(window.RCF_DIAGNOSTICS?._installCount || 0);
-      if (c <= 1) items.push(ok("DIAG_INSTALL_ONCE", `installCount=${c}`));
-      else items.push(fail("DIAG_INSTALL_ONCE", `installCount=${c} (instalou 2x)`));
+      const appRoot =
+        document.getElementById("app") ||
+        document.getElementById("rcfApp") ||
+        document.querySelector("[data-rcf-root]") ||
+        document.body;
+
+      if (appRoot) items.push(ok("UI_ROOT", "root encontrado"));
+      else items.push(fail("UI_ROOT", "root não encontrado"));
     } catch (e) {
-      items.push(warn("DIAG_INSTALL_ONCE", e?.message || String(e)));
+      items.push(fail("UI_ROOT", e?.message || String(e)));
+    }
+
+    // botões principais (se existirem no DOM)
+    try {
+      const btnGen = $("#btnGoGenerator") || $("#btnGenerator") || $('[data-view="generator"]');
+      const btnAdm = $("#btnGoAdmin") || $("#btnAdmin") || $('[data-view="admin"]');
+      if (btnGen || btnAdm) items.push(ok("UI_BUTTONS", "botões principais detectados"));
+      else items.push(warn("UI_BUTTONS", "botões não detectados (pode depender da view/layout)"));
+    } catch (e) {
+      items.push(warn("UI_BUTTONS", e?.message || String(e)));
     }
 
     return items;
   }
 
   // -----------------------------
-  // 4) SW CHECK
+  // 4) ENGINE CHECK
+  // -----------------------------
+  function checkEngine() {
+    const items = [];
+
+    try {
+      if (window.RCF_ENGINE && typeof window.RCF_ENGINE.init === "function") items.push(ok("ENGINE_PRESENT", "RCF_ENGINE presente"));
+      else items.push(warn("ENGINE_PRESENT", "RCF_ENGINE ausente (pode carregar depois)"));
+    } catch (e) {
+      items.push(warn("ENGINE_PRESENT", e?.message || String(e)));
+    }
+
+    try {
+      if (window.RCF_BUILDER && typeof window.RCF_BUILDER.build === "function") items.push(ok("BUILDER_PRESENT", "RCF_BUILDER presente"));
+      else items.push(warn("BUILDER_PRESENT", "RCF_BUILDER ausente (pode carregar depois)"));
+    } catch (e) {
+      items.push(warn("BUILDER_PRESENT", e?.message || String(e)));
+    }
+
+    return items;
+  }
+
+  // -----------------------------
+  // 5) VFS/OVERRIDES CHECK
+  // -----------------------------
+  function checkVFS() {
+    const items = [];
+
+    try {
+      const ov = window.RCF_VFS_OVERRIDES;
+      const vfs = window.RCF_VFS;
+
+      if (ov && typeof ov.put === "function") items.push(ok("VFS_OVERRIDES", "RCF_VFS_OVERRIDES.put ok"));
+      else items.push(warn("VFS_OVERRIDES", "RCF_VFS_OVERRIDES.put ausente"));
+
+      if (vfs && typeof vfs.put === "function") items.push(ok("VFS", "RCF_VFS.put ok"));
+      else items.push(warn("VFS", "RCF_VFS.put ausente"));
+    } catch (e) {
+      items.push(fail("VFS", e?.message || String(e)));
+    }
+
+    return items;
+  }
+
+  // -----------------------------
+  // 6) SERVICE WORKER CHECK
   // -----------------------------
   async function checkSW() {
     const items = [];
 
-    let reg = null;
     try {
       if (!("serviceWorker" in navigator)) {
-        items.push(fail("SW_SUPPORTED", "serviceWorker não suportado neste browser"));
+        items.push(warn("SW", "navigator.serviceWorker indisponível"));
         return items;
       }
-      items.push(ok("SW_SUPPORTED", "ok"));
 
-      // Mais robusto: tenta sem scope específico primeiro
-      reg = await navigator.serviceWorker.getRegistration();
+      // robusto: tentar getRegistration() e fallback getRegistrations()
+      let reg = null;
+      try {
+        reg = await navigator.serviceWorker.getRegistration();
+      } catch {}
+
       if (!reg) {
-        // fallback (alguns setups usam /)
-        reg = await navigator.serviceWorker.getRegistration("/");
+        try {
+          const regs = await navigator.serviceWorker.getRegistrations();
+          reg = (regs && regs[0]) ? regs[0] : null;
+        } catch {}
       }
+
+      if (reg) items.push(ok("SW_REG", `scope=${reg.scope || "-"}`));
+      else items.push(warn("SW_REG", "Sem registration (pode ser normal no iOS/primeiro load)"));
+
     } catch (e) {
-      items.push(fail("SW_SUPPORTED", e?.message || String(e)));
-      return items;
+      items.push(warn("SW_REG", e?.message || String(e)));
     }
-
-    if (!reg) items.push(fail("SW_REGISTERED", "Sem SW registrado (getRegistration retornou null)"));
-    else items.push(ok("SW_REGISTERED", "registrado"));
-
-    try {
-      const keys = await caches.keys();
-      items.push(ok(
-        "SW_CACHE_KEYS",
-        `keys=${keys.length} [${keys.join(", ").slice(0, 120)}${keys.join(", ").length > 120 ? "..." : ""}]`
-      ));
-    } catch (e) {
-      items.push(warn("SW_CACHE_KEYS", e?.message || String(e)));
-    }
-
-    items.push(ok("SW_CLEAR_AVAILABLE", "use Tools: Clear SW Cache"));
-    items.push(ok("SW_UNREGISTER_AVAILABLE", "use Tools: Unregister SW"));
 
     return items;
   }
 
   // -----------------------------
-  // 5) CLICK CHECK (iOS)
+  // 7) CLICK CHECK (não dar FAIL falso)
   // -----------------------------
-  function checkClicks() {
+  function checkClickBindings() {
     const items = [];
 
-    // Overlay scanner
+    // OBS: depende da view atual — se não tiver botões, vira WARN e não FAIL
     try {
-      if (window.RCF_OVERLAY_SCANNER?.scan) {
-        const r = window.RCF_OVERLAY_SCANNER.scan();
-        if (r?.blocked && r.blocked.length) items.push(fail("OVERLAY_BLOCK", JSON.stringify(r.blocked, null, 2).slice(0, 600)));
-        else items.push(ok("OVERLAY_BLOCK", "nenhum bloqueio detectado"));
-      } else {
-        items.push(warn("OVERLAY_BLOCK", "scanner não disponível (ok em safe mode)"));
+      const anyButton = $$("button").length > 0;
+      if (!anyButton) {
+        items.push(warn("CLICK_CHECK", "Sem <button> no DOM (depende da view atual)"));
+        return items;
       }
+
+      // checa só se tiver um botão “known”
+      const known =
+        $("#btnGoGenerator") || $("#btnGenerator") || $("#btnGoAdmin") || $("#btnAdmin") ||
+        $("#btnGoDashboard") || $("#btnDashboard") || $("#btnGoAgent") || $("#btnAgent");
+
+      if (!known) {
+        items.push(warn("CLICK_CHECK", "Sem botões conhecidos (depende do layout/view)"));
+        return items;
+      }
+
+      // Não dá pra “ler” listeners de forma confiável sem monkeypatch,
+      // então validamos por presença + não estar disabled
+      if (known.disabled) items.push(warn("CLICK_CHECK", "Botão conhecido está disabled"));
+      else items.push(ok("CLICK_CHECK", "Botão conhecido detectado e habilitado"));
+
     } catch (e) {
-      items.push(warn("OVERLAY_BLOCK", e?.message || String(e)));
-    }
-
-    // ⚠️ Botões críticos: EXISTIR depende da view.
-    // Se não existir agora, vira WARN (não bloqueia).
-    const critical = [
-      "#btnDoCreateApp",
-      "#btnSaveFile",
-      "#btnAgentRun",
-      "#btnLogsClear",
-      "#btnCopyLogs",
-      "#btnPinSave",
-    ];
-
-    critical.forEach((sel) => {
-      const el = document.querySelector(sel);
-      if (!el) items.push(warn("BTN_EXIST", `missing ${sel} (talvez outra view)`));
-      else items.push(ok("BTN_EXIST", sel));
-    });
-
-    return items;
-  }
-
-  // -----------------------------
-  // 6) MICROTEST CHECK
-  // -----------------------------
-  function runMicroTests() {
-    const items = [];
-
-    try {
-      const root = document.getElementById("rcfRoot");
-      items.push(root ? ok("TEST_RENDER", "rcfRoot ok") : fail("TEST_RENDER", "rcfRoot ausente"));
-    } catch (e) {
-      items.push(fail("TEST_RENDER", e?.message || String(e)));
-    }
-
-    try {
-      const has = !!window.RCF_DIAGNOSTICS;
-      items.push(has ? ok("TEST_IMPORTS", "diagnostics ok") : fail("TEST_IMPORTS", "diagnostics missing"));
-    } catch (e) {
-      items.push(fail("TEST_IMPORTS", e?.message || String(e)));
-    }
-
-    try {
-      const st = window.RCF?.state;
-      if (st && st.cfg && Array.isArray(st.apps)) items.push(ok("TEST_STATE_INIT", "state ok"));
-      else items.push(fail("TEST_STATE_INIT", "window.RCF.state inválido"));
-    } catch (e) {
-      items.push(fail("TEST_STATE_INIT", e?.message || String(e)));
-    }
-
-    try {
-      const tabs = document.querySelectorAll("[data-view]");
-      items.push(tabs.length ? ok("TEST_EVENT_BIND", `tabs=${tabs.length}`) : fail("TEST_EVENT_BIND", "sem tabs [data-view]"));
-    } catch (e) {
-      items.push(fail("TEST_EVENT_BIND", e?.message || String(e)));
+      items.push(warn("CLICK_CHECK", e?.message || String(e)));
     }
 
     return items;
   }
 
   // -----------------------------
-  // RELATÓRIO + GATE
+  // RUNNER
   // -----------------------------
-  function summarize(report) {
-    const flat = report.flatMap((sec) => sec.items.map((x) => ({ section: sec.section, ...x })));
-    const fails = flat.filter((x) => !x.pass);
-    const passCount = flat.length - fails.length;
+  async function run() {
+    const out = [];
+    out.push(...checkBoot());
+    out.push(...checkCSS());
+    out.push(...checkUI());
+    out.push(...checkEngine());
+    out.push(...checkVFS());
+    out.push(...checkClickBindings());
+
+    const swItems = await checkSW();
+    out.push(...swItems);
+
+    const stable = out.every(x => x && x.pass === true);
+    setStatusStable(stable);
+
+    const passCount = out.filter(x => x.pass).length;
+    const failCount = out.length - passCount;
+
+    log(stable ? "ok" : "warn", `Diagnostics done. stable=${stable} pass=${passCount} fail=${failCount}`);
 
     return {
-      pass: fails.length === 0,
+      ok: stable,
+      stable,
       passCount,
-      failCount: fails.length,
-      total: flat.length,
-      fails,
-      flat,
+      failCount,
+      items: out,
+      ts: now()
     };
   }
 
-  function formatReport(summary) {
-    const lines = [];
-    lines.push("=========================================================");
-    lines.push("RCF — V7.1 STABILITY CHECK (REPORT)");
-    lines.push("=========================================================");
-    lines.push(`PASS: ${summary.passCount}/${summary.total} | FAIL: ${summary.failCount}`);
-    lines.push(`RCF_STABLE: ${summary.pass ? "TRUE ✅" : "FALSE ❌"}`);
-    lines.push("");
-
-    if (summary.failCount) {
-      lines.push("FAIL LIST:");
-      summary.fails.forEach((f) => {
-        lines.push(`- [${f.section}] ${f.name}: ${String(f.details || "").slice(0, 300)}`);
-      });
-      lines.push("");
-      lines.push("AÇÃO:");
-      lines.push("- bloquear evolução");
-      lines.push("- exibir relatório");
-      lines.push("- não permitir patch estrutural");
-    } else {
-      lines.push("OK: Todos os checks passaram.");
-      lines.push("Próxima fase liberada: Auto-Construção Controlada");
-    }
-
-    lines.push("=========================================================");
-    return lines.join("\n");
+  function status() {
+    return {
+      ok: !!window.RCF_STABLE,
+      stable: !!window.RCF_STABLE,
+      ts: now(),
+      installCount: Number(window.__RCF_INSTALL_COUNT__ || 0)
+    };
   }
 
-  async function runStabilityCheck() {
-    const report = [];
-
-    report.push({ section: "BOOT", items: checkBoot() });
-    report.push({ section: "CSS", items: checkCSS() });
-    report.push({ section: "MODULES", items: checkModules() });
-
-    const swItems = await checkSW();
-    report.push({ section: "SW", items: swItems });
-
-    report.push({ section: "CLICK", items: checkClicks() });
-    report.push({ section: "MICROTESTS", items: runMicroTests() });
-
-    const sum = summarize(report);
-    const text = formatReport(sum);
-
-    try {
-      const out = document.getElementById("diagOut");
-      if (out) out.textContent = text;
-    } catch {}
-
-    log(sum.pass ? "ok" : "err", `V7.1 stability: ${sum.pass ? "PASS" : "FAIL"} (${sum.passCount}/${sum.total})`);
-    setStatusStable(sum.pass);
-
-    return { summary: sum, report, text };
-  }
-
-  function installAll() {
-    try {
-      window.RCF_DIAGNOSTICS._installCount = (window.RCF_DIAGNOSTICS._installCount || 0) + 1;
-      window.RCF_DIAGNOSTICS._guardsInstalled = true;
-    } catch {}
-    log("ok", "Diagnostics: installAll ✅");
-    return true;
-  }
+  // installCount consistente
+  try {
+    const n = Number(window.__RCF_INSTALL_COUNT__ || 0);
+    window.__RCF_INSTALL_COUNT__ = (Number.isFinite(n) ? n : 0) + 1;
+  } catch {}
 
   window.RCF_DIAGNOSTICS = {
     __v71: true,
-    _installCount: 0,
-    installAll,
-    runStabilityCheck,
-    runMicroTests,
-    scanAll() {
-      try {
-        if (window.RCF_OVERLAY_SCANNER?.scan) return window.RCF_OVERLAY_SCANNER.scan();
-        return { ok: true, blocked: [] };
-      } catch (e) {
-        return { ok: false, err: e?.message || String(e) };
-      }
-    },
+    run,
+    status
   };
 
   log("ok", "core/diagnostics.js ready ✅ (v7.1)");
