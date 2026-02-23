@@ -1,198 +1,328 @@
 /* FILE: app/js/core/doctor_scan.js
-   RControl Factory — Doctor Scan (READ-ONLY) — v1.0 SAFE
-   Objetivo:
-   - Não corrige nada automaticamente.
-   - Apenas detecta/indica possíveis pontos de falha e gera um relatório copiável.
-   - Monta UI no slot do Agente (rcfAgentSlotTools), sem quebrar se não existir.
+   RControl Factory — Doctor Scan — v1.0 (SAFE)
+
+   ✅ Apenas DIAGNÓSTICO (não corrige, não remove cache, não mexe em SW)
+   ✅ UI leve no painel do Agent (slot #rcfAgentSlotTools) ou fallback no body
+   ✅ Gera um relatório copiável
+
+   IMPORTANTE:
+   - Este módulo NÃO tenta “resolver”. Ele só aponta.
+   - Qualquer ação destrutiva fica com o operador (você).
 */
+
 (() => {
   "use strict";
 
-  const VERSION = "v1.0";
-  if (window.__RCF_DOCTOR_SCAN_LOADED__) return;
-  window.__RCF_DOCTOR_SCAN_LOADED__ = true;
+  const VER = "1.0";
+  const TAG = "doctor_scan";
 
-  const log = (...a) => { try { console.log("[DOCTOR]", ...a); } catch {} };
-  const now = () => new Date().toISOString();
-
-  function qs(sel, root=document){ try { return root.querySelector(sel); } catch { return null; } }
-
-  function getSWInfo() {
-    const out = { supported: false, controller: false, regs: 0, scope: null };
+  // logger compat: tenta usar o logger da Factory, senão console
+  function logLine(level, msg, obj) {
+    const line = `[${TAG}] ${msg}`;
     try {
-      out.supported = ("serviceWorker" in navigator);
-      out.controller = !!(navigator.serviceWorker && navigator.serviceWorker.controller);
+      if (typeof window.RCF_LOG === "function") {
+        window.RCF_LOG(level || "INFO", line, obj);
+        return;
+      }
     } catch {}
-    return new Promise((resolve) => {
-      if (!("serviceWorker" in navigator)) return resolve(out);
-      try {
-        navigator.serviceWorker.getRegistrations().then((regs) => {
-          out.regs = regs ? regs.length : 0;
-          try { out.scope = regs && regs[0] && regs[0].scope ? regs[0].scope : null; } catch {}
-          resolve(out);
-        }).catch(() => resolve(out));
-      } catch { resolve(out); }
-    });
-  }
-
-  function collectSignals(swInfo) {
-    const sig = [];
-    const has = (name) => { try { return !!window[name]; } catch { return false; } };
-
-    sig.push({ k: "ts", v: now() });
-    sig.push({ k: "doctor", v: VERSION });
-    sig.push({ k: "booted", v: !!window.__RCF_BOOTED__ });
-    sig.push({ k: "ui_ready", v: !!window.__RCF_UI_READY__ });
-
-    // core systems
-    sig.push({ k: "VFS", v: has("RCF_VFS") || has("__RCF_VFS__") || has("VFS") });
-    sig.push({ k: "GH_SYNC", v: has("RCF_GH_SYNC") || has("RCF_GITHUB_SYNC") });
-    sig.push({ k: "MAE", v: has("RCF_MAE") || has("MAE") || has("RCF_MOTHER") });
-
-    // optional subsystems
-    sig.push({ k: "ZIP_VAULT", v: has("RCF_ZIP_VAULT") });
-    sig.push({ k: "PREVIEW", v: has("RCF_PREVIEW_RUNNER") || has("RCF_PREVIEW") });
-
-    // sw
-    sig.push({ k: "sw_supported", v: !!swInfo.supported });
-    sig.push({ k: "sw_controller", v: !!swInfo.controller });
-    sig.push({ k: "sw_regs", v: Number(swInfo.regs || 0) });
-    sig.push({ k: "sw_scope", v: swInfo.scope || "" });
-
-    // storage sanity
     try {
-      const keys = Object.keys(localStorage || {});
-      sig.push({ k: "ls_keys", v: keys.length });
-      sig.push({ k: "ls_has_ghcfg", v: keys.includes("rcf:ghcfg") });
-    } catch {
-      sig.push({ k: "ls_keys", v: "ERR" });
-    }
-
-    // DOM slots
-    sig.push({ k: "slot_agent_tools", v: !!document.getElementById("rcfAgentSlotTools") });
-
-    return sig;
+      const fn = (level === "ERR") ? console.error : (level === "WARN" ? console.warn : console.log);
+      fn(line, obj || "");
+    } catch {}
   }
 
-  function buildReport(sig) {
+  const $ = (sel, root = document) => root.querySelector(sel);
+
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    }[c]));
+  }
+
+  function nowISO() { return new Date().toISOString(); }
+
+  function pickToolsRoot() {
+    // prioridade: painel do Agent
+    const a = $("#rcfAgentSlotTools");
+    if (a) return a;
+
+    // fallback: qualquer slot conhecido
+    const b = $("#rcfToolsSlot") || $("#rcfAdminSlotTools") || $("#rcfSlotTools");
+    if (b) return b;
+
+    // fallback final
+    return document.body;
+  }
+
+  function ensureUI() {
+    const root = pickToolsRoot();
+
+    // já existe?
+    if ($("#rcfDoctorCard", root)) return;
+
+    const wrap = document.createElement("div");
+    wrap.id = "rcfDoctorCard";
+    wrap.style.cssText = [
+      "margin:10px 0",
+      "padding:12px",
+      "border-radius:14px",
+      "border:1px solid rgba(255,255,255,.14)",
+      "background:rgba(255,255,255,.06)"
+    ].join(";");
+
+    wrap.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+        <div>
+          <div style="font-weight:900">🩺 Doctor Scan <span style="opacity:.75;font-weight:700">(v${esc(VER)})</span></div>
+          <div style="opacity:.8;font-size:12px;margin-top:2px">Diagnóstico seguro (sem ações automáticas).</div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button id="rcfDoctorRun" style="border:0;border-radius:999px;padding:10px 12px;font-weight:900;background:#35d0b5;color:#111">Rodar Scan</button>
+          <button id="rcfDoctorCopy" style="border:1px solid rgba(255,255,255,.18);border-radius:999px;padding:10px 12px;font-weight:900;background:rgba(255,255,255,.10);color:#eaf0ff">Copiar relatório</button>
+        </div>
+      </div>
+      <pre id="rcfDoctorOut" style="margin-top:10px;white-space:pre-wrap;background:rgba(0,0,0,.35);padding:10px;border-radius:12px;border:1px solid rgba(255,255,255,.10);min-height:120px">Doctor pronto ✅ Clique em “Rodar Scan”.</pre>
+    `;
+
+    root.appendChild(wrap);
+
+    const out = $("#rcfDoctorOut", wrap);
+    const btnRun = $("#rcfDoctorRun", wrap);
+    const btnCopy = $("#rcfDoctorCopy", wrap);
+
+    btnRun.onclick = async () => {
+      try {
+        out.textContent = `[${nowISO()}] Rodando Doctor Scan…\n`;
+        const rep = await runScan();
+        out.textContent = rep;
+      } catch (e) {
+        out.textContent += `\n[ERRO] ${e && e.message ? e.message : String(e)}\n`;
+      }
+    };
+
+    btnCopy.onclick = async () => {
+      try {
+        const txt = out.textContent || "";
+        await navigator.clipboard.writeText(txt);
+        out.textContent += `\n[${nowISO()}] Copiado ✅\n`;
+      } catch (e) {
+        out.textContent += `\n[${nowISO()}] Não consegui copiar automaticamente (iOS às vezes bloqueia). Selecione o texto e copie manual.\n`;
+      }
+    };
+
+    logLine("OK", "UI injected ✅");
+  }
+
+  async function safeJsonParse(s) {
+    try { return JSON.parse(s); } catch { return null; }
+  }
+
+  async function getSWInfo() {
+    const info = { supported: false, controller: false, regs: [] };
+    try {
+      info.supported = ("serviceWorker" in navigator);
+      if (!info.supported) return info;
+      info.controller = !!navigator.serviceWorker.controller;
+      const regs = await navigator.serviceWorker.getRegistrations();
+      for (const r of regs) {
+        info.regs.push({ scope: r.scope || "", active: !!r.active, waiting: !!r.waiting, installing: !!r.installing });
+      }
+    } catch (e) {
+      info.err = e && e.message ? e.message : String(e);
+    }
+    return info;
+  }
+
+  async function getCachesInfo() {
+    const info = { supported: false, keys: [] };
+    try {
+      info.supported = ("caches" in window);
+      if (!info.supported) return info;
+      const keys = await caches.keys();
+      info.keys = keys.slice(0, 30);
+      info.total = keys.length;
+    } catch (e) {
+      info.err = e && e.message ? e.message : String(e);
+    }
+    return info;
+  }
+
+  function getLSInfo() {
+    const k = (key) => {
+      try { return localStorage.getItem(key); } catch { return null; }
+    };
+    const has = (key) => {
+      try { return localStorage.getItem(key) != null; } catch { return false; }
+    };
+
+    const out = {};
+    const keys = [
+      "mother_bundle_local",
+      "rcf:ghcfg",
+      "rcf:apps",
+      "rcf:active",
+      "rcf:zip_vault",
+      "rcf:zip_templates",
+      "rcf:vfs_overrides"
+    ];
+
+    for (const key of keys) {
+      const v = k(key);
+      out[key] = {
+        present: has(key),
+        bytes: v ? v.length : 0
+      };
+    }
+    return out;
+  }
+
+  async function fetchTypeCheck(path) {
+    // check leve pra detectar “HTML no lugar de JS”
+    try {
+      const r = await fetch(path, { cache: "no-store" });
+      const ct = (r.headers.get("content-type") || "").toLowerCase();
+      const status = r.status;
+      let sniff = "";
+      try {
+        const txt = await r.text();
+        sniff = txt.slice(0, 120).replace(/\s+/g, " ");
+      } catch {}
+      const looksHtml = sniff.includes("<!doctype") || sniff.includes("<html") || ct.includes("text/html");
+      return { path, status, ct, looksHtml, sniff };
+    } catch (e) {
+      return { path, err: e && e.message ? e.message : String(e) };
+    }
+  }
+
+  async function runScan() {
     const lines = [];
-    lines.push("RCF Doctor Scan Report");
-    lines.push("----------------------");
-    for (const it of sig) lines.push(`${it.k}: ${it.v}`);
-    lines.push("");
-    lines.push("Notes:");
-    lines.push("- Este relatório é somente leitura (não aplica mudanças).");
-    lines.push("- Se algum item core estiver false, o módulo relacionado pode não ter carregado (ex.: index.html não incluiu).");
+    lines.push(`[${nowISO()}] RControl Factory — Doctor Scan v${VER}`);
+    lines.push(``);
+
+    // básicos
+    lines.push(`ENV`);
+    lines.push(`- href: ${location.href}`);
+    lines.push(`- baseURI: ${document.baseURI}`);
+    lines.push(`- ua: ${navigator.userAgent}`);
+    lines.push(``);
+
+    // status módulos (somente presença, sem assumir)
+    lines.push(`MÓDULOS (presença)`);
+    lines.push(`- RCF_GH_SYNC: ${!!window.RCF_GH_SYNC}`);
+    lines.push(`- RCF_VFS: ${!!window.RCF_VFS || !!window.RCF_VFS_OVERRIDES || !!window.VFS_OVERRIDES}`);
+    lines.push(`- RCF_AGENT: ${!!window.RCF_AGENT || !!window.RCF_AGENT_RUNTIME}`);
+    lines.push(`- ZIP VAULT: ${!!window.RCF_ZIP_VAULT || !!window.RCF_AGENT_ZIP_BRIDGE}`);
+    lines.push(``);
+
+    // SW
+    const sw = await getSWInfo();
+    lines.push(`SERVICE WORKER`);
+    lines.push(`- supported: ${sw.supported}`);
+    if (sw.supported) {
+      lines.push(`- controller: ${sw.controller}`);
+      if (sw.err) lines.push(`- err: ${sw.err}`);
+      lines.push(`- registrations: ${sw.regs.length}`);
+      for (const r of sw.regs.slice(0, 10)) {
+        lines.push(`  - scope=${r.scope} active=${r.active} waiting=${r.waiting} installing=${r.installing}`);
+      }
+    }
+    lines.push(``);
+
+    // caches
+    const ci = await getCachesInfo();
+    lines.push(`CACHES API`);
+    lines.push(`- supported: ${ci.supported}`);
+    if (ci.supported) {
+      if (ci.err) lines.push(`- err: ${ci.err}`);
+      lines.push(`- total keys: ${ci.total || 0}`);
+      for (const k of (ci.keys || [])) lines.push(`  - ${k}`);
+      if ((ci.total || 0) > (ci.keys || []).length) lines.push(`  ... (${(ci.total || 0) - (ci.keys || []).length} mais)`);
+    }
+    lines.push(``);
+
+    // localStorage
+    lines.push(`LOCALSTORAGE (tamanho aproximado)`);
+    const ls = getLSInfo();
+    for (const key of Object.keys(ls)) {
+      const it = ls[key];
+      lines.push(`- ${key}: present=${it.present} bytes=${it.bytes}`);
+    }
+    lines.push(``);
+
+    // mother bundle quick parse
+    lines.push(`MOTHER BUNDLE (quick)`);
+    try {
+      const raw = localStorage.getItem("mother_bundle_local");
+      if (!raw) {
+        lines.push(`- mother_bundle_local: ausente`);
+      } else {
+        const j = await safeJsonParse(raw);
+        const files = j && j.files ? j.files : null;
+        const count = files ? (Array.isArray(files) ? files.length : Object.keys(files).length) : 0;
+        lines.push(`- present: sim`);
+        lines.push(`- version: ${j && j.version ? j.version : "(?)"}`);
+        lines.push(`- ts: ${j && j.ts ? j.ts : "(?)"}`);
+        lines.push(`- filesCount: ${count}`);
+      }
+    } catch (e) {
+      lines.push(`- erro lendo mother_bundle_local: ${e && e.message ? e.message : String(e)}`);
+    }
+    lines.push(``);
+
+    // check “HTML no lugar de JS” (problema que você viu com JSZip)
+    lines.push(`FETCH CHECK (HTML no lugar de JS)`);
+    const checks = [
+      "./app.js",
+      "./js/core/doctor_scan.js",
+      "./app/vendor/jszip.min.js",
+      "./js/vendor/jszip.min.js"
+    ];
+    for (const p of checks) {
+      const r = await fetchTypeCheck(p);
+      if (r.err) {
+        lines.push(`- ${p}: ERR ${r.err}`);
+      } else {
+        lines.push(`- ${p}: status=${r.status} ct=${r.ct || "(none)"} looksHtml=${r.looksHtml}`);
+      }
+    }
+    lines.push(``);
+
+    // recomendações seguras (sem executar)
+    lines.push(`RECOMENDAÇÕES (SAFE)`);
+    lines.push(`- Se looksHtml=true em um .js: caminho/roteamento está errado ou SW está servindo fallback HTML.`);
+    lines.push(`- Se SW controller=true e cache keys explodindo: pode exigir “Unregister SW + Clear Caches” (manual).`);
+    lines.push(`- Se mother_bundle_local filesCount=0: MAE/Bundle não salvou corretamente (ver gh pull + save).`);
+    lines.push(``);
+
     return lines.join("\n");
   }
 
-  function renderInto(slot, reportText) {
-    if (!slot) return;
+  // API pública (se você quiser chamar de outro lugar)
+  window.RCF_DOCTOR = {
+    version: VER,
+    ensureUI,
+    runScan
+  };
 
-    let box = qs("#rcfDoctorBox", slot);
-    if (!box) {
-      box = document.createElement("div");
-      box.id = "rcfDoctorBox";
-      box.style.marginTop = "10px";
-      box.style.padding = "10px";
-      box.style.border = "1px solid rgba(255,255,255,.12)";
-      box.style.borderRadius = "12px";
-      box.style.background = "rgba(0,0,0,.15)";
-      box.innerHTML = `
-        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-          <button id="rcfDoctorRun" style="padding:8px 12px; border-radius:999px; border:1px solid rgba(255,255,255,.18); background:rgba(255,255,255,.06); color:#fff;">
-            Doctor Scan
-          </button>
-          <button id="rcfDoctorCopy" style="padding:8px 12px; border-radius:999px; border:1px solid rgba(255,255,255,.18); background:rgba(255,255,255,.06); color:#fff;">
-            Copiar relatório
-          </button>
-          <span id="rcfDoctorStatus" style="opacity:.8; font-size:12px;">pronto</span>
-        </div>
-        <pre id="rcfDoctorOut" style="margin:10px 0 0 0; white-space:pre-wrap; word-break:break-word; font-size:12px; line-height:1.25; opacity:.95;"></pre>
-      `;
-      slot.appendChild(box);
-    }
-
-    const out = qs("#rcfDoctorOut", box);
-    if (out) out.textContent = reportText || "";
-
-    const status = qs("#rcfDoctorStatus", box);
-    const btnRun = qs("#rcfDoctorRun", box);
-    const btnCopy = qs("#rcfDoctorCopy", box);
-
-    if (btnRun && !btnRun.__bound) {
-      btnRun.__bound = true;
-      btnRun.addEventListener("click", async () => {
-        try {
-          if (status) status.textContent = "rodando...";
-          const sw = await getSWInfo();
-          const sig = collectSignals(sw);
-          const rep = buildReport(sig);
-          if (out) out.textContent = rep;
-          if (status) status.textContent = "ok ✅";
-        } catch (e) {
-          if (status) status.textContent = "erro ❌";
-          if (out) out.textContent = "Doctor scan failed: " + (e && e.message ? e.message : String(e));
-        }
-      });
-    }
-
-    if (btnCopy && !btnCopy.__bound) {
-      btnCopy.__bound = true;
-      btnCopy.addEventListener("click", async () => {
-        try {
-          const txt = out ? out.textContent : "";
-          if (!txt) return;
-          if (navigator.clipboard && navigator.clipboard.writeText) {
-            await navigator.clipboard.writeText(txt);
-            if (status) status.textContent = "copiado ✅";
-          } else {
-            const ta = document.createElement("textarea");
-            ta.value = txt;
-            ta.style.position = "fixed";
-            ta.style.left = "-9999px";
-            document.body.appendChild(ta);
-            ta.select();
-            document.execCommand("copy");
-            document.body.removeChild(ta);
-            if (status) status.textContent = "copiado ✅";
-          }
-        } catch {
-          if (status) status.textContent = "falhou copiar ❌";
-        }
-      });
-    }
+  // mount automático (com tolerância)
+  function tryMountSoon() {
+    try { ensureUI(); } catch {}
   }
 
-  async function mount() {
-    try {
-      const slot = document.getElementById("rcfAgentSlotTools") || qs("[data-slot='rcfAgentSlotTools']");
-      if (!slot) {
-        log("slot rcfAgentSlotTools não encontrado; aguardando UI_READY...");
-        return false;
-      }
-      const sw = await getSWInfo();
-      const sig = collectSignals(sw);
-      const rep = buildReport(sig);
-      renderInto(slot, rep);
-      log("mounted ✅", VERSION);
-      return true;
-    } catch (e) {
-      log("mount failed", e);
-      return false;
-    }
+  // 1) tenta agora
+  tryMountSoon();
+
+  // 2) tenta quando DOM estiver pronto
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", () => setTimeout(tryMountSoon, 50), { once: true });
+  } else {
+    setTimeout(tryMountSoon, 50);
   }
 
-  window.RCF_DOCTOR = window.RCF_DOCTOR || {};
-  window.RCF_DOCTOR.version = VERSION;
-  window.RCF_DOCTOR.mount = mount;
+  // 3) tenta quando a Factory sinalizar UI_READY (se existir)
+  try {
+    window.addEventListener("RCF:UI_READY", () => setTimeout(tryMountSoon, 80));
+  } catch {}
 
-  (async () => {
-    const ok = await mount();
-    if (!ok) {
-      try { window.addEventListener("RCF:UI_READY", () => { mount(); }, { once: false }); } catch {}
-      try { setTimeout(() => { mount(); }, 600); } catch {}
-      try { setTimeout(() => { mount(); }, 1400); } catch {}
-    }
-  })();
+  logLine("OK", `ready ✅ (v${VER})`);
 })();
