@@ -1,6 +1,9 @@
 <!-- FILE: /app/index.html
      RControl Factory — index.html (vCLEAN-1+ENGINE + VENDOR ZIP + PAGES LINKS + EXTRAS3 + SWVER)
-     PATCH:
+     PATCH (2026-02-22 hotfix):
+     - ✅ FIX REGRESSÃO: ZIP/UI modules carregam DEPOIS do app.js, então precisamos reinjetar UI depois do load
+       -> POST-ZIP REINJECT (chama mountUI/mount/inject/init)
+     - ✅ MAE ALIAS: tenta mapear window.RCF_MAE / window.RCF_MOTHER caso o módulo exporte com outro nome
      - mantém DEGRAU 3 (auto extra-modules SAFE + 1 reload)
      - mantém ZIP modules carregando DEPOIS do app.js (evita botão sumir)
      - adiciona/garante "./js/core/pages_links.js"
@@ -21,7 +24,7 @@
   <link rel="manifest" href="./manifest.json" />
   <link rel="stylesheet" href="./styles.css" />
 
-  <meta name="rcf-index" content="vCLEAN-1+ENGINE+VENDORZIP+PAGESLINKS+EXTRAS3+SWVER" />
+  <meta name="rcf-index" content="vCLEAN-1+ENGINE+VENDORZIP+PAGESLINKS+EXTRAS3+SWVER+POSTZIPREINJECT" />
 </head>
 
 <body>
@@ -38,8 +41,7 @@
       window.__RCF_INDEX_BOOTED__ = true;
 
       // ✅ BUILD do SW (troque quando quiser forçar “quebra-cache”)
-      // Dica: mude só esse valor e publique -> iPhone pega na hora.
-      const RCF_SW_BUILD = "RCF_SW_BUILD_2026_02_22_01";
+      const RCF_SW_BUILD = "RCF_SW_BUILD_2026_02_22_02";
 
       function log(){ try { console.log.apply(console, ["[RCF/index]"].concat([].slice.call(arguments))); } catch(e){} }
 
@@ -96,9 +98,74 @@
           return { changed:true, list };
         }
 
-        // marcou como ok (sem precisar reload)
         try { sessionStorage.setItem(GUARD, "1"); } catch {}
         return { changed:false, list };
+      }
+
+      // =========================================================
+      // POST-ZIP REINJECT (corrige "UI_READY fired reinject_called=0")
+      // =========================================================
+      function postZipReinject(){
+        const tries = [
+          ["RCF_ZIP_VAULT", "mountUI"],
+          ["RCF_ZIP_VAULT", "mount"],
+          ["RCF_ZIP_VAULT", "injectUI"],
+          ["RCF_ZIP_VAULT", "inject"],
+          ["RCF_ZIP_VAULT", "init"],
+          ["RCF_AGENT_ZIP_BRIDGE", "mountUI"],
+          ["RCF_AGENT_ZIP_BRIDGE", "mount"],
+          ["RCF_AGENT_ZIP_BRIDGE", "init"]
+        ];
+
+        let called = 0;
+        for (const [objName, fnName] of tries) {
+          try {
+            const obj = window[objName];
+            const fn = obj && obj[fnName];
+            if (typeof fn === "function") {
+              fn.call(obj, { ui: window.RCF_UI });
+              called++;
+            }
+          } catch {}
+        }
+
+        try { window.RCF_LOGGER?.push?.("INFO", `POST-ZIP reinject ✅ called=${called}`); } catch {}
+        log("POST-ZIP reinject", "called=", called);
+
+        // também sinaliza evento de "late ready" (se algum módulo escutar)
+        try {
+          window.dispatchEvent(new CustomEvent("RCF:UI_READY", { detail: { ts: Date.now(), late: true } }));
+        } catch {}
+      }
+
+      // =========================================================
+      // MAE alias detector (caso o módulo exporte com outro nome)
+      // =========================================================
+      function ensureMaeAlias(){
+        try {
+          if (window.RCF_MAE || window.RCF_MOTHER) return true;
+
+          const candidates = [
+            window.RCF_MOTHER_SELFUPDATE,
+            window.MOTHER_SELFUPDATE,
+            window.MAE,
+            window.MOTHER
+          ].filter(Boolean);
+
+          const hit = candidates[0] || null;
+          if (hit) {
+            window.RCF_MAE = hit;
+            window.RCF_MOTHER = hit;
+            try { window.RCF_LOGGER?.push?.("OK", "MAE alias OK ✅"); } catch {}
+            log("MAE alias OK");
+            return true;
+          }
+
+          log("MAE alias: nenhum candidato encontrado");
+          return false;
+        } catch {
+          return false;
+        }
       }
 
       async function boot(){
@@ -170,6 +237,9 @@
           }
         }
 
+        // ✅ depois de carregar a mãe, tenta alias
+        try { ensureMaeAlias(); } catch {}
+
         // =========================================================
         // 2) app.js (cria UI/slots)
         // =========================================================
@@ -201,6 +271,9 @@
           }
         }
 
+        // ✅ HOTFIX: reinjetar UI depois do ZIP carregar
+        try { postZipReinject(); } catch {}
+
         // =========================================================
         // 4) SW register (versionado) — quebra-cache iOS
         // =========================================================
@@ -214,8 +287,6 @@
               .then((reg) => {
                 try { window.RCF_LOGGER?.push?.("BOOT", "sw register: ok ✅ " + swUrl); } catch {}
                 log("sw register ok", swUrl);
-
-                // tenta puxar update imediatamente (ajuda no iOS)
                 try { reg.update?.(); } catch {}
               })
               .catch((e) => {
