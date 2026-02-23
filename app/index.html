@@ -1,170 +1,151 @@
-<!-- FILE: /app/index.html
-     RCF — RECOVERY INDEX (SW/CACHE CLEANER) — 2026-02-22
-     Objetivo: sempre carregar (zero deps) e permitir limpar Service Worker / caches / storage.
--->
 <!doctype html>
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>RCF • Recovery</title>
-
-  <!-- tenta reduzir cache do HTML (nem sempre garante, mas ajuda) -->
-  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0" />
-  <meta http-equiv="Pragma" content="no-cache" />
-  <meta http-equiv="Expires" content="0" />
-
+  <title>RCF</title>
+  <meta name="theme-color" content="#0b1020" />
+  <base href="./" />
+  <link rel="manifest" href="./manifest.json" />
+  <link rel="stylesheet" href="./styles.css" />
+  <meta name="rcf-index" content="SAFE_BOOT_2026_02_22" />
   <style>
-    :root{color-scheme:dark;}
-    body{margin:0;background:#0b1020;color:#eaf0ff;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;}
-    .wrap{padding:18px;max-width:820px;margin:0 auto;}
-    .card{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:16px;margin:14px 0;}
-    h1{margin:6px 0 2px;font-size:22px}
-    p{margin:10px 0;opacity:.9;line-height:1.35}
-    .row{display:flex;gap:10px;flex-wrap:wrap}
-    button{
-      border:0;border-radius:999px;padding:12px 14px;font-weight:700;
-      background:#ff4d4d;color:#111;cursor:pointer
-    }
-    button.alt{background:#35d0b5}
-    button.dark{background:rgba(255,255,255,.10);color:#eaf0ff;border:1px solid rgba(255,255,255,.14)}
-    code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace}
-    pre{white-space:pre-wrap;background:rgba(0,0,0,.35);padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,.08)}
-    .small{font-size:12px;opacity:.75}
-    .ok{color:#7CFFA7}
-    .warn{color:#FFD36A}
-    .err{color:#FF7A7A}
+    /* garante algo visível mesmo se styles.css falhar */
+    body{background:#0b1020;color:#eaf0ff;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;}
+    .rcf_safe{max-width:920px;margin:0 auto;padding:14px}
+    .rcf_card{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:16px;padding:14px;margin:12px 0}
+    .rcf_btn{border:0;border-radius:999px;padding:10px 12px;font-weight:800;margin:6px 8px 0 0}
+    .r{background:#ff4d4d;color:#111}
+    .g{background:#35d0b5;color:#111}
+    .d{background:rgba(255,255,255,.12);color:#eaf0ff;border:1px solid rgba(255,255,255,.18)}
+    pre{white-space:pre-wrap;background:rgba(0,0,0,.35);padding:10px;border-radius:12px;border:1px solid rgba(255,255,255,.10);min-height:140px}
+    code{background:rgba(255,255,255,.10);padding:2px 6px;border-radius:8px}
   </style>
 </head>
+
 <body>
-  <div class="wrap">
-    <h1>RCF • RECOVERY MODE</h1>
-    <p>Se ficou tela preta, é <b>SW/cache preso</b>. Use os botões abaixo, depois clique <b>Reload</b>.</p>
+  <noscript>Ative o JavaScript para usar o app.</noscript>
 
-    <div class="card">
-      <div class="row">
-        <button id="btnUnreg">Unregister SW</button>
-        <button id="btnCaches">Clear Caches</button>
-        <button id="btnStorage" class="dark">Clear Storage</button>
-        <button id="btnHard" class="alt">Reload (cache-bust)</button>
+  <div id="app">
+    <div class="rcf_safe">
+      <h2>RCF • SAFE BOOT</h2>
+
+      <div class="rcf_card">
+        <div><b>Objetivo:</b> sair da tela preta e recuperar o controle.</div>
+        <div style="opacity:.9;margin-top:6px">
+          Se o boot normal falhar, você ainda consegue limpar SW/cache e ver logs aqui.
+        </div>
+
+        <button class="rcf_btn r" id="u">Unregister SW</button>
+        <button class="rcf_btn r" id="c">Clear Caches</button>
+        <button class="rcf_btn d" id="k">Show SW status</button>
+        <button class="rcf_btn g" id="boot">Boot normal agora</button>
       </div>
-      <p class="small">Dica iPhone: se o normal estiver preso, abra em <b>Aba Privada</b> e rode isso 1x.</p>
-    </div>
 
-    <div class="card">
-      <p class="small">Status:</p>
-      <pre id="log">Starting…</pre>
-    </div>
-
-    <div class="card">
-      <p class="small">
-        Depois de limpar: volte pro app normal. (Quando estabilizar, a gente volta seu index padrão.)
-      </p>
-      <div class="row">
-        <button id="btnGoApp" class="dark">Ir para Factory (./)</button>
+      <div class="rcf_card">
+        <div><b>Log</b></div>
+        <pre id="log">starting…</pre>
       </div>
     </div>
   </div>
 
   <script>
-    (function(){
-      const $ = (id)=>document.getElementById(id);
-      const logEl = $("log");
-      function log(msg, cls){
-        const line = msg + "\\n";
-        logEl.textContent += line;
-      }
-      function ts(){ return new Date().toISOString(); }
+  (function(){
+    const L = document.getElementById("log");
+    const log = (...a)=>{ try{ L.textContent += "\n" + a.join(" "); }catch{} };
 
-      function bustUrl(base){
-        const u = new URL(base, location.href);
-        u.searchParams.set("cb", String(Date.now()));
-        return u.toString();
-      }
+    const ts = ()=> new Date().toISOString();
+    log("[" + ts() + "] SAFE_BOOT loaded ✅ base=" + document.baseURI);
 
-      async function unregisterSW(){
-        log("\\n[" + ts() + "] Unregister SW…");
-        if (!("serviceWorker" in navigator)) {
-          log("  (no serviceWorker support)");
-          return { ok:true, count:0 };
+    async function unreg(){
+      try{
+        if(!("serviceWorker" in navigator)){ log("no SW support"); return; }
+        const regs = await navigator.serviceWorker.getRegistrations();
+        let ok=0;
+        for(const r of regs){ try{ if(await r.unregister()) ok++; }catch(e){} }
+        log("unregister ok=" + ok + " regs=" + regs.length);
+      }catch(e){ log("unregister err", (e && e.message) ? e.message : String(e)); }
+    }
+
+    async function clearCaches(){
+      try{
+        if(!("caches" in window)){ log("no caches API"); return; }
+        const keys = await caches.keys();
+        let del=0;
+        for(const k of keys){ try{ if(await caches.delete(k)) del++; }catch(e){} }
+        log("caches deleted=" + del + " keys=" + keys.length);
+      }catch(e){ log("caches err", (e && e.message) ? e.message : String(e)); }
+    }
+
+    async function swStatus(){
+      try{
+        const has = ("serviceWorker" in navigator);
+        log("sw supported=" + has);
+        if(!has) return;
+        log("controller=" + (!!navigator.serviceWorker.controller));
+        const regs = await navigator.serviceWorker.getRegistrations();
+        log("regs=" + regs.length);
+        for (const r of regs) {
+          try{ log(" - scope=" + (r.scope||"") ); }catch{}
         }
-        try{
-          const regs = await navigator.serviceWorker.getRegistrations();
-          let n = 0;
-          for (const r of regs) {
-            try{
-              const ok = await r.unregister();
-              if (ok) n++;
-            }catch(e){}
-          }
-          log("  ok: unregistered=" + n);
-          return { ok:true, count:n };
-        }catch(e){
-          log("  ERR: " + (e && e.message ? e.message : e));
-          return { ok:false, err:String(e) };
-        }
+      }catch(e){ log("status err", (e && e.message) ? e.message : String(e)); }
+    }
+
+    function loadScript(src){
+      return new Promise((resolve, reject)=>{
+        const s = document.createElement("script");
+        s.src = src + (src.includes("?") ? "&" : "?") + "cb=" + Date.now();
+        s.async = false;
+        s.onload = ()=> resolve(src);
+        s.onerror = ()=> reject(new Error("load failed: " + src));
+        document.head.appendChild(s);
+      });
+    }
+
+    async function bootNormal(){
+      log("[" + ts() + "] bootNormal…");
+      const modules = [
+        "./js/core/logger.js",
+        "./js/core/stability_guard.js",
+        "./js/core/storage.js",
+        "./js/core/github_sync.js",
+        "./js/core/vfs_overrides.js",
+        "./js/core/vfs_shim.js",
+        "./js/core/mother_selfupdate.js",
+        "./js/core/errors.js",
+        "./js/core/ui_safety.js",
+        "./js/core/ui_compact_outputs.js",
+        "./js/core/ui_bindings.js",
+        "./js/core/diagnostics.js",
+        "./js/core/preview_runner.js",
+        "./js/core/injector.js",
+        "./js/engine/template_registry.js",
+        "./js/engine/module_registry.js",
+        "./js/engine/builder.js",
+        "./js/engine/engine.js",
+        "./js/core/pages_links.js",
+        "./js/admin.github.js",
+        "./app.js",
+        "./js/core/zip_vault.js",
+        "./js/core/agent_zip_bridge.js"
+      ];
+
+      for (const src of modules) {
+        try { await loadScript(src); log("loaded ✅", src); }
+        catch(e){ log("failed ❌", src, "::", (e && e.message) ? e.message : String(e)); }
       }
 
-      async function clearCaches(){
-        log("\\n[" + ts() + "] Clear caches…");
-        if (!("caches" in window)) {
-          log("  (no caches API)");
-          return { ok:true, count:0 };
-        }
-        try{
-          const keys = await caches.keys();
-          let n = 0;
-          for (const k of keys){
-            try{
-              const ok = await caches.delete(k);
-              if (ok) n++;
-            }catch(e){}
-          }
-          log("  ok: deleted=" + n + " (" + keys.length + " keys)");
-          return { ok:true, count:n };
-        }catch(e){
-          log("  ERR: " + (e && e.message ? e.message : e));
-          return { ok:false, err:String(e) };
-        }
-      }
+      log("[" + ts() + "] bootNormal finished.");
+    }
 
-      function clearStorage(){
-        log("\\n[" + ts() + "] Clear storage…");
-        let a=0,b=0;
-        try{ a = localStorage.length; localStorage.clear(); }catch(e){}
-        try{ b = sessionStorage.length; sessionStorage.clear(); }catch(e){}
-        log("  ok: localStorage cleared ("+a+") / sessionStorage cleared ("+b+")");
-        return { ok:true, local:a, session:b };
-      }
+    document.getElementById("u").onclick = unreg;
+    document.getElementById("c").onclick = clearCaches;
+    document.getElementById("k").onclick = swStatus;
+    document.getElementById("boot").onclick = bootNormal;
 
-      async function fullClean(){
-        await unregisterSW();
-        await clearCaches();
-      }
-
-      function reloadHard(){
-        const target = bustUrl("./");
-        log("\\n[" + ts() + "] Reload -> " + target);
-        try{ location.href = target; }catch(e){ location.reload(); }
-      }
-
-      // bind
-      $("btnUnreg").onclick = unregisterSW;
-      $("btnCaches").onclick = clearCaches;
-      $("btnStorage").onclick = clearStorage;
-      $("btnHard").onclick = async ()=>{ await fullClean(); reloadHard(); };
-      $("btnGoApp").onclick = ()=>{ location.href = bustUrl("./"); };
-
-      // auto status
-      log("[" + ts() + "] RECOVERY ready. href=" + location.href);
-      if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.getRegistrations()
-          .then(r=>log("SW regs=" + r.length))
-          .catch(()=>log("SW regs=?"));
-      } else {
-        log("SW unsupported");
-      }
-    })();
+    // já mostra status de cara
+    swStatus();
+  })();
   </script>
 </body>
 </html>
