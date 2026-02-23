@@ -1,338 +1,198 @@
 /* FILE: app/js/core/doctor_scan.js
-   RControl Factory — Doctor Scan (READ-ONLY) — v0.1
-   Objetivo: scanner seguro que NÃO altera nada.
-
-   O que ele faz:
-   - Coleta status de módulos (versões), VFS, MAE, GitHub cfg, bundles e chaves do localStorage
-   - Ajuda a localizar 'onde está o problema' e 'onde está cada coisa'
-
-   O que ele NÃO faz:
-   - Não escreve em VFS, não mexe no GitHub, não aplica bundle.
+   RControl Factory — Doctor Scan (READ-ONLY) — v1.0 SAFE
+   Objetivo:
+   - Não corrige nada automaticamente.
+   - Apenas detecta/indica possíveis pontos de falha e gera um relatório copiável.
+   - Monta UI no slot do Agente (rcfAgentSlotTools), sem quebrar se não existir.
 */
 (() => {
   "use strict";
 
-  if (window.RCF_DOCTOR && window.RCF_DOCTOR.__v01) return;
+  const VERSION = "v1.0";
+  if (window.__RCF_DOCTOR_SCAN_LOADED__) return;
+  window.__RCF_DOCTOR_SCAN_LOADED__ = true;
 
-  const LS_GHCFG_KEY = "rcf:ghcfg";
-  const LS_BUNDLE_KEY = "rcf:mother_bundle_local";
-  const LS_BUNDLE_RAW = "rcf:mother_bundle_raw";
-  const LS_BUNDLE_META = "rcf:mother_bundle_meta";
-  const LS_COMPAT_1 = "rcf:mother_bundle";
-  const LS_COMPAT_2 = "rcf:mother_bundle_json";
+  const log = (...a) => { try { console.log("[DOCTOR]", ...a); } catch {} };
+  const now = () => new Date().toISOString();
 
-  const log = (lvl, msg, obj) => {
+  function qs(sel, root=document){ try { return root.querySelector(sel); } catch { return null; } }
+
+  function getSWInfo() {
+    const out = { supported: false, controller: false, regs: 0, scope: null };
     try {
-      if (obj !== undefined) window.RCF_LOGGER?.push?.(lvl, String(msg) + " " + JSON.stringify(obj));
-      else window.RCF_LOGGER?.push?.(lvl, String(msg));
+      out.supported = ("serviceWorker" in navigator);
+      out.controller = !!(navigator.serviceWorker && navigator.serviceWorker.controller);
     } catch {}
-    try {
-      if (obj !== undefined) console.log("[DOCTOR]", lvl, msg, obj);
-      else console.log("[DOCTOR]", lvl, msg);
-    } catch {}
-  };
-
-  const safeParse = (raw, fb) => {
-    try { return raw ? JSON.parse(raw) : fb; } catch { return fb; }
-  };
-
-  const nowISO = () => {
-    try { return new Date().toISOString(); } catch { return String(Date.now()); }
-  };
-
-  function isFn(x){ return typeof x === "function"; }
-
-  function bytesOf(s){
-    try { return new Blob([String(s ?? "")]).size; } catch { return String(s ?? "").length; }
-  }
-
-  function lsGet(k){
-    try { return localStorage.getItem(k); } catch { return null; }
-  }
-
-  function summarizeObj(name, obj){
-    if (!obj || typeof obj !== "object") return `${name}: absent`;
-    const keys = Object.keys(obj);
-    return `${name}: ok keys=${keys.length} (${keys.slice(0, 8).join(",")}${keys.length > 8 ? ",…" : ""})`;
-  }
-
-  function moduleVersions(){
-    const out = [];
-    const picks = [
-      ["RCF_MAE", "__v23g"],
-      ["RCF_GH_SYNC", "version"],
-      ["RCF_VFS_OVERRIDES", "version"],
-      ["RCF_VFS_SHIM", "version"],
-      ["RCF_DIAG", "version"],
-      ["RCF_LOGGER", "version"],
-      ["RCF_PREVIEW", "version"],
-      ["RCF_AGENT_RUNTIME", "version"],
-      ["RCF_ZIP_VAULT", "version"],
-      ["RCF_AGENT_ZIP_BRIDGE", "version"],
-    ];
-
-    for (const [name, key] of picks){
+    return new Promise((resolve) => {
+      if (!("serviceWorker" in navigator)) return resolve(out);
       try {
-        const o = window[name];
-        if (!o) { out.push(`${name}: absent`); continue; }
-        const v = (key && (key in o)) ? o[key] : (o.version || o.__v || o.__version || null);
-        out.push(`${name}: ok ${v ? `v=${String(v)}` : "(no version field)"}`);
-      } catch (e) {
-        out.push(`${name}: err ${(e && e.message) ? e.message : String(e)}`);
-      }
-    }
-    return out;
+        navigator.serviceWorker.getRegistrations().then((regs) => {
+          out.regs = regs ? regs.length : 0;
+          try { out.scope = regs && regs[0] && regs[0].scope ? regs[0].scope : null; } catch {}
+          resolve(out);
+        }).catch(() => resolve(out));
+      } catch { resolve(out); }
+    });
   }
 
-  function ghcfgReport(){
-    const raw = lsGet(LS_GHCFG_KEY);
-    const cfg = safeParse(raw, {});
-    const owner = String(cfg.owner || "").trim();
-    const repo = String(cfg.repo || "").trim();
-    const branch = String(cfg.branch || "").trim() || "main";
-    const path = String(cfg.path || "").trim();
+  function collectSignals(swInfo) {
+    const sig = [];
+    const has = (name) => { try { return !!window[name]; } catch { return false; } };
 
-    const hasToken = !!String(cfg.token || "").trim();
-    const ok = !!owner && !!repo && !!path;
+    sig.push({ k: "ts", v: now() });
+    sig.push({ k: "doctor", v: VERSION });
+    sig.push({ k: "booted", v: !!window.__RCF_BOOTED__ });
+    sig.push({ k: "ui_ready", v: !!window.__RCF_UI_READY__ });
 
+    // core systems
+    sig.push({ k: "VFS", v: has("RCF_VFS") || has("__RCF_VFS__") || has("VFS") });
+    sig.push({ k: "GH_SYNC", v: has("RCF_GH_SYNC") || has("RCF_GITHUB_SYNC") });
+    sig.push({ k: "MAE", v: has("RCF_MAE") || has("MAE") || has("RCF_MOTHER") });
+
+    // optional subsystems
+    sig.push({ k: "ZIP_VAULT", v: has("RCF_ZIP_VAULT") });
+    sig.push({ k: "PREVIEW", v: has("RCF_PREVIEW_RUNNER") || has("RCF_PREVIEW") });
+
+    // sw
+    sig.push({ k: "sw_supported", v: !!swInfo.supported });
+    sig.push({ k: "sw_controller", v: !!swInfo.controller });
+    sig.push({ k: "sw_regs", v: Number(swInfo.regs || 0) });
+    sig.push({ k: "sw_scope", v: swInfo.scope || "" });
+
+    // storage sanity
+    try {
+      const keys = Object.keys(localStorage || {});
+      sig.push({ k: "ls_keys", v: keys.length });
+      sig.push({ k: "ls_has_ghcfg", v: keys.includes("rcf:ghcfg") });
+    } catch {
+      sig.push({ k: "ls_keys", v: "ERR" });
+    }
+
+    // DOM slots
+    sig.push({ k: "slot_agent_tools", v: !!document.getElementById("rcfAgentSlotTools") });
+
+    return sig;
+  }
+
+  function buildReport(sig) {
     const lines = [];
-    lines.push(`ghcfg: ${ok ? "ok" : "warn"} owner=${owner || "-"} repo=${repo || "-"} branch=${branch} path=${path || "-"}`);
-    lines.push(`ghcfg: token=${hasToken ? "SET" : "EMPTY"} (não exponho token no log)`);
-    lines.push(`ghcfg: rawBytes=${raw ? bytesOf(raw) : 0}`);
-    return lines;
+    lines.push("RCF Doctor Scan Report");
+    lines.push("----------------------");
+    for (const it of sig) lines.push(`${it.k}: ${it.v}`);
+    lines.push("");
+    lines.push("Notes:");
+    lines.push("- Este relatório é somente leitura (não aplica mudanças).");
+    lines.push("- Se algum item core estiver false, o módulo relacionado pode não ter carregado (ex.: index.html não incluiu).");
+    return lines.join("\n");
   }
 
-  function bundleReport(){
-    const keys = [LS_BUNDLE_KEY, LS_COMPAT_1, LS_COMPAT_2, LS_BUNDLE_RAW, LS_BUNDLE_META];
-    const lines = [];
-    const lens = {};
+  function renderInto(slot, reportText) {
+    if (!slot) return;
 
-    for (const k of keys){
-      const v = lsGet(k);
-      lens[k] = v ? bytesOf(v) : 0;
+    let box = qs("#rcfDoctorBox", slot);
+    if (!box) {
+      box = document.createElement("div");
+      box.id = "rcfDoctorBox";
+      box.style.marginTop = "10px";
+      box.style.padding = "10px";
+      box.style.border = "1px solid rgba(255,255,255,.12)";
+      box.style.borderRadius = "12px";
+      box.style.background = "rgba(0,0,0,.15)";
+      box.innerHTML = `
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+          <button id="rcfDoctorRun" style="padding:8px 12px; border-radius:999px; border:1px solid rgba(255,255,255,.18); background:rgba(255,255,255,.06); color:#fff;">
+            Doctor Scan
+          </button>
+          <button id="rcfDoctorCopy" style="padding:8px 12px; border-radius:999px; border:1px solid rgba(255,255,255,.18); background:rgba(255,255,255,.06); color:#fff;">
+            Copiar relatório
+          </button>
+          <span id="rcfDoctorStatus" style="opacity:.8; font-size:12px;">pronto</span>
+        </div>
+        <pre id="rcfDoctorOut" style="margin:10px 0 0 0; white-space:pre-wrap; word-break:break-word; font-size:12px; line-height:1.25; opacity:.95;"></pre>
+      `;
+      slot.appendChild(box);
     }
 
-    const meta = safeParse(lsGet(LS_BUNDLE_META), {});
-    const metaCount = Number(meta.filesCount || 0) || 0;
-    const metaKeys = Array.isArray(meta.rawKeys) ? meta.rawKeys : [];
-    const bridge = !!meta.bridge;
+    const out = qs("#rcfDoctorOut", box);
+    if (out) out.textContent = reportText || "";
 
-    lines.push(`bundle(keys): local=${lens[LS_BUNDLE_KEY]}B compat1=${lens[LS_COMPAT_1]}B compat2=${lens[LS_COMPAT_2]}B raw=${lens[LS_BUNDLE_RAW]}B meta=${lens[LS_BUNDLE_META]}B`);
-    lines.push(`bundle(meta): filesCount=${metaCount} bridge=${bridge ? "YES" : "NO"} rawKeys=${metaKeys.length ? metaKeys.join(",") : "-"}`);
+    const status = qs("#rcfDoctorStatus", box);
+    const btnRun = qs("#rcfDoctorRun", box);
+    const btnCopy = qs("#rcfDoctorCopy", box);
 
-    // sanity: tentar contar files do normalized
+    if (btnRun && !btnRun.__bound) {
+      btnRun.__bound = true;
+      btnRun.addEventListener("click", async () => {
+        try {
+          if (status) status.textContent = "rodando...";
+          const sw = await getSWInfo();
+          const sig = collectSignals(sw);
+          const rep = buildReport(sig);
+          if (out) out.textContent = rep;
+          if (status) status.textContent = "ok ✅";
+        } catch (e) {
+          if (status) status.textContent = "erro ❌";
+          if (out) out.textContent = "Doctor scan failed: " + (e && e.message ? e.message : String(e));
+        }
+      });
+    }
+
+    if (btnCopy && !btnCopy.__bound) {
+      btnCopy.__bound = true;
+      btnCopy.addEventListener("click", async () => {
+        try {
+          const txt = out ? out.textContent : "";
+          if (!txt) return;
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(txt);
+            if (status) status.textContent = "copiado ✅";
+          } else {
+            const ta = document.createElement("textarea");
+            ta.value = txt;
+            ta.style.position = "fixed";
+            ta.style.left = "-9999px";
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand("copy");
+            document.body.removeChild(ta);
+            if (status) status.textContent = "copiado ✅";
+          }
+        } catch {
+          if (status) status.textContent = "falhou copiar ❌";
+        }
+      });
+    }
+  }
+
+  async function mount() {
     try {
-      const txt = String(lsGet(LS_BUNDLE_KEY) || "").trim();
-      if (!txt) {
-        lines.push("bundle(normalized): absent");
-      } else {
-        const j = safeParse(txt, null);
-        const count = Array.isArray(j?.files) ? j.files.length : -1;
-        lines.push(`bundle(normalized): ok files=${count >= 0 ? count : "?"} version=${j?.version || "-"}`);
+      const slot = document.getElementById("rcfAgentSlotTools") || qs("[data-slot='rcfAgentSlotTools']");
+      if (!slot) {
+        log("slot rcfAgentSlotTools não encontrado; aguardando UI_READY...");
+        return false;
       }
+      const sw = await getSWInfo();
+      const sig = collectSignals(sw);
+      const rep = buildReport(sig);
+      renderInto(slot, rep);
+      log("mounted ✅", VERSION);
+      return true;
     } catch (e) {
-      lines.push(`bundle(normalized): err ${(e && e.message) ? e.message : String(e)}`);
-    }
-
-    return lines;
-  }
-
-  function vfsReport(){
-    const lines = [];
-    const ov = window.RCF_VFS_OVERRIDES;
-    const vfs = window.RCF_VFS;
-    const shim = window.RCF_VFS_SHIM;
-
-    lines.push(summarizeObj("RCF_VFS_OVERRIDES", ov));
-    lines.push(summarizeObj("RCF_VFS", vfs));
-    lines.push(summarizeObj("RCF_VFS_SHIM", shim));
-
-    try {
-      if (ov && isFn(ov.put)) lines.push("VFS: overrides.put ✅");
-      else lines.push("VFS: overrides.put ❌");
-    } catch {}
-
-    try {
-      const clearFn = (ov && (ov.clearOverrides || ov.clear)) || null;
-      lines.push(`VFS: overrides.clear=${clearFn ? "YES" : "NO"}`);
-    } catch {}
-
-    return lines;
-  }
-
-  async function swReport(){
-    const lines = [];
-    try {
-      if (!("serviceWorker" in navigator)) {
-        lines.push("sw: unsupported");
-        return lines;
-      }
-
-      const regs = await navigator.serviceWorker.getRegistrations();
-      lines.push(`sw: registrations=${regs.length}`);
-
-      for (let i = 0; i < Math.min(2, regs.length); i++){
-        const r = regs[i];
-        const scope = r?.scope || "-";
-        const active = r?.active?.scriptURL ? "active" : "noactive";
-        const installing = r?.installing?.scriptURL ? "installing" : "";
-        const waiting = r?.waiting?.scriptURL ? "waiting" : "";
-        lines.push(`sw[${i}]: ${active} ${installing} ${waiting} scope=${scope}`);
-      }
-    } catch (e) {
-      lines.push(`sw: err ${(e && e.message) ? e.message : String(e)}`);
-    }
-    return lines;
-  }
-
-  function storageKeysReport(){
-    const lines = [];
-    try {
-      const all = [];
-      for (let i = 0; i < localStorage.length; i++){
-        const k = localStorage.key(i);
-        if (k) all.push(k);
-      }
-      all.sort();
-
-      const rcf = all.filter(k => k.startsWith("rcf:"));
-      lines.push(`localStorage: totalKeys=${all.length} rcfKeys=${rcf.length}`);
-
-      // lista curta (pra não poluir)
-      lines.push(`localStorage(rcf sample): ${rcf.slice(0, 18).join(",")}${rcf.length > 18 ? ",…" : ""}`);
-    } catch (e) {
-      lines.push(`localStorage: err ${(e && e.message) ? e.message : String(e)}`);
-    }
-    return lines;
-  }
-
-  function quickMapHint(){
-    // Dicas de “onde fica cada coisa”, baseado no layout padrão do projeto
-    return [
-      "map: UI/View principal → /app/app.js",
-      "map: Core modules → /app/js/core/*",
-      "map: Engine (builder/registry/engine) → /app/js/engine/*",
-      "map: Admin GitHub (pull/push + UI) → /app/js/admin.github.js",
-      "map: Mother bundle JSON → /app/import/mother_bundle.json",
-      "map: VFS overrides/shim → /app/js/core/vfs_overrides.js + vfs_shim.js",
-      "map: Diagnostics output (#diagOut) → /app/js/core/diagnostics.js",
-    ];
-  }
-
-  async function scan(opts){
-    const report = [];
-    report.push("========================================");
-    report.push(`DOCTOR SCAN (read-only) v0.1 — ${nowISO()}`);
-    report.push("========================================");
-
-    // módulos
-    report.push("");
-    report.push("[MODULES]");
-    report.push(...moduleVersions());
-
-    // ghcfg
-    report.push("");
-    report.push("[GITHUB CFG]");
-    report.push(...ghcfgReport());
-
-    // bundle
-    report.push("");
-    report.push("[MOTHER BUNDLE]");
-    report.push(...bundleReport());
-
-    // VFS
-    report.push("");
-    report.push("[VFS]");
-    report.push(...vfsReport());
-
-    // storage keys
-    report.push("");
-    report.push("[STORAGE KEYS]");
-    report.push(...storageKeysReport());
-
-    // service worker
-    report.push("");
-    report.push("[SERVICE WORKER]");
-    if (opts?.skipSW) report.push("sw: skipped");
-    else report.push(...(await swReport()));
-
-    // map hint
-    report.push("");
-    report.push("[WHERE IS WHAT]");
-    report.push(...quickMapHint());
-
-    // heurísticas simples
-    report.push("");
-    report.push("[HEURISTICS]");
-    try {
-      const mae = window.RCF_MAE;
-      if (!mae) report.push("mae: ABSENT ❌ (selfupdate não disponível)");
-      else if (!isFn(mae.updateFromGitHub)) report.push("mae: present mas updateFromGitHub AUSENTE ❌");
-      else report.push("mae: ok ✅");
-
-      const gh = window.RCF_GH_SYNC;
-      if (!gh) report.push("gh_sync: ABSENT ❌");
-      else if (!isFn(gh.pull)) report.push("gh_sync: pull AUSENTE ❌");
-      else report.push("gh_sync: ok ✅");
-    } catch (e) {
-      report.push(`heuristics: err ${(e && e.message) ? e.message : String(e)}`);
-    }
-
-    return {
-      ok: true,
-      text: report.join("\n")
-    };
-  }
-
-  function scanText(opts){
-    try {
-      // scanText síncrono “best effort” (sem SW)
-      const report = [];
-      report.push("========================================");
-      report.push(`DOCTOR SCAN (read-only) v0.1 — ${nowISO()}`);
-      report.push("========================================");
-      report.push("");
-      report.push("[MODULES]");
-      report.push(...moduleVersions());
-      report.push("");
-      report.push("[GITHUB CFG]");
-      report.push(...ghcfgReport());
-      report.push("");
-      report.push("[MOTHER BUNDLE]");
-      report.push(...bundleReport());
-      report.push("");
-      report.push("[VFS]");
-      report.push(...vfsReport());
-      report.push("");
-      report.push("[STORAGE KEYS]");
-      report.push(...storageKeysReport());
-      report.push("");
-      report.push("[WHERE IS WHAT]");
-      report.push(...quickMapHint());
-      report.push("");
-      report.push("[HEURISTICS]");
-      try {
-        const mae = window.RCF_MAE;
-        if (!mae) report.push("mae: ABSENT ❌ (selfupdate não disponível)");
-        else if (typeof mae.updateFromGitHub !== "function") report.push("mae: present mas updateFromGitHub AUSENTE ❌");
-        else report.push("mae: ok ✅");
-
-        const gh = window.RCF_GH_SYNC;
-        if (!gh) report.push("gh_sync: ABSENT ❌");
-        else if (typeof gh.pull !== "function") report.push("gh_sync: pull AUSENTE ❌");
-        else report.push("gh_sync: ok ✅");
-      } catch {}
-      return report.join("\n");
-    } catch (e) {
-      return `DOCTOR SCAN err: ${(e && e.message) ? e.message : String(e)}`;
+      log("mount failed", e);
+      return false;
     }
   }
 
-  window.RCF_DOCTOR = {
-    __v01: true,
-    scan,
-    scanText
-  };
+  window.RCF_DOCTOR = window.RCF_DOCTOR || {};
+  window.RCF_DOCTOR.version = VERSION;
+  window.RCF_DOCTOR.mount = mount;
 
-  log("ok", "doctor_scan.js ready ✅ (read-only)");
+  (async () => {
+    const ok = await mount();
+    if (!ok) {
+      try { window.addEventListener("RCF:UI_READY", () => { mount(); }, { once: false }); } catch {}
+      try { setTimeout(() => { mount(); }, 600); } catch {}
+      try { setTimeout(() => { mount(); }, 1400); } catch {}
+    }
+  })();
 })();
