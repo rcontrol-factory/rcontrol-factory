@@ -1,13 +1,12 @@
 /* FILE: app/app.js
-   RControl Factory — /app/app.js — V8.0 PADRÃO (CLEAN + UI READY BUS)
-   - Arquivo completo (1 peça) pra copiar/colar
-   - ✅ FIX: Apps list layout (nome grande não empurra botões) + CSS ellipsis
-   - ✅ ADD: Dashboard -> botão APAGAR app + deleteApp() (confirm + ajuste active + status/log)
-   - ✅ FIX: Preview/Timesheet preso -> teardownPreviewHard() + hook ao sair do Generator
-   - ✅ FIX: Evitar duplo bind do Generator (stubs só se módulo real NÃO existir)
-   - ✅ Mantém: boot lock, stability, UI_READY bus, GitHub/MAE, engine, core externos
+   RControl Factory - /app/app.js - V8.0 PADRAO
+   - Arquivo completo (1 peca) pra copiar/colar
+   - FIX: Apps list layout
+   - ADD: Dashboard -> botao APAGAR app
+   - FIX: Preview preso -> teardownPreviewHard()
+   - FIX: Evitar duplo bind do Generator
+   - Mantem: boot lock, stability, UI_READY bus
 */
-
 (() => {
   "use strict";
 
