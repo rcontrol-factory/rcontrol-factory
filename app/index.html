@@ -1,173 +1,193 @@
-<!-- FILE: /app/index.html
-     RControl Factory — RESCUE MODE (não carrega app.js)
-     Objetivo: destravar iOS/SW/cache e te dar botões de recuperação.
+<!-- FILE: app/index.html
+     RControl Factory — /app/index.html — vCLEAN-1+ENGINE (SAFE INDEX + watchdog + safe=1)
+     - Anti-duplo-load (__RCF_INDEX_BOOTED__)
+     - Watchdog: mostra qual script travou
+     - Modo safe: ?safe=1  (carrega só o mínimo pra isolar módulo quebrado)
 -->
 <!doctype html>
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>RCF • RESCUE</title>
-  <base href="./" />
-  <meta name="theme-color" content="#0b1020" />
+  <meta name="theme-color" content="#0b1220" />
+  <title>RControl Factory</title>
+
   <style>
-    body{margin:0;background:#070b12;color:#fff;font-family:system-ui}
-    .wrap{max-width:860px;margin:0 auto;padding:18px}
-    .card{border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:14px;background:rgba(255,255,255,.04)}
+    /* tela de boot / watchdog */
+    :root{--bg:#070b12;--fg:#fff;--muted:rgba(255,255,255,.75);--card:rgba(255,255,255,.05);--bd:rgba(255,255,255,.14)}
+    body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial}
+    #bootScreen{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:18px}
+    .card{max-width:860px;width:100%;border:1px solid var(--bd);border-radius:16px;background:var(--card);padding:16px}
     .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
-    .btn{padding:10px 12px;border-radius:999px;border:1px solid rgba(255,255,255,.16);background:rgba(20,28,44,.92);color:#fff;font-weight:800}
-    .btn.ok{background:#2dd4bf;color:#022;border:0}
-    .btn.danger{background:#ef4444;border:0}
-    pre{white-space:pre-wrap;word-break:break-word;background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.12);padding:12px;border-radius:12px;max-height:55vh;overflow:auto}
-    .hint{opacity:.85}
+    .title{font-weight:900;font-size:18px}
+    .pill{font-size:12px;padding:6px 10px;border-radius:999px;border:1px solid var(--bd);background:rgba(0,0,0,.25)}
+    .mono{white-space:pre-wrap;word-break:break-word;margin-top:10px;padding:12px;border-radius:12px;background:rgba(0,0,0,.35);border:1px solid var(--bd);max-height:45vh;overflow:auto}
+    .btn{appearance:none;border:0;border-radius:12px;padding:10px 12px;font-weight:800}
+    .ok{background:#2dd4bf;color:#022}
+    .danger{background:#ef4444;color:#fff}
+    .ghost{background:rgba(255,255,255,.08);color:#fff;border:1px solid var(--bd)}
+    a{color:#7dd3fc}
   </style>
+
+  <script>
+    // ==============================
+    // INDEX BOOT GUARD + WATCHDOG
+    // ==============================
+    (function(){
+      if (window.__RCF_INDEX_BOOTED__) return;
+      window.__RCF_INDEX_BOOTED__ = true;
+
+      const qs = new URLSearchParams(location.search);
+      window.__RCF_SAFE_MODE__ = (qs.get("safe") === "1");
+
+      const stamp = () => new Date().toLocaleString();
+      const log = (m) => {
+        try {
+          window.__RCF_BOOT_LOG__ = window.__RCF_BOOT_LOG__ || [];
+          window.__RCF_BOOT_LOG__.push("[" + stamp() + "] " + m);
+          const el = document.getElementById("bootLog");
+          if (el) el.textContent = window.__RCF_BOOT_LOG__.join("\n");
+          const st = document.getElementById("bootStatus");
+          if (st) st.textContent = m;
+        } catch {}
+      };
+
+      window.__RCF_BOOT_LOG_PUSH__ = log;
+      window.addEventListener("error", (ev) => {
+        try { log("ERR: " + (ev.message || "window.error") + (ev.filename ? (" @ " + ev.filename + ":" + (ev.lineno||0)) : "")); } catch {}
+      });
+      window.addEventListener("unhandledrejection", (ev) => {
+        try { log("UNHANDLED: " + (ev.reason && (ev.reason.message || ev.reason)) ); } catch {}
+      });
+
+      // Watchdog: se em 10s o app não sinalizar boot, mantém essa tela com log
+      setTimeout(() => {
+        try {
+          const booted = (window.__RCF_BOOTED__ === true) || (window.__RCF_UI_READY__ === true);
+          if (!booted) {
+            log("WATCHDOG: ainda não bootou (10s). Último script=" + (window.__RCF_LAST_SCRIPT__ || "(nenhum)"));
+            const hint = document.getElementById("bootHint");
+            if (hint) hint.textContent =
+              "Dica: abra com ?safe=1 pra carregar só o mínimo e isolar módulo quebrado.";
+          } else {
+            // se bootou, some com tela
+            const bs = document.getElementById("bootScreen");
+            if (bs) bs.style.display = "none";
+          }
+        } catch {}
+      }, 10000);
+
+      // helper pra carregar scripts em ordem com log
+      window.__RCF_LOAD_SCRIPT__ = function(src){
+        return new Promise((resolve, reject) => {
+          try {
+            window.__RCF_LAST_SCRIPT__ = src;
+            log("loading: " + src);
+            const s = document.createElement("script");
+            s.src = src;
+            s.defer = true;
+            s.onload = () => { log("loaded: " + src); resolve(true); };
+            s.onerror = () => { log("FAIL: " + src); reject(new Error("load fail " + src)); };
+            document.head.appendChild(s);
+          } catch (e) { reject(e); }
+        });
+      };
+
+      log("index init OK — safe=" + (window.__RCF_SAFE_MODE__ ? "1" : "0"));
+    })();
+  </script>
 </head>
+
 <body>
-  <div class="wrap">
+  <!-- app root -->
+  <div id="app"></div>
+
+  <!-- boot / watchdog screen -->
+  <div id="bootScreen">
     <div class="card">
       <div class="row" style="justify-content:space-between">
-        <div>
-          <div style="font-size:18px;font-weight:900">RCF • RESCUE MODE</div>
-          <div class="hint">Se o app travou em “carregando app.js…”, use isso pra limpar SW/cache e voltar.</div>
+        <div class="title">RCF • Boot</div>
+        <div class="row">
+          <div class="pill" id="bootMode">mode: <span id="bootModeVal"></span></div>
+          <div class="pill">status: <span id="bootStatus">iniciando…</span></div>
         </div>
-        <div style="font-size:12px;opacity:.8" id="ver">vRESCUE</div>
       </div>
+
+      <div style="margin-top:10px;color:var(--muted)">
+        Se travar em “carregando…”, este log mostra exatamente qual script quebrou.
+      </div>
+
+      <div class="mono" id="bootLog">Pronto.</div>
+
+      <div id="bootHint" style="margin-top:10px;color:var(--muted)"></div>
 
       <div class="row" style="margin-top:12px">
-        <button class="btn danger" id="btnUnreg">Unregister SW</button>
-        <button class="btn danger" id="btnCaches">Clear Caches</button>
-        <button class="btn danger" id="btnOverrides">Clear Overrides</button>
-        <button class="btn" id="btnBump">Bump Cache Bust</button>
-        <button class="btn ok" id="btnReload">Reload</button>
+        <button class="btn ok" type="button" onclick="location.href=location.origin+location.pathname+'?safe=1'">Abrir SAFE (?safe=1)</button>
+        <button class="btn ghost" type="button" onclick="location.reload()">Reload</button>
+        <button class="btn danger" type="button" onclick="localStorage.removeItem('rcf:logs'); alert('logs locais limpos');">Limpar logs locais</button>
       </div>
 
-      <div class="row" style="margin-top:10px">
-        <button class="btn" id="btnShowKeys">Show localStorage keys</button>
-        <button class="btn danger" id="btnSoftReset">Soft Reset (não apaga apps)</button>
+      <div style="margin-top:10px;color:var(--muted);font-size:12px">
+        Base: <a href="https://rcontrol-factory.pages.dev/" target="_blank" rel="noreferrer">rcontrol-factory.pages.dev</a>
       </div>
-
-      <div style="margin-top:12px" class="hint">
-        Depois de limpar: clique <b>Reload</b>.  
-        Quando voltar, a gente recoloca o index padrão e corrige o app.js sem perder nada.
-      </div>
-
-      <pre id="out">Pronto.</pre>
     </div>
   </div>
 
   <script>
-    (function(){
-      const out = document.getElementById("out");
-      const log = (...a) => { try { out.textContent += "\n" + a.join(" "); } catch {} try { console.log("[RCF/RESCUE]", ...a); } catch {} };
+    // mostra modo na UI
+    try {
+      document.getElementById("bootModeVal").textContent = (window.__RCF_SAFE_MODE__ ? "SAFE" : "NORMAL");
+    } catch {}
+  </script>
 
-      function bump(){
+  <script>
+    // ==============================
+    // LOADER EM ORDEM (sem duplicar app.js)
+    // ==============================
+    (async function(){
+      const load = window.__RCF_LOAD_SCRIPT__;
+      const log = window.__RCF_BOOT_LOG_PUSH__ || function(){};
+
+      // ✅ ajuste aqui se você usa cache bust via localStorage
+      const bust = (() => {
         try {
-          const k = "rcf:cache_bust";
-          const v = String(Date.now());
-          localStorage.setItem(k, v);
-          log("OK bump:", k, "=", v);
-        } catch(e){ log("ERR bump:", e.message||e); }
+          const v = localStorage.getItem("rcf:cache_bust");
+          return v ? ("?v=" + encodeURIComponent(v)) : "";
+        } catch { return ""; }
+      })();
+
+      try {
+        // 1) Core / compat (carregue só o que EXISTE no seu deploy)
+        //    Se um desses paths não existir, o log vai mostrar.
+        //    No SAFE MODE, pula módulos extras.
+        const safe = (window.__RCF_SAFE_MODE__ === true);
+
+        // Ajuste os caminhos conforme seu projeto (mantive padrão do seu setup /app/js/core e /app/js/engine)
+        // Core base (mínimo)
+        await load("./js/core/diagnostics.js" + bust).catch(() => log("warn: diagnostics.js não carregou (ok)"));
+        await load("./js/core/ui_bindings.js" + bust).catch(() => log("warn: ui_bindings.js não carregou (ok)"));
+
+        // Engine (se existir)
+        if (!safe) {
+          await load("./js/engine/engine.js" + bust).catch(() => log("warn: engine.js não carregou (ok)"));
+        } else {
+          log("SAFE MODE: pulando engine/admin módulos");
+        }
+
+        // Admin/GitHub/Sync (só no normal)
+        if (!safe) {
+          await load("./js/admin.github.js" + bust).catch(() => log("warn: admin.github.js não carregou (ok)"));
+          await load("./js/core/github_sync.js" + bust).catch(() => log("warn: github_sync.js não carregou (ok)"));
+        }
+
+        // 2) APP PRINCIPAL (sempre por último)
+        //    Se você tem /app/app.js como principal, é esse.
+        await load("./app.js" + bust);
+
+        log("DONE: scripts carregados");
+      } catch (e) {
+        log("FATAL LOADER: " + (e && (e.message || e)));
       }
-
-      async function unreg(){
-        try{
-          if(!("serviceWorker" in navigator)){ log("SW: unsupported"); return; }
-          const regs = await navigator.serviceWorker.getRegistrations();
-          let n=0;
-          for(const r of regs){ try{ if(await r.unregister()) n++; }catch{} }
-          log("SW unregistered:", n);
-        }catch(e){ log("ERR sw:", e.message||e); }
-      }
-
-      async function clearCaches(){
-        try{
-          if(!("caches" in window)){ log("Caches: unsupported"); return; }
-          const keys = await caches.keys();
-          await Promise.all(keys.map(k => caches.delete(k)));
-          log("Caches deleted:", keys.length, keys.join(", "));
-        }catch(e){ log("ERR caches:", e.message||e); }
-      }
-
-      function clearOverrides(){
-        try{
-          // suas chaves típicas
-          const keys = [
-            "rcf:RCF_OVERRIDES_MAP",
-            "RCF_OVERRIDES_MAP",
-            "rcf:mother_bundle",
-            "RCF_MOTHER_BUNDLE"
-          ];
-          for(const k of keys){
-            try{ localStorage.removeItem(k); }catch{}
-          }
-          // se existir o VFS de overrides no runtime, tenta limpar também
-          try{
-            const V = window.RCF_OVERRIDES_VFS;
-            if(V && typeof V.listFiles === "function" && typeof V.deleteFile === "function"){
-              V.listFiles().then(list => {
-                (list||[]).slice(0, 1200).forEach(p => { try{ V.deleteFile(p); }catch{} });
-              }).catch(()=>{});
-            }
-          }catch{}
-          log("Overrides cleared (keys removed).");
-        }catch(e){ log("ERR overrides:", e.message||e); }
-      }
-
-      function showKeys(){
-        try{
-          const ks=[];
-          for(let i=0;i<localStorage.length;i++){
-            const k = localStorage.key(i);
-            if(!k) continue;
-            if(k.startsWith("rcf:") || k.includes("RCF")) ks.push(k);
-          }
-          ks.sort();
-          log("Keys:", ks.length);
-          log(ks.join("\n"));
-        }catch(e){ log("ERR keys:", e.message||e); }
-      }
-
-      function softReset(){
-        try{
-          // NÃO apaga apps: rcf:apps
-          // reseta só view/active/pending e logs (opcional)
-          const keep = new Set(["rcf:apps"]);
-          const del=[];
-          for(let i=0;i<localStorage.length;i++){
-            const k = localStorage.key(i);
-            if(!k) continue;
-            if(!k.startsWith("rcf:")) continue;
-            if(keep.has(k)) continue;
-            if(k === "rcf:apps") continue;
-            // remove coisas que travam boot
-            if(
-              k === "rcf:active" ||
-              k === "rcf:pending" ||
-              k === "rcf:logs" ||
-              k === "rcf:cfg" ||
-              k === "rcf:RCF_FILE_INDEX" ||
-              k === "rcf:RCF_TARGET_MAP" ||
-              k === "rcf:ghcfg"
-            ){
-              del.push(k);
-            }
-          }
-          del.forEach(k => { try{ localStorage.removeItem(k); }catch{} });
-          log("Soft reset removed:", del.length, del.join(", "));
-        }catch(e){ log("ERR reset:", e.message||e); }
-      }
-
-      document.getElementById("btnUnreg").onclick = () => unreg();
-      document.getElementById("btnCaches").onclick = () => clearCaches();
-      document.getElementById("btnOverrides").onclick = () => clearOverrides();
-      document.getElementById("btnBump").onclick = () => bump();
-      document.getElementById("btnReload").onclick = () => location.reload();
-
-      document.getElementById("btnShowKeys").onclick = () => showKeys();
-      document.getElementById("btnSoftReset").onclick = () => softReset();
-
-      log("RESCUE ready. base=", document.baseURI);
-      bump();
     })();
   </script>
 </body>
