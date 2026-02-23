@@ -530,3 +530,57 @@ body::before{
   70%  { opacity: 1; transform: translateY(0) scale(1); }
   100% { opacity: 0; transform: translateY(-6px) scale(.98); }
 }
+
+/* =========================================================
+   RCF DOCTOR MODAL (iOS SAFE) — enable touch/scroll
+   Fix: algumas classes globais (.overlay/.backdrop etc) estavam com
+   pointer-events:none; isso bloqueia scroll/click no modal do Doctor.
+   ========================================================= */
+
+/* Alvos prováveis do Doctor (mantém compat mesmo se o JS mudar) */
+#rcfDoctorOverlay,
+#rcfDoctorModal,
+#rcfDoctorSheet,
+.rcf-doctor-overlay,
+.rcf-doctor-modal,
+.rcf-doctor-sheet {
+  pointer-events: auto !important;
+}
+
+/* Se o Doctor reutilizar classes genéricas de overlay/backdrop, libera */
+.overlay.rcf-doctor,
+.backdrop.rcf-doctor,
+.dialog.rcf-doctor,
+.modal.rcf-doctor,
+.sheet.rcf-doctor {
+  pointer-events: auto !important;
+}
+
+/* Corpo rolável (mantém os botões fixos) */
+#rcfDoctorModal .rcfDoctorBody,
+#rcfDoctorSheet .rcfDoctorBody,
+.rcf-doctor-modal .rcfDoctorBody,
+.rcf-doctor-sheet .rcfDoctorBody {
+  max-height: 60vh;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+/* Fallback: se o report estiver direto no <pre> */
+#rcfDoctorModal pre,
+#rcfDoctorSheet pre,
+.rcf-doctor-modal pre,
+.rcf-doctor-sheet pre {
+  max-height: 56vh;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Evita “travamento” de toque por elementos acima */
+#rcfDoctorModal *,
+#rcfDoctorSheet *,
+.rcf-doctor-modal *,
+.rcf-doctor-sheet * {
+  pointer-events: auto;
+}
