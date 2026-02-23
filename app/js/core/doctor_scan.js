@@ -1,433 +1,503 @@
-/* FILE: app/js/core/doctor_scan.js
-   RControl Factory — Doctor Scan (UI + report)
-   v1.3 iOS FIX: modal scroll + block background scroll + pointer-events safe
+/* FILE: /app/js/core/doctor_scan.js
+   RControl Factory — Doctor Scan — v1.3 SAFE (STRICT HOST + MODAL SCROLL iOS)
+
+   OBJETIVO:
+   - Botão "Doctor Scan" fixo no slot do ADMIN (INTEGRATIONS) sem vazar pra outras telas
+   - Gera relatório rápido (SW/cache/localStorage/mother_bundle_local/resources)
+   - Modal com scroll real no iOS (não mexe a tela de trás)
+
+   REGRAS SAFE:
+   - Não altera arquivos, não limpa nada automaticamente
+   - Só lê e reporta
 */
+
 (() => {
   "use strict";
 
-  const VER = "v1.3";
-  const TAG = "[DOCTOR]";
-  const log = (...a) => { try { console.log(TAG, ...a); } catch {} };
+  try {
+    const VERSION = "v1.3";
 
-  // ---------------------------------------------------------
-  // Helpers
-  // ---------------------------------------------------------
-  const $ = (sel, root = document) => root.querySelector(sel);
+    // =========================================================
+    // Logs (HARD SAFE)
+    // =========================================================
+    const logOk = (...a) => { try { console.log("[RCF]", "OK:", ...a); } catch {} };
+    const logWarn = (...a) => { try { console.log("[RCF]", "WARN:", ...a); } catch {} };
 
-  function safeJsonParse(s, fallback = null) {
-    try { return JSON.parse(s); } catch { return fallback; }
-  }
+    // =========================================================
+    // Helpers
+    // =========================================================
+    const qs = (sel, root = document) => root.querySelector(sel);
+    const safeStr = (v) => (v === null || v === undefined) ? "" : String(v);
 
-  function nowISO() {
-    try { return new Date().toISOString(); } catch { return String(Date.now()); }
-  }
-
-  function countLocalStorageKeys(prefix = "") {
-    try {
-      const total = localStorage.length || 0;
-      let pref = 0;
-      for (let i = 0; i < total; i++) {
-        const k = localStorage.key(i);
-        if (!k) continue;
-        if (!prefix || k.startsWith(prefix)) pref++;
-      }
-      return { total, pref };
-    } catch {
-      return { total: -1, pref: -1 };
-    }
-  }
-
-  async function getSWStatus() {
-    const out = {
-      supported: ("serviceWorker" in navigator),
-      controller: false,
-      registrations: -1,
+    const tsISO = () => {
+      try { return new Date().toISOString(); } catch { return String(Date.now()); }
     };
 
-    try {
-      out.controller = !!(navigator.serviceWorker && navigator.serviceWorker.controller);
-    } catch {}
+    // =========================================================
+    // STRICT HOST: Admin Integrations Slot only
+    // (isso impede o Doctor de ir parar no Agent)
+    // =========================================================
+    const ADMIN_SLOT_ID = "rcfAdminSlotIntegrations";
 
-    if (!out.supported) return out;
-
-    try {
-      const regs = await navigator.serviceWorker.getRegistrations();
-      out.registrations = regs ? regs.length : 0;
-    } catch {
-      out.registrations = -1;
+    function getAdminSlot() {
+      try { return document.getElementById(ADMIN_SLOT_ID); } catch { return null; }
     }
 
-    return out;
-  }
+    // =========================================================
+    // Modal (iOS-safe scroll + no background scroll)
+    // =========================================================
+    let __overlay = null;
+    let __lastBodyOverflow = null;
 
-  async function getCacheStatus() {
-    const out = { supported: ("caches" in window), keys: -1 };
-    if (!out.supported) return out;
-    try {
-      const keys = await caches.keys();
-      out.keys = keys ? keys.length : 0;
-    } catch {
-      out.keys = -1;
+    function lockBodyScroll() {
+      try {
+        const b = document.body;
+        if (!b) return;
+        __lastBodyOverflow = b.style.overflow || "";
+        b.style.overflow = "hidden";
+      } catch {}
     }
-    return out;
-  }
 
-  function getMotherBundleLocal() {
-    // chave padrão usada no projeto
-    const key = "rcf:mother_bundle_local";
-    try {
-      const raw = localStorage.getItem(key);
-      if (!raw) return { present: false, key, size: 0, filesCount: 0 };
-      const size = raw.length;
-      const obj = safeJsonParse(raw, {});
-      const filesCount = (obj && obj.files && typeof obj.files === "object")
-        ? Object.keys(obj.files).length
-        : (obj && Array.isArray(obj.files) ? obj.files.length : 0);
-      return { present: true, key, size, filesCount };
-    } catch {
-      return { present: false, key, size: -1, filesCount: -1 };
+    function unlockBodyScroll() {
+      try {
+        const b = document.body;
+        if (!b) return;
+        b.style.overflow = __lastBodyOverflow || "";
+      } catch {}
     }
-  }
 
-  function getResourcesInfo() {
-    try {
-      const entries = performance && performance.getEntriesByType
-        ? performance.getEntriesByType("resource")
-        : [];
-      const urls = [];
-      for (const e of entries) {
-        const n = e && e.name ? String(e.name) : "";
-        if (n) urls.push(n);
-      }
-      const total = urls.length;
-      const set = new Set(urls);
-      const unique = set.size;
-      const duplicates = total - unique;
-      return { total, unique, duplicates };
-    } catch {
-      return { total: -1, unique: -1, duplicates: -1 };
-    }
-  }
+    function ensureOverlay() {
+      if (__overlay && document.body && document.body.contains(__overlay)) return __overlay;
 
-  function buildReportText(data) {
-    const lines = [];
-    lines.push(`[${nowISO()}] RCF DOCTOR REPORT ${data.version}`);
-    lines.push("");
-    lines.push("== Service Worker ==");
-    lines.push(`supported: ${data.sw.supported}`);
-    lines.push(`controller: ${data.sw.controller}`);
-    lines.push(`registrations: ${data.sw.registrations}`);
-    lines.push("");
-    lines.push("== Cache API ==");
-    lines.push(`supported: ${data.cache.supported}`);
-    lines.push(`keys: ${data.cache.keys}`);
-    lines.push("");
-    lines.push("== localStorage ==");
-    lines.push(`total keys: ${data.ls.total}`);
-    lines.push(`rcf:* keys: ${data.ls.rcf}`);
-    lines.push("");
-    lines.push("== mother_bundle_local ==");
-    lines.push(`present: ${data.mbl.present}`);
-    lines.push(`key: ${data.mbl.key}`);
-    lines.push(`size: ${data.mbl.size}`);
-    lines.push(`filesCount: ${data.mbl.filesCount}`);
-    lines.push("");
-    lines.push("== Resources ==");
-    lines.push(`total: ${data.res.total}`);
-    lines.push(`unique: ${data.res.unique}`);
-    lines.push(`duplicates: ${data.res.duplicates}`);
-    lines.push("");
-    return lines.join("\n");
-  }
+      const overlay = document.createElement("div");
+      overlay.id = "rcfDoctorOverlay";
+      overlay.setAttribute("role", "dialog");
+      overlay.setAttribute("aria-modal", "true");
 
-  // ---------------------------------------------------------
-  // iOS-safe modal (blocks background scroll)
-  // ---------------------------------------------------------
-  let __open = false;
-  let __prevOverflowHtml = "";
-  let __prevOverflowBody = "";
-  let __touchBlocker = null;
+      // overlay ocupa tudo e segura scroll/touch
+      overlay.style.position = "fixed";
+      overlay.style.left = "0";
+      overlay.style.top = "0";
+      overlay.style.right = "0";
+      overlay.style.bottom = "0";
+      overlay.style.zIndex = "99999";
+      overlay.style.background = "rgba(0,0,0,.55)";
+      overlay.style.display = "none";
+      overlay.style.alignItems = "center";
+      overlay.style.justifyContent = "center";
+      overlay.style.padding = "14px";
+      overlay.style.backdropFilter = "blur(6px)";
 
-  function lockBackgroundScroll() {
-    try {
-      const html = document.documentElement;
-      const body = document.body;
-      __prevOverflowHtml = html.style.overflow || "";
-      __prevOverflowBody = body.style.overflow || "";
-      html.style.overflow = "hidden";
-      body.style.overflow = "hidden";
-    } catch {}
+      // IMPORTANT: não deixa o toque rolar o fundo
+      overlay.addEventListener("touchmove", (e) => {
+        try { e.preventDefault(); } catch {}
+      }, { passive: false });
 
-    // Bloqueia swipe fora do modal (iOS)
-    try {
-      __touchBlocker = (ev) => {
-        // se o toque NÃO estiver dentro do modal, bloqueia
-        const modal = document.getElementById("rcfDoctorModal");
-        if (!modal) return;
-        if (!modal.contains(ev.target)) {
-          ev.preventDefault();
-          ev.stopPropagation();
+      overlay.addEventListener("click", (e) => {
+        // fecha se clicar fora do painel
+        try {
+          if (e.target === overlay) hideModal();
+        } catch {}
+      });
+
+      const panel = document.createElement("div");
+      panel.id = "rcfDoctorPanel";
+      panel.style.width = "min(720px, 100%)";
+      panel.style.maxHeight = "86vh";
+      panel.style.borderRadius = "18px";
+      panel.style.border = "1px solid rgba(255,255,255,.14)";
+      panel.style.background = "rgba(10,14,26,.92)";
+      panel.style.boxShadow = "0 24px 60px rgba(0,0,0,.45)";
+      panel.style.overflow = "hidden"; // header fixo e body scrolla dentro
+      panel.style.display = "flex";
+      panel.style.flexDirection = "column";
+
+      const head = document.createElement("div");
+      head.style.display = "flex";
+      head.style.alignItems = "center";
+      head.style.justifyContent = "space-between";
+      head.style.gap = "10px";
+      head.style.padding = "12px 12px 10px 12px";
+      head.style.borderBottom = "1px solid rgba(255,255,255,.12)";
+
+      const left = document.createElement("div");
+      left.style.display = "flex";
+      left.style.gap = "10px";
+      left.style.alignItems = "center";
+
+      const title = document.createElement("div");
+      title.textContent = "RCF DOCTOR";
+      title.style.fontWeight = "900";
+      title.style.letterSpacing = ".6px";
+      title.style.color = "#eaf0ff";
+
+      const ver = document.createElement("div");
+      ver.textContent = VERSION;
+      ver.style.opacity = ".75";
+      ver.style.fontWeight = "800";
+      ver.style.fontSize = "12px";
+      ver.style.color = "#cfe1ff";
+
+      left.appendChild(title);
+      left.appendChild(ver);
+
+      const actions = document.createElement("div");
+      actions.style.display = "flex";
+      actions.style.gap = "10px";
+      actions.style.alignItems = "center";
+
+      const btnClose = document.createElement("button");
+      btnClose.type = "button";
+      btnClose.textContent = "Fechar";
+      btnClose.style.border = "1px solid rgba(255,255,255,.14)";
+      btnClose.style.background = "rgba(255,255,255,.08)";
+      btnClose.style.color = "#eaf0ff";
+      btnClose.style.borderRadius = "999px";
+      btnClose.style.padding = "10px 14px";
+      btnClose.style.fontWeight = "900";
+      btnClose.onclick = () => hideModal();
+
+      const btnCopy = document.createElement("button");
+      btnCopy.type = "button";
+      btnCopy.textContent = "Copiar report";
+      btnCopy.style.border = "0";
+      btnCopy.style.background = "#35d0b5";
+      btnCopy.style.color = "#0a0f1a";
+      btnCopy.style.borderRadius = "999px";
+      btnCopy.style.padding = "10px 14px";
+      btnCopy.style.fontWeight = "950";
+      btnCopy.onclick = async () => {
+        try {
+          const pre = qs("#rcfDoctorPre", panel);
+          const txt = pre ? pre.textContent : "";
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(txt);
+          } else {
+            // fallback iOS antigo
+            const ta = document.createElement("textarea");
+            ta.value = txt;
+            ta.style.position = "fixed";
+            ta.style.opacity = "0";
+            document.body.appendChild(ta);
+            ta.focus();
+            ta.select();
+            document.execCommand("copy");
+            ta.remove();
+          }
+          btnCopy.textContent = "Copiado ✅";
+          setTimeout(() => { btnCopy.textContent = "Copiar report"; }, 900);
+        } catch {
+          btnCopy.textContent = "Falhou ❌";
+          setTimeout(() => { btnCopy.textContent = "Copiar report"; }, 900);
         }
       };
-      document.addEventListener("touchmove", __touchBlocker, { passive: false, capture: true });
-    } catch {}
-  }
 
-  function unlockBackgroundScroll() {
-    try {
-      const html = document.documentElement;
-      const body = document.body;
-      html.style.overflow = __prevOverflowHtml;
-      body.style.overflow = __prevOverflowBody;
-    } catch {}
+      actions.appendChild(btnClose);
+      actions.appendChild(btnCopy);
 
-    try {
-      if (__touchBlocker) {
-        document.removeEventListener("touchmove", __touchBlocker, { capture: true });
-      }
-    } catch {}
-    __touchBlocker = null;
-  }
+      head.appendChild(left);
+      head.appendChild(actions);
 
-  function closeModal() {
-    try {
-      const el = document.getElementById("rcfDoctorOverlay");
-      if (el && el.parentNode) el.parentNode.removeChild(el);
-    } catch {}
-    __open = false;
-    unlockBackgroundScroll();
-  }
+      const body = document.createElement("div");
+      body.id = "rcfDoctorBody";
+      body.style.padding = "12px";
+      body.style.overflow = "auto";                 // SCROLL AQUI
+      body.style.webkitOverflowScrolling = "touch"; // iOS momentum
+      body.style.maxHeight = "calc(86vh - 60px)";
 
-  async function copyToClipboard(text) {
-    // iOS: fallback com textarea selection
-    try {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        await navigator.clipboard.writeText(text);
-        return true;
-      }
-    } catch {}
+      const pre = document.createElement("pre");
+      pre.id = "rcfDoctorPre";
+      pre.style.whiteSpace = "pre-wrap";
+      pre.style.margin = "0";
+      pre.style.padding = "12px";
+      pre.style.borderRadius = "14px";
+      pre.style.border = "1px solid rgba(255,255,255,.10)";
+      pre.style.background = "rgba(0,0,0,.35)";
+      pre.style.color = "#eaf0ff";
+      pre.style.fontFamily = "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+      pre.style.fontSize = "14px";
+      pre.style.lineHeight = "1.35";
 
-    try {
-      const ta = document.createElement("textarea");
-      ta.value = text;
-      ta.setAttribute("readonly", "true");
-      ta.style.position = "fixed";
-      ta.style.left = "-9999px";
-      ta.style.top = "0";
-      document.body.appendChild(ta);
-      ta.select();
-      ta.setSelectionRange(0, ta.value.length);
-      const ok = document.execCommand("copy");
-      document.body.removeChild(ta);
-      return !!ok;
-    } catch {
-      return false;
+      body.appendChild(pre);
+
+      panel.appendChild(head);
+      panel.appendChild(body);
+
+      overlay.appendChild(panel);
+
+      document.body.appendChild(overlay);
+      __overlay = overlay;
+      return overlay;
     }
-  }
 
-  function openModal(reportText) {
-    if (__open) closeModal();
-    __open = true;
+    function showModal(text) {
+      const ov = ensureOverlay();
+      const pre = qs("#rcfDoctorPre", ov);
+      if (pre) pre.textContent = safeStr(text);
 
-    lockBackgroundScroll();
+      lockBodyScroll();
+      ov.style.display = "flex";
+    }
 
-    const overlay = document.createElement("div");
-    overlay.id = "rcfDoctorOverlay";
-    overlay.style.position = "fixed";
-    overlay.style.inset = "0";
-    overlay.style.zIndex = "999999";
-    overlay.style.background = "rgba(0,0,0,.55)";
-    overlay.style.backdropFilter = "blur(6px)";
-    overlay.style.webkitBackdropFilter = "blur(6px)";
-    overlay.style.display = "flex";
-    overlay.style.alignItems = "flex-start";
-    overlay.style.justifyContent = "center";
-    overlay.style.padding = "14px";
-    overlay.style.pointerEvents = "auto";
+    function hideModal() {
+      try {
+        if (!__overlay) return;
+        __overlay.style.display = "none";
+      } catch {}
+      unlockBodyScroll();
+    }
 
-    // Fecha ao clicar fora
-    overlay.addEventListener("click", (e) => {
-      if (e.target === overlay) closeModal();
-    }, true);
+    // =========================================================
+    // Doctor Scan (coletores)
+    // =========================================================
+    async function getSWInfo() {
+      const out = { supported: false, controller: false, registrations: null, scopes: [] };
 
-    const modal = document.createElement("div");
-    modal.id = "rcfDoctorModal";
-    modal.style.width = "min(900px, 96vw)";
-    modal.style.maxHeight = "86vh";
-    modal.style.marginTop = "8vh";
-    modal.style.borderRadius = "18px";
-    modal.style.border = "1px solid rgba(255,255,255,.14)";
-    modal.style.background = "rgba(10,16,32,.92)";
-    modal.style.boxShadow = "0 18px 70px rgba(0,0,0,.55)";
-    modal.style.overflow = "hidden";
-    modal.style.pointerEvents = "auto";
+      try {
+        out.supported = ("serviceWorker" in navigator);
+        if (!out.supported) return out;
 
-    // impede clique no modal de “vazar” pro overlay
-    modal.addEventListener("click", (e) => {
-      e.stopPropagation();
-    }, true);
+        out.controller = !!navigator.serviceWorker.controller;
 
-    const head = document.createElement("div");
-    head.style.display = "flex";
-    head.style.gap = "10px";
-    head.style.padding = "12px";
-    head.style.borderBottom = "1px solid rgba(255,255,255,.10)";
+        try {
+          const regs = await navigator.serviceWorker.getRegistrations();
+          out.registrations = regs.length;
+          for (const r of regs) {
+            try { out.scopes.push(r.scope || ""); } catch {}
+          }
+        } catch {
+          out.registrations = null;
+        }
+      } catch {}
 
-    const btnClose = document.createElement("button");
-    btnClose.textContent = "Fechar";
-    btnClose.style.border = "1px solid rgba(255,255,255,.16)";
-    btnClose.style.background = "rgba(255,255,255,.10)";
-    btnClose.style.color = "#eaf0ff";
-    btnClose.style.borderRadius = "999px";
-    btnClose.style.padding = "10px 14px";
-    btnClose.style.fontWeight = "800";
-    btnClose.onclick = closeModal;
+      return out;
+    }
 
-    const btnCopy = document.createElement("button");
-    btnCopy.textContent = "Copiar report";
-    btnCopy.style.border = "0";
-    btnCopy.style.background = "#35d0b5";
-    btnCopy.style.color = "#061019";
-    btnCopy.style.borderRadius = "999px";
-    btnCopy.style.padding = "10px 14px";
-    btnCopy.style.fontWeight = "900";
-    btnCopy.onclick = async () => {
-      const ok = await copyToClipboard(reportText);
-      try { btnCopy.textContent = ok ? "Copiado ✅" : "Falhou ❌"; } catch {}
-      setTimeout(() => { try { btnCopy.textContent = "Copiar report"; } catch {} }, 1100);
+    async function getCacheInfo() {
+      const out = { supported: false, keys: null };
+      try {
+        out.supported = ("caches" in window);
+        if (!out.supported) return out;
+        const keys = await caches.keys();
+        out.keys = keys.length;
+      } catch {
+        out.keys = null;
+      }
+      return out;
+    }
+
+    function getLocalStorageInfo() {
+      const out = { supported: false, totalKeys: null, rcfKeys: null };
+      try {
+        out.supported = !!window.localStorage;
+        if (!out.supported) return out;
+
+        const total = localStorage.length;
+        let rcf = 0;
+        for (let i = 0; i < total; i++) {
+          const k = localStorage.key(i);
+          if (k && k.startsWith("rcf:")) rcf++;
+        }
+        out.totalKeys = total;
+        out.rcfKeys = rcf;
+      } catch {
+        out.totalKeys = null;
+        out.rcfKeys = null;
+      }
+      return out;
+    }
+
+    function getMotherBundleLocalInfo() {
+      const out = { present: false, key: "rcf:mother_bundle_local", size: null, filesCount: null };
+      try {
+        const k = out.key;
+        const raw = localStorage.getItem(k);
+        if (!raw) return out;
+        out.present = true;
+        out.size = raw.length;
+
+        try {
+          const obj = JSON.parse(raw);
+          const files = obj && obj.files ? obj.files : null;
+          if (files && typeof files === "object") {
+            out.filesCount = Object.keys(files).length;
+          }
+        } catch {}
+      } catch {}
+      return out;
+    }
+
+    function getResourceInfo() {
+      const out = { total: null, unique: null, duplicates: null };
+      try {
+        const res = performance && performance.getEntriesByType ? performance.getEntriesByType("resource") : [];
+        const urls = [];
+        for (const r of res) {
+          try { if (r && r.name) urls.push(String(r.name)); } catch {}
+        }
+        const total = urls.length;
+        const map = new Map();
+        for (const u of urls) map.set(u, (map.get(u) || 0) + 1);
+        let dup = 0;
+        for (const [, c] of map) if (c > 1) dup += (c - 1);
+
+        out.total = total;
+        out.unique = map.size;
+        out.duplicates = dup;
+      } catch {
+        out.total = null; out.unique = null; out.duplicates = null;
+      }
+      return out;
+    }
+
+    function buildReport(sw, cache, ls, mbl, res) {
+      const lines = [];
+      lines.push(`[${tsISO()}] RCF DOCTOR REPORT ${VERSION}`);
+      lines.push("");
+      lines.push("== Service Worker ==");
+      lines.push(`supported: ${sw.supported}`);
+      lines.push(`controller: ${sw.controller}`);
+      lines.push(`registrations: ${sw.registrations === null ? "?" : sw.registrations}`);
+      if (sw.scopes && sw.scopes.length) {
+        lines.push(`scopes: ${sw.scopes.length}`);
+        for (const s of sw.scopes.slice(0, 6)) lines.push(` - ${s}`);
+        if (sw.scopes.length > 6) lines.push(` - ... (+${sw.scopes.length - 6})`);
+      }
+
+      lines.push("");
+      lines.push("== Cache API ==");
+      lines.push(`supported: ${cache.supported}`);
+      lines.push(`keys: ${cache.keys === null ? "?" : cache.keys}`);
+
+      lines.push("");
+      lines.push("== localStorage ==");
+      lines.push(`total keys: ${ls.totalKeys === null ? "?" : ls.totalKeys}`);
+      lines.push(`rcf:* keys: ${ls.rcfKeys === null ? "?" : ls.rcfKeys}`);
+
+      lines.push("");
+      lines.push("== mother_bundle_local ==");
+      lines.push(`present: ${mbl.present}`);
+      lines.push(`key: ${mbl.key}`);
+      lines.push(`size: ${mbl.size === null ? "?" : mbl.size}`);
+      lines.push(`filesCount: ${mbl.filesCount === null ? "?" : mbl.filesCount}`);
+
+      lines.push("");
+      lines.push("== Resources ==");
+      lines.push(`total: ${res.total === null ? "?" : res.total}`);
+      lines.push(`unique: ${res.unique === null ? "?" : res.unique}`);
+      lines.push(`duplicates: ${res.duplicates === null ? "?" : res.duplicates}`);
+
+      // hints (SAFE: só sugestão, não executa)
+      lines.push("");
+      lines.push("== Hints (SAFE) ==");
+      if (sw.supported && sw.controller && (sw.registrations === 0)) {
+        lines.push("- SW controller=true mas registrations=0: pode ser SW antigo/controlando por outra scope.");
+        lines.push("  Use: SAFE BOOT > Show SW status / Unregister SW se ficar preso.");
+      }
+      if (cache.supported && cache.keys === 0) {
+        lines.push("- Cache API vazio (keys=0): ok se você está usando overrides + bundle local.");
+      }
+      if (mbl.present && (mbl.filesCount || 0) === 0) {
+        lines.push("- mother_bundle_local filesCount=0: revisar MAE save / storage registry.");
+      }
+
+      return lines.join("\n");
+    }
+
+    async function collectReport() {
+      const sw = await getSWInfo();
+      const cache = await getCacheInfo();
+      const ls = getLocalStorageInfo();
+      const mbl = getMotherBundleLocalInfo();
+      const res = getResourceInfo();
+      return buildReport(sw, cache, ls, mbl, res);
+    }
+
+    // =========================================================
+    // UI Button (Admin slot)
+    // =========================================================
+    function ensureButton() {
+      const host = getAdminSlot();
+      if (!host) return null;
+
+      // se já existe, não duplica
+      const existing = qs("[data-rcf-doctor-btn='1']", host);
+      if (existing) return existing;
+
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = "🩺 Doctor Scan";
+      btn.setAttribute("data-rcf-doctor-btn", "1");
+
+      // tenta herdar estilo de botões do RCF
+      btn.style.border = "0";
+      btn.style.borderRadius = "999px";
+      btn.style.padding = "12px 16px";
+      btn.style.fontWeight = "950";
+      btn.style.background = "#35d0b5";
+      btn.style.color = "#0a0f1a";
+      btn.style.cursor = "pointer";
+
+      btn.onclick = async () => {
+        try {
+          btn.disabled = true;
+          const old = btn.textContent;
+          btn.textContent = "⏳ Doctor…";
+          const report = await collectReport();
+          showModal(report);
+          btn.textContent = old;
+        } catch (e) {
+          try { showModal("Doctor failed: " + (e && e.message ? e.message : String(e))); } catch {}
+        } finally {
+          btn.disabled = false;
+        }
+      };
+
+      // coloca no host
+      try {
+        host.appendChild(btn);
+      } catch {
+        try { host.insertAdjacentElement("beforeend", btn); } catch {}
+      }
+
+      logOk("[DOCTOR] Doctor button injected ✅ (Admin slot strict)");
+      return btn;
+    }
+
+    function boot(){
+      // tenta montar agora
+      ensureButton();
+
+      // acompanha troca de abas/DOM
+      const mo = new MutationObserver(() => ensureButton());
+      try { mo.observe(document.documentElement, { childList:true, subtree:true }); } catch {}
+
+      // evento UI READY (compat)
+      try {
+        window.addEventListener("RCF:UI_READY", () => ensureButton(), { passive:true });
+      } catch {}
+
+      logOk(`[DOCTOR] doctor_scan.js ready ✅ (${VERSION})`);
+    }
+
+    // API pública
+    window.RCF_DOCTOR = {
+      __v13: true,
+      version: VERSION,
+      run: async () => collectReport(),
+      show: (t) => showModal(t),
+      hide: () => hideModal(),
+      mountUI: () => ensureButton()
     };
 
-    head.appendChild(btnClose);
-    head.appendChild(btnCopy);
-
-    const body = document.createElement("div");
-    body.style.padding = "12px";
-
-    // textarea é o MAIS estável pra scroll/seleção no iOS
-    const ta = document.createElement("textarea");
-    ta.value = reportText;
-    ta.readOnly = true;
-    ta.style.width = "100%";
-    ta.style.height = "60vh";
-    ta.style.maxHeight = "62vh";
-    ta.style.resize = "none";
-    ta.style.borderRadius = "14px";
-    ta.style.border = "1px solid rgba(255,255,255,.12)";
-    ta.style.background = "rgba(0,0,0,.35)";
-    ta.style.color = "#eaf0ff";
-    ta.style.fontFamily = "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace";
-    ta.style.fontSize = "14px";
-    ta.style.lineHeight = "1.35";
-    ta.style.padding = "12px";
-    ta.style.outline = "none";
-    ta.style.overflow = "auto";
-    ta.style.webkitOverflowScrolling = "touch";
-    ta.style.touchAction = "pan-y";
-    ta.style.overscrollBehavior = "contain";
-
-    body.appendChild(ta);
-
-    modal.appendChild(head);
-    modal.appendChild(body);
-    overlay.appendChild(modal);
-    document.body.appendChild(overlay);
-
-    // foco ajuda iOS a entender que o scroll é “dentro”
-    try { ta.focus(); } catch {}
-    try { ta.scrollTop = 0; } catch {}
-  }
-
-  // ---------------------------------------------------------
-  // Main doctor action
-  // ---------------------------------------------------------
-  async function runDoctor() {
-    const sw = await getSWStatus();
-    const cache = await getCacheStatus();
-    const lsCnt = countLocalStorageKeys("rcf:");
-    const mbl = getMotherBundleLocal();
-    const res = getResourcesInfo();
-
-    const report = buildReportText({
-      version: "v1.3",
-      sw,
-      cache,
-      ls: { total: lsCnt.total, rcf: lsCnt.pref },
-      mbl,
-      res,
-    });
-
-    openModal(report);
-    return report;
-  }
-
-  // ---------------------------------------------------------
-  // Mount button in Integrations slot (fixo)
-  // ---------------------------------------------------------
-  function ensureButton() {
-    // lugar fixo pra integrações (pelo seu print existe)
-    const root =
-      document.getElementById("rcfAgentSlotTools") || // slot que vocês usam muito
-      document.getElementById("rcfIntegrationSlot") ||
-      document.getElementById("rcfIntegrationsSlot");
-
-    if (!root) return false;
-
-    if (document.getElementById("btnDoctorScan")) return true;
-
-    const btn = document.createElement("button");
-    btn.id = "btnDoctorScan";
-    btn.type = "button";
-    btn.textContent = "🩺 Doctor Scan";
-    btn.style.border = "0";
-    btn.style.borderRadius = "999px";
-    btn.style.padding = "12px 14px";
-    btn.style.fontWeight = "900";
-    btn.style.background = "#35d0b5";
-    btn.style.color = "#061019";
-    btn.style.boxShadow = "0 10px 30px rgba(0,0,0,.35)";
-    btn.style.cursor = "pointer";
-
-    btn.onclick = () => { runDoctor().catch((e) => log("runDoctor err", e)); };
-
-    // coloca dentro do slot (não “solto” na tela)
-    try { root.appendChild(btn); } catch {}
-
-    log("Doctor button injected ✅");
-    return true;
-  }
-
-  function mount() {
-    const ok = ensureButton();
-    if (!ok) {
-      // tenta de novo depois, porque UI pode carregar depois
-      setTimeout(ensureButton, 350);
-      setTimeout(ensureButton, 1200);
-    }
-  }
-
-  // ---------------------------------------------------------
-  // Public API
-  // ---------------------------------------------------------
-  window.RCF_DOCTOR_SCAN = {
-    ver: VER,
-    mount,
-    run: runDoctor,
-    close: closeModal,
-  };
-
-  // auto-mount
-  try {
-    if (document.readyState === "complete" || document.readyState === "interactive") {
-      mount();
+    // start
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", boot, { once:true });
     } else {
-      document.addEventListener("DOMContentLoaded", mount, { once: true });
+      boot();
     }
-  } catch {}
 
-  // se o seu UI READY bus existir, melhor ainda
-  try {
-    window.addEventListener("RCF:UI_READY", () => mount());
-  } catch {}
-
-  log("doctor_scan.js ready ✅", VER);
+  } catch (e) {
+    try { console.error("doctor_scan.js failed", e); } catch {}
+  }
 })();
