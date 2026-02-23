@@ -11,10 +11,25 @@
   "use strict";
 
   // =========================================================
-  // BOOT LOCK (evita double init)
+  // BOOT LOCK (evita double init) — SAFE (permite retry se falhar)
   // =========================================================
-  if (window.__RCF_BOOTED__) return;
-  window.__RCF_BOOTED__ = true;
+  const __BOOT_KEY = "__RCF_BOOT_STATE__";
+  try {
+    const st = window[__BOOT_KEY] || {};
+    const now = Date.now();
+
+    // já bootou com sucesso
+    if (st.booted === true) return;
+
+    // já está bootando (segura duplo load em sequência)
+    if (st.booting === true && (now - (st.ts || 0)) < 8000) return;
+
+    window[__BOOT_KEY] = { booting: true, booted: false, ts: now, ver: "v8" };
+  } catch {
+    // fallback compat (não trava)
+    if (window.__RCF_BOOTED__) return;
+    window.__RCF_BOOTED__ = true;
+  }
 
   // =========================================================
   // BOOT WATCHDOG (anti "carregando pra sempre")
@@ -2902,11 +2917,29 @@ try {
 }
 
       Logger.write("RCF V8 init ok — mode:", State.cfg.mode);
+      // ✅ marca boot concluído (permite detectar init real)
+      try {
+        window.__RCF_BOOTED__ = true; // compat
+        const st = window[__BOOT_KEY] || {};
+        st.booting = false;
+        st.booted = true;
+        st.ts = Date.now();
+        window[__BOOT_KEY] = st;
+      } catch {}
       safeSetStatus("OK ✅");
       syncFabStatusText();
     } catch (e) {
       const msg = (e?.message || e);
       Logger.write("FATAL init:", msg);
+      // ✅ libera retry se falhou (não deixa boot lock travar)
+      try {
+        const st = window[__BOOT_KEY] || {};
+        st.booting = false;
+        st.booted = false;
+        st.ts = Date.now();
+        window[__BOOT_KEY] = st;
+        window.__RCF_BOOTED__ = false;
+      } catch {}
       Stability.showErrorScreen("Falha ao iniciar (safeInit)", String(msg));
     }
   }
