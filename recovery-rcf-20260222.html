@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>RCF • ROOT RECOVERY</title>
+  <style>
+    :root{color-scheme:dark;}
+    body{margin:0;background:#070a14;color:#eaf0ff;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;}
+    .wrap{padding:18px;max-width:900px;margin:0 auto;}
+    .card{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);border-radius:16px;padding:16px;margin:14px 0;}
+    button{border:0;border-radius:999px;padding:12px 14px;font-weight:800;cursor:pointer;margin:6px 8px 0 0}
+    .r{background:#ff4d4d;color:#111}
+    .g{background:#35d0b5;color:#111}
+    .d{background:rgba(255,255,255,.12);color:#eaf0ff;border:1px solid rgba(255,255,255,.18)}
+    pre{white-space:pre-wrap;background:rgba(0,0,0,.35);padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,.10);min-height:200px}
+    code{background:rgba(255,255,255,.10);padding:2px 6px;border-radius:8px}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h2>RCF • ROOT RECOVERY (fora do /app)</h2>
+  <div class="card">
+    <p>
+      Isso roda na <b>raiz</b> do site. Serve pra limpar SW/caches e voltar a abrir a Factory.
+      <br/>Se /app estiver preto, use aqui.
+    </p>
+    <button class="r" id="u">Unregister ALL SW</button>
+    <button class="r" id="c">Clear ALL Caches</button>
+    <button class="d" id="s">Clear Storage (CUIDADO)</button>
+    <button class="g" id="go">Abrir /app/ (cache-bust)</button>
+  </div>
+
+  <div class="card">
+    <div><b>Status</b></div>
+    <pre id="log">boot…</pre>
+  </div>
+</div>
+
+<script>
+(function(){
+  const L = document.getElementById("log");
+  const log = (m)=>{ L.textContent += "\n" + m; };
+  const ts = ()=> new Date().toISOString();
+  const bust = (p)=> p + (p.includes("?")?"&":"?") + "cb=" + Date.now();
+
+  async function unregAll(){
+    log("[" + ts() + "] Unregister SW (ALL)…");
+    if (!("serviceWorker" in navigator)) { log("no SW support"); return; }
+    const regs = await navigator.serviceWorker.getRegistrations();
+    let ok=0;
+    for (const r of regs){ try{ if(await r.unregister()) ok++; }catch(e){} }
+    log("unregistered=" + ok + " total_regs=" + regs.length);
+    try { log("controller=" + (!!navigator.serviceWorker.controller)); } catch {}
+  }
+
+  async function clearAllCaches(){
+    log("[" + ts() + "] Clear caches (ALL)…");
+    if (!("caches" in window)) { log("no caches API"); return; }
+    const keys = await caches.keys();
+    let del=0;
+    for (const k of keys){ try{ if(await caches.delete(k)) del++; }catch(e){} }
+    log("deleted=" + del + " total_keys=" + keys.length);
+  }
+
+  function clearStorage(){
+    // ⚠️ isso apaga apps salvos localmente. só use se VOCÊ quiser zerar tudo.
+    let a=0,b=0;
+    try{ a=localStorage.length; localStorage.clear(); }catch(e){}
+    try{ b=sessionStorage.length; sessionStorage.clear(); }catch(e){}
+    log("[" + ts() + "] storage CLEARED local=" + a + " session=" + b);
+  }
+
+  document.getElementById("u").onclick = unregAll;
+  document.getElementById("c").onclick = clearAllCaches;
+  document.getElementById("s").onclick = clearStorage;
+
+  document.getElementById("go").onclick = async ()=>{
+    await unregAll();
+    await clearAllCaches();
+    // NÃO chama clearStorage automaticamente (pra não destruir seus apps)
+    location.href = bust("/app/");
+  };
+
+  log("[" + ts() + "] href=" + location.href);
+})();
+</script>
+</body>
+</html>
