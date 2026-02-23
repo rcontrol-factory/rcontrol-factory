@@ -1,15 +1,17 @@
 /* FILE: /app/js/core/vendor_loader.js
-   RControl Factory — vendor_loader.js — v1.1 SAFE
+   RControl Factory — vendor_loader.js — v1.2 SAFE
    - Mantém compat com boot atual
    - ✅ Auto-load de módulos extras via localStorage: rcf:boot:extra_modules (array)
    - ✅ Default SAFE: tenta carregar ./js/core/agent_runtime.js (se existir) sem quebrar tela
+   - ✅ Default SAFE: tenta carregar ./js/core/doctor_scan.js (se existir) sem quebrar tela
 */
 
 (() => {
   "use strict";
 
-  if (window.__RCF_VENDOR_LOADER_V11__) return;
-  window.__RCF_VENDOR_LOADER_V11__ = true;
+  // compat: se v1.2 já está ativo, sai
+  if (window.__RCF_VENDOR_LOADER_V12__) return;
+  window.__RCF_VENDOR_LOADER_V12__ = true;
 
   const log = (lvl, msg) => {
     try { window.RCF_LOGGER?.push?.(lvl, msg); } catch {}
@@ -60,7 +62,12 @@
 
     // 2) default SAFE: agent_runtime
     if (!list.includes("js/core/agent_runtime.js") && !list.includes("app/js/core/agent_runtime.js")) {
-      list.unshift("js/core/agent_runtime.js"); // runtime path (equiv ./js/core/agent_runtime.js)
+      list.unshift("js/core/agent_runtime.js");
+    }
+
+    // 3) default SAFE: doctor_scan
+    if (!list.includes("js/core/doctor_scan.js") && !list.includes("app/js/core/doctor_scan.js")) {
+      list.unshift("js/core/doctor_scan.js");
     }
 
     // evita spam: marca tentados
@@ -91,15 +98,15 @@
 
   // expõe helper (se quiser usar no futuro)
   window.RCF_VENDOR_LOADER = window.RCF_VENDOR_LOADER || {};
-  window.RCF_VENDOR_LOADER.__v11 = true;
+  window.RCF_VENDOR_LOADER.__v12 = true;
   window.RCF_VENDOR_LOADER.loadExtraModules = loadExtraModules;
 
   // roda depois do core subir (não interfere na ordem do boot)
   const run = () => {
     loadExtraModules().then(() => {
-      log("OK", "vendor_loader.js pronto ✅ (v1.1)");
+      log("OK", "vendor_loader.js pronto ✅ (v1.2)");
     }).catch(() => {
-      log("OK", "vendor_loader.js pronto ✅ (v1.1)"); // sempre "ok"
+      log("OK", "vendor_loader.js pronto ✅ (v1.2)");
     });
   };
 
