@@ -1,185 +1,232 @@
-<!-- FILE: app/index.html
-     RControl Factory — /app/index.html — vCLEAN-1+ENGINE+STYLE (SAFE INDEX + watchdog + safe=1)
-     - Anti-duplo-load (__RCF_INDEX_BOOTED__)
-     - Watchdog: mostra qual script travou
-     - Modo safe: ?safe=1 (carrega mínimo pra isolar módulo quebrado)
-     - ✅ FIX: carrega ./styles.css (restaura “essência” / layout)
+<!-- FILE: /app/index.html
+     RControl Factory — index.html (vCLEAN-1+ENGINE + VENDOR ZIP + PAGES LINKS + EXTRAS3 + SWVER)
+     PATCH:
+     - mantém DEGRAU 3 (auto extra-modules SAFE + 1 reload)
+     - mantém ZIP modules carregando DEPOIS do app.js (evita botão sumir)
+     - adiciona/garante "./js/core/pages_links.js"
+     - mantém base "./" e guards anti-boot duplicado
+     - ✅ SW VERSIONED REGISTER (iOS cache breaker): ./sw.js?v=BUILD
 -->
 <!doctype html>
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <meta name="theme-color" content="#0b1220" />
-  <title>RControl Factory</title>
+  <title>RCF</title>
+  <meta name="theme-color" content="#0b1020" />
 
-  <style>
-    /* tela de boot / watchdog */
-    :root{--bg:#070b12;--fg:#fff;--muted:rgba(255,255,255,.75);--card:rgba(255,255,255,.05);--bd:rgba(255,255,255,.14)}
-    body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial}
-    #bootScreen{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:18px}
-    .card{max-width:860px;width:100%;border:1px solid var(--bd);border-radius:16px;background:var(--card);padding:16px}
-    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
-    .title{font-weight:900;font-size:18px}
-    .pill{font-size:12px;padding:6px 10px;border-radius:999px;border:1px solid var(--bd);background:rgba(0,0,0,.25)}
-    .mono{white-space:pre-wrap;word-break:break-word;margin-top:10px;padding:12px;border-radius:12px;background:rgba(0,0,0,.35);border:1px solid var(--bd);max-height:45vh;overflow:auto}
-    .btn{appearance:none;border:0;border-radius:12px;padding:10px 12px;font-weight:800}
-    .ok{background:#2dd4bf;color:#022}
-    .danger{background:#ef4444;color:#fff}
-    .ghost{background:rgba(255,255,255,.08);color:#fff;border:1px solid var(--bd)}
-    a{color:#7dd3fc}
-  </style>
+  <!-- PADRÃO: base relativo (Pages/subpath safe) -->
+  <base href="./" />
 
-  <script>
-    // ==============================
-    // INDEX BOOT GUARD + WATCHDOG
-    // ==============================
-    (function(){
-      if (window.__RCF_INDEX_BOOTED__) return;
-      window.__RCF_INDEX_BOOTED__ = true;
+  <link rel="manifest" href="./manifest.json" />
+  <link rel="stylesheet" href="./styles.css" />
 
-      const qs = new URLSearchParams(location.search);
-      window.__RCF_SAFE_MODE__ = (qs.get("safe") === "1");
-
-      const stamp = () => new Date().toLocaleString();
-      const log = (m) => {
-        try {
-          window.__RCF_BOOT_LOG__ = window.__RCF_BOOT_LOG__ || [];
-          window.__RCF_BOOT_LOG__.push("[" + stamp() + "] " + m);
-          const el = document.getElementById("bootLog");
-          if (el) el.textContent = window.__RCF_BOOT_LOG__.join("\n");
-          const st = document.getElementById("bootStatus");
-          if (st) st.textContent = m;
-        } catch {}
-      };
-
-      window.__RCF_BOOT_LOG_PUSH__ = log;
-      window.addEventListener("error", (ev) => {
-        try { log("ERR: " + (ev.message || "window.error") + (ev.filename ? (" @ " + ev.filename + ":" + (ev.lineno||0)) : "")); } catch {}
-      });
-      window.addEventListener("unhandledrejection", (ev) => {
-        try { log("UNHANDLED: " + (ev.reason && (ev.reason.message || ev.reason)) ); } catch {}
-      });
-
-      setTimeout(() => {
-        try {
-          const booted = (window.__RCF_BOOTED__ === true) || (window.__RCF_UI_READY__ === true);
-          if (!booted) {
-            log("WATCHDOG: ainda não bootou (10s). Último script=" + (window.__RCF_LAST_SCRIPT__ || "(nenhum)"));
-            const hint = document.getElementById("bootHint");
-            if (hint) hint.textContent = "Dica: abra com ?safe=1 pra carregar só o mínimo e isolar módulo quebrado.";
-          } else {
-            const bs = document.getElementById("bootScreen");
-            if (bs) bs.style.display = "none";
-          }
-        } catch {}
-      }, 10000);
-
-      window.__RCF_LOAD_SCRIPT__ = function(src){
-        return new Promise((resolve, reject) => {
-          try {
-            window.__RCF_LAST_SCRIPT__ = src;
-            log("loading: " + src);
-            const s = document.createElement("script");
-            s.src = src;
-            s.defer = true;
-            s.onload = () => { log("loaded: " + src); resolve(true); };
-            s.onerror = () => { log("FAIL: " + src); reject(new Error("load fail " + src)); };
-            document.head.appendChild(s);
-          } catch (e) { reject(e); }
-        });
-      };
-
-      log("index init OK — safe=" + (window.__RCF_SAFE_MODE__ ? "1" : "0"));
-    })();
-  </script>
+  <meta name="rcf-index" content="vCLEAN-1+ENGINE+VENDORZIP+PAGESLINKS+EXTRAS3+SWVER" />
 </head>
 
 <body>
-  <div id="app"></div>
+  <noscript>Ative o JavaScript para usar o app.</noscript>
 
-  <div id="bootScreen">
-    <div class="card">
-      <div class="row" style="justify-content:space-between">
-        <div class="title">RCF • Boot</div>
-        <div class="row">
-          <div class="pill" id="bootMode">mode: <span id="bootModeVal"></span></div>
-          <div class="pill">status: <span id="bootStatus">iniciando…</span></div>
-        </div>
-      </div>
-
-      <div style="margin-top:10px;color:var(--muted)">
-        Se travar em “carregando…”, este log mostra exatamente qual script quebrou.
-      </div>
-
-      <div class="mono" id="bootLog">Pronto.</div>
-      <div id="bootHint" style="margin-top:10px;color:var(--muted)"></div>
-
-      <div class="row" style="margin-top:12px">
-        <button class="btn ok" type="button" onclick="location.href=location.origin+location.pathname+'?safe=1'">Abrir SAFE (?safe=1)</button>
-        <button class="btn ghost" type="button" onclick="location.reload()">Reload</button>
-        <button class="btn danger" type="button" onclick="localStorage.removeItem('rcf:logs'); alert('logs locais limpos');">Limpar logs locais</button>
-      </div>
-
-      <div style="margin-top:10px;color:var(--muted);font-size:12px">
-        Base: <a href="https://rcontrol-factory.pages.dev/" target="_blank" rel="noreferrer">rcontrol-factory.pages.dev</a>
-      </div>
-    </div>
+  <div id="app">
+    <div style="padding:14px;font-family:system-ui">Carregando…</div>
   </div>
 
   <script>
-    try { document.getElementById("bootModeVal").textContent = (window.__RCF_SAFE_MODE__ ? "SAFE" : "NORMAL"); } catch {}
-  </script>
+    (function () {
+      // ✅ Guard: evita carregar tudo 2x em edge cases
+      if (window.__RCF_INDEX_BOOTED__) return;
+      window.__RCF_INDEX_BOOTED__ = true;
 
-  <script>
-    // ==============================
-    // LOADER EM ORDEM + CSS (restaura layout)
-    // ==============================
-    (async function(){
-      const load = window.__RCF_LOAD_SCRIPT__;
-      const log = window.__RCF_BOOT_LOG_PUSH__ || function(){};
+      // ✅ BUILD do SW (troque quando quiser forçar “quebra-cache”)
+      // Dica: mude só esse valor e publique -> iPhone pega na hora.
+      const RCF_SW_BUILD = "RCF_SW_BUILD_2026_02_22_01";
 
-      const bust = (() => {
+      function log(){ try { console.log.apply(console, ["[RCF/index]"].concat([].slice.call(arguments))); } catch(e){} }
+
+      function loadScript(src){
+        return new Promise((resolve, reject) => {
+          const s = document.createElement("script");
+          s.src = src;
+          s.async = false;
+          s.onload = () => resolve(src);
+          s.onerror = () => reject(new Error("load failed: " + src));
+          document.head.appendChild(s);
+        });
+      }
+
+      // =========================================================
+      // DEGRAU 3 — AUTO EXTRA MODULES (SAFE + 1 reload)
+      // =========================================================
+      function ensureExtraModules(){
+        const KEY = "rcf:boot:extra_modules";
+        const GUARD = "rcf:extra_modules_installed:v1";
+        const MUST = [
+          "./js/core/agent_tools_panel.js",
+          "./js/core/agent_scanmap.js"
+        ];
+
+        // evita loop de reload
         try {
-          const v = localStorage.getItem("rcf:cache_bust");
-          return v ? ("?v=" + encodeURIComponent(v)) : "";
-        } catch { return ""; }
-      })();
+          if (sessionStorage.getItem(GUARD) === "1") return { changed:false, already:true };
+        } catch {}
 
-      // ✅ carrega CSS base antes de tudo (isso devolve a “essência”)
-      try {
-        const link = document.createElement("link");
-        link.rel = "stylesheet";
-        link.href = "./styles.css" + bust;
-        link.onload = () => log("loaded: ./styles.css" + bust);
-        link.onerror = () => log("FAIL: ./styles.css" + bust);
-        document.head.appendChild(link);
-        log("loading: ./styles.css" + bust);
-      } catch {}
-
-      try {
-        const safe = (window.__RCF_SAFE_MODE__ === true);
-
-        // Core base
-        await load("./js/core/diagnostics.js" + bust).catch(() => log("warn: diagnostics.js não carregou (ok)"));
-        await load("./js/core/ui_bindings.js" + bust).catch(() => log("warn: ui_bindings.js não carregou (ok)"));
-
-        // Engine/Admin só no NORMAL
-        if (!safe) {
-          await load("./js/engine/engine.js" + bust).catch(() => log("warn: engine.js não carregou (ok)"));
-          await load("./js/admin.github.js" + bust).catch(() => log("warn: admin.github.js não carregou (ok)"));
-          await load("./js/core/github_sync.js" + bust).catch(() => log("warn: github_sync.js não carregou (ok)"));
-        } else {
-          log("SAFE MODE: pulando engine/admin módulos");
+        let cur = [];
+        try {
+          const raw = localStorage.getItem(KEY);
+          const j = raw ? JSON.parse(raw) : [];
+          cur = Array.isArray(j) ? j : [];
+        } catch {
+          cur = [];
         }
 
-        // App principal por último
-        await load("./app.js" + bust);
+        const norm = (p) => String(p || "").trim();
+        const set = new Set(cur.map(norm).filter(Boolean));
 
-        log("DONE: scripts carregados");
-      } catch (e) {
-        log("FATAL LOADER: " + (e && (e.message || e)));
+        let changed = false;
+        for (const p of MUST) {
+          const x = norm(p);
+          if (!set.has(x)) { set.add(x); changed = true; }
+        }
+
+        const list = Array.from(set).sort((a,b)=>a.localeCompare(b));
+
+        if (changed) {
+          try { localStorage.setItem(KEY, JSON.stringify(list)); } catch {}
+          try { sessionStorage.setItem(GUARD, "1"); } catch {}
+          return { changed:true, list };
+        }
+
+        // marcou como ok (sem precisar reload)
+        try { sessionStorage.setItem(GUARD, "1"); } catch {}
+        return { changed:false, list };
       }
+
+      async function boot(){
+        log("BOOT: starting… base=", document.baseURI);
+
+        // ✅ roda antes de qualquer coisa que dependa do boot extra
+        try {
+          const r = ensureExtraModules();
+          if (r && r.changed) {
+            log("DEGRAU3: extra_modules atualizado -> reload 1x", r.list || []);
+            try { location.reload(); return; } catch {}
+          } else {
+            log("DEGRAU3: extra_modules ok");
+          }
+        } catch (e) {
+          log("DEGRAU3: falhou (ignorado)", (e && e.message) ? e.message : e);
+        }
+
+        // =========================================================
+        // 1) CORE + ENGINE (antes do app.js)
+        // =========================================================
+        const modules = [
+          "./js/core/logger.js",
+          "./js/core/stability_guard.js",
+          "./js/core/storage.js",
+
+          /* ✅ VENDOR */
+          "./js/core/vendor_loader.js",
+          "./js/core/vendor_health.js",
+
+          "./js/core/github_sync.js",
+          "./js/core/vfs_overrides.js",
+          "./js/core/vfs_shim.js",
+          "./js/core/mother_selfupdate.js",
+          "./js/core/errors.js",
+          "./js/core/risk.js",
+          "./js/core/snapshot.js",
+          "./js/core/selfheal.js",
+          "./js/core/ui_safety.js",
+          "./js/core/ui_compact_outputs.js",
+          "./js/core/ui_bindings.js",
+          "./js/core/diagnostics.js",
+          "./js/core/publish_queue.js",
+          "./js/core/preview_runner.js",
+          "./js/core/policy.js",
+          "./js/core/settings_cleanup.js",
+          "./js/core/injector.js",
+
+          /* ✅ ENGINE */
+          "./js/engine/template_registry.js",
+          "./js/engine/module_registry.js",
+          "./js/engine/builder.js",
+          "./js/engine/engine.js",
+
+          /* ✅ PWA Links / Pages Hook */
+          "./js/core/pages_links.js",
+
+          "./js/admin.github.js"
+        ];
+
+        for (const src of modules) {
+          try {
+            await loadScript(src);
+            try { window.RCF_LOGGER?.push?.("BOOT", "module loaded ✅ " + src); } catch {}
+            log("module loaded ✅", src);
+          } catch (e) {
+            try { window.RCF_LOGGER?.push?.("WARN", "module missing/failed ❌ " + src + " :: " + (e.message||e)); } catch {}
+            log("module missing/failed ❌", src, (e.message||e));
+          }
+        }
+
+        // =========================================================
+        // 2) app.js (cria UI/slots)
+        // =========================================================
+        try {
+          await loadScript("./app.js");
+          try { window.RCF_LOGGER?.push?.("BOOT", "app.js loaded ✅ ./app.js"); } catch {}
+          log("app.js loaded ✅");
+        } catch (e) {
+          try { window.RCF_LOGGER?.push?.("ERR", "app.js missing/failed ❌ ./app.js :: " + (e.message||e)); } catch {}
+          log("app.js missing/failed ❌", (e.message||e));
+        }
+
+        // =========================================================
+        // 3) ZIP/UI modules (depois do app.js)
+        // =========================================================
+        const afterApp = [
+          "./js/core/zip_vault.js",
+          "./js/core/agent_zip_bridge.js"
+        ];
+
+        for (const src of afterApp) {
+          try {
+            await loadScript(src);
+            try { window.RCF_LOGGER?.push?.("BOOT", "module loaded ✅ " + src); } catch {}
+            log("module loaded ✅", src);
+          } catch (e) {
+            try { window.RCF_LOGGER?.push?.("WARN", "module missing/failed ❌ " + src + " :: " + (e.message||e)); } catch {}
+            log("module missing/failed ❌", src, (e.message||e));
+          }
+        }
+
+        // =========================================================
+        // 4) SW register (versionado) — quebra-cache iOS
+        // =========================================================
+        try {
+          if (!window.__RCF_SW_REGISTERED__ && "serviceWorker" in navigator) {
+            window.__RCF_SW_REGISTERED__ = true;
+
+            const swUrl = "./sw.js?v=" + encodeURIComponent(RCF_SW_BUILD);
+
+            navigator.serviceWorker.register(swUrl, { scope: "./" })
+              .then((reg) => {
+                try { window.RCF_LOGGER?.push?.("BOOT", "sw register: ok ✅ " + swUrl); } catch {}
+                log("sw register ok", swUrl);
+
+                // tenta puxar update imediatamente (ajuda no iOS)
+                try { reg.update?.(); } catch {}
+              })
+              .catch((e) => {
+                try { window.RCF_LOGGER?.push?.("WARN", "sw register: fail/ignored :: " + (e?.message||e)); } catch {}
+                log("sw register fail/ignored:", (e?.message||e));
+              });
+          }
+        } catch {}
+      }
+
+      boot();
     })();
   </script>
 </body>
