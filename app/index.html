@@ -8,7 +8,7 @@
   <base href="./" />
   <link rel="manifest" href="./manifest.json" />
   <link rel="stylesheet" href="./styles.css" />
-  <meta name="rcf-index" content="SAFE_BOOT_AUTO_2026_02_23" />
+  <meta name="rcf-index" content="SAFE_BOOT_AUTO_2026_02_23b" />
   <style>
     body{background:#0b1020;color:#eaf0ff;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;}
     .rcf_safe{max-width:920px;margin:0 auto;padding:14px}
@@ -17,7 +17,10 @@
     .r{background:#ff4d4d;color:#111}
     .g{background:#35d0b5;color:#111}
     .d{background:rgba(255,255,255,.12);color:#eaf0ff;border:1px solid rgba(255,255,255,.18)}
-    pre{white-space:pre-wrap;background:rgba(0,0,0,.35);padding:10px;border-radius:12px;border:1px solid rgba(255,255,255,.10);min-height:160px;max-height:42vh;overflow:auto;-webkit-overflow-scrolling:touch}
+    pre{
+      white-space:pre-wrap;background:rgba(0,0,0,.35);padding:10px;border-radius:12px;border:1px solid rgba(255,255,255,.10);
+      min-height:160px;max-height:42vh;overflow:auto;-webkit-overflow-scrolling:touch
+    }
     code{background:rgba(255,255,255,.10);padding:2px 6px;border-radius:8px}
     .muted{opacity:.88}
     .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
@@ -73,9 +76,29 @@
 
     function setPill(el, txt){ try{ el.textContent = txt; }catch{} }
 
+    function hideSafe(reason){
+      try {
+        setPill(pUI, "ui: READY ✅");
+        log("[" + ts() + "] SAFE overlay hide ✅ reason=" + reason);
+      } catch {}
+
+      // remove de verdade pra não bloquear touch/scroll
+      try { safeRoot.style.pointerEvents = "none"; } catch {}
+      try { safeRoot.style.display = "none"; } catch {}
+      try { safeRoot.remove(); } catch {}
+    }
+
     log("[" + ts() + "] SAFE_BOOT_AUTO loaded ✅ base=" + document.baseURI);
     setPill(pMode, SAFE_LOCK ? "mode: SAFE (lock)" : "mode: AUTO");
     setPill(pUI, "ui: waiting…");
+
+    // 🔥 PRINCIPAL: evento real da Factory (app.js / ui bus)
+    // quando disparar, some na hora
+    try {
+      window.addEventListener("RCF:UI_READY", function(){
+        hideSafe("event RCF:UI_READY");
+      }, { once: true });
+    } catch {}
 
     async function unreg(){
       try{
@@ -160,7 +183,7 @@
       try { window.__RCF_SAFE_BOOT_DONE__ = true; } catch {}
     }
 
-    // some o SAFE BOOT quando a UI real estiver pronta
+    // fallback: polling (caso o evento não dispare por algum motivo)
     function watchUI(){
       const start = Date.now();
       const timer = setInterval(()=>{
@@ -169,13 +192,10 @@
 
         if (uiReady) {
           clearInterval(timer);
-          setTimeout(()=>{
-            try { safeRoot.style.display = "none"; } catch {}
-          }, 120);
+          hideSafe("__RCF_UI_READY__");
           return;
         }
 
-        // timeout só pra não ficar infinito (mantém safe visível)
         if (Date.now() - start > 12000) {
           clearInterval(timer);
           setPill(pUI, "ui: timeout (safe stays)");
@@ -189,15 +209,13 @@
     document.getElementById("k").onclick = swStatus;
     document.getElementById("boot").onclick = ()=>{ bootNormal(); watchUI(); };
 
-    // status inicial
     swStatus();
 
-    // AUTO BOOT (sem clicar) — a não ser que esteja em ?safe=1
     if (!SAFE_LOCK) {
       setTimeout(()=>{
         bootNormal();
         watchUI();
-      }, 250);
+      }, 150);
     } else {
       log("[" + ts() + "] SAFE LOCK ativo (?safe=1). Auto-boot desativado.");
     }
