@@ -1,303 +1,169 @@
 <!-- FILE: /app/index.html
-     RControl Factory — index.html (vCLEAN-1+ENGINE + VENDOR ZIP + PAGES LINKS + EXTRAS3 + SWVER)
-     PATCH (2026-02-22 hotfix):
-     - ✅ FIX REGRESSÃO: ZIP/UI modules carregam DEPOIS do app.js, então precisamos reinjetar UI depois do load
-       -> POST-ZIP REINJECT (chama mountUI/mount/inject/init)
-     - ✅ MAE ALIAS: tenta mapear window.RCF_MAE / window.RCF_MOTHER caso o módulo exporte com outro nome
-     - mantém DEGRAU 3 (auto extra-modules SAFE + 1 reload)
-     - mantém ZIP modules carregando DEPOIS do app.js (evita botão sumir)
-     - adiciona/garante "./js/core/pages_links.js"
-     - mantém base "./" e guards anti-boot duplicado
-     - ✅ SW VERSIONED REGISTER (iOS cache breaker): ./sw.js?v=BUILD
+     RCF — RECOVERY INDEX (SW/CACHE CLEANER) — 2026-02-22
+     Objetivo: sempre carregar (zero deps) e permitir limpar Service Worker / caches / storage.
 -->
 <!doctype html>
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>RCF</title>
-  <meta name="theme-color" content="#0b1020" />
+  <title>RCF • Recovery</title>
 
-  <!-- PADRÃO: base relativo (Pages/subpath safe) -->
-  <base href="./" />
+  <!-- tenta reduzir cache do HTML (nem sempre garante, mas ajuda) -->
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
 
-  <link rel="manifest" href="./manifest.json" />
-  <link rel="stylesheet" href="./styles.css" />
-
-  <meta name="rcf-index" content="vCLEAN-1+ENGINE+VENDORZIP+PAGESLINKS+EXTRAS3+SWVER+POSTZIPREINJECT" />
+  <style>
+    :root{color-scheme:dark;}
+    body{margin:0;background:#0b1020;color:#eaf0ff;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;}
+    .wrap{padding:18px;max-width:820px;margin:0 auto;}
+    .card{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:16px;margin:14px 0;}
+    h1{margin:6px 0 2px;font-size:22px}
+    p{margin:10px 0;opacity:.9;line-height:1.35}
+    .row{display:flex;gap:10px;flex-wrap:wrap}
+    button{
+      border:0;border-radius:999px;padding:12px 14px;font-weight:700;
+      background:#ff4d4d;color:#111;cursor:pointer
+    }
+    button.alt{background:#35d0b5}
+    button.dark{background:rgba(255,255,255,.10);color:#eaf0ff;border:1px solid rgba(255,255,255,.14)}
+    code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace}
+    pre{white-space:pre-wrap;background:rgba(0,0,0,.35);padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,.08)}
+    .small{font-size:12px;opacity:.75}
+    .ok{color:#7CFFA7}
+    .warn{color:#FFD36A}
+    .err{color:#FF7A7A}
+  </style>
 </head>
-
 <body>
-  <noscript>Ative o JavaScript para usar o app.</noscript>
+  <div class="wrap">
+    <h1>RCF • RECOVERY MODE</h1>
+    <p>Se ficou tela preta, é <b>SW/cache preso</b>. Use os botões abaixo, depois clique <b>Reload</b>.</p>
 
-  <div id="app">
-    <div style="padding:14px;font-family:system-ui">Carregando…</div>
+    <div class="card">
+      <div class="row">
+        <button id="btnUnreg">Unregister SW</button>
+        <button id="btnCaches">Clear Caches</button>
+        <button id="btnStorage" class="dark">Clear Storage</button>
+        <button id="btnHard" class="alt">Reload (cache-bust)</button>
+      </div>
+      <p class="small">Dica iPhone: se o normal estiver preso, abra em <b>Aba Privada</b> e rode isso 1x.</p>
+    </div>
+
+    <div class="card">
+      <p class="small">Status:</p>
+      <pre id="log">Starting…</pre>
+    </div>
+
+    <div class="card">
+      <p class="small">
+        Depois de limpar: volte pro app normal. (Quando estabilizar, a gente volta seu index padrão.)
+      </p>
+      <div class="row">
+        <button id="btnGoApp" class="dark">Ir para Factory (./)</button>
+      </div>
+    </div>
   </div>
 
   <script>
-    (function () {
-      // ✅ Guard: evita carregar tudo 2x em edge cases
-      if (window.__RCF_INDEX_BOOTED__) return;
-      window.__RCF_INDEX_BOOTED__ = true;
+    (function(){
+      const $ = (id)=>document.getElementById(id);
+      const logEl = $("log");
+      function log(msg, cls){
+        const line = msg + "\\n";
+        logEl.textContent += line;
+      }
+      function ts(){ return new Date().toISOString(); }
 
-      // ✅ BUILD do SW (troque quando quiser forçar “quebra-cache”)
-      const RCF_SW_BUILD = "RCF_SW_BUILD_2026_02_22_02";
-
-      function log(){ try { console.log.apply(console, ["[RCF/index]"].concat([].slice.call(arguments))); } catch(e){} }
-
-      function loadScript(src){
-        return new Promise((resolve, reject) => {
-          const s = document.createElement("script");
-          s.src = src;
-          s.async = false;
-          s.onload = () => resolve(src);
-          s.onerror = () => reject(new Error("load failed: " + src));
-          document.head.appendChild(s);
-        });
+      function bustUrl(base){
+        const u = new URL(base, location.href);
+        u.searchParams.set("cb", String(Date.now()));
+        return u.toString();
       }
 
-      // =========================================================
-      // DEGRAU 3 — AUTO EXTRA MODULES (SAFE + 1 reload)
-      // =========================================================
-      function ensureExtraModules(){
-        const KEY = "rcf:boot:extra_modules";
-        const GUARD = "rcf:extra_modules_installed:v1";
-        const MUST = [
-          "./js/core/agent_tools_panel.js",
-          "./js/core/agent_scanmap.js"
-        ];
-
-        // evita loop de reload
-        try {
-          if (sessionStorage.getItem(GUARD) === "1") return { changed:false, already:true };
-        } catch {}
-
-        let cur = [];
-        try {
-          const raw = localStorage.getItem(KEY);
-          const j = raw ? JSON.parse(raw) : [];
-          cur = Array.isArray(j) ? j : [];
-        } catch {
-          cur = [];
+      async function unregisterSW(){
+        log("\\n[" + ts() + "] Unregister SW…");
+        if (!("serviceWorker" in navigator)) {
+          log("  (no serviceWorker support)");
+          return { ok:true, count:0 };
         }
-
-        const norm = (p) => String(p || "").trim();
-        const set = new Set(cur.map(norm).filter(Boolean));
-
-        let changed = false;
-        for (const p of MUST) {
-          const x = norm(p);
-          if (!set.has(x)) { set.add(x); changed = true; }
-        }
-
-        const list = Array.from(set).sort((a,b)=>a.localeCompare(b));
-
-        if (changed) {
-          try { localStorage.setItem(KEY, JSON.stringify(list)); } catch {}
-          try { sessionStorage.setItem(GUARD, "1"); } catch {}
-          return { changed:true, list };
-        }
-
-        try { sessionStorage.setItem(GUARD, "1"); } catch {}
-        return { changed:false, list };
-      }
-
-      // =========================================================
-      // POST-ZIP REINJECT (corrige "UI_READY fired reinject_called=0")
-      // =========================================================
-      function postZipReinject(){
-        const tries = [
-          ["RCF_ZIP_VAULT", "mountUI"],
-          ["RCF_ZIP_VAULT", "mount"],
-          ["RCF_ZIP_VAULT", "injectUI"],
-          ["RCF_ZIP_VAULT", "inject"],
-          ["RCF_ZIP_VAULT", "init"],
-          ["RCF_AGENT_ZIP_BRIDGE", "mountUI"],
-          ["RCF_AGENT_ZIP_BRIDGE", "mount"],
-          ["RCF_AGENT_ZIP_BRIDGE", "init"]
-        ];
-
-        let called = 0;
-        for (const [objName, fnName] of tries) {
-          try {
-            const obj = window[objName];
-            const fn = obj && obj[fnName];
-            if (typeof fn === "function") {
-              fn.call(obj, { ui: window.RCF_UI });
-              called++;
-            }
-          } catch {}
-        }
-
-        try { window.RCF_LOGGER?.push?.("INFO", `POST-ZIP reinject ✅ called=${called}`); } catch {}
-        log("POST-ZIP reinject", "called=", called);
-
-        // também sinaliza evento de "late ready" (se algum módulo escutar)
-        try {
-          window.dispatchEvent(new CustomEvent("RCF:UI_READY", { detail: { ts: Date.now(), late: true } }));
-        } catch {}
-      }
-
-      // =========================================================
-      // MAE alias detector (caso o módulo exporte com outro nome)
-      // =========================================================
-      function ensureMaeAlias(){
-        try {
-          if (window.RCF_MAE || window.RCF_MOTHER) return true;
-
-          const candidates = [
-            window.RCF_MOTHER_SELFUPDATE,
-            window.MOTHER_SELFUPDATE,
-            window.MAE,
-            window.MOTHER
-          ].filter(Boolean);
-
-          const hit = candidates[0] || null;
-          if (hit) {
-            window.RCF_MAE = hit;
-            window.RCF_MOTHER = hit;
-            try { window.RCF_LOGGER?.push?.("OK", "MAE alias OK ✅"); } catch {}
-            log("MAE alias OK");
-            return true;
+        try{
+          const regs = await navigator.serviceWorker.getRegistrations();
+          let n = 0;
+          for (const r of regs) {
+            try{
+              const ok = await r.unregister();
+              if (ok) n++;
+            }catch(e){}
           }
-
-          log("MAE alias: nenhum candidato encontrado");
-          return false;
-        } catch {
-          return false;
+          log("  ok: unregistered=" + n);
+          return { ok:true, count:n };
+        }catch(e){
+          log("  ERR: " + (e && e.message ? e.message : e));
+          return { ok:false, err:String(e) };
         }
       }
 
-      async function boot(){
-        log("BOOT: starting… base=", document.baseURI);
-
-        // ✅ roda antes de qualquer coisa que dependa do boot extra
-        try {
-          const r = ensureExtraModules();
-          if (r && r.changed) {
-            log("DEGRAU3: extra_modules atualizado -> reload 1x", r.list || []);
-            try { location.reload(); return; } catch {}
-          } else {
-            log("DEGRAU3: extra_modules ok");
-          }
-        } catch (e) {
-          log("DEGRAU3: falhou (ignorado)", (e && e.message) ? e.message : e);
+      async function clearCaches(){
+        log("\\n[" + ts() + "] Clear caches…");
+        if (!("caches" in window)) {
+          log("  (no caches API)");
+          return { ok:true, count:0 };
         }
-
-        // =========================================================
-        // 1) CORE + ENGINE (antes do app.js)
-        // =========================================================
-        const modules = [
-          "./js/core/logger.js",
-          "./js/core/stability_guard.js",
-          "./js/core/storage.js",
-
-          /* ✅ VENDOR */
-          "./js/core/vendor_loader.js",
-          "./js/core/vendor_health.js",
-
-          "./js/core/github_sync.js",
-          "./js/core/vfs_overrides.js",
-          "./js/core/vfs_shim.js",
-          "./js/core/mother_selfupdate.js",
-          "./js/core/errors.js",
-          "./js/core/risk.js",
-          "./js/core/snapshot.js",
-          "./js/core/selfheal.js",
-          "./js/core/ui_safety.js",
-          "./js/core/ui_compact_outputs.js",
-          "./js/core/ui_bindings.js",
-          "./js/core/diagnostics.js",
-          "./js/core/publish_queue.js",
-          "./js/core/preview_runner.js",
-          "./js/core/policy.js",
-          "./js/core/settings_cleanup.js",
-          "./js/core/injector.js",
-
-          /* ✅ ENGINE */
-          "./js/engine/template_registry.js",
-          "./js/engine/module_registry.js",
-          "./js/engine/builder.js",
-          "./js/engine/engine.js",
-
-          /* ✅ PWA Links / Pages Hook */
-          "./js/core/pages_links.js",
-
-          "./js/admin.github.js"
-        ];
-
-        for (const src of modules) {
-          try {
-            await loadScript(src);
-            try { window.RCF_LOGGER?.push?.("BOOT", "module loaded ✅ " + src); } catch {}
-            log("module loaded ✅", src);
-          } catch (e) {
-            try { window.RCF_LOGGER?.push?.("WARN", "module missing/failed ❌ " + src + " :: " + (e.message||e)); } catch {}
-            log("module missing/failed ❌", src, (e.message||e));
+        try{
+          const keys = await caches.keys();
+          let n = 0;
+          for (const k of keys){
+            try{
+              const ok = await caches.delete(k);
+              if (ok) n++;
+            }catch(e){}
           }
+          log("  ok: deleted=" + n + " (" + keys.length + " keys)");
+          return { ok:true, count:n };
+        }catch(e){
+          log("  ERR: " + (e && e.message ? e.message : e));
+          return { ok:false, err:String(e) };
         }
-
-        // ✅ depois de carregar a mãe, tenta alias
-        try { ensureMaeAlias(); } catch {}
-
-        // =========================================================
-        // 2) app.js (cria UI/slots)
-        // =========================================================
-        try {
-          await loadScript("./app.js");
-          try { window.RCF_LOGGER?.push?.("BOOT", "app.js loaded ✅ ./app.js"); } catch {}
-          log("app.js loaded ✅");
-        } catch (e) {
-          try { window.RCF_LOGGER?.push?.("ERR", "app.js missing/failed ❌ ./app.js :: " + (e.message||e)); } catch {}
-          log("app.js missing/failed ❌", (e.message||e));
-        }
-
-        // =========================================================
-        // 3) ZIP/UI modules (depois do app.js)
-        // =========================================================
-        const afterApp = [
-          "./js/core/zip_vault.js",
-          "./js/core/agent_zip_bridge.js"
-        ];
-
-        for (const src of afterApp) {
-          try {
-            await loadScript(src);
-            try { window.RCF_LOGGER?.push?.("BOOT", "module loaded ✅ " + src); } catch {}
-            log("module loaded ✅", src);
-          } catch (e) {
-            try { window.RCF_LOGGER?.push?.("WARN", "module missing/failed ❌ " + src + " :: " + (e.message||e)); } catch {}
-            log("module missing/failed ❌", src, (e.message||e));
-          }
-        }
-
-        // ✅ HOTFIX: reinjetar UI depois do ZIP carregar
-        try { postZipReinject(); } catch {}
-
-        // =========================================================
-        // 4) SW register (versionado) — quebra-cache iOS
-        // =========================================================
-        try {
-          if (!window.__RCF_SW_REGISTERED__ && "serviceWorker" in navigator) {
-            window.__RCF_SW_REGISTERED__ = true;
-
-            const swUrl = "./sw.js?v=" + encodeURIComponent(RCF_SW_BUILD);
-
-            navigator.serviceWorker.register(swUrl, { scope: "./" })
-              .then((reg) => {
-                try { window.RCF_LOGGER?.push?.("BOOT", "sw register: ok ✅ " + swUrl); } catch {}
-                log("sw register ok", swUrl);
-                try { reg.update?.(); } catch {}
-              })
-              .catch((e) => {
-                try { window.RCF_LOGGER?.push?.("WARN", "sw register: fail/ignored :: " + (e?.message||e)); } catch {}
-                log("sw register fail/ignored:", (e?.message||e));
-              });
-          }
-        } catch {}
       }
 
-      boot();
+      function clearStorage(){
+        log("\\n[" + ts() + "] Clear storage…");
+        let a=0,b=0;
+        try{ a = localStorage.length; localStorage.clear(); }catch(e){}
+        try{ b = sessionStorage.length; sessionStorage.clear(); }catch(e){}
+        log("  ok: localStorage cleared ("+a+") / sessionStorage cleared ("+b+")");
+        return { ok:true, local:a, session:b };
+      }
+
+      async function fullClean(){
+        await unregisterSW();
+        await clearCaches();
+      }
+
+      function reloadHard(){
+        const target = bustUrl("./");
+        log("\\n[" + ts() + "] Reload -> " + target);
+        try{ location.href = target; }catch(e){ location.reload(); }
+      }
+
+      // bind
+      $("btnUnreg").onclick = unregisterSW;
+      $("btnCaches").onclick = clearCaches;
+      $("btnStorage").onclick = clearStorage;
+      $("btnHard").onclick = async ()=>{ await fullClean(); reloadHard(); };
+      $("btnGoApp").onclick = ()=>{ location.href = bustUrl("./"); };
+
+      // auto status
+      log("[" + ts() + "] RECOVERY ready. href=" + location.href);
+      if ("serviceWorker" in navigator) {
+        navigator.serviceWorker.getRegistrations()
+          .then(r=>log("SW regs=" + r.length))
+          .catch(()=>log("SW regs=?"));
+      } else {
+        log("SW unsupported");
+      }
     })();
   </script>
 </body>
