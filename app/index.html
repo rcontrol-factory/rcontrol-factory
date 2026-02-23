@@ -1,11 +1,10 @@
 <!-- FILE: app/index.html
-     RControl Factory — /app/index.html — vSAFE-AUTOBOOT 2026-02-23
-     ✅ Boot normal automático (entra direto na Factory)
-     ✅ SAFE BOOT só em emergência (fallback automático se boot falhar)
-     ✅ Botão "SAFE" no canto (abre/fecha painel)
-     ✅ Param ?safe=1 força modo SAFE (não faz boot automático)
-     ✅ Sem separadores "=====" fora de comentário
+     RCF — SAFE BOOT (auto-boot) v1.3
+     ✅ Entra direto na Factory (auto boot normal)
+     ✅ SAFE BOOT fica só pra emergência (?safe=1)
+     ✅ Some sozinho quando a UI sobe (evento RCF:UI_READY)
 -->
+
 <!doctype html>
 <html lang="pt-BR">
 <head>
@@ -16,65 +15,44 @@
   <base href="./" />
   <link rel="manifest" href="./manifest.json" />
   <link rel="stylesheet" href="./styles.css" />
-  <meta name="rcf-index" content="SAFE_AUTOBOOT_2026_02_23" />
+  <meta name="rcf-index" content="SAFE_BOOT_AUTO_2026_02_23_v1_3" />
   <style>
-    /* fallback visual (se styles.css falhar) */
-    :root{color-scheme:dark}
-    body{background:#0b1020;color:#eaf0ff;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;margin:0}
-    .rcf_loading{padding:14px;max-width:920px;margin:0 auto}
-    .rcf_pill{display:inline-block;padding:6px 10px;border-radius:999px;background:rgba(255,255,255,.10);border:1px solid rgba(255,255,255,.14);font-weight:800}
-    .rcf_safe_wrap{position:fixed;inset:0;background:rgba(0,0,0,.55);backdrop-filter:blur(6px);display:none;z-index:999999}
+    /* garante algo visível mesmo se styles.css falhar */
+    body{background:#0b1020;color:#eaf0ff;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;}
     .rcf_safe{max-width:920px;margin:0 auto;padding:14px}
     .rcf_card{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:16px;padding:14px;margin:12px 0}
     .rcf_btn{border:0;border-radius:999px;padding:10px 12px;font-weight:800;margin:6px 8px 0 0}
     .r{background:#ff4d4d;color:#111}
     .g{background:#35d0b5;color:#111}
     .d{background:rgba(255,255,255,.12);color:#eaf0ff;border:1px solid rgba(255,255,255,.18)}
-    pre{white-space:pre-wrap;background:rgba(0,0,0,.35);padding:10px;border-radius:12px;border:1px solid rgba(255,255,255,.10);min-height:160px;max-height:50vh;overflow:auto}
+    pre{white-space:pre-wrap;background:rgba(0,0,0,.35);padding:10px;border-radius:12px;border:1px solid rgba(255,255,255,.10);min-height:140px}
     code{background:rgba(255,255,255,.10);padding:2px 6px;border-radius:8px}
-
-    /* botão SAFE flutuante */
-    .rcf_safe_fab{
-      position:fixed;right:10px;bottom:10px;z-index:999998;
-      border-radius:999px;border:1px solid rgba(255,255,255,.18);
-      background:rgba(0,0,0,.35);color:#eaf0ff;font-weight:900;
-      padding:10px 12px;
-    }
+    .rcf_hint{opacity:.85;margin-top:8px;font-size:13px;line-height:1.35}
   </style>
 </head>
 
 <body>
   <noscript>Ative o JavaScript para usar o app.</noscript>
 
-  <!-- conteúdo normal -->
   <div id="app">
-    <div class="rcf_loading">
-      <div class="rcf_pill">RCF • carregando…</div>
-      <div style="opacity:.85;margin-top:10px">
-        Se der erro no boot, o modo SAFE abre sozinho.
-      </div>
-    </div>
-  </div>
-
-  <!-- botão SAFE (manual) -->
-  <button class="rcf_safe_fab" id="rcfSafeFab" type="button">SAFE</button>
-
-  <!-- painel SAFE (overlay) -->
-  <div class="rcf_safe_wrap" id="rcfSafeWrap" aria-hidden="true">
-    <div class="rcf_safe">
-      <h2 style="margin:6px 0 0">RCF • SAFE BOOT</h2>
+    <div class="rcf_safe" id="rcfSafeBootUI">
+      <h2>RCF • SAFE BOOT</h2>
 
       <div class="rcf_card">
-        <div><b>Objetivo:</b> recuperar controle (SW/cache/logs) se algo travar.</div>
+        <div><b>Objetivo:</b> sair da tela preta e recuperar o controle.</div>
         <div style="opacity:.9;margin-top:6px">
-          Dica: abrir <code>/app/?safe=1</code> força ficar só no SAFE (não tenta boot).
+          Se o boot normal falhar, você ainda consegue limpar SW/cache e ver logs aqui.
         </div>
 
-        <button class="rcf_btn r" id="u" type="button">Unregister SW</button>
-        <button class="rcf_btn r" id="c" type="button">Clear Caches</button>
-        <button class="rcf_btn d" id="k" type="button">Show SW status</button>
-        <button class="rcf_btn g" id="boot" type="button">Tentar boot normal</button>
-        <button class="rcf_btn d" id="closeSafe" type="button">Fechar</button>
+        <button class="rcf_btn r" id="u">Unregister SW</button>
+        <button class="rcf_btn r" id="c">Clear Caches</button>
+        <button class="rcf_btn d" id="k">Show SW status</button>
+        <button class="rcf_btn g" id="boot">Boot normal agora</button>
+
+        <div class="rcf_hint" id="hint">
+          ✅ Normalmente agora ele entra direto na Factory.<br/>
+          Para <b>forçar</b> ficar no SAFE BOOT, abra com: <code>?safe=1</code>
+        </div>
       </div>
 
       <div class="rcf_card">
@@ -86,40 +64,19 @@
 
   <script>
   (function(){
-    "use strict";
-
-    // =========================================================
-    // BOOT LOCK (evita double init por reload/duplo script)
-    // =========================================================
-    if (window.__RCF_INDEX_BOOTED__) return;
-    window.__RCF_INDEX_BOOTED__ = true;
-
-    const $ = (id)=> document.getElementById(id);
-    const L = $("log");
-    const ts = ()=> new Date().toISOString();
+    const L = document.getElementById("log");
+    const UI = document.getElementById("rcfSafeBootUI");
     const log = (...a)=>{ try{ L.textContent += "\n" + a.join(" "); }catch{} };
 
+    const ts = ()=> new Date().toISOString();
+    log("[" + ts() + "] SAFE_BOOT loaded ✅ base=" + document.baseURI);
+
+    // parâmetros
     const params = new URLSearchParams(location.search || "");
-    const forceSafe = params.get("safe") === "1" || location.hash === "#safe";
-
-    function showSafe(){
-      const wrap = $("rcfSafeWrap");
-      try{ wrap.style.display = "block"; wrap.setAttribute("aria-hidden","false"); }catch{}
+    const forceSafe = (params.get("safe") === "1");
+    if (forceSafe) {
+      log("INFO: force SAFE mode (?safe=1) ✅");
     }
-    function hideSafe(){
-      const wrap = $("rcfSafeWrap");
-      try{ wrap.style.display = "none"; wrap.setAttribute("aria-hidden","true"); }catch{}
-    }
-
-    // FAB toggle
-    $("rcfSafeFab").onclick = ()=> {
-      const wrap = $("rcfSafeWrap");
-      const open = (wrap && wrap.style.display === "block");
-      if (open) hideSafe(); else { showSafe(); swStatus(); }
-    };
-    $("closeSafe").onclick = hideSafe;
-
-    log("[" + ts() + "] index loaded ✅ base=" + document.baseURI + " safe=" + forceSafe);
 
     async function unreg(){
       try{
@@ -167,6 +124,10 @@
     }
 
     async function bootNormal(){
+      // evita duplo-boot
+      if (window.__RCF_SAFE_BOOTING__) { log("INFO: boot already running"); return; }
+      window.__RCF_SAFE_BOOTING__ = true;
+
       log("[" + ts() + "] bootNormal…");
 
       const modules = [
@@ -181,7 +142,6 @@
         "./js/core/ui_safety.js",
         "./js/core/ui_compact_outputs.js",
         "./js/core/ui_bindings.js",
-        "./js/core/doctor_scan.js",
         "./js/core/diagnostics.js",
         "./js/core/preview_runner.js",
         "./js/core/injector.js",
@@ -196,54 +156,43 @@
         "./js/core/agent_zip_bridge.js"
       ];
 
-      let failed = 0;
-
+      let fails = 0;
       for (const src of modules) {
         try { await loadScript(src); log("loaded ✅", src); }
         catch(e){
-          failed++;
+          fails++;
           log("failed ❌", src, "::", (e && e.message) ? e.message : String(e));
-          // se falhou algo essencial, já abre SAFE
-          showSafe();
         }
       }
 
-      log("[" + ts() + "] bootNormal finished. failed=" + failed);
+      log("[" + ts() + "] bootNormal finished. fails=" + fails);
 
-      // fallback extra: se app não “assumir” em X segundos, abre SAFE
-      try{
-        setTimeout(()=>{
-          try{
-            // se não existe algum sinal de app (RCF) depois de um tempo, abre safe
-            const hasRCF = !!(window.RCF || window.__RCF_BOOTED__ || window.__RCF_UI_READY__);
-            if(!hasRCF){
-              log("fallback: no RCF signal -> SAFE");
-              showSafe();
-            }
-          }catch{}
-        }, 2500);
-      }catch{}
+      // se a UI subir, a gente esconde o SAFE UI automaticamente
+      // (o app dispara RCF:UI_READY nos seus logs)
     }
 
-    $("u").onclick = unreg;
-    $("c").onclick = clearCaches;
-    $("k").onclick = swStatus;
-    $("boot").onclick = bootNormal;
-
-    // =========================================================
-    // START
-    // =========================================================
-    if (forceSafe){
-      showSafe();
-      swStatus();
-      log("SAFE only mode (no autoboot).");
-    } else {
-      // entra direto na Factory (autoboot)
-      try { hideSafe(); } catch {}
-      bootNormal().catch((e)=>{
-        log("bootNormal fatal", (e && e.message) ? e.message : String(e));
-        showSafe();
+    // some o SAFE BOOT quando o app avisar que montou UI
+    try{
+      window.addEventListener("RCF:UI_READY", ()=>{
+        try{
+          log("INFO: UI_READY recebido ✅ (escondendo SAFE BOOT)");
+          if (UI) UI.style.display = "none";
+        }catch{}
       });
+    }catch{}
+
+    document.getElementById("u").onclick = unreg;
+    document.getElementById("c").onclick = clearCaches;
+    document.getElementById("k").onclick = swStatus;
+    document.getElementById("boot").onclick = bootNormal;
+
+    // já mostra status de cara
+    swStatus();
+
+    // ✅ AUTO BOOT (só não roda se ?safe=1)
+    if (!forceSafe) {
+      // watchdog: se o boot travar, SAFE UI continua disponível
+      setTimeout(()=>{ bootNormal(); }, 80);
     }
   })();
   </script>
