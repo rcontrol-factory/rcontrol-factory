@@ -1,11 +1,9 @@
 <!-- FILE: /app/index.html
-     RControl Factory — index.html (vCLEAN-1+ENGINE + VENDOR ZIP + PAGES LINKS + EXTRAS3 + SWVER)
-     PATCH:
-     - mantém DEGRAU 3 (auto extra-modules SAFE + 1 reload)
-     - mantém ZIP modules carregando DEPOIS do app.js (evita botão sumir)
-     - adiciona/garante "./js/core/pages_links.js"
-     - mantém base "./" e guards anti-boot duplicado
-     - ✅ SW VERSIONED REGISTER (iOS cache breaker): ./sw.js?v=BUILD
+     RControl Factory — index.html (PADRÃO HOTFIX: APPJS TIMEOUT + CACHE-BUST)
+     - Mantém base "./"
+     - Mantém Guard __RCF_INDEX_BOOTED__
+     - Adiciona loadScript com timeout
+     - Força cache-bust SOMENTE no app.js (resolve travas de SW/cache no iOS)
 -->
 <!doctype html>
 <html lang="pt-BR">
@@ -15,13 +13,12 @@
   <title>RCF</title>
   <meta name="theme-color" content="#0b1020" />
 
-  <!-- PADRÃO: base relativo (Pages/subpath safe) -->
   <base href="./" />
 
   <link rel="manifest" href="./manifest.json" />
   <link rel="stylesheet" href="./styles.css" />
 
-  <meta name="rcf-index" content="vCLEAN-1+ENGINE+VENDORZIP+PAGESLINKS+EXTRAS3+SWVER" />
+  <meta name="rcf-index" content="vPADRAO-HOTFIX-APPJS-TIMEOUT-BUST" />
 </head>
 
 <body>
@@ -33,99 +30,67 @@
 
   <script>
     (function () {
-      // ✅ Guard: evita carregar tudo 2x em edge cases
       if (window.__RCF_INDEX_BOOTED__) return;
       window.__RCF_INDEX_BOOTED__ = true;
 
-      // ✅ BUILD do SW (troque quando quiser forçar “quebra-cache”)
-      // Dica: mude só esse valor e publique -> iPhone pega na hora.
-      const RCF_SW_BUILD = "RCF_SW_BUILD_2026_02_22_01";
-
       function log(){ try { console.log.apply(console, ["[RCF/index]"].concat([].slice.call(arguments))); } catch(e){} }
 
-      function loadScript(src){
+      function loadScript(src, opts){
+        opts = opts || {};
+        const timeoutMs = Number.isFinite(opts.timeoutMs) ? opts.timeoutMs : 12000;
+
         return new Promise((resolve, reject) => {
-          const s = document.createElement("script");
-          s.src = src;
-          s.async = false;
-          s.onload = () => resolve(src);
-          s.onerror = () => reject(new Error("load failed: " + src));
-          document.head.appendChild(s);
+          let done = false;
+          let tmr = null;
+
+          function finish(ok, payload){
+            if (done) return;
+            done = true;
+            if (tmr) { try { clearTimeout(tmr); } catch {} tmr = null; }
+            ok ? resolve(payload) : reject(payload);
+          }
+
+          try {
+            const s = document.createElement("script");
+            s.async = false;
+            s.src = src;
+
+            s.onload = () => finish(true, src);
+            s.onerror = () => finish(false, new Error("load failed: " + src));
+
+            tmr = setTimeout(() => {
+              try { s.remove(); } catch {}
+              finish(false, new Error("TIMEOUT loading: " + src + " ("+timeoutMs+"ms)"));
+            }, timeoutMs);
+
+            document.head.appendChild(s);
+          } catch (e) {
+            finish(false, e);
+          }
         });
       }
 
-      // =========================================================
-      // DEGRAU 3 — AUTO EXTRA MODULES (SAFE + 1 reload)
-      // =========================================================
-      function ensureExtraModules(){
-        const KEY = "rcf:boot:extra_modules";
-        const GUARD = "rcf:extra_modules_installed:v1";
-        const MUST = [
-          "./js/core/agent_tools_panel.js",
-          "./js/core/agent_scanmap.js"
-        ];
-
-        // evita loop de reload
+      // cache-bust bem simples (só pra quebrar enrosco de SW/cache)
+      function bustKey(){
         try {
-          if (sessionStorage.getItem(GUARD) === "1") return { changed:false, already:true };
-        } catch {}
-
-        let cur = [];
-        try {
-          const raw = localStorage.getItem(KEY);
-          const j = raw ? JSON.parse(raw) : [];
-          cur = Array.isArray(j) ? j : [];
+          const k = localStorage.getItem("rcf:cache_bust");
+          if (k) return k;
+          const n = String(Date.now());
+          localStorage.setItem("rcf:cache_bust", n);
+          return n;
         } catch {
-          cur = [];
+          return String(Date.now());
         }
-
-        const norm = (p) => String(p || "").trim();
-        const set = new Set(cur.map(norm).filter(Boolean));
-
-        let changed = false;
-        for (const p of MUST) {
-          const x = norm(p);
-          if (!set.has(x)) { set.add(x); changed = true; }
-        }
-
-        const list = Array.from(set).sort((a,b)=>a.localeCompare(b));
-
-        if (changed) {
-          try { localStorage.setItem(KEY, JSON.stringify(list)); } catch {}
-          try { sessionStorage.setItem(GUARD, "1"); } catch {}
-          return { changed:true, list };
-        }
-
-        // marcou como ok (sem precisar reload)
-        try { sessionStorage.setItem(GUARD, "1"); } catch {}
-        return { changed:false, list };
       }
 
       async function boot(){
         log("BOOT: starting… base=", document.baseURI);
 
-        // ✅ roda antes de qualquer coisa que dependa do boot extra
-        try {
-          const r = ensureExtraModules();
-          if (r && r.changed) {
-            log("DEGRAU3: extra_modules atualizado -> reload 1x", r.list || []);
-            try { location.reload(); return; } catch {}
-          } else {
-            log("DEGRAU3: extra_modules ok");
-          }
-        } catch (e) {
-          log("DEGRAU3: falhou (ignorado)", (e && e.message) ? e.message : e);
-        }
-
-        // =========================================================
-        // 1) CORE + ENGINE (antes do app.js)
-        // =========================================================
         const modules = [
           "./js/core/logger.js",
           "./js/core/stability_guard.js",
           "./js/core/storage.js",
 
-          /* ✅ VENDOR */
           "./js/core/vendor_loader.js",
           "./js/core/vendor_health.js",
 
@@ -147,21 +112,19 @@
           "./js/core/settings_cleanup.js",
           "./js/core/injector.js",
 
-          /* ✅ ENGINE */
           "./js/engine/template_registry.js",
           "./js/engine/module_registry.js",
           "./js/engine/builder.js",
           "./js/engine/engine.js",
 
-          /* ✅ PWA Links / Pages Hook */
           "./js/core/pages_links.js",
-
           "./js/admin.github.js"
         ];
 
+        // 1) CORE + ENGINE
         for (const src of modules) {
           try {
-            await loadScript(src);
+            await loadScript(src, { timeoutMs: 12000 });
             try { window.RCF_LOGGER?.push?.("BOOT", "module loaded ✅ " + src); } catch {}
             log("module loaded ✅", src);
           } catch (e) {
@@ -170,21 +133,21 @@
           }
         }
 
-        // =========================================================
-        // 2) app.js (cria UI/slots)
-        // =========================================================
+        // 2) app.js (com cache-bust + timeout maior)
         try {
-          await loadScript("./app.js");
-          try { window.RCF_LOGGER?.push?.("BOOT", "app.js loaded ✅ ./app.js"); } catch {}
+          const appSrc = "./app.js?v=" + encodeURIComponent(bustKey());
+          log("Agora carregando app.js…", appSrc);
+
+          await loadScript(appSrc, { timeoutMs: 20000 });
+
+          try { window.RCF_LOGGER?.push?.("BOOT", "app.js loaded ✅ " + appSrc); } catch {}
           log("app.js loaded ✅");
         } catch (e) {
-          try { window.RCF_LOGGER?.push?.("ERR", "app.js missing/failed ❌ ./app.js :: " + (e.message||e)); } catch {}
+          try { window.RCF_LOGGER?.push?.("ERR", "app.js missing/failed ❌ :: " + (e.message||e)); } catch {}
           log("app.js missing/failed ❌", (e.message||e));
         }
 
-        // =========================================================
         // 3) ZIP/UI modules (depois do app.js)
-        // =========================================================
         const afterApp = [
           "./js/core/zip_vault.js",
           "./js/core/agent_zip_bridge.js"
@@ -192,7 +155,7 @@
 
         for (const src of afterApp) {
           try {
-            await loadScript(src);
+            await loadScript(src, { timeoutMs: 12000 });
             try { window.RCF_LOGGER?.push?.("BOOT", "module loaded ✅ " + src); } catch {}
             log("module loaded ✅", src);
           } catch (e) {
@@ -201,22 +164,14 @@
           }
         }
 
-        // =========================================================
-        // 4) SW register (versionado) — quebra-cache iOS
-        // =========================================================
+        // SW register (guard)
         try {
           if (!window.__RCF_SW_REGISTERED__ && "serviceWorker" in navigator) {
             window.__RCF_SW_REGISTERED__ = true;
-
-            const swUrl = "./sw.js?v=" + encodeURIComponent(RCF_SW_BUILD);
-
-            navigator.serviceWorker.register(swUrl, { scope: "./" })
-              .then((reg) => {
-                try { window.RCF_LOGGER?.push?.("BOOT", "sw register: ok ✅ " + swUrl); } catch {}
-                log("sw register ok", swUrl);
-
-                // tenta puxar update imediatamente (ajuda no iOS)
-                try { reg.update?.(); } catch {}
+            navigator.serviceWorker.register("./sw.js", { scope: "./" })
+              .then(() => {
+                try { window.RCF_LOGGER?.push?.("BOOT", "sw register: ok (scope ./)"); } catch {}
+                log("sw register ok");
               })
               .catch((e) => {
                 try { window.RCF_LOGGER?.push?.("WARN", "sw register: fail/ignored :: " + (e?.message||e)); } catch {}
