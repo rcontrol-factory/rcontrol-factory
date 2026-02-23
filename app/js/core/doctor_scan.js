@@ -1,368 +1,277 @@
 /* FILE: app/js/core/doctor_scan.js
-   RControl Factory — Doctor Scan — v1.1 (SLOT SAFE + não “solto”)
-   Objetivo:
-   - NÃO injetar no body (evita botão aparecendo em todas as telas)
-   - Montar no slot oficial: settings.security.actions
-   - Fallback seguro: cria slot dentro de #view-settings (ou #view-admin)
-   - Sem autonomia perigosa: só diagnóstico + botões manuais (opcional)
+   RControl Factory — Doctor Scan — v1.1 (FIX SLOT + STORAGE KEYS + REPORT UI)
 */
 
 (() => {
   "use strict";
 
   const TAG = "[DOCTOR]";
-  const VER = "v1.1";
+  const VERSION = "1.1";
 
-  // evita double init
-  if (window.__RCF_DOCTOR_SCAN_BOOTED__) return;
-  window.__RCF_DOCTOR_SCAN_BOOTED__ = true;
+  if (window.__RCF_DOCTOR_LOADED__) return;
+  window.__RCF_DOCTOR_LOADED__ = true;
 
-  const now = () => new Date().toISOString();
-  const log = (...a) => { try { console.log(TAG, ...a); } catch {} };
-  const warn = (...a) => { try { console.warn(TAG, ...a); } catch {} };
+  const log = (...a) => {
+    try { console.log(TAG, ...a); } catch {}
+  };
 
-  function $(sel, root = document) {
-    try { return root.querySelector(sel); } catch { return null; }
+  const $ = (sel, root = document) => root.querySelector(sel);
+
+  function tsISO() {
+    try { return new Date().toISOString(); } catch { return "" + Date.now(); }
   }
 
-  function safeJsonParse(s, fallback) {
-    try { return JSON.parse(s); } catch { return fallback; }
+  function findHost() {
+    return (
+      $("#rcfAdminSlotIntegrations") ||
+      $("#rcfAdminSlotTop") ||
+      $("#view-admin") ||
+      null
+    );
   }
 
-  function safeText(s) {
-    return String(s == null ? "" : s);
-  }
-
-  // ---------------------------------------------------------
-  // SLOT RESOLVE (usa registry do app.js)
-  // ---------------------------------------------------------
-  function getUI() {
-    try { return window.RCF_UI || null; } catch { return null; }
-  }
-
-  function resolveMountSlot() {
-    const UI = getUI();
-
-    // 1) Preferido: Settings > Security
-    try {
-      const s = UI && UI.getSlot ? UI.getSlot("settings.security.actions") : null;
-      if (s) return s;
-    } catch {}
-
-    // 2) Fallback: Agent tools panel
-    try {
-      const s = UI && UI.getSlot ? UI.getSlot("agent.tools") : null;
-      if (s) return s;
-    } catch {}
-
-    // 3) Fallback: Admin top
-    try {
-      const s = UI && UI.getSlot ? UI.getSlot("admin.top") : null;
-      if (s) return s;
-    } catch {}
-
-    // 4) Último fallback: tenta criar slot (sem quebrar)
-    try {
-      if (UI && UI.ensureSlot) {
-        // tenta criar dentro de Settings primeiro
-        const s1 = UI.ensureSlot("settings.security.actions", {
-          parentSelector: "#view-settings",
-          id: "rcfSettingsSecurityActions",
-          className: "rcfSlot rcfSlotDoctor"
-        });
-        if (s1) return s1;
-
-        // se não existir settings, cria no admin
-        const s2 = UI.ensureSlot("admin.top", {
-          parentSelector: "#view-admin",
-          id: "rcfAdminSlotTop",
-          className: "rcfSlot rcfSlotDoctor"
-        });
-        if (s2) return s2;
+  function ensureStyles() {
+    if ($("#__rcf_doctor_css")) return;
+    const st = document.createElement("style");
+    st.id = "__rcf_doctor_css";
+    st.textContent = `
+      .rcfDoctorRow{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px}
+      .rcfDoctorBtn{
+        border:0;border-radius:999px;padding:10px 12px;font-weight:900;
+        background:rgba(255,255,255,.12);color:#eaf0ff;border:1px solid rgba(255,255,255,.18)
       }
-    } catch {}
-
-    return null;
+      .rcfDoctorBtn.ok{background:#35d0b5;color:#071018}
+      .rcfDoctorBtn.danger{background:#ff4d4d;color:#1a0b0b}
+      .rcfDoctorOverlay{
+        position:fixed;inset:0;background:rgba(0,0,0,.6);
+        display:none;align-items:flex-end;justify-content:center;
+        z-index:999999;padding:10px;
+      }
+      .rcfDoctorPanel{
+        width:min(980px,100%);max-height:82vh;overflow:auto;
+        background:#0b1020;color:#eaf0ff;border-radius:16px;
+        border:1px solid rgba(255,255,255,.14);
+        padding:12px;
+      }
+      .rcfDoctorPanel pre{
+        white-space:pre-wrap;word-break:break-word;
+        background:rgba(255,255,255,.06);
+        border:1px solid rgba(255,255,255,.12);
+        padding:10px;border-radius:12px;
+      }
+    `;
+    document.head.appendChild(st);
   }
 
-  // ---------------------------------------------------------
-  // UI BUILD
-  // ---------------------------------------------------------
-  function ensureContainer(slot) {
-    if (!slot) return null;
+  function ensureOverlay() {
+    ensureStyles();
+    let ov = $("#__rcf_doctor_overlay");
+    if (ov) return ov;
 
-    // container fixo do doctor (pra não duplicar)
-    let host = $("#rcfDoctorHost", slot);
-    if (host) return host;
+    ov = document.createElement("div");
+    ov.id = "__rcf_doctor_overlay";
+    ov.className = "rcfDoctorOverlay";
+    ov.innerHTML = `
+      <div class="rcfDoctorPanel">
+        <div style="display:flex;gap:8px;margin-bottom:8px">
+          <button class="rcfDoctorBtn" id="__rcf_doc_close">Fechar</button>
+          <button class="rcfDoctorBtn ok" id="__rcf_doc_copy">Copiar report</button>
+        </div>
+        <pre id="__rcf_doc_pre">Pronto.</pre>
+      </div>
+    `;
+    document.body.appendChild(ov);
 
-    host = document.createElement("div");
-    host.id = "rcfDoctorHost";
-    host.setAttribute("data-rcf", "doctor");
-    host.style.display = "flex";
-    host.style.flexWrap = "wrap";
-    host.style.gap = "8px";
-    host.style.alignItems = "center";
-    host.style.margin = "6px 0";
+    $("#__rcf_doc_close").onclick = () => ov.style.display = "none";
 
-    // label pequeno
-    const label = document.createElement("span");
-    label.textContent = `Doctor ${VER}`;
-    label.style.opacity = "0.85";
-    label.style.fontWeight = "700";
-    label.style.marginRight = "6px";
-    host.appendChild(label);
-
-    slot.appendChild(host);
-    return host;
-  }
-
-  function makeBtn(id, text) {
-    const b = document.createElement("button");
-    b.id = id;
-    b.type = "button";
-    b.textContent = text;
-
-    // tenta herdar estilos do app (rcf_btn), senão cai num inline seguro
-    b.className = "rcf_btn d";
-    b.style.borderRadius = "999px";
-    b.style.padding = "8px 10px";
-    b.style.fontWeight = "800";
-    b.style.border = "1px solid rgba(255,255,255,.18)";
-    b.style.background = "rgba(255,255,255,.10)";
-    b.style.color = "inherit";
-
-    return b;
-  }
-
-  // ---------------------------------------------------------
-  // DOCTOR ACTIONS (somente diagnóstico / ações manuais)
-  // ---------------------------------------------------------
-  async function getSWStatus() {
-    const out = {
-      supported: false,
-      controller: false,
-      regs: 0,
-      scopes: []
+    $("#__rcf_doc_copy").onclick = async () => {
+      const txt = $("#__rcf_doc_pre").textContent || "";
+      try {
+        await navigator.clipboard.writeText(txt);
+        alert("Report copiado ✅");
+      } catch {
+        alert("Falhou copiar ❌");
+      }
     };
 
-    try {
-      out.supported = ("serviceWorker" in navigator);
-      if (!out.supported) return out;
-
-      out.controller = !!navigator.serviceWorker.controller;
-
-      const regs = await navigator.serviceWorker.getRegistrations();
-      out.regs = regs.length;
-
-      for (const r of regs) {
-        try { out.scopes.push(r.scope || ""); } catch {}
-      }
-    } catch (e) {
-      out.error = safeText(e && e.message ? e.message : e);
-    }
-
-    return out;
-  }
-
-  async function getCacheStatus() {
-    const out = { supported: false, keys: 0, names: [] };
-
-    try {
-      out.supported = ("caches" in window);
-      if (!out.supported) return out;
-
-      const keys = await caches.keys();
-      out.keys = keys.length;
-      out.names = keys.slice(0, 40);
-    } catch (e) {
-      out.error = safeText(e && e.message ? e.message : e);
-    }
-
-    return out;
-  }
-
-  function getLocalStatus() {
-    const out = {
-      localStorage: { supported: false, keys: 0, rcfKeys: [], hasMotherBundleLocal: false, mother_bundle_local: null },
-      sessionStorage: { supported: false }
-    };
-
-    // localStorage
-    try {
-      out.localStorage.supported = !!window.localStorage;
-      if (out.localStorage.supported) {
-        const keys = [];
-        for (let i = 0; i < localStorage.length; i++) {
-          const k = localStorage.key(i);
-          if (k) keys.push(k);
-        }
-        out.localStorage.keys = keys.length;
-        out.localStorage.rcfKeys = keys.filter(k => /^rcf:/i.test(k)).slice(0, 80);
-
-        const raw = localStorage.getItem("mother_bundle_local");
-        out.localStorage.hasMotherBundleLocal = !!raw;
-        if (raw) {
-          const mb = safeJsonParse(raw, null);
-          if (mb && typeof mb === "object") {
-            out.localStorage.mother_bundle_local = {
-              version: mb.version || null,
-              ts: mb.ts || null,
-              filesCount: mb.files ? (Array.isArray(mb.files) ? mb.files.length : Object.keys(mb.files || {}).length) : 0
-            };
-          }
-        }
-      }
-    } catch (e) {
-      out.localStorage.error = safeText(e && e.message ? e.message : e);
-    }
-
-    // sessionStorage
-    try {
-      out.sessionStorage.supported = !!window.sessionStorage;
-    } catch (e) {
-      out.sessionStorage.error = safeText(e && e.message ? e.message : e);
-    }
-
-    return out;
-  }
-
-  async function runDoctorReport() {
-    const report = {
-      at: now(),
-      href: safeText(location.href),
-      ua: safeText(navigator.userAgent),
-      sw: await getSWStatus(),
-      cache: await getCacheStatus(),
-      storage: getLocalStatus()
-    };
-
-    try { window.__RCF_DOCTOR_LAST__ = report; } catch {}
-
-    // log resumido
-    log("report ✅", {
-      sw: report.sw,
-      cacheKeys: report.cache.keys,
-      mother_bundle_local: report.storage.localStorage.mother_bundle_local
+    ov.addEventListener("click", (e) => {
+      if (e.target === ov) ov.style.display = "none";
     });
 
-    // tenta jogar no logger do RCF, se existir
-    try {
-      if (window.RCF_LOG && typeof window.RCF_LOG === "function") {
-        window.RCF_LOG(`${TAG} report ok swRegs=${report.sw.regs} cacheKeys=${report.cache.keys}`);
-      }
-    } catch {}
-
-    // feedback visível sem “soltar” UI: usa alert curto
-    try {
-      const mb = report.storage.localStorage.mother_bundle_local;
-      const mbTxt = mb ? `mother_bundle_local files=${mb.filesCount}` : "mother_bundle_local: (none)";
-      alert(
-        `Doctor Report ✅\n` +
-        `SW regs=${report.sw.regs} controller=${report.sw.controller}\n` +
-        `Caches=${report.cache.keys}\n` +
-        `${mbTxt}`
-      );
-    } catch {}
-
-    return report;
+    return ov;
   }
 
-  async function unregisterAllSW() {
+  async function getSWInfo() {
+    const out = { supported:false, controller:false, registrations:0 };
     try {
-      if (!("serviceWorker" in navigator)) {
-        alert("Sem suporte a Service Worker neste navegador.");
-        return;
-      }
+      out.supported = "serviceWorker" in navigator;
+      if (!out.supported) return out;
+      out.controller = !!navigator.serviceWorker.controller;
       const regs = await navigator.serviceWorker.getRegistrations();
-      let ok = 0;
-      for (const r of regs) {
-        try { if (await r.unregister()) ok++; } catch {}
-      }
-      log("unregister ✅ ok=", ok, "regs=", regs.length);
-      alert(`SW unregister ✅ ok=${ok} regs=${regs.length}`);
-    } catch (e) {
-      warn("unregister err", e);
-      alert("SW unregister ❌ " + safeText(e && e.message ? e.message : e));
+      out.registrations = regs.length;
+    } catch(e) {
+      out.error = e.message || String(e);
     }
+    return out;
   }
 
-  async function clearAllCaches() {
+  async function getCacheInfo() {
+    const out = { supported:false, keys:0 };
     try {
-      if (!("caches" in window)) {
-        alert("Sem Cache API neste navegador.");
-        return;
-      }
+      out.supported = "caches" in window;
+      if (!out.supported) return out;
       const keys = await caches.keys();
-      let del = 0;
-      for (const k of keys) {
-        try { if (await caches.delete(k)) del++; } catch {}
-      }
-      log("caches clear ✅ del=", del, "keys=", keys.length);
-      alert(`Caches clear ✅ deleted=${del} keys=${keys.length}`);
-    } catch (e) {
-      warn("caches err", e);
-      alert("Caches clear ❌ " + safeText(e && e.message ? e.message : e));
+      out.keys = keys.length;
+    } catch(e){
+      out.error = e.message || String(e);
     }
+    return out;
   }
 
-  // ---------------------------------------------------------
-  // MOUNT
-  // ---------------------------------------------------------
-  function mount() {
-    const slot = resolveMountSlot();
-    if (!slot) {
-      warn("Sem slot disponível — não vou injetar no body (por segurança).");
-      return false;
-    }
-
-    const host = ensureContainer(slot);
-    if (!host) return false;
-
-    // já existe?
-    if ($("#btnDoctorReport", host)) {
-      log("já montado (skip)");
-      return true;
-    }
-
-    const b1 = makeBtn("btnDoctorReport", "Doctor Scan");
-    b1.onclick = () => { runDoctorReport(); };
-
-    const b2 = makeBtn("btnDoctorUnregSW", "Unreg SW");
-    b2.onclick = () => { unregisterAllSW(); };
-
-    const b3 = makeBtn("btnDoctorClearCaches", "Clear Caches");
-    b3.onclick = () => { clearAllCaches(); };
-
-    host.appendChild(b1);
-    host.appendChild(b2);
-    host.appendChild(b3);
-
-    log("Doctor button injected ✅ slot=", slot.getAttribute("data-rcf-slot") || slot.id || "(unknown)");
+  function getLocalStorageInfo() {
+    const out = { keys:0, rcfKeys:[] };
     try {
-      if (window.RCF_LOG && typeof window.RCF_LOG === "function") {
-        window.RCF_LOG(`${TAG} Doctor button injected ✅`);
+      for (let i=0;i<localStorage.length;i++){
+        const k = localStorage.key(i);
+        if (k) {
+          out.keys++;
+          if (k.startsWith("rcf:")) out.rcfKeys.push(k);
+        }
       }
-    } catch {}
+    } catch(e){
+      out.error = e.message || String(e);
+    }
+    return out;
+  }
 
+  function getMotherBundleLocalInfo() {
+    const keys = [
+      "rcf:mother_bundle_local",
+      "mother_bundle_local"
+    ];
+    const out = { present:false };
+    for (const k of keys) {
+      const v = localStorage.getItem(k);
+      if (v) {
+        out.present = true;
+        out.key = k;
+        out.size = v.length;
+        try {
+          const parsed = JSON.parse(v);
+          if (parsed.files) {
+            out.filesCount = Array.isArray(parsed.files)
+              ? parsed.files.length
+              : Object.keys(parsed.files).length;
+          }
+        } catch {}
+        break;
+      }
+    }
+    return out;
+  }
+
+  function getResourceList() {
+    const entries = performance.getEntriesByType("resource") || [];
+    const urls = entries
+      .map(e => e.name)
+      .filter(n => n.includes(".js") || n.includes(".css"));
+
+    const norm = urls.map(u => u.split("?")[0]);
+    const map = new Map();
+    norm.forEach(u => map.set(u, (map.get(u)||0)+1));
+
+    const dups = [...map.entries()].filter(([_,c]) => c>1);
+    return {
+      total: norm.length,
+      unique: map.size,
+      dupsCount: dups.length,
+      dups
+    };
+  }
+
+  async function buildReport() {
+    const sw = await getSWInfo();
+    const cache = await getCacheInfo();
+    const ls = getLocalStorageInfo();
+    const mother = getMotherBundleLocalInfo();
+    const res = getResourceList();
+
+    const lines = [];
+    lines.push(`[${tsISO()}] RCF DOCTOR REPORT v${VERSION}`);
+    lines.push("");
+    lines.push("== Service Worker ==");
+    lines.push(`supported: ${sw.supported}`);
+    lines.push(`controller: ${sw.controller}`);
+    lines.push(`registrations: ${sw.registrations}`);
+    if (sw.error) lines.push(`error: ${sw.error}`);
+    lines.push("");
+
+    lines.push("== Cache API ==");
+    lines.push(`supported: ${cache.supported}`);
+    lines.push(`keys: ${cache.keys}`);
+    if (cache.error) lines.push(`error: ${cache.error}`);
+    lines.push("");
+
+    lines.push("== localStorage ==");
+    lines.push(`total keys: ${ls.keys}`);
+    lines.push(`rcf:* keys: ${ls.rcfKeys.length}`);
+    lines.push("");
+
+    lines.push("== mother_bundle_local ==");
+    lines.push(`present: ${mother.present}`);
+    if (mother.present) {
+      lines.push(`key: ${mother.key}`);
+      lines.push(`size: ${mother.size}`);
+      lines.push(`filesCount: ${mother.filesCount || 0}`);
+    }
+    lines.push("");
+
+    lines.push("== Resources ==");
+    lines.push(`total: ${res.total}`);
+    lines.push(`unique: ${res.unique}`);
+    lines.push(`duplicates: ${res.dupsCount}`);
+    if (res.dups.length){
+      lines.push("top duplicates:");
+      res.dups.slice(0,20).forEach(([u,c])=>{
+        lines.push(` - x${c} ${u}`);
+      });
+    }
+
+    return lines.join("\n");
+  }
+
+  function mountDoctorUI() {
+    const host = findHost();
+    if (!host) return false;
+    if ($("#__rcf_doctor_mount")) return true;
+
+    const wrap = document.createElement("div");
+    wrap.id = "__rcf_doctor_mount";
+    wrap.style.marginTop = "10px";
+
+    const btn = document.createElement("button");
+    btn.className = "rcfDoctorBtn ok";
+    btn.textContent = "🩺 Doctor Scan";
+
+    btn.onclick = async () => {
+      const report = await buildReport();
+      const ov = ensureOverlay();
+      $("#__rcf_doc_pre").textContent = report;
+      ov.style.display = "flex";
+    };
+
+    wrap.appendChild(btn);
+    host.appendChild(wrap);
+
+    log("Doctor mounted OK");
     return true;
   }
 
-  // tenta montar cedo
-  try { mount(); } catch {}
+  // tenta montar agora e depois
+  mountDoctorUI();
+  window.addEventListener("RCF:UI_READY", mountDoctorUI);
+  document.addEventListener("DOMContentLoaded", mountDoctorUI);
 
-  // tenta montar depois do UI_READY (quando app reinjeta UI)
-  try {
-    window.addEventListener("RCF:UI_READY", () => {
-      try { mount(); } catch {}
-    });
-  } catch {}
+  log("doctor_scan.js ready", VERSION);
 
-  // fallback: DOM ready
-  try {
-    if (document.readyState === "loading") {
-      document.addEventListener("DOMContentLoaded", () => { try { mount(); } catch {} });
-    }
-  } catch {}
-
-  log("doctor_scan.js ready ✅", VER);
 })();
