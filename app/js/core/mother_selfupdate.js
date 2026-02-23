@@ -1,14 +1,17 @@
-/* RControl Factory — /app/js/core/mother_selfupdate.js (PADRÃO) — v2.3g
+/* FILE: /app/js/core/mother_selfupdate.js
+   RControl Factory — /app/js/core/mother_selfupdate.js (PADRÃO) — v2.3h
    PATCH (mínimo e seguro):
    - Mantém BRIDGE (files[] vazio não dá erro)
    - ✅ FIX: MAE update usa ghcfg salvo (owner/repo/branch/path/token)
    - ✅ FIX: salva bundle em TODOS os keys compat (local/raw/meta/compat1/compat2)
    - ✅ LOG: "mother_bundle_local saved filesCount=X (rawKeys ...)" para confirmar no log
+   - ✅ ANTI-OVERWRITE: se algum módulo sobrescrever window.RCF_MAE, reidrata (sem loop infinito)
 */
 (() => {
   "use strict";
 
-  if (window.RCF_MAE && window.RCF_MAE.__v23g) return;
+  // se já estiver nessa versão, não reinstala
+  if (window.RCF_MAE && window.RCF_MAE.__v23h) return;
 
   const LS_BUNDLE_KEY       = "rcf:mother_bundle_local";
   const LS_BUNDLE_RAW       = "rcf:mother_bundle_raw";
@@ -166,7 +169,7 @@
     return txt || "";
   }
 
-  // ✅ NOVO: carregar ghcfg salvo (fonte: GH_SYNC.loadConfig OU localStorage)
+  // ✅ carrega ghcfg salvo (GH_SYNC.loadConfig OU localStorage)
   function loadGHCfg(){
     let cfg = {};
     try {
@@ -231,16 +234,13 @@
       bridge: !!bridge
     };
 
-    // salvar o normalized em todos os compat keys (garante scanner achar)
     try { localStorage.setItem(LS_BUNDLE_KEY, normTxt); } catch {}
     try { localStorage.setItem(LS_BUNDLE_COMPAT_1, normTxt); } catch {}
     try { localStorage.setItem(LS_BUNDLE_COMPAT_2, normTxt); } catch {}
 
-    // salvar raw + meta
     try { localStorage.setItem(LS_BUNDLE_RAW, String(rawTxt || "")); } catch {}
     try { localStorage.setItem(LS_BUNDLE_META, JSON.stringify(meta)); } catch {}
 
-    // log igual você já viu no passado
     log("ok", `mother_bundle_local saved filesCount=${meta.filesCount} (rawKeys ${meta.rawKeys.join(",") || "-"})`);
     return meta;
   }
@@ -303,7 +303,6 @@
 
     if (!norm.ok || !norm.normalized) throw new Error("Bundle inválido");
 
-    // ✅ salva em todos os keys compat (resolve files=0 em scanner que lê compat)
     saveBundleEverywhere(norm.normalized, norm.rawTxt, norm.rawKeys, !!norm.bridge);
 
     if (norm.bridge) {
@@ -330,13 +329,61 @@
     throw new Error("Overrides VFS sem clear()");
   }
 
-  window.RCF_MAE = {
-    __v23g: true,
-    updateFromGitHub,
-    applySaved,
-    clear,
-    getLocalBundleText
-  };
+  // ===========================
+  // ✅ INSTALL + ANTI-OVERWRITE
+  // ===========================
+  function installAPI(reason){
+    try {
+      const api = (window.RCF_MAE && typeof window.RCF_MAE === "object") ? window.RCF_MAE : {};
+      api.__v23h = true;
+      api.updateFromGitHub = updateFromGitHub;
+      api.applySaved = applySaved;
+      api.clear = clear;
+      api.getLocalBundleText = getLocalBundleText;
 
-  log("ok", "mother_selfupdate.js ready ✅ (bridge+ghcfg cfg fix + compat save)");
+      window.RCF_MAE = api;
+
+      // alias compat (se algum lugar usar outro nome)
+      try { window.RCF_MOTHER = window.RCF_MAE; } catch {}
+
+      log("ok", "MAE installed ✅ " + (reason || "install"));
+      return api;
+    } catch (e) {
+      log("err", "MAE install fail :: " + (e?.message || e));
+      return null;
+    }
+  }
+
+  function ensureAPI(reason){
+    try {
+      const ok = !!(window.RCF_MAE && typeof window.RCF_MAE.updateFromGitHub === "function");
+      if (ok) return true;
+      installAPI("rehydrate:" + (reason || "unknown"));
+      return !!(window.RCF_MAE && typeof window.RCF_MAE.updateFromGitHub === "function");
+    } catch {
+      return false;
+    }
+  }
+
+  // instala agora
+  installAPI("boot");
+
+  // reidrata algumas vezes no começo (caso app.js ou outro módulo sobrescreva depois)
+  (function softWatchdog(){
+    let tries = 0;
+    const max = 12; // ~12s (1s cada)
+    const tick = () => {
+      tries++;
+      ensureAPI("watchdog#" + tries);
+      if (tries < max) setTimeout(tick, 1000);
+    };
+    setTimeout(tick, 700);
+  })();
+
+  // reidrata quando UI_READY disparar (módulos tardios)
+  try {
+    window.addEventListener("RCF:UI_READY", () => ensureAPI("UI_READY"), { passive: true });
+  } catch {}
+
+  log("ok", "mother_selfupdate.js ready ✅ (bridge+ghcfg cfg fix + compat save + anti-overwrite)");
 })();
