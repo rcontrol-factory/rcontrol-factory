@@ -965,7 +965,7 @@
             <div id="rcfAdminSlotTop" data-rcf-slot="admin.top">
               <div class="row">
                 <button class="btn ghost" id="btnAdminDiag" type="button" data-rcf-action="admin.diag">Diagnosticar (local)</button>
-                <button class="rcfBtn" data-rcf-action="admin.diag">Doctor</button>
+          <button class="rcfBtn" id="btnAdminDoctor">Doctor</button>
                 <button class="btn danger" id="btnAdminZero" type="button" data-rcf-action="admin.zero">Zerar (safe)</button>
               </div>
 
@@ -2564,17 +2564,38 @@
   // Doctor (atalho p/ Diagnostics + ScanMap quando disponível)
   // =========================================================
   function runDoctor() {
-    try { Logger.write("doctor: run"); } catch {}
+    try { Logger.write("doctor: start"); } catch {}
+
+    // 1) Permite que módulos externos (doctor/scan) respondam
+    try { window.dispatchEvent(new CustomEvent("RCF:DOCTOR", { detail: { ts: Date.now() } })); } catch {}
+
+    // 2) Se existir UI de Doctor carregada por algum módulo, abre ela
     try {
-      const D = window.RCF_DIAGNOSTICS || window.RCF_DIAG || window.DIAGNOSTICS;
-      if (D && typeof D.run === "function") { D.run(); Logger.write("doctor: diagnostics.run() ok"); }
-      else if (D && typeof D.check === "function") { D.check(); Logger.write("doctor: diagnostics.check() ok"); }
-    } catch (e) { try { Logger.write("doctor: diagnostics err", String(e && (e.message||e))); } catch {} }
+      const candidates = [
+        window.RCF_DOCTOR_SCAN,
+        window.RCF_DOCTOR,
+        window.__RCF_DOCTOR__,
+        window.RCF_DIAGNOSTICS && window.RCF_DIAGNOSTICS.doctor
+      ].filter(Boolean);
+      for (const obj of candidates) {
+        if (typeof obj.open === "function") { obj.open(); try { Logger.write("doctor: open()"); } catch {} return; }
+        if (typeof obj.show === "function") { obj.show(); try { Logger.write("doctor: show()"); } catch {} return; }
+      }
+    } catch {}
+
+    // 3) Fallback: roda diagnostics + scanmap e joga você para Logs (pra você VER que rodou)
     try {
-      const S = window.RCF_SCANMAP || window.__RCF_SCANMAP__;
-      if (S && typeof S.scanNow === "function") { S.scanNow(); Logger.write("doctor: scanmap.scanNow() ok"); }
-      else if (S && typeof S.scan === "function") { S.scan(); Logger.write("doctor: scanmap.scan() ok"); }
-    } catch (e) { try { Logger.write("doctor: scanmap err", String(e && (e.message||e))); } catch {} }
+      const D = window.RCF_DIAGNOSTICS;
+      if (D && typeof D.run === "function") D.run({ silent: false });
+    } catch (e) { try { Logger.write("doctor: diagnostics fail " + (e && e.message ? e.message : e)); } catch {} }
+
+    try {
+      const SM = window.RCF_SCANMAP;
+      if (SM && typeof SM.scanNow === "function") SM.scanNow();
+    } catch (e) { try { Logger.write("doctor: scanmap fail " + (e && e.message ? e.message : e)); } catch {} }
+
+    try { setView("logs"); } catch {}
+    try { Logger.write("doctor: done (fallback)"); } catch {}
   }
 
   function bindUI() {
@@ -2588,6 +2609,7 @@
     bindTap($("#btnFabTools"), () => { openFabPanel(false); openTools(true); });
     bindTap($("#btnFabAdmin"), () => { openFabPanel(false); setView("admin"); });
     bindTap($("#btnFabDoctor"), () => { openFabPanel(false); setView("admin"); runDoctor(); });
+    bindTap($("#btnAdminDoctor"), () => { try { setView("admin"); } catch {} runDoctor(); });
     bindTap($("#btnFabLogs"), () => { openFabPanel(false); setView("logs"); });
 
     // fecha painel se tocar fora
