@@ -1,17 +1,17 @@
 /* FILE: app/app.js
-   RControl Factory - /app/app.js - V8.0.1 PADRAO
+   RControl Factory - /app/app.js - V8.0.2 PADRAO (Doctor FAB-only, no global delegation)
    - Arquivo completo (1 peca) pra copiar/colar
    - FIX: Apps list layout
    - ADD: Dashboard -> botao APAGAR app
    - FIX: Preview preso -> teardownPreviewHard()
    - FIX: Evitar duplo bind do Generator
    - Mantem: boot lock, stability, UI_READY bus
-   - HOTFIX: Doctor unificado (somente no FAB raiozinho) — remove btnAdminDoctor
-   - HOTFIX: Remove 'doctor delegation' global (capture pointerup/click/touchend) para evitar duplicação e tap morto iOS
-   - HOTFIX: btnFabDoctor agora chama runDoctor() sem forçar setView('admin')
 */
 (() => {
   "use strict";
+
+  // BUILD SIGNATURE (cache-bust verification)
+  try { console.info("[RCF] /app/app.js BUILD=V8.0.2_DOCTOR_FAB_ONLY"); } catch {}
 
   // =========================================================
   // GLOBAL LOG ALIAS (compat) — evita: "Can't find variable: log"
@@ -968,7 +968,8 @@
             <div id="rcfAdminSlotTop" data-rcf-slot="admin.top">
               <div class="row">
                 <button class="btn ghost" id="btnAdminDiag" type="button" data-rcf-action="admin.diag">Diagnosticar (local)</button>
-<button class="btn danger" id="btnAdminZero" type="button" data-rcf-action="admin.zero">Zerar (safe)</button>
+          <button class="rcfBtn" id="btnAdminDoctor" type="button" onclick="try{window.RCF_DOCTOR&&window.RCF_DOCTOR.open&&window.RCF_DOCTOR.open()}catch(e){}">Doctor</button>
+                <button class="btn danger" id="btnAdminZero" type="button" data-rcf-action="admin.zero">Zerar (safe)</button>
               </div>
 
               <pre class="mono" id="adminOut">Pronto.</pre>
@@ -1077,7 +1078,7 @@
             <button class="btn ghost" id="btnFabAdmin" type="button" data-rcf-action="fab.admin">Admin</button>
           </div>
           <div class="fab-row" style="margin-top:8px">
-            <button class="btn ghost" id="btnFabDoctor" type="button" data-rcf-action="fab.doctor" >Doctor</button>
+            <button class="btn ghost" id="btnFabDoctor" type="button" data-rcf-action="fab.doctor" onclick="try{window.RCF_DOCTOR&&window.RCF_DOCTOR.open&&window.RCF_DOCTOR.open()}catch(e){}">Doctor</button>
             <button class="btn ghost" id="btnFabLogs" type="button" data-rcf-action="fab.logs">Logs</button>
           </div>
           <div class="fab-row" style="margin-top:8px">
@@ -2618,8 +2619,7 @@
   // - Alvos: botões/itens cujo texto seja "Doctor" ou "Doctor Scan" (case-insensitive),
   //         ou que tenham data-rcf-action contendo "doctor".
   // =========================================================
-
-function bindUI() {
+  function bindUI() {
     $$("[data-view]").forEach(btn => bindTap(btn, () => setView(btn.getAttribute("data-view"))));
     bindTap($("#btnOpenTools"), () => { openTools(true); openFabPanel(false); });
     bindTap($("#btnCloseTools"), () => openTools(false));
@@ -2630,19 +2630,12 @@ function bindUI() {
     bindTap($("#btnFabTools"), () => { openFabPanel(false); openTools(true); });
     bindTap($("#btnFabAdmin"), () => { openFabPanel(false); setView("admin"); });
     bindTap($("#btnFabDoctor"), () => { openFabPanel(false); runDoctor(); });
-bindTap($("#btnFabLogs"), () => { openFabPanel(false); setView("logs"); });
+    // Doctor deve existir SOMENTE no FAB (Admin button, se existir no DOM, é ocultado)
+    try { const b = $("#btnAdminDoctor"); if (b) b.style.display = "none"; } catch {}
+    bindTap($("#btnFabLogs"), () => { openFabPanel(false); setView("logs"); });
 
     // fecha painel se tocar fora
-    document.addEventListener("pointerdown", (ev) => {
-      try {
-        const p = $("#rcfFabPanel");
-        if (!p || !p.classList.contains("open")) return;
-        const fab = $("#rcfFab");
-        const t = ev.target;
-        if (p.contains(t) || (fab && fab.contains(t))) return;
-        openFabPanel(false);
-      } catch {}
-    }, { passive: true });
+    // (removido) fechar FAB ao tocar fora — evitamos listener global em document por estabilidade iOS
 
     bindTap($("#btnCreateNewApp"), () => setView("newapp"));
     bindTap($("#btnOpenEditor"), () => setView("editor"));
