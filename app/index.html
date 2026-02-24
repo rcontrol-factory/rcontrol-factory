@@ -1,8 +1,8 @@
 <!-- FILE: app/index.html
-     RCF — SAFE BOOT (auto-boot) v1.3
-     ✅ Entra direto na Factory (auto boot normal)
-     ✅ SAFE BOOT fica só pra emergência (?safe=1)
-     ✅ Some sozinho quando a UI sobe (evento RCF:UI_READY)
+     RCF — SAFE BOOT (auto-boot silencioso) v1.4
+     ✅ Entra direto na Factory (sem flash)
+     ✅ SAFE BOOT só aparece em emergência
+     ✅ Watchdog 2500ms
 -->
 
 <!doctype html>
@@ -15,9 +15,9 @@
   <base href="./" />
   <link rel="manifest" href="./manifest.json" />
   <link rel="stylesheet" href="./styles.css" />
-  <meta name="rcf-index" content="SAFE_BOOT_AUTO_2026_02_23_v1_3" />
+  <meta name="rcf-index" content="SAFE_BOOT_AUTO_2026_02_24_v1_4" />
+
   <style>
-    /* garante algo visível mesmo se styles.css falhar */
     body{background:#0b1020;color:#eaf0ff;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;}
     .rcf_safe{max-width:920px;margin:0 auto;padding:14px}
     .rcf_card{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:16px;padding:14px;margin:12px 0}
@@ -26,8 +26,6 @@
     .g{background:#35d0b5;color:#111}
     .d{background:rgba(255,255,255,.12);color:#eaf0ff;border:1px solid rgba(255,255,255,.18)}
     pre{white-space:pre-wrap;background:rgba(0,0,0,.35);padding:10px;border-radius:12px;border:1px solid rgba(255,255,255,.10);min-height:140px}
-    code{background:rgba(255,255,255,.10);padding:2px 6px;border-radius:8px}
-    .rcf_hint{opacity:.85;margin-top:8px;font-size:13px;line-height:1.35}
   </style>
 </head>
 
@@ -35,24 +33,15 @@
   <noscript>Ative o JavaScript para usar o app.</noscript>
 
   <div id="app">
-    <div class="rcf_safe" id="rcfSafeBootUI">
+    <!-- COMEÇA OCULTO -->
+    <div class="rcf_safe" id="rcfSafeBootUI" style="display:none">
       <h2>RCF • SAFE BOOT</h2>
 
       <div class="rcf_card">
-        <div><b>Objetivo:</b> sair da tela preta e recuperar o controle.</div>
-        <div style="opacity:.9;margin-top:6px">
-          Se o boot normal falhar, você ainda consegue limpar SW/cache e ver logs aqui.
-        </div>
-
         <button class="rcf_btn r" id="u">Unregister SW</button>
         <button class="rcf_btn r" id="c">Clear Caches</button>
         <button class="rcf_btn d" id="k">Show SW status</button>
         <button class="rcf_btn g" id="boot">Boot normal agora</button>
-
-        <div class="rcf_hint" id="hint">
-          ✅ Normalmente agora ele entra direto na Factory.<br/>
-          Para <b>forçar</b> ficar no SAFE BOOT, abra com: <code>?safe=1</code>
-        </div>
       </div>
 
       <div class="rcf_card">
@@ -62,139 +51,110 @@
     </div>
   </div>
 
-  <script>
-  (function(){
-    const L = document.getElementById("log");
-    const UI = document.getElementById("rcfSafeBootUI");
-    const log = (...a)=>{ try{ L.textContent += "\n" + a.join(" "); }catch{} };
+<script>
+(function(){
 
-    const ts = ()=> new Date().toISOString();
-    log("[" + ts() + "] SAFE_BOOT loaded ✅ base=" + document.baseURI);
+  const L  = document.getElementById("log");
+  const UI = document.getElementById("rcfSafeBootUI");
+  const ts = ()=> new Date().toISOString();
+  const log = (...a)=>{ try{ L.textContent += "\n" + a.join(" "); }catch{} };
 
-    // parâmetros
-    const params = new URLSearchParams(location.search || "");
-    const forceSafe = (params.get("safe") === "1");
-    if (forceSafe) {
-      log("INFO: force SAFE mode (?safe=1) ✅");
-    }
+  let uiReady = false;
+  let bootFinished = false;
 
-    async function unreg(){
+  const params = new URLSearchParams(location.search || "");
+  const forceSafe = (params.get("safe") === "1");
+
+  function showSafe(reason){
+    if (!UI) return;
+    UI.style.display = "block";
+    log("SAFE MODE:", reason);
+  }
+
+  async function loadScript(src){
+    return new Promise((resolve, reject)=>{
+      const s = document.createElement("script");
+      s.src = src + "?cb=" + Date.now();
+      s.async = false;
+      s.onload = ()=> resolve(src);
+      s.onerror = ()=> reject(new Error("load failed: " + src));
+      document.head.appendChild(s);
+    });
+  }
+
+  async function bootNormal(){
+
+    if (window.__RCF_SAFE_BOOTING__) return;
+    window.__RCF_SAFE_BOOTING__ = true;
+
+    log("[" + ts() + "] bootNormal…");
+
+    const modules = [
+      "./js/core/logger.js",
+      "./js/core/stability_guard.js",
+      "./js/core/storage.js",
+      "./js/core/github_sync.js",
+      "./js/core/vfs_overrides.js",
+      "./js/core/vfs_shim.js",
+      "./js/core/mother_selfupdate.js",
+      "./js/core/errors.js",
+      "./js/core/ui_safety.js",
+      "./js/core/ui_compact_outputs.js",
+      "./js/core/ui_bindings.js",
+      "./js/core/diagnostics.js",
+      "./js/core/preview_runner.js",
+      "./js/core/injector.js",
+      "./js/engine/template_registry.js",
+      "./js/engine/module_registry.js",
+      "./js/engine/builder.js",
+      "./js/engine/engine.js",
+      "./js/core/pages_links.js",
+      "./js/admin.github.js",
+      "./app.js",
+      "./js/core/zip_vault.js",
+      "./js/core/agent_zip_bridge.js"
+    ];
+
+    let fails = 0;
+
+    for (const src of modules){
       try{
-        if(!("serviceWorker" in navigator)){ log("no SW support"); return; }
-        const regs = await navigator.serviceWorker.getRegistrations();
-        let ok=0;
-        for(const r of regs){ try{ if(await r.unregister()) ok++; }catch(e){} }
-        log("unregister ok=" + ok + " regs=" + regs.length);
-      }catch(e){ log("unregister err", (e && e.message) ? e.message : String(e)); }
-    }
-
-    async function clearCaches(){
-      try{
-        if(!("caches" in window)){ log("no caches API"); return; }
-        const keys = await caches.keys();
-        let del=0;
-        for(const k of keys){ try{ if(await caches.delete(k)) del++; }catch(e){} }
-        log("caches deleted=" + del + " keys=" + keys.length);
-      }catch(e){ log("caches err", (e && e.message) ? e.message : String(e)); }
-    }
-
-    async function swStatus(){
-      try{
-        const has = ("serviceWorker" in navigator);
-        log("sw supported=" + has);
-        if(!has) return;
-        log("controller=" + (!!navigator.serviceWorker.controller));
-        const regs = await navigator.serviceWorker.getRegistrations();
-        log("regs=" + regs.length);
-        for (const r of regs) {
-          try{ log(" - scope=" + (r.scope||"") ); }catch{}
-        }
-      }catch(e){ log("status err", (e && e.message) ? e.message : String(e)); }
-    }
-
-    function loadScript(src){
-      return new Promise((resolve, reject)=>{
-        const s = document.createElement("script");
-        s.src = src + (src.includes("?") ? "&" : "?") + "cb=" + Date.now();
-        s.async = false;
-        s.onload = ()=> resolve(src);
-        s.onerror = ()=> reject(new Error("load failed: " + src));
-        document.head.appendChild(s);
-      });
-    }
-
-    async function bootNormal(){
-      // evita duplo-boot
-      if (window.__RCF_SAFE_BOOTING__) { log("INFO: boot already running"); return; }
-      window.__RCF_SAFE_BOOTING__ = true;
-
-      log("[" + ts() + "] bootNormal…");
-
-      const modules = [
-        "./js/core/logger.js",
-        "./js/core/stability_guard.js",
-        "./js/core/storage.js",
-        "./js/core/github_sync.js",
-        "./js/core/vfs_overrides.js",
-        "./js/core/vfs_shim.js",
-        "./js/core/mother_selfupdate.js",
-        "./js/core/errors.js",
-        "./js/core/ui_safety.js",
-        "./js/core/ui_compact_outputs.js",
-        "./js/core/ui_bindings.js",
-        "./js/core/diagnostics.js",
-        "./js/core/preview_runner.js",
-        "./js/core/injector.js",
-        "./js/engine/template_registry.js",
-        "./js/engine/module_registry.js",
-        "./js/engine/builder.js",
-        "./js/engine/engine.js",
-        "./js/core/pages_links.js",
-        "./js/admin.github.js",
-        "./app.js",
-        "./js/core/zip_vault.js",
-        "./js/core/agent_zip_bridge.js"
-      ];
-
-      let fails = 0;
-      for (const src of modules) {
-        try { await loadScript(src); log("loaded ✅", src); }
-        catch(e){
-          fails++;
-          log("failed ❌", src, "::", (e && e.message) ? e.message : String(e));
-        }
+        await loadScript(src);
+      }catch(e){
+        fails++;
+        log("failed:", src);
       }
-
-      log("[" + ts() + "] bootNormal finished. fails=" + fails);
-
-      // se a UI subir, a gente esconde o SAFE UI automaticamente
-      // (o app dispara RCF:UI_READY nos seus logs)
     }
 
-    // some o SAFE BOOT quando o app avisar que montou UI
-    try{
-      window.addEventListener("RCF:UI_READY", ()=>{
-        try{
-          log("INFO: UI_READY recebido ✅ (escondendo SAFE BOOT)");
-          if (UI) UI.style.display = "none";
-        }catch{}
-      });
-    }catch{}
+    bootFinished = true;
 
-    document.getElementById("u").onclick = unreg;
-    document.getElementById("c").onclick = clearCaches;
-    document.getElementById("k").onclick = swStatus;
-    document.getElementById("boot").onclick = bootNormal;
-
-    // já mostra status de cara
-    swStatus();
-
-    // ✅ AUTO BOOT (só não roda se ?safe=1)
-    if (!forceSafe) {
-      // watchdog: se o boot travar, SAFE UI continua disponível
-      setTimeout(()=>{ bootNormal(); }, 80);
+    if (fails > 0){
+      showSafe("boot errors (" + fails + ")");
     }
-  })();
-  </script>
+  }
+
+  // UI READY EVENT
+  window.addEventListener("RCF:UI_READY", ()=>{
+    uiReady = true;
+    if (UI) UI.style.display = "none";
+  });
+
+  // WATCHDOG 2500ms
+  setTimeout(()=>{
+    if (!uiReady && !forceSafe){
+      showSafe("UI_READY timeout");
+    }
+  }, 2500);
+
+  // FORCE SAFE
+  if (forceSafe){
+    showSafe("?safe=1 forced");
+  }else{
+    setTimeout(()=> bootNormal(), 80);
+  }
+
+})();
+</script>
+
 </body>
 </html>
