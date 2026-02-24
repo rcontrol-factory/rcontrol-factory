@@ -634,57 +634,67 @@
     return false;
   }
 
-  function bindAppsSelectionDelegation() {
-    if (window.__RCF_APPS_SELECT_BOUND__) return;
-    window.__RCF_APPS_SELECT_BOUND__ = true;
+  function bindAppsSelectionButtons() {
+    // v1.2.10: sem delegation global — bind por botão com guard no próprio elemento
+    try {
+      const candidates = Array.from(document.querySelectorAll("button, a, [role='button']"));
+      let bound = 0;
 
-    const handler = (ev) => {
-      try {
-        const t = ev.target;
-        if (!t) return;
+      for (const el of candidates) {
+        try {
+          if (!el || !el.textContent) continue;
 
-        const btn = t.closest ? t.closest("button, a, [role='button']") : null;
-        if (!btn) return;
+          const txt = String(el.textContent || "").trim().toLowerCase();
+          const action = String(el.getAttribute("data-rcf-action") || "").trim().toLowerCase();
+          const id = String(el.id || "").trim().toLowerCase();
 
-        const txt = String(btn.textContent || "").trim().toLowerCase();
-        const action = String(btn.getAttribute("data-rcf-action") || "").trim().toLowerCase();
-        const id = String(btn.id || "").trim().toLowerCase();
+          const isSelect =
+            txt === "selecionar" ||
+            txt.includes("selecionar") ||
+            action.includes("select") ||
+            action.includes("app.select") ||
+            id.includes("select");
 
-        const isSelect =
-          txt === "selecionar" ||
-          txt.includes("selecionar") ||
-          action.includes("select") ||
-          action.includes("app.select") ||
-          id.includes("select");
+          if (!isSelect) continue;
 
-        if (!isSelect) return;
+          // evita bind duplicado no mesmo elemento
+          if (el.dataset && el.dataset.rcfAppsSelectBound === "1") continue;
+          if (el.dataset) el.dataset.rcfAppsSelectBound = "1";
 
-        const card = btn.closest ? btn.closest("[data-app-card], [data-app], .card, .appCard, li, .item, .row, div") : null;
-        const slug = findSlugInCard(card || btn.parentElement);
+          el.addEventListener("click", (ev) => {
+            try {
+              // dedupe rápido por elemento (iOS pode gerar sequência)
+              const now = Date.now();
+              const last = Number(el.dataset?.rcfAppsSelectLastTs || "0");
+              if (last && (now - last) < 450) return;
+              if (el.dataset) el.dataset.rcfAppsSelectLastTs = String(now);
 
-        if (!slug) {
-          loggerPush("WARN", "APP SELECT: não consegui achar slug no card.");
-          return;
-        }
+              const card = el.closest ? el.closest("[data-app-card], [data-app], .card, .appCard, li, .item, .row, div") : null;
+              const slug = findSlugInCard(card || el.parentElement);
 
-        // impede que handlers antigos façam bagunça
-        try { ev.preventDefault(); ev.stopPropagation(); } catch {}
+              if (!slug) {
+                loggerPush("WARN", "APP SELECT: não consegui achar slug no card.");
+                return;
+              }
 
-        const ok = setActiveSlugEverywhere(slug);
-        if (ok) {
-          loggerPush("INFO", "ACTIVE set ✅ slug=" + slug);
-          setTopStatus("App ativo: " + slug);
-          setTimeout(() => setTopStatus("OK ✅"), 900);
-          tryRefreshUI();
-        }
-      } catch {}
-    };
+              try { ev.preventDefault(); ev.stopPropagation(); } catch {}
 
-    // captura (pega antes do resto)
-    document.addEventListener("click", handler, { capture: true, passive: false });
-    document.addEventListener("touchend", handler, { capture: true, passive: false });
+              const ok = setActiveSlugEverywhere(slug);
+              if (ok) {
+                loggerPush("INFO", "ACTIVE set ✅ slug=" + slug);
+                setTopStatus("App ativo: " + slug);
+                setTimeout(() => setTopStatus("OK ✅"), 900);
+                tryRefreshUI();
+              }
+            } catch {}
+          }, { passive: false });
 
-    loggerPush("log", "Apps select bind OK ✅ (delegation)");
+          bound++;
+        } catch {}
+      }
+
+      if (bound > 0) loggerPush("log", "Apps select bind OK ✅ (buttons) bound=" + bound);
+    } catch {}
   }
 
   // ---------- existing binds ----------
@@ -820,7 +830,7 @@
     bindGenerator();
 
     // ✅ DEGRAU 3
-    bindAppsSelectionDelegation();
+    bindAppsSelectionButtons();
 
     enforceLogsScopeNow();
 
@@ -830,7 +840,7 @@
         try { ensurePipelineButtons(); updateApplyButtonEnabled(); } catch {}
         try { bindGenerator(); } catch {}
         // mantém o bind do select vivo mesmo com re-render
-        try { bindAppsSelectionDelegation(); } catch {}
+        try { bindAppsSelectionButtons(); } catch {}
       });
       obs.observe(document.body, { attributes: true, attributeFilter: ["data-view", "class"] });
     } catch {}
@@ -845,7 +855,7 @@
       setActiveAppSlug: (slug) => setActiveSlugEverywhere(slug)
     };
 
-    loggerPush("log", "core/ui_bindings.js carregado ✅ (v1.2.8 HARD LOGS + PIPELINE + GENERATOR + APPS SELECT)");
+    loggerPush("log", "core/ui_bindings.js carregado ✅ (v1.2.10 HARD LOGS + PIPELINE + GENERATOR + APPS SELECT)");
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
