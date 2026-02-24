@@ -1,14 +1,15 @@
 /* FILE: app/js/core/doctor_scan.js
-   RControl Factory — DOCTOR SCAN — v1.5x (PATCH: show last fatals)
-   - ✅ Doctor fica só no ADMIN (não fica solto em todas as telas)
-   - ✅ Modal com rolagem iOS
-   - ✅ Mostra "Last FATAL" vindo de window.__RCF_FATALS__ / __RCF_LOGS__
+   RControl Factory — DOCTOR SCAN — v1.5 (ADMIN SLOT REMOVED + FAB/TOOLS READY)
+   - ✅ NÃO injeta botão sozinho (evita “botão solto”)
+   - ✅ Expõe API: window.RCF_DOCTOR_SCAN.open()
+   - ✅ Modal com rolagem iOS: overflow:auto + -webkit-overflow-scrolling + touch-action
+   - ✅ Botões: Scan / Copy / Close
 */
 
 (() => {
   "use strict";
 
-  const VERSION = "v1.5x";
+  const VERSION = "v1.5";
 
   // evita double init
   if (window.__RCF_DOCTOR_SCAN_BOOTED__) return;
@@ -21,38 +22,14 @@
 
   const $ = (sel, root = document) => root.querySelector(sel);
 
-  function getAdminMountRoot() {
-    try {
-      const reg = window.RCF_UI?.slots;
-      if (reg) {
-        const prefer = ["admin.integrations", "admin.top", "admin.logs"];
-        for (const k of prefer) {
-          const sel = reg[k];
-          if (sel) {
-            const el = $(sel);
-            if (el) return el;
-          }
-        }
-      }
-    } catch {}
-    return $("#rcfAdminSlotIntegrations") || $("#rcfAdminSlotTop") || null;
-  }
-
+  // =========================================================
+  // Modal (iOS-safe scroll)
+  // =========================================================
   function ensureStyles() {
     if ($("#__rcfDoctorStyle")) return;
     const s = document.createElement("style");
     s.id = "__rcfDoctorStyle";
     s.textContent = `
-      .rcfDoctorBtn{
-        display:inline-flex; align-items:center; gap:8px;
-        border:1px solid rgba(255,255,255,.18);
-        background:rgba(255,255,255,.10);
-        color:#eaf0ff; font-weight:900;
-        padding:10px 12px; border-radius:999px;
-        cursor:pointer; user-select:none;
-      }
-      .rcfDoctorBtn:active{ transform:scale(.99); }
-
       .rcfDoctorOverlay{
         position:fixed; inset:0;
         background:rgba(0,0,0,.55);
@@ -77,9 +54,16 @@
         gap:10px;
         border-bottom:1px solid rgba(255,255,255,.10);
       }
-      .rcfDoctorTitle{ font-weight:950; letter-spacing:.2px; }
-      .rcfDoctorActions{ display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
-      .rcfDoctorAct{ border:0; border-radius:999px; padding:10px 12px; font-weight:900; cursor:pointer; }
+      .rcfDoctorTitle{
+        font-weight:950; letter-spacing:.2px;
+      }
+      .rcfDoctorActions{
+        display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end;
+      }
+      .rcfDoctorAct{
+        border:0; border-radius:999px; padding:10px 12px;
+        font-weight:900; cursor:pointer;
+      }
       .rcfDoctorAct.scan{ background:#35d0b5; color:#0b1020; }
       .rcfDoctorAct.copy{ background:rgba(255,255,255,.12); color:#eaf0ff; border:1px solid rgba(255,255,255,.18); }
       .rcfDoctorAct.close{ background:#ff4d4d; color:#1b0b0b; }
@@ -126,7 +110,7 @@
 
     const title = document.createElement("div");
     title.className = "rcfDoctorTitle";
-    title.textContent = `RCF Doctor Scan ${VERSION}`;
+    title.textContent = `RCF Doctor ${VERSION}`;
 
     const actions = document.createElement("div");
     actions.className = "rcfDoctorActions";
@@ -170,8 +154,12 @@
       try { prevActive?.focus?.(); } catch {}
     }
 
-    overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+    // clicar fora fecha
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) close();
+    });
 
+    // ESC fecha (desktop)
     window.addEventListener("keydown", function onKey(e) {
       if (e.key === "Escape") {
         window.removeEventListener("keydown", onKey);
@@ -188,6 +176,7 @@
         btnCopy.textContent = "Copied ✅";
         setTimeout(() => (btnCopy.textContent = "Copy"), 900);
       } catch {
+        // fallback: select
         try {
           const r = document.createRange();
           r.selectNodeContents(pre);
@@ -211,6 +200,7 @@
       try {
         const rep = await buildReport();
         pre.textContent = rep;
+        try { pre.scrollTop = 0; } catch {}
       } catch (e) {
         pre.textContent = "DOCTOR scan error: " + ((e && e.message) ? e.message : String(e));
       } finally {
@@ -219,13 +209,20 @@
       }
     };
 
+    // trava scroll do body mas deixa scroll dentro do modal
     try { document.body.classList.add("rcfDoctorNoScroll"); } catch {}
+
     document.body.appendChild(overlay);
+
+    // garante foco
     try { btnScan.focus(); } catch {}
 
-    return { overlay, pre };
+    return { overlay, pre, close };
   }
 
+  // =========================================================
+  // Scan core
+  // =========================================================
   function nowISO() {
     try { return new Date().toISOString(); } catch { return String(Date.now()); }
   }
@@ -309,33 +306,9 @@
     const mb = readMotherBundleLocal();
     const rs = resourcesSummary();
 
-    const fat = (() => {
-      const out = { count: 0, last: [] };
-      try {
-        const arr = Array.isArray(window.__RCF_FATALS__) ? window.__RCF_FATALS__ : [];
-        out.count = arr.length;
-        out.last = arr.slice(-8).map(x => ({
-          ts: x.ts || "",
-          message: x.message || "",
-          source: x.source || x.filename || "",
-          lineno: x.lineno || 0,
-          colno: x.colno || 0,
-          kind: x.kind || ""
-        }));
-        return out;
-      } catch {}
-      try {
-        const logs = Array.isArray(window.__RCF_LOGS__) ? window.__RCF_LOGS__ : [];
-        const fatLogs = logs.filter(l => (l && l.tag === "FATAL")).slice(-8);
-        out.count = fatLogs.length;
-        out.last = fatLogs.map(l => ({ ts: l.t ? new Date(l.t).toISOString() : "", message: l.msg || "", source: "", lineno: 0, colno: 0, kind: "log" }));
-      } catch {}
-      return out;
-    })();
-
-    let hints = [];
+    const hints = [];
     if (sw.supported && sw.controller && sw.registrations === 0) {
-      hints.push("- SW controller=true mas registrations=0: pode ser SW antigo/controlando por outra scope.\n  Use: SAFE BOOT > Show SW status / Unregister SW se ficar preso.");
+      hints.push("- SW controller=true mas registrations=0: pode ser SW antigo/controlando por outra scope.\n  Use: Tools > Unregister SW se ficar preso.");
     }
     if (ca.supported && ca.keys === 0) {
       hints.push("- Cache API vazio (keys=0): ok se você está usando overrides + bundle local.");
@@ -372,24 +345,6 @@
     lines.push(`unique: ${rs.unique}`);
     lines.push(`duplicates: ${rs.duplicates}`);
 
-    lines.push("");
-    lines.push("== Last FATAL ==");
-    lines.push(`count: ${fat.count}`);
-    if (fat.last && fat.last.length) {
-      for (const f of fat.last) {
-        const src = f.source ? `${f.source}:${f.lineno}:${f.colno}` : "(no source)";
-        lines.push(`- ${f.ts || ""} ${f.kind || ""} :: ${f.message || ""} @ ${src}`);
-      }
-      const last = fat.last[fat.last.length - 1];
-      if ((last.message || "").toLowerCase().includes("unexpected end of script") && !last.source) {
-        lines.push("");
-        lines.push("hint: 'Unexpected end of script' sem source normalmente é arquivo JS truncado/carregado como HTML.");
-        lines.push("      Veja qual script foi o último a carregar antes do fatal (aba Logs) e reenvie esse arquivo completo.");
-      }
-    } else {
-      lines.push("- (nenhum fatal capturado em __RCF_FATALS__)");
-    }
-
     if (hints.length) {
       lines.push("");
       lines.push("== Hints (SAFE) ==");
@@ -399,44 +354,21 @@
     return lines.join("\n");
   }
 
-  function mount() {
-    const root = getAdminMountRoot();
-    if (!root) return false;
-    if ($("#__rcfDoctorBtn", root)) return true;
-
-    const btn = document.createElement("button");
-    btn.id = "__rcfDoctorBtn";
-    btn.className = "rcfDoctorBtn";
-    btn.type = "button";
-    btn.textContent = "Doctor";
-
-    btn.onclick = async () => {
-      const rep = await buildReport().catch(e => "Doctor error: " + ((e && e.message) ? e.message : String(e)));
-      const modal = openModal(rep);
-      try { modal.pre.scrollTop = 0; } catch {}
-    };
-
-    try { root.prepend(btn); } catch { root.appendChild(btn); }
-
-    log("Doctor button injected ✅");
-    return true;
+  // =========================================================
+  // Public API
+  // =========================================================
+  async function open() {
+    const rep = await buildReport().catch(e => "Doctor error: " + ((e && e.message) ? e.message : String(e)));
+    const modal = openModal(rep);
+    try { modal.pre.scrollTop = 0; } catch {}
+    return modal;
   }
 
-  try {
-    if (mount()) {
-      log("doctor_scan.js ready ✅ (" + VERSION + ")");
-    } else {
-      log("admin slot not found yet; waiting UI_READY…");
-    }
-  } catch (e) {
-    log("mount err", (e && e.message) ? e.message : String(e));
-  }
+  window.RCF_DOCTOR_SCAN = {
+    version: VERSION,
+    open,
+    scan: buildReport
+  };
 
-  try {
-    window.addEventListener("RCF:UI_READY", () => { try { mount(); } catch {} });
-  } catch {}
-
-  try {
-    document.addEventListener("click", () => { try { mount(); } catch {} }, { passive: true });
-  } catch {}
+  log("doctor_scan.js ready ✅ (" + VERSION + ") API=window.RCF_DOCTOR_SCAN.open()");
 })();
