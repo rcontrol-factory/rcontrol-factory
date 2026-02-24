@@ -1,6 +1,7 @@
 /* FILE: app/js/core/doctor_scan.js
-   RControl Factory — DOCTOR SCAN — v1.4 (iOS SCROLL FIX + ADMIN SLOT ONLY)
-   - ✅ Doctor fica só no ADMIN (não fica solto em todas as telas)
+   RControl Factory — DOCTOR SCAN — v1.5 (ADMIN SLOT REMOVED + FAB/TOOLS READY)
+   - ✅ NÃO injeta botão sozinho (evita “botão solto”)
+   - ✅ Expõe API: window.RCF_DOCTOR_SCAN.open()
    - ✅ Modal com rolagem iOS: overflow:auto + -webkit-overflow-scrolling + touch-action
    - ✅ Botões: Scan / Copy / Close
 */
@@ -8,7 +9,7 @@
 (() => {
   "use strict";
 
-  const VERSION = "v1.4";
+  const VERSION = "v1.5";
 
   // evita double init
   if (window.__RCF_DOCTOR_SCAN_BOOTED__) return;
@@ -22,29 +23,6 @@
   const $ = (sel, root = document) => root.querySelector(sel);
 
   // =========================================================
-  // Helpers: UI slots (Admin)
-  // =========================================================
-  function getAdminMountRoot() {
-    try {
-      // usa registry se existir
-      const reg = window.RCF_UI?.slots;
-      if (reg) {
-        const prefer = ["admin.integrations", "admin.top", "admin.logs"];
-        for (const k of prefer) {
-          const sel = reg[k];
-          if (sel) {
-            const el = $(sel);
-            if (el) return el;
-          }
-        }
-      }
-    } catch {}
-
-    // fallback (se o registry não existir por algum motivo)
-    return $("#rcfAdminSlotIntegrations") || $("#rcfAdminSlotTop") || null;
-  }
-
-  // =========================================================
   // Modal (iOS-safe scroll)
   // =========================================================
   function ensureStyles() {
@@ -52,23 +30,12 @@
     const s = document.createElement("style");
     s.id = "__rcfDoctorStyle";
     s.textContent = `
-      .rcfDoctorBtn{
-        display:inline-flex; align-items:center; gap:8px;
-        border:1px solid rgba(255,255,255,.18);
-        background:rgba(255,255,255,.10);
-        color:#eaf0ff; font-weight:900;
-        padding:10px 12px; border-radius:999px;
-        cursor:pointer; user-select:none;
-      }
-      .rcfDoctorBtn:active{ transform:scale(.99); }
-
       .rcfDoctorOverlay{
         position:fixed; inset:0;
         background:rgba(0,0,0,.55);
         z-index:999999;
         display:flex; align-items:center; justify-content:center;
         padding:14px;
-        /* Important iOS */
         touch-action:none;
       }
       .rcfDoctorModal{
@@ -143,7 +110,7 @@
 
     const title = document.createElement("div");
     title.className = "rcfDoctorTitle";
-    title.textContent = `RCF Doctor Scan ${VERSION}`;
+    title.textContent = `RCF Doctor ${VERSION}`;
 
     const actions = document.createElement("div");
     actions.className = "rcfDoctorActions";
@@ -233,6 +200,7 @@
       try {
         const rep = await buildReport();
         pre.textContent = rep;
+        try { pre.scrollTop = 0; } catch {}
       } catch (e) {
         pre.textContent = "DOCTOR scan error: " + ((e && e.message) ? e.message : String(e));
       } finally {
@@ -249,7 +217,7 @@
     // garante foco
     try { btnScan.focus(); } catch {}
 
-    return { overlay, pre };
+    return { overlay, pre, close };
   }
 
   // =========================================================
@@ -319,7 +287,6 @@
   }
 
   function resourcesSummary() {
-    // tenta contar resources via Performance API
     const out = { total: 0, unique: 0, duplicates: 0 };
     try {
       const entries = performance.getEntriesByType?.("resource") || [];
@@ -339,9 +306,9 @@
     const mb = readMotherBundleLocal();
     const rs = resourcesSummary();
 
-    let hints = [];
+    const hints = [];
     if (sw.supported && sw.controller && sw.registrations === 0) {
-      hints.push("- SW controller=true mas registrations=0: pode ser SW antigo/controlando por outra scope.\n  Use: SAFE BOOT > Show SW status / Unregister SW se ficar preso.");
+      hints.push("- SW controller=true mas registrations=0: pode ser SW antigo/controlando por outra scope.\n  Use: Tools > Unregister SW se ficar preso.");
     }
     if (ca.supported && ca.keys === 0) {
       hints.push("- Cache API vazio (keys=0): ok se você está usando overrides + bundle local.");
@@ -388,62 +355,20 @@
   }
 
   // =========================================================
-  // Mount button (Admin only)
+  // Public API
   // =========================================================
-  function mount() {
-    const root = getAdminMountRoot();
-    if (!root) {
-      // admin não está na tela agora
-      return false;
-    }
-
-    // evita duplicar
-    if ($("#__rcfDoctorBtn", root)) return true;
-
-    const btn = document.createElement("button");
-    btn.id = "__rcfDoctorBtn";
-    btn.className = "rcfDoctorBtn";
-    btn.type = "button";
-    btn.textContent = "Doctor";
-
-    btn.onclick = async () => {
-      const rep = await buildReport().catch(e => "Doctor error: " + ((e && e.message) ? e.message : String(e)));
-      const modal = openModal(rep);
-      // já deixa o relatório no topo
-      try { modal.pre.scrollTop = 0; } catch {}
-    };
-
-    // coloca no começo (mais “fixo” visualmente no Admin)
-    try { root.prepend(btn); } catch { root.appendChild(btn); }
-
-    log("Doctor button injected ✅");
-    return true;
+  async function open() {
+    const rep = await buildReport().catch(e => "Doctor error: " + ((e && e.message) ? e.message : String(e)));
+    const modal = openModal(rep);
+    try { modal.pre.scrollTop = 0; } catch {}
+    return modal;
   }
 
-  // tenta montar agora e também quando UI_READY acontecer
-  try {
-    if (mount()) {
-      log("doctor_scan.js ready ✅ (" + VERSION + ")");
-    } else {
-      log("admin slot not found yet; waiting UI_READY…");
-    }
-  } catch (e) {
-    log("mount err", (e && e.message) ? e.message : String(e));
-  }
+  window.RCF_DOCTOR_SCAN = {
+    version: VERSION,
+    open,
+    scan: buildReport
+  };
 
-  // Re-mount on UI_READY
-  try {
-    window.addEventListener("RCF:UI_READY", () => {
-      try { mount(); } catch {}
-    });
-  } catch {}
-
-  // Re-mount on view changes (fallback simples por clique em botões de view)
-  // (não quebra se não existir nada)
-  try {
-    document.addEventListener("click", () => {
-      // leve: só tenta montar de novo (idempotente)
-      try { mount(); } catch {}
-    }, { passive: true });
-  } catch {}
+  log("doctor_scan.js ready ✅ (" + VERSION + ") API=window.RCF_DOCTOR_SCAN.open()");
 })();
