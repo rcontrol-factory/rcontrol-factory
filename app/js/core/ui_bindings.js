@@ -559,9 +559,9 @@
           // pega a linha mais “slug-like”
           const lines = t.split("\n").map(s => s.trim()).filter(Boolean);
           for (const line of lines) {
-            if (looksLikeSlug(line) && line.includes("-")) return line;
+            if (looksLikeSlug(line)) return line;
           }
-          if (looksLikeSlug(t) && t.includes("-")) return t;
+          if (looksLikeSlug(t)) return t;
         }
       } catch {}
     }
@@ -572,7 +572,7 @@
       const tokens = txt.split(/\s+/).map(s => s.trim()).filter(Boolean);
       for (const tok of tokens) {
         const clean = tok.replace(/[^\w\-]/g, "");
-        if (looksLikeSlug(clean) && clean.includes("-")) return clean;
+        if (looksLikeSlug(clean)) return clean;
       }
     } catch {}
 
@@ -845,7 +845,7 @@
       setActiveAppSlug: (slug) => setActiveSlugEverywhere(slug)
     };
 
-    loggerPush("log", "core/ui_bindings.js carregado ✅ (v1.2.7 HARD LOGS + PIPELINE + GENERATOR + APPS SELECT)");
+    loggerPush("log", "core/ui_bindings.js carregado ✅ (v1.2.8 HARD LOGS + PIPELINE + GENERATOR + APPS SELECT)");
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
