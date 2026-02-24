@@ -1212,6 +1212,27 @@
   }
 
   function setView(name) {
+    // v8.0.6_VIEW_LOCK: prevent cascaded setView loops (admin <-> generator)
+    try {
+      const now = Date.now();
+
+      // ignore redundant same-view requests
+      if (typeof State === "object" && State && State.view === viewName) return;
+
+      // simple reentrancy lock (no globals)
+      if (setView.__busy__) {
+        const dt = now - (setView.__busy_ts__ || 0);
+        if (dt < 650) return; // ignore rapid reentry
+      }
+      setView.__busy__ = true;
+      setView.__busy_ts__ = now;
+
+      // auto-release lock (sync view changes finish quickly)
+      setTimeout(() => { try { setView.__busy__ = false; } catch {} }, 0);
+      // failsafe release
+      setTimeout(() => { try { setView.__busy__ = false; } catch {} }, 800);
+    } catch {}
+
     if (!name) return;
 
     // PATCH: ao sair do generator, mata overlay/preview preso
