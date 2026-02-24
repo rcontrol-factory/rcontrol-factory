@@ -1,5 +1,5 @@
 /* FILE: app/app.js
-   RControl Factory - /app/app.js - V8.0.2 PADRAO (Doctor FAB-only, no global delegation)
+   RControl Factory - /app/app.js - V8.0 PADRAO
    - Arquivo completo (1 peca) pra copiar/colar
    - FIX: Apps list layout
    - ADD: Dashboard -> botao APAGAR app
@@ -9,9 +9,6 @@
 */
 (() => {
   "use strict";
-
-  // BUILD SIGNATURE (cache-bust verification)
-  try { console.info("[RCF] /app/app.js BUILD=V8.0.2_DOCTOR_FAB_ONLY"); } catch {}
 
   // =========================================================
   // GLOBAL LOG ALIAS (compat) — evita: "Can't find variable: log"
@@ -968,8 +965,7 @@
             <div id="rcfAdminSlotTop" data-rcf-slot="admin.top">
               <div class="row">
                 <button class="btn ghost" id="btnAdminDiag" type="button" data-rcf-action="admin.diag">Diagnosticar (local)</button>
-          <button class="rcfBtn" id="btnAdminDoctor" type="button" onclick="try{window.RCF_DOCTOR&&window.RCF_DOCTOR.open&&window.RCF_DOCTOR.open()}catch(e){}">Doctor</button>
-                <button class="btn danger" id="btnAdminZero" type="button" data-rcf-action="admin.zero">Zerar (safe)</button>
+<button class="btn danger" id="btnAdminZero" type="button" data-rcf-action="admin.zero">Zerar (safe)</button>
               </div>
 
               <pre class="mono" id="adminOut">Pronto.</pre>
@@ -1078,7 +1074,7 @@
             <button class="btn ghost" id="btnFabAdmin" type="button" data-rcf-action="fab.admin">Admin</button>
           </div>
           <div class="fab-row" style="margin-top:8px">
-            <button class="btn ghost" id="btnFabDoctor" type="button" data-rcf-action="fab.doctor" onclick="try{window.RCF_DOCTOR&&window.RCF_DOCTOR.open&&window.RCF_DOCTOR.open()}catch(e){}">Doctor</button>
+            <button class="btn ghost" id="btnFabDoctor" type="button" data-rcf-action="fab.doctor">Doctor</button>
             <button class="btn ghost" id="btnFabLogs" type="button" data-rcf-action="fab.logs">Logs</button>
           </div>
           <div class="fab-row" style="margin-top:8px">
@@ -2567,9 +2563,15 @@
   // Doctor (atalho p/ Diagnostics + ScanMap quando disponível)
   // =========================================================
   function runDoctor() {
-    try { Logger.write("doctor: start"); } catch {}
+    // v8.0.4_DOCTOR_BIND_LOCK_CLEAN: prevent reentrancy/spam starts
+    try {
+      if (runDoctor.__running__) return;
+      runDoctor.__running__ = true;
+    } catch {}
 
-    // 1) Permite que módulos externos (doctor/scan) respondam
+    try { Logger.write("doctor: start"); } catch {}
+    try {
+// 1) Permite que módulos externos (doctor/scan) respondam
     try { window.dispatchEvent(new CustomEvent("RCF:DOCTOR", { detail: { ts: Date.now() } })); } catch {}
 
     // 2) Se existir UI de Doctor carregada por algum módulo, abre ela
@@ -2619,7 +2621,71 @@
   // - Alvos: botões/itens cujo texto seja "Doctor" ou "Doctor Scan" (case-insensitive),
   //         ou que tenham data-rcf-action contendo "doctor".
   // =========================================================
-  function bindUI() {
+  function installDoctorDelegation() {
+    try {
+      if (window.__RCF_DOCTOR_DELEG_INSTALLED__) return;
+      window.__RCF_DOCTOR_DELEG_INSTALLED__ = true;
+    } catch {}
+
+    const norm = (s) => String(s || "").replace(/\s+/g, " ").trim().toLowerCase();
+
+    const shouldOpen = (el) => {
+      try {
+        if (!el) return false;
+        const act = norm(el.getAttribute && el.getAttribute("data-rcf-action"));
+        if (act && act.includes("doctor")) return true;
+
+        const txt = norm(el.textContent);
+        if (!txt) return false;
+
+        // Evita falso positivo: "Diagnosticar" não é Doctor
+        if (txt.includes("diagnost")) return false;
+
+        return (txt === "doctor" || txt === "doctor scan" || txt.includes("doctor scan"));
+      } catch {
+        return false;
+      }
+    };
+
+    const handler = (ev) => {
+      try {
+        const t = ev && ev.target;
+        if (!t) return;
+        const el = (t.closest && t.closest("button,a,[role=button],div")) || t;
+        if (!shouldOpen(el)) return;
+
+        try { ev.preventDefault(); } catch {}
+        try { ev.stopPropagation(); } catch {}
+        try { ev.stopImmediatePropagation && ev.stopImmediatePropagation(); } catch {}
+
+        // abre Doctor
+        try { window.RCF_DOCTOR && window.RCF_DOCTOR.open && window.RCF_DOCTOR.open(); }
+        catch (e) { try { log("ERR: doctor.open failed: " + (e && e.message ? e.message : e)); } catch {} }
+
+        try { log("OK: doctor delegation fired ✅"); } catch {}
+      } catch {}
+    };
+
+    // Capture=true pra ganhar de overlays e delegation de libs
+    try { document.addEventListener("pointerup", handler, true); } catch {}
+    try { document.addEventListener("click", handler, true); } catch {}
+    try { document.addEventListener("touchend", handler, { capture: true, passive: false }); } catch {}
+
+    try { log("OK: doctor delegation installed ✅"); } catch {}
+    } finally {
+      try { Logger.write("doctor: end"); } catch {}
+      try { runDoctor.__running__ = false; } catch {}
+    }
+
+  }
+
+  // instala cedo e também após UI_READY (caso tenha sido carregado antes)
+  try { installDoctorDelegation(); } catch {}
+  try {
+    window.addEventListener("RCF:UI_READY", () => { try { installDoctorDelegation(); } catch {} }, { once: false });
+  } catch {}
+
+function bindUI() {
     $$("[data-view]").forEach(btn => bindTap(btn, () => setView(btn.getAttribute("data-view"))));
     bindTap($("#btnOpenTools"), () => { openTools(true); openFabPanel(false); });
     bindTap($("#btnCloseTools"), () => openTools(false));
@@ -2630,12 +2696,19 @@
     bindTap($("#btnFabTools"), () => { openFabPanel(false); openTools(true); });
     bindTap($("#btnFabAdmin"), () => { openFabPanel(false); setView("admin"); });
     bindTap($("#btnFabDoctor"), () => { openFabPanel(false); runDoctor(); });
-    // Doctor deve existir SOMENTE no FAB (Admin button, se existir no DOM, é ocultado)
-    try { const b = $("#btnAdminDoctor"); if (b) b.style.display = "none"; } catch {}
     bindTap($("#btnFabLogs"), () => { openFabPanel(false); setView("logs"); });
 
     // fecha painel se tocar fora
-    // (removido) fechar FAB ao tocar fora — evitamos listener global em document por estabilidade iOS
+    document.addEventListener("pointerdown", (ev) => {
+      try {
+        const p = $("#rcfFabPanel");
+        if (!p || !p.classList.contains("open")) return;
+        const fab = $("#rcfFab");
+        const t = ev.target;
+        if (p.contains(t) || (fab && fab.contains(t))) return;
+        openFabPanel(false);
+      } catch {}
+    }, { passive: true });
 
     bindTap($("#btnCreateNewApp"), () => setView("newapp"));
     bindTap($("#btnOpenEditor"), () => setView("editor"));
