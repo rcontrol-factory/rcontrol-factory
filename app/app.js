@@ -244,21 +244,57 @@
   // =========================================================
   // Doctor loader (lazy)
   // =========================================================
-  function loadScriptOnce(src, id) {
+  function loadScriptOnce(src, id, opts = {}) {
+    // SAFE loader: evita injetar HTML/404 e reduz risco de "Unexpected end of script"
     return new Promise((resolve) => {
       try {
         if (id && document.getElementById(id)) return resolve(true);
-        // já carregou?
-        const exists = Array.from(document.scripts || []).some(s => (s && s.src) ? s.src.includes(src) : false);
+
+        const exists = Array.from(document.scripts || []).some((s) => (s && s.src) ? s.src.includes(src) : false);
         if (exists) return resolve(true);
 
-        const s = document.createElement("script");
-        if (id) s.id = id;
-        s.src = src;
-        s.async = true;
-        s.onload = () => resolve(true);
-        s.onerror = () => resolve(false);
-        document.head.appendChild(s);
+        const expectMarker = String(opts.expectMarker || "").trim();
+
+        // tenta fetch primeiro (mesma origem) para validar
+        fetch(src, { cache: "no-store" })
+          .then(async (r) => {
+            try {
+              const ct = (r.headers.get("content-type") || "").toLowerCase();
+              const text = await r.text();
+
+              const t = (text || "").trim();
+
+              // HTML comum de 404/redirect
+              const looksHtml = t.startsWith("<!doctype") || t.startsWith("<html") || t.startsWith("<");
+              if (!r.ok || looksHtml) {
+                log("WARN: loadScriptOnce SAFE bloqueou (HTTP/HTML):", src, "status=" + r.status, "ct=" + ct);
+                return resolve(false);
+              }
+
+              if (expectMarker && !t.includes(expectMarker)) {
+                log("WARN: loadScriptOnce SAFE bloqueou (marker ausente):", src, "marker=" + expectMarker);
+                return resolve(false);
+              }
+
+              // injeta via Blob para garantir o conteúdo exato
+              const blob = new Blob([text], { type: "text/javascript" });
+              const url = URL.createObjectURL(blob);
+
+              const s = document.createElement("script");
+              if (id) s.id = id;
+              s.src = url;
+              s.onload = () => { try { URL.revokeObjectURL(url); } catch {} resolve(true); };
+              s.onerror = () => { try { URL.revokeObjectURL(url); } catch {} resolve(false); };
+              document.head.appendChild(s);
+            } catch (e) {
+              log("WARN: loadScriptOnce SAFE falhou:", src, (e && e.message) ? e.message : String(e));
+              resolve(false);
+            }
+          })
+          .catch((e) => {
+            log("WARN: loadScriptOnce SAFE fetch erro:", src, (e && e.message) ? e.message : String(e));
+            resolve(false);
+          });
       } catch {
         resolve(false);
       }
@@ -269,7 +305,7 @@
     try {
       if (window.RCF_DOCTOR_SCAN && typeof window.RCF_DOCTOR_SCAN.open === "function") return true;
       // tenta carregar o módulo (core)
-      const ok = await loadScriptOnce("/app/js/core/doctor_scan.js", "__rcfDoctorScanScript");
+      const ok = await loadScriptOnce("/app/js/core/doctor_scan.js", "__rcfDoctorScanScript", { expectMarker: "RCF_DOCTOR_SCAN" });
       if (ok && window.RCF_DOCTOR_SCAN && typeof window.RCF_DOCTOR_SCAN.open === "function") return true;
 
       // fallback paths (compat)
