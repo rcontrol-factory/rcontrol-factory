@@ -2166,4 +2166,8 @@
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", () => { safeInit(); }, { passive: true });
-  } e
+  } else {
+    safeInit();
+  }
+
+})();
