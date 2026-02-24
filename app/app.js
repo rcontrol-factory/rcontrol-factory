@@ -2608,7 +2608,74 @@
   } catch {}
 
 
-  function bindUI() {
+  
+  // =========================================================
+  // DOCTOR: Delegation (iOS touch-safe)
+  // - Alguns botões/itens podem ser montados por módulos externos (ui_bindings etc.)
+  // - Em iOS, certos overlays podem "engolir" click; então capturamos pointer/touch.
+  // - Alvos: botões/itens cujo texto seja "Doctor" ou "Doctor Scan" (case-insensitive),
+  //         ou que tenham data-rcf-action contendo "doctor".
+  // =========================================================
+  function installDoctorDelegation() {
+    try {
+      if (window.__RCF_DOCTOR_DELEG_INSTALLED__) return;
+      window.__RCF_DOCTOR_DELEG_INSTALLED__ = true;
+    } catch {}
+
+    const norm = (s) => String(s || "").replace(/\s+/g, " ").trim().toLowerCase();
+
+    const shouldOpen = (el) => {
+      try {
+        if (!el) return false;
+        const act = norm(el.getAttribute && el.getAttribute("data-rcf-action"));
+        if (act && act.includes("doctor")) return true;
+
+        const txt = norm(el.textContent);
+        if (!txt) return false;
+
+        // Evita falso positivo: "Diagnosticar" não é Doctor
+        if (txt.includes("diagnost")) return false;
+
+        return (txt === "doctor" || txt === "doctor scan" || txt.includes("doctor scan"));
+      } catch {
+        return false;
+      }
+    };
+
+    const handler = (ev) => {
+      try {
+        const t = ev && ev.target;
+        if (!t) return;
+        const el = (t.closest && t.closest("button,a,[role=button],div")) || t;
+        if (!shouldOpen(el)) return;
+
+        try { ev.preventDefault(); } catch {}
+        try { ev.stopPropagation(); } catch {}
+        try { ev.stopImmediatePropagation && ev.stopImmediatePropagation(); } catch {}
+
+        // abre Doctor
+        try { window.RCF_DOCTOR && window.RCF_DOCTOR.open && window.RCF_DOCTOR.open(); }
+        catch (e) { try { log("ERR: doctor.open failed: " + (e && e.message ? e.message : e)); } catch {} }
+
+        try { log("OK: doctor delegation fired ✅"); } catch {}
+      } catch {}
+    };
+
+    // Capture=true pra ganhar de overlays e delegation de libs
+    try { document.addEventListener("pointerup", handler, true); } catch {}
+    try { document.addEventListener("click", handler, true); } catch {}
+    try { document.addEventListener("touchend", handler, { capture: true, passive: false }); } catch {}
+
+    try { log("OK: doctor delegation installed ✅"); } catch {}
+  }
+
+  // instala cedo e também após UI_READY (caso tenha sido carregado antes)
+  try { installDoctorDelegation(); } catch {}
+  try {
+    window.addEventListener("RCF:UI_READY", () => { try { installDoctorDelegation(); } catch {} }, { once: false });
+  } catch {}
+
+function bindUI() {
     $$("[data-view]").forEach(btn => bindTap(btn, () => setView(btn.getAttribute("data-view"))));
     bindTap($("#btnOpenTools"), () => { openTools(true); openFabPanel(false); });
     bindTap($("#btnCloseTools"), () => openTools(false));
