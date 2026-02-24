@@ -1,9 +1,8 @@
 /* FILE: app/js/core/doctor_scan.js
-   RControl Factory — DOCTOR SCAN — v1.5 (ADMIN SLOT REMOVED + FAB/TOOLS READY)
-   - ✅ NÃO injeta botão sozinho (evita “botão solto”)
-   - ✅ Expõe API: window.RCF_DOCTOR_SCAN.open()
-   - ✅ Modal com rolagem iOS: overflow:auto + -webkit-overflow-scrolling + touch-action
-   - ✅ Botões: Scan / Copy / Close
+   RControl Factory — DOCTOR SCAN — v1.5 (API ONLY + small)
+   - ✅ Não injeta botão sozinho (sem bagunça)
+   - ✅ Exponha: window.RCF_DOCTOR_SCAN.open() / scan()
+   - ✅ Modal com scroll iOS safe
 */
 
 (() => {
@@ -11,20 +10,11 @@
 
   const VERSION = "v1.5";
 
-  // evita double init
   if (window.__RCF_DOCTOR_SCAN_BOOTED__) return;
   window.__RCF_DOCTOR_SCAN_BOOTED__ = true;
 
-  const log = (...a) => {
-    try { console.log("[DOCTOR]", ...a); } catch {}
-    try { window.__RCF_LOGS__?.push?.({ t: Date.now(), tag: "DOCTOR", msg: a.join(" ") }); } catch {}
-  };
-
   const $ = (sel, root = document) => root.querySelector(sel);
 
-  // =========================================================
-  // Modal (iOS-safe scroll)
-  // =========================================================
   function ensureStyles() {
     if ($("#__rcfDoctorStyle")) return;
     const s = document.createElement("style");
@@ -56,6 +46,7 @@
       }
       .rcfDoctorTitle{
         font-weight:950; letter-spacing:.2px;
+        color:#eaf0ff;
       }
       .rcfDoctorActions{
         display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end;
@@ -67,14 +58,12 @@
       .rcfDoctorAct.scan{ background:#35d0b5; color:#0b1020; }
       .rcfDoctorAct.copy{ background:rgba(255,255,255,.12); color:#eaf0ff; border:1px solid rgba(255,255,255,.18); }
       .rcfDoctorAct.close{ background:#ff4d4d; color:#1b0b0b; }
-
       .rcfDoctorBody{
         padding:12px 14px;
         overflow:auto;
         -webkit-overflow-scrolling:touch;
         touch-action:pan-y;
       }
-
       .rcfDoctorPre{
         margin:0;
         white-space:pre-wrap;
@@ -86,8 +75,8 @@
         font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
         font-size:12px;
         line-height:1.45;
+        color:#eaf0ff;
       }
-
       body.rcfDoctorNoScroll{
         overflow:hidden !important;
         touch-action:none !important;
@@ -96,135 +85,12 @@
     document.head.appendChild(s);
   }
 
-  function openModal(initialText) {
-    ensureStyles();
-
-    const overlay = document.createElement("div");
-    overlay.className = "rcfDoctorOverlay";
-
-    const modal = document.createElement("div");
-    modal.className = "rcfDoctorModal";
-
-    const head = document.createElement("div");
-    head.className = "rcfDoctorHead";
-
-    const title = document.createElement("div");
-    title.className = "rcfDoctorTitle";
-    title.textContent = `RCF Doctor ${VERSION}`;
-
-    const actions = document.createElement("div");
-    actions.className = "rcfDoctorActions";
-
-    const btnScan = document.createElement("button");
-    btnScan.className = "rcfDoctorAct scan";
-    btnScan.textContent = "Scan";
-
-    const btnCopy = document.createElement("button");
-    btnCopy.className = "rcfDoctorAct copy";
-    btnCopy.textContent = "Copy";
-
-    const btnClose = document.createElement("button");
-    btnClose.className = "rcfDoctorAct close";
-    btnClose.textContent = "Close";
-
-    actions.appendChild(btnScan);
-    actions.appendChild(btnCopy);
-    actions.appendChild(btnClose);
-
-    head.appendChild(title);
-    head.appendChild(actions);
-
-    const body = document.createElement("div");
-    body.className = "rcfDoctorBody";
-
-    const pre = document.createElement("pre");
-    pre.className = "rcfDoctorPre";
-    pre.textContent = initialText || "Carregando…";
-    body.appendChild(pre);
-
-    modal.appendChild(head);
-    modal.appendChild(body);
-    overlay.appendChild(modal);
-
-    const prevActive = document.activeElement;
-
-    function close() {
-      try { document.body.classList.remove("rcfDoctorNoScroll"); } catch {}
-      try { overlay.remove(); } catch {}
-      try { prevActive?.focus?.(); } catch {}
-    }
-
-    // clicar fora fecha
-    overlay.addEventListener("click", (e) => {
-      if (e.target === overlay) close();
-    });
-
-    // ESC fecha (desktop)
-    window.addEventListener("keydown", function onKey(e) {
-      if (e.key === "Escape") {
-        window.removeEventListener("keydown", onKey);
-        close();
-      }
-    });
-
-    btnClose.onclick = close;
-
-    btnCopy.onclick = async () => {
-      const txt = pre.textContent || "";
-      try {
-        await navigator.clipboard.writeText(txt);
-        btnCopy.textContent = "Copied ✅";
-        setTimeout(() => (btnCopy.textContent = "Copy"), 900);
-      } catch {
-        // fallback: select
-        try {
-          const r = document.createRange();
-          r.selectNodeContents(pre);
-          const sel = window.getSelection();
-          sel.removeAllRanges();
-          sel.addRange(r);
-          document.execCommand("copy");
-          sel.removeAllRanges();
-          btnCopy.textContent = "Copied ✅";
-          setTimeout(() => (btnCopy.textContent = "Copy"), 900);
-        } catch {
-          btnCopy.textContent = "Copy failed";
-          setTimeout(() => (btnCopy.textContent = "Copy"), 900);
-        }
-      }
-    };
-
-    btnScan.onclick = async () => {
-      btnScan.textContent = "Scanning…";
-      btnScan.disabled = true;
-      try {
-        const rep = await buildReport();
-        pre.textContent = rep;
-        try { pre.scrollTop = 0; } catch {}
-      } catch (e) {
-        pre.textContent = "DOCTOR scan error: " + ((e && e.message) ? e.message : String(e));
-      } finally {
-        btnScan.disabled = false;
-        btnScan.textContent = "Scan";
-      }
-    };
-
-    // trava scroll do body mas deixa scroll dentro do modal
-    try { document.body.classList.add("rcfDoctorNoScroll"); } catch {}
-
-    document.body.appendChild(overlay);
-
-    // garante foco
-    try { btnScan.focus(); } catch {}
-
-    return { overlay, pre, close };
-  }
-
-  // =========================================================
-  // Scan core
-  // =========================================================
   function nowISO() {
     try { return new Date().toISOString(); } catch { return String(Date.now()); }
+  }
+
+  function safeJsonParse(s) {
+    try { return JSON.parse(s); } catch { return null; }
   }
 
   function countLocalStorageKeys(prefix) {
@@ -237,10 +103,6 @@
       }
     } catch {}
     return { total, pref };
-  }
-
-  function safeJsonParse(s) {
-    try { return JSON.parse(s); } catch { return null; }
   }
 
   async function listSW() {
@@ -306,17 +168,6 @@
     const mb = readMotherBundleLocal();
     const rs = resourcesSummary();
 
-    const hints = [];
-    if (sw.supported && sw.controller && sw.registrations === 0) {
-      hints.push("- SW controller=true mas registrations=0: pode ser SW antigo/controlando por outra scope.\n  Use: Tools > Unregister SW se ficar preso.");
-    }
-    if (ca.supported && ca.keys === 0) {
-      hints.push("- Cache API vazio (keys=0): ok se você está usando overrides + bundle local.");
-    }
-    if (!mb.present) {
-      hints.push("- mother_bundle_local não encontrado: se o app não estiver puxando o bundle, confira GitHub pull e MAE update.");
-    }
-
     const lines = [];
     lines.push(`[${nowISO()}] RCF DOCTOR REPORT ${VERSION}`);
     lines.push("");
@@ -345,18 +196,124 @@
     lines.push(`unique: ${rs.unique}`);
     lines.push(`duplicates: ${rs.duplicates}`);
 
-    if (hints.length) {
-      lines.push("");
-      lines.push("== Hints (SAFE) ==");
-      for (const h of hints) lines.push(h);
-    }
-
     return lines.join("\n");
   }
 
-  // =========================================================
-  // Public API
-  // =========================================================
+  function openModal(initialText) {
+    ensureStyles();
+
+    const overlay = document.createElement("div");
+    overlay.className = "rcfDoctorOverlay";
+
+    const modal = document.createElement("div");
+    modal.className = "rcfDoctorModal";
+
+    const head = document.createElement("div");
+    head.className = "rcfDoctorHead";
+
+    const title = document.createElement("div");
+    title.className = "rcfDoctorTitle";
+    title.textContent = `RCF Doctor ${VERSION}`;
+
+    const actions = document.createElement("div");
+    actions.className = "rcfDoctorActions";
+
+    const btnScan = document.createElement("button");
+    btnScan.className = "rcfDoctorAct scan";
+    btnScan.textContent = "Scan";
+
+    const btnCopy = document.createElement("button");
+    btnCopy.className = "rcfDoctorAct copy";
+    btnCopy.textContent = "Copy";
+
+    const btnClose = document.createElement("button");
+    btnClose.className = "rcfDoctorAct close";
+    btnClose.textContent = "Close";
+
+    actions.appendChild(btnScan);
+    actions.appendChild(btnCopy);
+    actions.appendChild(btnClose);
+
+    head.appendChild(title);
+    head.appendChild(actions);
+
+    const body = document.createElement("div");
+    body.className = "rcfDoctorBody";
+
+    const pre = document.createElement("pre");
+    pre.className = "rcfDoctorPre";
+    pre.textContent = initialText || "Carregando…";
+    body.appendChild(pre);
+
+    modal.appendChild(head);
+    modal.appendChild(body);
+    overlay.appendChild(modal);
+
+    const prevActive = document.activeElement;
+
+    function close() {
+      try { document.body.classList.remove("rcfDoctorNoScroll"); } catch {}
+      try { overlay.remove(); } catch {}
+      try { prevActive?.focus?.(); } catch {}
+    }
+
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) close();
+    });
+
+    window.addEventListener("keydown", function onKey(e) {
+      if (e.key === "Escape") {
+        window.removeEventListener("keydown", onKey);
+        close();
+      }
+    });
+
+    btnClose.onclick = close;
+
+    btnCopy.onclick = async () => {
+      const txt = pre.textContent || "";
+      try {
+        await navigator.clipboard.writeText(txt);
+        btnCopy.textContent = "Copied ✅";
+        setTimeout(() => (btnCopy.textContent = "Copy"), 900);
+      } catch {
+        try {
+          const r = document.createRange();
+          r.selectNodeContents(pre);
+          const sel = window.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(r);
+          document.execCommand("copy");
+          sel.removeAllRanges();
+          btnCopy.textContent = "Copied ✅";
+          setTimeout(() => (btnCopy.textContent = "Copy"), 900);
+        } catch {
+          btnCopy.textContent = "Copy failed";
+          setTimeout(() => (btnCopy.textContent = "Copy"), 900);
+        }
+      }
+    };
+
+    btnScan.onclick = async () => {
+      btnScan.textContent = "Scanning…";
+      btnScan.disabled = true;
+      try {
+        pre.textContent = await buildReport();
+      } catch (e) {
+        pre.textContent = "Doctor scan error: " + ((e && e.message) ? e.message : String(e));
+      } finally {
+        btnScan.disabled = false;
+        btnScan.textContent = "Scan";
+      }
+    };
+
+    try { document.body.classList.add("rcfDoctorNoScroll"); } catch {}
+    document.body.appendChild(overlay);
+    try { btnScan.focus(); } catch {}
+
+    return { overlay, pre, close };
+  }
+
   async function open() {
     const rep = await buildReport().catch(e => "Doctor error: " + ((e && e.message) ? e.message : String(e)));
     const modal = openModal(rep);
@@ -366,9 +323,9 @@
 
   window.RCF_DOCTOR_SCAN = {
     version: VERSION,
-    open,
-    scan: buildReport
+    scan: buildReport,
+    open
   };
 
-  log("doctor_scan.js ready ✅ (" + VERSION + ") API=window.RCF_DOCTOR_SCAN.open()");
+  try { console.log("[DOCTOR] doctor_scan.js ready ✅ (" + VERSION + ")"); } catch {}
 })();
