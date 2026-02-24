@@ -11,6 +11,26 @@
   "use strict";
 
   // =========================================================
+  // GLOBAL LOG ALIAS (compat) — evita: "Can't find variable: log"
+  // - Alguns módulos antigos chamam log(...) direto.
+  // - Aqui garantimos `log` no escopo e `window.log` sem depender do Logger ainda.
+  // =========================================================
+  const log = (...args) => {
+    try {
+      if (window.RCF_LOGGER && typeof window.RCF_LOGGER.push === "function") {
+        const msg = args.map(a => {
+          try { return (typeof a === "string" ? a : JSON.stringify(a)); } catch { return String(a); }
+        }).join(" ");
+        window.RCF_LOGGER.push("LOG", msg);
+        return;
+      }
+    } catch {}
+    try { console.log("[RCF]", ...args); } catch {}
+  };
+  try { if (!window.log) window.log = log; } catch {}
+
+
+  // =========================================================
   // BOOT LOCK (evita double init) — SAFE (permite retry se falhar)
   // =========================================================
   const __BOOT_KEY = "__RCF_BOOT_STATE__";
@@ -515,6 +535,9 @@
   window.RCF.state = State;
   window.RCF.log = (...a) => Logger.write(...a);
 
+  // compat global: alguns módulos chamam log() direto
+  try { if (!window.log) window.log = (...a) => Logger.write(...a); } catch {}
+
   // =========================================================
   // UI: Compact CSS
   // =========================================================
@@ -942,6 +965,7 @@
             <div id="rcfAdminSlotTop" data-rcf-slot="admin.top">
               <div class="row">
                 <button class="btn ghost" id="btnAdminDiag" type="button" data-rcf-action="admin.diag">Diagnosticar (local)</button>
+                <button class="rcfBtn" data-rcf-action="admin.diag">Doctor</button>
                 <button class="btn danger" id="btnAdminZero" type="button" data-rcf-action="admin.zero">Zerar (safe)</button>
               </div>
 
@@ -1051,7 +1075,10 @@
             <button class="btn ghost" id="btnFabAdmin" type="button" data-rcf-action="fab.admin">Admin</button>
           </div>
           <div class="fab-row" style="margin-top:8px">
+            <button class="btn ghost" id="btnFabDoctor" type="button" data-rcf-action="fab.doctor">Doctor</button>
             <button class="btn ghost" id="btnFabLogs" type="button" data-rcf-action="fab.logs">Logs</button>
+          </div>
+          <div class="fab-row" style="margin-top:8px">
             <button class="btn danger" id="btnFabClose" type="button" data-rcf-action="fab.close">Fechar</button>
           </div>
         </div>
@@ -2532,6 +2559,24 @@
   // =========================================================
   // Bind UI
   // =========================================================
+
+  // =========================================================
+  // Doctor (atalho p/ Diagnostics + ScanMap quando disponível)
+  // =========================================================
+  function runDoctor() {
+    try { Logger.write("doctor: run"); } catch {}
+    try {
+      const D = window.RCF_DIAGNOSTICS || window.RCF_DIAG || window.DIAGNOSTICS;
+      if (D && typeof D.run === "function") { D.run(); Logger.write("doctor: diagnostics.run() ok"); }
+      else if (D && typeof D.check === "function") { D.check(); Logger.write("doctor: diagnostics.check() ok"); }
+    } catch (e) { try { Logger.write("doctor: diagnostics err", String(e && (e.message||e))); } catch {} }
+    try {
+      const S = window.RCF_SCANMAP || window.__RCF_SCANMAP__;
+      if (S && typeof S.scanNow === "function") { S.scanNow(); Logger.write("doctor: scanmap.scanNow() ok"); }
+      else if (S && typeof S.scan === "function") { S.scan(); Logger.write("doctor: scanmap.scan() ok"); }
+    } catch (e) { try { Logger.write("doctor: scanmap err", String(e && (e.message||e))); } catch {} }
+  }
+
   function bindUI() {
     $$("[data-view]").forEach(btn => bindTap(btn, () => setView(btn.getAttribute("data-view"))));
     bindTap($("#btnOpenTools"), () => { openTools(true); openFabPanel(false); });
@@ -2542,6 +2587,7 @@
     bindTap($("#btnFabClose"), () => openFabPanel(false));
     bindTap($("#btnFabTools"), () => { openFabPanel(false); openTools(true); });
     bindTap($("#btnFabAdmin"), () => { openFabPanel(false); setView("admin"); });
+    bindTap($("#btnFabDoctor"), () => { openFabPanel(false); setView("admin"); runDoctor(); });
     bindTap($("#btnFabLogs"), () => { openFabPanel(false); setView("logs"); });
 
     // fecha painel se tocar fora
