@@ -1,5 +1,5 @@
 /* FILE: /app/js/core/zip_vault.js
-   RControl Factory — js/core/zip_vault.js — v1.0g SAFE (FIX DEFINITIVO: "VAULT SUMIU")
+   RControl Factory — js/core/zip_vault.js — v1.0i SAFE (FIX DEFINITIVO: "VAULT SUMIU")
    FIX:
    - ✅ FORÇA UI.mount() sempre (mesmo se rcf:vault:cfg autoMountUI=false)
    - ✅ Monta também no evento RCF:UI_READY (depois que app.js cria slots/UI)
@@ -9,7 +9,7 @@
 (function () {
   "use strict";
 
-  if (window.RCF_ZIP_VAULT && window.RCF_ZIP_VAULT.__v10g) return;
+  if (window.RCF_ZIP_VAULT && (window.RCF_ZIP_VAULT.__v10g || window.RCF_ZIP_VAULT.__v10i)) return;
 
   const PREFIX = "rcf:";
   const LS_INDEX_KEY = PREFIX + "vault:index";
@@ -507,6 +507,20 @@
       if (this._lock) return { ok:false, err:"locked" };
       this._lock = true;
 
+
+      // Dedup (iOS pode disparar 2x o mesmo trigger em sequência): ignora reimport do mesmo arquivo por ~2s
+      try {
+        const sig = String((file && file.name) || "") + "|" + String((file && file.size) || 0) + "|" + String((file && file.lastModified) || 0);
+        const now = Date.now();
+        if (this._lastImportSig === sig && this._lastImportAt && (now - this._lastImportAt) < 2000) {
+          try { log("WARN", "VAULT import duplicado ignorado ⚠️"); } catch {}
+          this._lock = false;
+          return { ok:false, err:"dup" };
+        }
+        this._lastImportSig = sig;
+        this._lastImportAt = now;
+      } catch {}
+
       const jobId = "job_" + Date.now();
       const startedAt = nowISO();
       const importedKeys = [];
@@ -707,6 +721,7 @@
             UI.out("Importando… (não feche a aba)");
             const r = await Vault.importZipFile(f);
             if (r.ok) UI.out(`✅ Import OK • files=${r.count} • ${(r.bytes / (1024*1024)).toFixed(1)}MB`);
+            else if (r.err === "dup") UI.out("⚠️ Import ignorado (duplicado)");
             else UI.out("❌ Falhou: " + (r.err || "erro"));
           } catch (e) {
             UI.out("❌ Erro: " + (e?.message || e));
@@ -870,6 +885,8 @@
 
   window.RCF_ZIP_VAULT = {
     __v10g: true,
+    __v10i: true,
+    __v: "1.0i",
     mount: () => UI.mount(),
     importZip: (file) => Vault.importZipFile(file),
     list: () => Vault.index(),
@@ -911,5 +928,5 @@
     restoreZipAppsLoop();
   }
 
-  log("OK", "zip_vault.js ready ✅ (v1.0g)");
+  log("OK", "zip_vault.js ready ✅ (v1.0i)");
 })();
