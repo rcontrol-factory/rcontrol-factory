@@ -240,7 +240,47 @@
     }
   }
 
+  
   // =========================================================
+  // Doctor loader (lazy)
+  // =========================================================
+  function loadScriptOnce(src, id) {
+    return new Promise((resolve) => {
+      try {
+        if (id && document.getElementById(id)) return resolve(true);
+        // já carregou?
+        const exists = Array.from(document.scripts || []).some(s => (s && s.src) ? s.src.includes(src) : false);
+        if (exists) return resolve(true);
+
+        const s = document.createElement("script");
+        if (id) s.id = id;
+        s.src = src;
+        s.async = true;
+        s.onload = () => resolve(true);
+        s.onerror = () => resolve(false);
+        document.head.appendChild(s);
+      } catch {
+        resolve(false);
+      }
+    });
+  }
+
+  async function ensureDoctorScan() {
+    try {
+      if (window.RCF_DOCTOR_SCAN && typeof window.RCF_DOCTOR_SCAN.open === "function") return true;
+      // tenta carregar o módulo (core)
+      const ok = await loadScriptOnce("/app/js/core/doctor_scan.js", "__rcfDoctorScanScript");
+      if (ok && window.RCF_DOCTOR_SCAN && typeof window.RCF_DOCTOR_SCAN.open === "function") return true;
+
+      // fallback paths (compat)
+      await loadScriptOnce("/js/core/doctor_scan.js", "__rcfDoctorScanScript2");
+      return !!(window.RCF_DOCTOR_SCAN && typeof window.RCF_DOCTOR_SCAN.open === "function");
+    } catch {
+      return false;
+    }
+  }
+
+// =========================================================
   // State
   // =========================================================
   const State = {
@@ -708,6 +748,9 @@
               <button class="btn ghost" id="btnSwClearCache" type="button">Clear SW Cache</button>
               <button class="btn ghost" id="btnSwUnregister" type="button">Unregister SW</button>
               <button class="btn ok" id="btnSwRegister" type="button">Register SW</button>
+            </div>
+            <div class="row" style="margin-top:10px">
+              <button class="btn ghost" id="btnToolsDoctor" type="button">Doctor</button>
             </div>
             <pre class="mono small" id="logsBox">Pronto.</pre>
           </div>
@@ -1803,8 +1846,15 @@
     // ✅ Doctor somente aqui
     bindTap($("#btnFabDoctor"), async () => {
       openFabPanel(false);
-      setView("diagnostics");
       safeSetStatus("Doctor…");
+      const ok = await ensureDoctorScan();
+      if (ok && window.RCF_DOCTOR_SCAN && typeof window.RCF_DOCTOR_SCAN.open === "function") {
+        window.RCF_DOCTOR_SCAN.open();
+        setTimeout(()=>safeSetStatus("Doctor ✅"), 700);
+        return;
+      }
+      // fallback: mantém o comportamento antigo
+      setView("diagnostics");
       await runV8StabilityCheck();
       setTimeout(()=>safeSetStatus("OK ✅"), 900);
     });
@@ -1908,6 +1958,24 @@
       safeSetStatus(r.ok ? "SW ✅" : "SW ❌");
       setTimeout(()=>safeSetStatus("OK ✅"), 900);
     });
+    bindTap($("#btnToolsDoctor"), async () => {
+      try {
+        await ensureDoctorScan();
+        if (window.RCF_DOCTOR_SCAN && typeof window.RCF_DOCTOR_SCAN.open === "function") {
+          window.RCF_DOCTOR_SCAN.open();
+          safeSetStatus("Doctor ✅");
+          return;
+        }
+        // fallback: abre diagnostics
+        setView("logs");
+        safeSetStatus("Doctor fallback → Logs");
+      } catch (e) {
+        console.warn("Doctor open failed:", e);
+        safeSetStatus("Doctor failed");
+      }
+    });
+
+
 
     // Diagnostics view buttons (mesmo sem tab)
     bindTap($("#btnDiagRun"), async () => { safeSetStatus("Doctor…"); await runV8StabilityCheck(); setTimeout(()=>safeSetStatus("OK ✅"), 900); });
@@ -2101,5 +2169,3 @@
   } else {
     safeInit();
   }
-
-})();
