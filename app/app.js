@@ -965,7 +965,7 @@
             <div id="rcfAdminSlotTop" data-rcf-slot="admin.top">
               <div class="row">
                 <button class="btn ghost" id="btnAdminDiag" type="button" data-rcf-action="admin.diag">Diagnosticar (local)</button>
-          <button class="rcfBtn" id="btnAdminDoctor">Doctor</button>
+          <button class="rcfBtn" id="btnAdminDoctor" type="button" onclick="try{window.RCF_DOCTOR&&window.RCF_DOCTOR.open&&window.RCF_DOCTOR.open()}catch(e){}">Doctor</button>
                 <button class="btn danger" id="btnAdminZero" type="button" data-rcf-action="admin.zero">Zerar (safe)</button>
               </div>
 
@@ -1075,7 +1075,7 @@
             <button class="btn ghost" id="btnFabAdmin" type="button" data-rcf-action="fab.admin">Admin</button>
           </div>
           <div class="fab-row" style="margin-top:8px">
-            <button class="btn ghost" id="btnFabDoctor" type="button" data-rcf-action="fab.doctor">Doctor</button>
+            <button class="btn ghost" id="btnFabDoctor" type="button" data-rcf-action="fab.doctor" onclick="try{window.RCF_DOCTOR&&window.RCF_DOCTOR.open&&window.RCF_DOCTOR.open()}catch(e){}">Doctor</button>
             <button class="btn ghost" id="btnFabLogs" type="button" data-rcf-action="fab.logs">Logs</button>
           </div>
           <div class="fab-row" style="margin-top:8px">
@@ -2597,6 +2597,16 @@
     try { setView("logs"); } catch {}
     try { Logger.write("doctor: done (fallback)"); } catch {}
   }
+
+  // =========================================================
+  // Doctor export (garante clique via onclick, caso bindTap falhe no iOS)
+  // =========================================================
+  try {
+    window.RCF_DOCTOR = window.RCF_DOCTOR || {};
+    window.RCF_DOCTOR.run = runDoctor;
+    window.RCF_DOCTOR.open = () => runDoctor();
+  } catch {}
+
 
   function bindUI() {
     $$("[data-view]").forEach(btn => bindTap(btn, () => setView(btn.getAttribute("data-view"))));
