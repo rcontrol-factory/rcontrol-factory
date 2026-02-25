@@ -1,10 +1,12 @@
-/* FILE: app/js/core/diagnostics.js
-   RCF — /app/js/core/diagnostics.js (V7.1 STABILITY CHECK) — PADRÃO
-   Patch mínimo:
-   - Não dar FAIL falso no CLICK CHECK (depende da view atual)
-   - Emergency UI só falha se estiver ativa/visível
-   - SW getRegistration mais robusto
-   - installCount consistente
+/* FILE: /app/js/core/diagnostics.js
+   RCF — /app/js/core/diagnostics.js (V7.2 BOOT TRACE + STABILITY CHECK) — PADRÃO
+   Patch mínimo e seguro:
+   - ✅ BOOT TRACE: detecta "boot duplo" via localStorage/sessionStorage (somente log, sem timers)
+   - ✅ FIX: BOOT_LOCK aceita __RCF_BOOTED__ OU __RCF_INDEX_BOOTED__ (evita FAIL falso no index clean)
+   - Mantém: Não dar FAIL falso no CLICK CHECK (depende da view atual)
+   - Mantém: Emergency UI só falha se estiver ativa/visível
+   - Mantém: SW getRegistration mais robusto
+   - Mantém: installCount consistente
    API: window.RCF_DIAGNOSTICS
 */
 
@@ -12,15 +14,21 @@
 (() => {
   "use strict";
 
-  if (window.RCF_DIAGNOSTICS && window.RCF_DIAGNOSTICS.__v71) return;
+  if (window.RCF_DIAGNOSTICS && window.RCF_DIAGNOSTICS.__v72) return;
 
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
   const now = () => new Date().toISOString();
 
-  function log(level, msg) {
-    try { window.RCF_LOGGER?.push?.(level, msg); } catch {}
-    try { console.log("[RCF_DIAG]", level, msg); } catch {}
+  function log(level, msg, obj) {
+    try {
+      if (obj !== undefined) window.RCF_LOGGER?.push?.(level, String(msg) + " " + JSON.stringify(obj));
+      else window.RCF_LOGGER?.push?.(level, msg);
+    } catch {}
+    try {
+      if (obj !== undefined) console.log("[RCF_DIAG]", level, msg, obj);
+      else console.log("[RCF_DIAG]", level, msg);
+    } catch {}
   }
 
   function ok(name, details = "")   { return { name, pass: true,  details, ts: now() }; }
@@ -54,15 +62,98 @@
   }
 
   // -----------------------------
+  // 0) BOOT TRACE (mínimo, só log)
+  // -----------------------------
+  const BOOT_LS_KEY = "rcf:diag:last_boot";
+  const BOOT_SS_KEY = "rcf:diag:boot_session";
+  const BOOT_DOUBLE_WINDOW_MS = 5 * 60 * 1000; // 5 min
+
+  function safeParse(raw, fb) { try { return raw ? JSON.parse(raw) : fb; } catch { return fb; } }
+  function safeStringify(obj) { try { return JSON.stringify(obj); } catch { return ""; } }
+
+  function getNavType() {
+    try {
+      const nav = performance.getEntriesByType?.("navigation");
+      if (nav && nav[0] && nav[0].type) return String(nav[0].type);
+    } catch {}
+    try {
+      const t = performance.navigation?.type;
+      if (t === 1) return "reload";
+      if (t === 2) return "back_forward";
+      if (t === 0) return "navigate";
+    } catch {}
+    return "unknown";
+  }
+
+  function bootStamp() {
+    const ts = Date.now();
+    let sess = "";
+    try {
+      sess = String(sessionStorage.getItem(BOOT_SS_KEY) || "");
+      if (!sess) {
+        sess = "sess_" + ts + "_" + Math.floor(Math.random() * 1e6);
+        sessionStorage.setItem(BOOT_SS_KEY, sess);
+      }
+    } catch {
+      sess = "sess_" + ts;
+    }
+
+    const cur = {
+      ts,
+      iso: now(),
+      session: sess,
+      url: String(location.href || ""),
+      referrer: String(document.referrer || ""),
+      vis: String(document.visibilityState || ""),
+      navType: getNavType(),
+      timeOrigin: (() => { try { return Number(performance.timeOrigin || 0); } catch { return 0; } })()
+    };
+
+    const prev = safeParse(localStorage.getItem(BOOT_LS_KEY) || "", null);
+
+    try { localStorage.setItem(BOOT_LS_KEY, safeStringify(cur)); } catch {}
+
+    try {
+      if (prev && typeof prev.ts === "number") {
+        const dt = cur.ts - prev.ts;
+        if (dt > 0 && dt <= BOOT_DOUBLE_WINDOW_MS) {
+          log("warn", "BOOT_DOUBLE_DETECTED ⚠️ (reboot/reload na mesma janela)", { dtMs: dt, prev, cur });
+        } else {
+          log("ok", "BOOT_STAMP ok", { navType: cur.navType, vis: cur.vis });
+        }
+      } else {
+        log("ok", "BOOT_STAMP first", { navType: cur.navType, vis: cur.vis });
+      }
+    } catch {}
+
+    window.__RCF_LAST_BOOT__ = cur;
+    window.__RCF_PREV_BOOT__ = prev || null;
+    return { cur, prev };
+  }
+
+  bootStamp();
+
+  // -----------------------------
   // 1) BOOT CHECK
   // -----------------------------
   function checkBoot() {
     const items = [];
 
-    if (window.__RCF_BOOTED__) items.push(ok("BOOT_LOCK", `__RCF_BOOTED__=${window.__RCF_BOOTED__}`));
-    else items.push(fail("BOOT_LOCK", "__RCF_BOOTED__ ausente (adicione lock no safeInit)"));
+    // ✅ FIX: aceitar locks diferentes (index clean usa __RCF_INDEX_BOOTED__)
+    try {
+      const lockVal =
+        window.__RCF_BOOTED__ ||
+        window.__RCF_INDEX_BOOTED__ ||
+        window.__RCF_INDEX_BOOTED || // fallback (caso alguém setou sem __)
+        null;
 
-    // Emergency UI (fallback) — só acusa se estiver ativo/visível
+      if (lockVal) items.push(ok("BOOT_LOCK", `lock=${String(lockVal)}`));
+      else items.push(warn("BOOT_LOCK", "Nenhum lock detectado (__RCF_BOOTED__/__RCF_INDEX_BOOTED__). Se estiver tudo OK, ignore."));
+    } catch (e) {
+      items.push(warn("BOOT_LOCK", e?.message || String(e)));
+    }
+
+    // Emergency UI — só acusa se estiver ativo/visível
     try {
       const reloadBtn = document.getElementById("rcfReloadBtn");
       const clearBtn  = document.getElementById("rcfClearLogsBtn");
@@ -71,6 +162,24 @@
       else items.push(ok("EMERGENCY_UI", "Fallback não ativo"));
     } catch (e) {
       items.push(warn("EMERGENCY_UI", e?.message || String(e)));
+    }
+
+    // BOOT DOUBLE (somente WARN)
+    try {
+      const prev = window.__RCF_PREV_BOOT__;
+      const cur = window.__RCF_LAST_BOOT__;
+      if (prev && cur && typeof prev.ts === "number" && typeof cur.ts === "number") {
+        const dt = cur.ts - prev.ts;
+        if (dt > 0 && dt <= BOOT_DOUBLE_WINDOW_MS) {
+          items.push(warn("BOOT_DOUBLE", `detected dtMs=${dt} nav=${cur.navType}`));
+        } else {
+          items.push(ok("BOOT_DOUBLE", "no recent double boot"));
+        }
+      } else {
+        items.push(ok("BOOT_DOUBLE", "no prev boot stamp"));
+      }
+    } catch (e) {
+      items.push(warn("BOOT_DOUBLE", e?.message || String(e)));
     }
 
     return items;
@@ -101,7 +210,6 @@
   function checkUI() {
     const items = [];
 
-    // root container (depende do index)
     try {
       const appRoot =
         document.getElementById("app") ||
@@ -115,7 +223,6 @@
       items.push(fail("UI_ROOT", e?.message || String(e)));
     }
 
-    // botões principais (se existirem no DOM)
     try {
       const btnGen = $("#btnGoGenerator") || $("#btnGenerator") || $('[data-view="generator"]');
       const btnAdm = $("#btnGoAdmin") || $("#btnAdmin") || $('[data-view="admin"]');
@@ -185,7 +292,6 @@
         return items;
       }
 
-      // robusto: tentar getRegistration() e fallback getRegistrations()
       let reg = null;
       try {
         reg = await navigator.serviceWorker.getRegistration();
@@ -214,7 +320,6 @@
   function checkClickBindings() {
     const items = [];
 
-    // OBS: depende da view atual — se não tiver botões, vira WARN e não FAIL
     try {
       const anyButton = $$("button").length > 0;
       if (!anyButton) {
@@ -222,7 +327,6 @@
         return items;
       }
 
-      // checa só se tiver um botão “known”
       const known =
         $("#btnGoGenerator") || $("#btnGenerator") || $("#btnGoAdmin") || $("#btnAdmin") ||
         $("#btnGoDashboard") || $("#btnDashboard") || $("#btnGoAgent") || $("#btnAgent");
@@ -232,8 +336,6 @@
         return items;
       }
 
-      // Não dá pra “ler” listeners de forma confiável sem monkeypatch,
-      // então validamos por presença + não estar disabled
       if (known.disabled) items.push(warn("CLICK_CHECK", "Botão conhecido está disabled"));
       else items.push(ok("CLICK_CHECK", "Botão conhecido detectado e habilitado"));
 
@@ -282,22 +384,23 @@
       ok: !!window.RCF_STABLE,
       stable: !!window.RCF_STABLE,
       ts: now(),
-      installCount: Number(window.__RCF_INSTALL_COUNT__ || 0)
+      installCount: Number(window.__RCF_INSTALL_COUNT__ || 0),
+      lastBoot: window.__RCF_LAST_BOOT__ || null,
+      prevBoot: window.__RCF_PREV_BOOT__ || null
     };
   }
 
-  // installCount consistente
   try {
     const n = Number(window.__RCF_INSTALL_COUNT__ || 0);
     window.__RCF_INSTALL_COUNT__ = (Number.isFinite(n) ? n : 0) + 1;
   } catch {}
 
   window.RCF_DIAGNOSTICS = {
-    __v71: true,
+    __v72: true,
     run,
     status
   };
 
-  log("ok", "core/diagnostics.js ready ✅ (v7.1)");
+  log("ok", "core/diagnostics.js ready ✅ (v7.2 BOOT TRACE)");
 })();
 /* === RCF_RANGE_END file:/app/js/core/diagnostics.js === */
