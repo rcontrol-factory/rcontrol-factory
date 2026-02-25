@@ -1,15 +1,16 @@
 /* FILE: /app/js/core/zip_vault.js
-   RControl Factory — js/core/zip_vault.js — v1.0i SAFE (FIX DEFINITIVO: "VAULT SUMIU")
-   FIX:
-   - ✅ FORÇA UI.mount() sempre (mesmo se rcf:vault:cfg autoMountUI=false)
-   - ✅ Monta também no evento RCF:UI_READY (depois que app.js cria slots/UI)
-   - Mantém: IDB ArrayBuffer, Viewer, Auto ZIP->APP pack (pequenos) + restore packs
+   RControl Factory — js/core/zip_vault.js — v1.0j SAFE (DEDUP: mount/restore 3x no mesmo boot)
+   BASE: v1.0i (seu arquivo)
+   PATCH MÍNIMO (sem refatorar pipeline / sem mexer em boot):
+   - ✅ DEDUP MOUNT: se já montou com sucesso, chamadas seguintes viram no-op (não loga 3x)
+   - ✅ DEDUP RESTORE: restorePacks só roda de verdade quando TEMPLATE_REGISTRY existir; depois disso, não repete
+   - Mantém: IDB ArrayBuffer, Viewer, JSZip loader robusto, Auto ZIP->APP pack + restore packs
 */
 
 (function () {
   "use strict";
 
-  if (window.RCF_ZIP_VAULT && (window.RCF_ZIP_VAULT.__v10g || window.RCF_ZIP_VAULT.__v10i)) return;
+  if (window.RCF_ZIP_VAULT && (window.RCF_ZIP_VAULT.__v10g || window.RCF_ZIP_VAULT.__v10i || window.RCF_ZIP_VAULT.__v10j)) return;
 
   const PREFIX = "rcf:";
   const LS_INDEX_KEY = PREFIX + "vault:index";
@@ -67,6 +68,26 @@
     x = x.replace(/\/{2,}/g, "/");
     return x;
   }
+
+  // =========================================================
+  // SESSION GUARDS (DEDUP mount/restore dentro do mesmo boot)
+  // =========================================================
+  const __SESSION = (function(){
+    try {
+      if (!window.__RCF_ZIP_VAULT_SESSION__) {
+        window.__RCF_ZIP_VAULT_SESSION__ = {
+          mountOk: false,
+          mountTag: "",
+          restoreOk: false,
+          restoreTag: "",
+          restoreAttempts: 0
+        };
+      }
+      return window.__RCF_ZIP_VAULT_SESSION__;
+    } catch {
+      return { mountOk:false, mountTag:"", restoreOk:false, restoreTag:"", restoreAttempts:0 };
+    }
+  })();
 
   // =========================================================
   // IDB
@@ -507,7 +528,6 @@
       if (this._lock) return { ok:false, err:"locked" };
       this._lock = true;
 
-
       // Dedup (iOS pode disparar 2x o mesmo trigger em sequência): ignora reimport do mesmo arquivo por ~2s
       try {
         const sig = String((file && file.name) || "") + "|" + String((file && file.size) || 0) + "|" + String((file && file.lastModified) || 0);
@@ -865,28 +885,60 @@
   };
 
   // =========================================================
-  // BOOT: FORÇA mount + hooks
+  // BOOT: FORÇA mount + hooks (DEDUP)
   // =========================================================
   function forceMountNow(tag) {
     try {
+      // ✅ DEDUP: se já montou com sucesso, não repete log nem re-monta
+      if (__SESSION.mountOk && UI._mounted) return;
+
       const ok = UI.mount();
-      if (ok) log("OK", "VAULT mount OK ✅ via " + tag);
-      else log("WARN", "VAULT mount pending… via " + tag);
+      if (ok) {
+        if (!__SESSION.mountOk) {
+          __SESSION.mountOk = true;
+          __SESSION.mountTag = String(tag || "");
+          log("OK", "VAULT mount OK ✅ via " + tag);
+        }
+      } else {
+        log("WARN", "VAULT mount pending… via " + tag);
+      }
     } catch (e) {
       log("WARN", "VAULT mount erro via " + tag + " :: " + (e?.message || e));
     }
   }
 
+  function restorePacksOnce(tag) {
+    try {
+      // ✅ só tenta de verdade quando registry existir (senão, deixa as próximas tentarem)
+      const REG = window.RCF_TEMPLATE_REGISTRY;
+      const hasReg = !!(REG && (typeof REG.add === "function"));
+
+      if (__SESSION.restoreOk) return;
+
+      __SESSION.restoreAttempts = Number(__SESSION.restoreAttempts || 0) + 1;
+
+      if (!hasReg) return; // ainda não dá pra registrar templates
+
+      const n = AutoZipToApp.restorePacks();
+      __SESSION.restoreOk = true;
+      __SESSION.restoreTag = String(tag || "");
+      // (AutoZipToApp.restorePacks já loga templates=N quando >0)
+      if (!n) log("OK", "ZIP->APP restore ✅ templates=0 (via " + tag + ")");
+    } catch {}
+  }
+
   function restoreZipAppsLoop() {
-    try { AutoZipToApp.restorePacks(); } catch {}
-    setTimeout(() => { try { AutoZipToApp.restorePacks(); } catch {} }, 900);
-    setTimeout(() => { try { AutoZipToApp.restorePacks(); } catch {} }, 2200);
+    // ✅ mantém redundância, mas com DEDUP real
+    restorePacksOnce("restore#0");
+    setTimeout(() => restorePacksOnce("restore#900ms"), 900);
+    setTimeout(() => restorePacksOnce("restore#2200ms"), 2200);
   }
 
   window.RCF_ZIP_VAULT = {
     __v10g: true,
     __v10i: true,
-    __v: "1.0i",
+    __v10j: true,
+    __v: "1.0j",
     mount: () => UI.mount(),
     importZip: (file) => Vault.importZipFile(file),
     list: () => Vault.index(),
@@ -911,6 +963,8 @@
       forceMountNow("RCF:UI_READY");
       setTimeout(() => forceMountNow("RCF:UI_READY+700ms"), 700);
       setTimeout(() => forceMountNow("RCF:UI_READY+1800ms"), 1800);
+      // restore também pode depender de registry ficar pronto
+      restoreZipAppsLoop();
     });
   } catch {}
 
@@ -928,5 +982,5 @@
     restoreZipAppsLoop();
   }
 
-  log("OK", "zip_vault.js ready ✅ (v1.0i)");
+  log("OK", "zip_vault.js ready ✅ (v1.0j)");
 })();
