@@ -1,160 +1,147 @@
-<!-- FILE: app/index.html
-     RCF — SAFE BOOT (auto-boot silencioso) v1.4
-     ✅ Entra direto na Factory (sem flash)
-     ✅ SAFE BOOT só aparece em emergência
-     ✅ Watchdog 2500ms
+<!--
+  RControl Factory — INDEX (NORMAL BOOT) vCLEAN-2
+  ✅ Sem SAFE BOOT embutido
+  ✅ Sem loader manual (sem loadScript / sem lista dinâmica / sem watchdog)
+  ✅ Boot via <script defer> padrão
+  ✅ Mantém o “app root” (#app) simples e estável
+
+  NOTA:
+  - Safe Boot deve ficar em arquivo separado (ex.: /app/safe.html) e só ser usado em emergência.
+  - Este index não injeta UI extra nem intercepta eventos.
 -->
 
 <!doctype html>
 <html lang="pt-BR">
 <head>
+  <!-- Core -->
   <meta charset="utf-8" />
+  <meta http-equiv="x-ua-compatible" content="ie=edge" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>RCF</title>
+
+  <title>RControl Factory</title>
   <meta name="theme-color" content="#0b1020" />
+  <meta name="color-scheme" content="dark light" />
+
+  <!-- RCF marker -->
+  <meta name="rcf-index" content="NORMAL_BOOT_2026_02_24_vCLEAN_2" />
+
+  <!-- PWA -->
   <base href="./" />
   <link rel="manifest" href="./manifest.json" />
-  <link rel="stylesheet" href="./styles.css" />
-  <meta name="rcf-index" content="SAFE_BOOT_AUTO_2026_02_24_v1_4" />
+  <link rel="icon" href="./favicon.ico" />
+  <link rel="apple-touch-icon" href="./icons/icon-192.png" />
 
+  <!-- Styles -->
+  <link rel="stylesheet" href="./styles.css" />
+
+  <!-- Fallback visual mínimo (não é SafeBoot; é só “splash” neutro) -->
   <style>
-    body{background:#0b1020;color:#eaf0ff;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;}
-    .rcf_safe{max-width:920px;margin:0 auto;padding:14px}
-    .rcf_card{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:16px;padding:14px;margin:12px 0}
-    .rcf_btn{border:0;border-radius:999px;padding:10px 12px;font-weight:800;margin:6px 8px 0 0}
-    .r{background:#ff4d4d;color:#111}
-    .g{background:#35d0b5;color:#111}
-    .d{background:rgba(255,255,255,.12);color:#eaf0ff;border:1px solid rgba(255,255,255,.18)}
-    pre{white-space:pre-wrap;background:rgba(0,0,0,.35);padding:10px;border-radius:12px;border:1px solid rgba(255,255,255,.10);min-height:140px}
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      background: #0b1020;
+      color: #eaf0ff;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    }
+    .rcf_splash {
+      min-height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 18px;
+      box-sizing: border-box;
+    }
+    .rcf_splash_card {
+      max-width: 720px;
+      width: 100%;
+      background: rgba(255,255,255,.06);
+      border: 1px solid rgba(255,255,255,.12);
+      border-radius: 18px;
+      padding: 16px 14px;
+      box-sizing: border-box;
+    }
+    .rcf_splash_title {
+      font-size: 18px;
+      font-weight: 900;
+      margin: 0 0 8px 0;
+      letter-spacing: .2px;
+    }
+    .rcf_splash_hint {
+      opacity: .86;
+      font-size: 13px;
+      line-height: 1.35;
+      margin: 0;
+    }
   </style>
+
+  <!--
+    BOOT PADRÃO (scripts estáticos com defer)
+    IMPORTANTE: não mudar ordem sem necessidade.
+  -->
+
+  <!-- Core / boot safety -->
+  <script defer src="./js/core/logger.js"></script>
+  <script defer src="./js/core/stability_guard.js"></script>
+
+  <!-- Storage + GitHub + VFS + MAE + updates -->
+  <script defer src="./js/core/storage.js"></script>
+  <script defer src="./js/core/github_sync.js"></script>
+  <script defer src="./js/core/vfs_overrides.js"></script>
+  <script defer src="./js/core/vfs_shim.js"></script>
+  <script defer src="./js/core/mother_selfupdate.js"></script>
+
+  <!-- Errors + UI safety/compact -->
+  <script defer src="./js/core/errors.js"></script>
+  <script defer src="./js/core/ui_safety.js"></script>
+  <script defer src="./js/core/ui_compact_outputs.js"></script>
+
+  <!-- UI bindings + diagnostics + preview -->
+  <script defer src="./js/core/ui_bindings.js"></script>
+  <script defer src="./js/core/diagnostics.js"></script>
+  <script defer src="./js/core/preview_runner.js"></script>
+
+  <!-- Injector + engine pipeline -->
+  <script defer src="./js/core/injector.js"></script>
+  <script defer src="./js/engine/template_registry.js"></script>
+  <script defer src="./js/engine/module_registry.js"></script>
+  <script defer src="./js/engine/builder.js"></script>
+  <script defer src="./js/engine/engine.js"></script>
+
+  <!-- Pages links + Admin GH -->
+  <script defer src="./js/core/pages_links.js"></script>
+  <script defer src="./js/admin.github.js"></script>
+
+  <!-- App main -->
+  <script defer src="./app.js"></script>
+
+  <!-- Vault / ZIP -->
+  <script defer src="./js/core/zip_vault.js"></script>
+  <script defer src="./js/core/agent_zip_bridge.js"></script>
+
 </head>
 
 <body>
-  <noscript>Ative o JavaScript para usar o app.</noscript>
+  <noscript>Ative o JavaScript para usar a RControl Factory.</noscript>
 
+  <!-- Root único e fixo -->
   <div id="app">
-    <!-- COMEÇA OCULTO -->
-    <div class="rcf_safe" id="rcfSafeBootUI" style="display:none">
-      <h2>RCF • SAFE BOOT</h2>
-
-      <div class="rcf_card">
-        <button class="rcf_btn r" id="u">Unregister SW</button>
-        <button class="rcf_btn r" id="c">Clear Caches</button>
-        <button class="rcf_btn d" id="k">Show SW status</button>
-        <button class="rcf_btn g" id="boot">Boot normal agora</button>
-      </div>
-
-      <div class="rcf_card">
-        <div><b>Log</b></div>
-        <pre id="log">starting…</pre>
+    <!-- Splash neutro (o app substitui/atualiza o conteúdo ao montar) -->
+    <div class="rcf_splash" aria-label="RCF carregando">
+      <div class="rcf_splash_card">
+        <h1 class="rcf_splash_title">RControl Factory</h1>
+        <p class="rcf_splash_hint">
+          Carregando módulos…<br/>
+          Se ficar preso, use o Safe Boot separado (emergência).
+        </p>
       </div>
     </div>
   </div>
 
-<script>
-(function(){
-
-  const L  = document.getElementById("log");
-  const UI = document.getElementById("rcfSafeBootUI");
-  const ts = ()=> new Date().toISOString();
-  const log = (...a)=>{ try{ L.textContent += "\n" + a.join(" "); }catch{} };
-
-  let uiReady = false;
-  let bootFinished = false;
-
-  const params = new URLSearchParams(location.search || "");
-  const forceSafe = (params.get("safe") === "1");
-
-  function showSafe(reason){
-    if (!UI) return;
-    UI.style.display = "block";
-    log("SAFE MODE:", reason);
-  }
-
-  async function loadScript(src){
-    return new Promise((resolve, reject)=>{
-      const s = document.createElement("script");
-      s.src = src + "?cb=" + Date.now();
-      s.async = false;
-      s.onload = ()=> resolve(src);
-      s.onerror = ()=> reject(new Error("load failed: " + src));
-      document.head.appendChild(s);
-    });
-  }
-
-  async function bootNormal(){
-
-    if (window.__RCF_SAFE_BOOTING__) return;
-    window.__RCF_SAFE_BOOTING__ = true;
-
-    log("[" + ts() + "] bootNormal…");
-
-    const modules = [
-      "./js/core/logger.js",
-      "./js/core/stability_guard.js",
-      "./js/core/storage.js",
-      "./js/core/github_sync.js",
-      "./js/core/vfs_overrides.js",
-      "./js/core/vfs_shim.js",
-      "./js/core/mother_selfupdate.js",
-      "./js/core/errors.js",
-      "./js/core/ui_safety.js",
-      "./js/core/ui_compact_outputs.js",
-      "./js/core/ui_bindings.js",
-      "./js/core/diagnostics.js",
-      "./js/core/preview_runner.js",
-      "./js/core/injector.js",
-      "./js/engine/template_registry.js",
-      "./js/engine/module_registry.js",
-      "./js/engine/builder.js",
-      "./js/engine/engine.js",
-      "./js/core/pages_links.js",
-      "./js/admin.github.js",
-      "./app.js",
-      "./js/core/zip_vault.js",
-      "./js/core/agent_zip_bridge.js"
-    ];
-
-    let fails = 0;
-
-    for (const src of modules){
-      try{
-        await loadScript(src);
-      }catch(e){
-        fails++;
-        log("failed:", src);
-      }
-    }
-
-    bootFinished = true;
-
-    if (fails > 0){
-      showSafe("boot errors (" + fails + ")");
-    }
-  }
-
-  // UI READY EVENT
-  window.addEventListener("RCF:UI_READY", ()=>{
-    uiReady = true;
-    if (UI) UI.style.display = "none";
-  });
-
-  // WATCHDOG 2500ms
-  setTimeout(()=>{
-    if (!uiReady && !forceSafe){
-      showSafe("UI_READY timeout");
-    }
-  }, 2500);
-
-  // FORCE SAFE
-  if (forceSafe){
-    showSafe("?safe=1 forced");
-  }else{
-    setTimeout(()=> bootNormal(), 80);
-  }
-
-})();
-</script>
-
+  <!--
+    Sem SAFE BOOT aqui.
+    Sem loader JS aqui.
+    Sem timers aqui.
+    Sem listeners globais aqui.
+  -->
 </body>
 </html>
