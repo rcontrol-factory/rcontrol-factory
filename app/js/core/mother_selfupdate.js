@@ -1,11 +1,11 @@
 /* FILE: /app/js/core/mother_selfupdate.js
-   RControl Factory — /app/js/core/mother_selfupdate.js (PADRÃO) — v2.3h
-   PATCH (mínimo e seguro):
-   - Mantém BRIDGE (files[] vazio não dá erro)
-   - ✅ FIX: MAE update usa ghcfg salvo (owner/repo/branch/path/token)
-   - ✅ FIX: salva bundle em TODOS os keys compat (local/raw/meta/compat1/compat2)
-   - ✅ LOG: "mother_bundle_local saved filesCount=X (rawKeys ...)" para confirmar no log
-   - ✅ ANTI-OVERWRITE: se algum módulo sobrescrever window.RCF_MAE, reidrata (sem loop infinito)
+   RControl Factory — mother_selfupdate.js (PADRÃO SAFE) — v2.3h
+
+   Mantém o comportamento seguro e “padrão” (SEM watchdog / SEM rehydrate / SEM hooks extras)
+   - BRIDGE: files[] vazio não dá erro
+   - FIX: MAE update usa ghcfg salvo (owner/repo/branch/path/token)
+   - FIX: salva bundle em TODOS os keys compat (local/raw/meta/compat1/compat2)
+   - LOG: "mother_bundle_local saved filesCount=X (rawKeys ...)" para confirmar no log
 */
 (() => {
   "use strict";
@@ -153,9 +153,7 @@
 
     // BRIDGE: aceita files.length === 0
     if (!files.length) {
-      console.warn("Bundle bridge detectado (files vazio). Nada para aplicar.");
       log("warn", "bundle bridge detectado (files vazio)", rawKeys);
-
       const normalized = { version: "rcf_bundle_v1", ts: Date.now(), files: [] };
       return { ok:true, rawKeys, normalized, bridge:true, rawTxt };
     }
@@ -169,7 +167,7 @@
     return txt || "";
   }
 
-  // ✅ carrega ghcfg salvo (GH_SYNC.loadConfig OU localStorage)
+  // carrega ghcfg salvo (GH_SYNC.loadConfig OU localStorage)
   function loadGHCfg(){
     let cfg = {};
     try {
@@ -245,7 +243,7 @@
     return meta;
   }
 
-  async function applyBundleToOverrides(normalizedBundleText, opts){
+  async function applyBundleToOverrides(normalizedBundleText){
     const txt = String(normalizedBundleText || "").trim();
     if (!txt) throw new Error("Bundle normalizado vazio para aplicar");
 
@@ -257,7 +255,6 @@
 
     // BRIDGE
     if (bundle.files.length === 0) {
-      console.warn("Bundle bridge detectado (files vazio). Nada para aplicar.");
       log("warn", "apply bridge: files vazio");
       return { applied: 0, bridge: true };
     }
@@ -305,22 +302,20 @@
 
     saveBundleEverywhere(norm.normalized, norm.rawTxt, norm.rawKeys, !!norm.bridge);
 
-    if (norm.bridge) {
-      return { applied: 0, bridge: true };
-    }
+    if (norm.bridge) return { applied: 0, bridge: true };
 
     const wantApply = !!opts?.apply;
     if (!wantApply) {
       return { ok:true, passive:true, saved:true, total: norm.normalized.files.length };
     }
 
-    return await applyBundleToOverrides(JSON.stringify(norm.normalized), opts);
+    return await applyBundleToOverrides(JSON.stringify(norm.normalized));
   }
 
-  async function applySaved(opts){
+  async function applySaved(){
     const txt = getLocalBundleText();
     if (!txt) throw new Error("Sem bundle salvo.");
-    return await applyBundleToOverrides(txt, opts);
+    return await applyBundleToOverrides(txt);
   }
 
   async function clear(){
@@ -329,61 +324,22 @@
     throw new Error("Overrides VFS sem clear()");
   }
 
-  // ===========================
-  // ✅ INSTALL + ANTI-OVERWRITE
-  // ===========================
-  function installAPI(reason){
-    try {
-      const api = (window.RCF_MAE && typeof window.RCF_MAE === "object") ? window.RCF_MAE : {};
-      api.__v23h = true;
-      api.updateFromGitHub = updateFromGitHub;
-      api.applySaved = applySaved;
-      api.clear = clear;
-      api.getLocalBundleText = getLocalBundleText;
-
-      window.RCF_MAE = api;
-
-      // alias compat (se algum lugar usar outro nome)
-      try { window.RCF_MOTHER = window.RCF_MAE; } catch {}
-
-      log("ok", "MAE installed ✅ " + (reason || "install"));
-      return api;
-    } catch (e) {
-      log("err", "MAE install fail :: " + (e?.message || e));
-      return null;
-    }
-  }
-
-  function ensureAPI(reason){
-    try {
-      const ok = !!(window.RCF_MAE && typeof window.RCF_MAE.updateFromGitHub === "function");
-      if (ok) return true;
-      installAPI("rehydrate:" + (reason || "unknown"));
-      return !!(window.RCF_MAE && typeof window.RCF_MAE.updateFromGitHub === "function");
-    } catch {
-      return false;
-    }
-  }
-
-  // instala agora
-  installAPI("boot");
-
-  // reidrata algumas vezes no começo (caso app.js ou outro módulo sobrescreva depois)
-  (function softWatchdog(){
-    let tries = 0;
-    const max = 12; // ~12s (1s cada)
-    const tick = () => {
-      tries++;
-      ensureAPI("watchdog#" + tries);
-      if (tries < max) setTimeout(tick, 1000);
-    };
-    setTimeout(tick, 700);
-  })();
-
-  // reidrata quando UI_READY disparar (módulos tardios)
+  // INSTALL API (sem watchdog / sem rehydrate)
   try {
-    window.addEventListener("RCF:UI_READY", () => ensureAPI("UI_READY"), { passive: true });
-  } catch {}
+    const api = (window.RCF_MAE && typeof window.RCF_MAE === "object") ? window.RCF_MAE : {};
+    api.__v23h = true;
+    api.updateFromGitHub = updateFromGitHub;
+    api.applySaved = applySaved;
+    api.clear = clear;
+    api.getLocalBundleText = getLocalBundleText;
 
-  log("ok", "mother_selfupdate.js ready ✅ (bridge+ghcfg cfg fix + compat save + anti-overwrite)");
+    window.RCF_MAE = api;
+    try { window.RCF_MOTHER = window.RCF_MAE; } catch {}
+
+    log("ok", "MAE installed ✅ boot");
+  } catch (e) {
+    log("err", "MAE install fail :: " + (e?.message || e));
+  }
+
+  log("ok", "mother_selfupdate.js ready ✅ (bridge+ghcfg cfg fix + compat save)");
 })();
