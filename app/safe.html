@@ -1,3 +1,10 @@
+<!-- FILE: app/safe.html
+     RCF — SAFE BOOT (separado) v1.3
+     ✅ Página de emergência: SW/Caches/Status/Log
+     ✅ "Boot normal agora" carrega módulos (somente aqui)
+     ✅ Some sozinho quando a UI sobe (RCF:UI_READY)
+-->
+
 <!doctype html>
 <html lang="pt-BR">
 <head>
@@ -8,7 +15,7 @@
   <base href="./" />
   <link rel="manifest" href="./manifest.json" />
   <link rel="stylesheet" href="./styles.css" />
-  <meta name="rcf-safe" content="SAFE_BOOT_2026_02_23" />
+  <meta name="rcf-index" content="SAFE_BOOT_SEPARATE_2026_02_24_v1_3" />
   <style>
     body{background:#0b1020;color:#eaf0ff;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;}
     .rcf_safe{max-width:920px;margin:0 auto;padding:14px}
@@ -17,8 +24,12 @@
     .r{background:#ff4d4d;color:#111}
     .g{background:#35d0b5;color:#111}
     .d{background:rgba(255,255,255,.12);color:#eaf0ff;border:1px solid rgba(255,255,255,.18)}
-    pre{white-space:pre-wrap;background:rgba(0,0,0,.35);padding:10px;border-radius:12px;border:1px solid rgba(255,255,255,.10);min-height:140px}
+    pre{white-space:pre-wrap;background:rgba(0,0,0,.35);padding:10px;border-radius:12px;border:1px solid rgba(255,255,255,.10);min-height:160px}
     code{background:rgba(255,255,255,.10);padding:2px 6px;border-radius:8px}
+    .rcf_hint{opacity:.85;margin-top:8px;font-size:13px;line-height:1.35}
+    .row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+    .sep{height:1px;background:rgba(255,255,255,.12);margin:12px 0}
+    .mini{opacity:.85;font-size:12px}
   </style>
 </head>
 
@@ -26,20 +37,31 @@
   <noscript>Ative o JavaScript para usar o app.</noscript>
 
   <div id="app">
-    <div class="rcf_safe">
+    <div class="rcf_safe" id="rcfSafeBootUI">
       <h2>RCF • SAFE BOOT</h2>
 
       <div class="rcf_card">
-        <div><b>Objetivo:</b> sair da tela preta e recuperar o controle.</div>
+        <div><b>Objetivo:</b> sair de tela preta / recuperar controle do SW + Cache.</div>
         <div style="opacity:.9;margin-top:6px">
-          Se o boot normal falhar, você ainda consegue limpar SW/cache e ver logs aqui.
+          Use esta página só quando precisar. Para voltar ao normal: abra <code>index.html</code> (ou remova <code>?safe=1</code>).
         </div>
 
-        <button class="rcf_btn r" id="u">Unregister SW</button>
-        <button class="rcf_btn r" id="c">Clear Caches</button>
-        <button class="rcf_btn d" id="k">Show SW status</button>
-        <button class="rcf_btn g" id="boot">Boot normal agora</button>
-        <button class="rcf_btn d" id="go">Abrir Factory (/app/)</button>
+        <div class="sep"></div>
+
+        <div class="row">
+          <button class="rcf_btn r" id="u">Unregister SW</button>
+          <button class="rcf_btn r" id="c">Clear Caches</button>
+          <button class="rcf_btn d" id="k">Show SW status</button>
+          <button class="rcf_btn d" id="home">Abrir Factory (normal)</button>
+          <button class="rcf_btn g" id="boot">Boot normal agora (via SAFE)</button>
+        </div>
+
+        <div class="rcf_hint" id="hint">
+          • Esta tela é separada do index normal.<br/>
+          • Se o boot via SAFE falhar, o log aqui mostra qual módulo quebrou.
+        </div>
+
+        <div class="mini" id="meta"></div>
       </div>
 
       <div class="rcf_card">
@@ -52,12 +74,21 @@
   <script>
   (function(){
     const L = document.getElementById("log");
+    const UI = document.getElementById("rcfSafeBootUI");
+    const META = document.getElementById("meta");
     const log = (...a)=>{ try{ L.textContent += "\n" + a.join(" "); }catch{} };
 
     const ts = ()=> new Date().toISOString();
-    const bust = (p)=> p + (p.includes("?") ? "&" : "?") + "cb=" + Date.now();
-
     log("[" + ts() + "] SAFE_BOOT loaded ✅ base=" + document.baseURI);
+    try{
+      META.textContent = "href=" + location.href + " | ua=" + (navigator.userAgent || "");
+    }catch{}
+
+    // parâmetros
+    let params;
+    try{ params = new URLSearchParams(location.search || ""); }catch{ params = null; }
+    const forceSafe = !!(params && params.get("safe") === "1");
+    if (forceSafe) log("INFO: safe=1 ✅");
 
     async function unreg(){
       try{
@@ -96,7 +127,8 @@
     function loadScript(src){
       return new Promise((resolve, reject)=>{
         const s = document.createElement("script");
-        s.src = bust(src);
+        // cache-buster só aqui no SAFE (não mexe no index normal)
+        s.src = src + (src.includes("?") ? "&" : "?") + "cb=" + Date.now();
         s.async = false;
         s.onload = ()=> resolve(src);
         s.onerror = ()=> reject(new Error("load failed: " + src));
@@ -105,7 +137,11 @@
     }
 
     async function bootNormal(){
+      if (window.__RCF_SAFE_BOOTING__) { log("INFO: boot already running"); return; }
+      window.__RCF_SAFE_BOOTING__ = true;
+
       log("[" + ts() + "] bootNormal…");
+
       const modules = [
         "./js/core/logger.js",
         "./js/core/stability_guard.js",
@@ -118,7 +154,6 @@
         "./js/core/ui_safety.js",
         "./js/core/ui_compact_outputs.js",
         "./js/core/ui_bindings.js",
-        "./js/core/doctor_scan.js",
         "./js/core/diagnostics.js",
         "./js/core/preview_runner.js",
         "./js/core/injector.js",
@@ -133,23 +168,48 @@
         "./js/core/agent_zip_bridge.js"
       ];
 
+      let fails = 0;
       for (const src of modules) {
         try { await loadScript(src); log("loaded ✅", src); }
-        catch(e){ log("failed ❌", src, "::", (e && e.message) ? e.message : String(e)); }
+        catch(e){
+          fails++;
+          log("failed ❌", src, "::", (e && e.message) ? e.message : String(e));
+        }
       }
-      log("[" + ts() + "] bootNormal finished.");
+
+      log("[" + ts() + "] bootNormal finished. fails=" + fails);
     }
 
+    // some o SAFE BOOT quando o app avisar que montou UI
+    try{
+      window.addEventListener("RCF:UI_READY", ()=>{
+        try{
+          log("INFO: UI_READY recebido ✅ (escondendo SAFE BOOT)");
+          if (UI) UI.style.display = "none";
+        }catch{}
+      });
+    }catch{}
+
+    // botões
     document.getElementById("u").onclick = unreg;
     document.getElementById("c").onclick = clearCaches;
     document.getElementById("k").onclick = swStatus;
     document.getElementById("boot").onclick = bootNormal;
-    document.getElementById("go").onclick = async ()=>{
-      // emergência: tenta “desenroscar” e voltar pro app
-      await swStatus();
-      location.href = bust("./");
+
+    document.getElementById("home").onclick = function(){
+      try{
+        // vai pro index normal (remove safe=1)
+        const u = new URL(location.href);
+        u.searchParams.delete("safe");
+        // se veio com safe=1, volta para index.html
+        const target = "./index.html" + (u.search ? u.search : "");
+        location.href = target;
+      }catch(e){
+        location.href = "./index.html";
+      }
     };
 
+    // status inicial
     swStatus();
   })();
   </script>
