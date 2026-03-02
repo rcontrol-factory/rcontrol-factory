@@ -1,28 +1,33 @@
 /* FILE: /app/js/core/zip_vault.js
-   RControl Factory — js/core/zip_vault.js — v1.0j SAFE (DEDUP: mount/restore 3x no mesmo boot)
-   BASE: v1.0i (seu arquivo)
-   PATCH MÍNIMO (sem refatorar pipeline / sem mexer em boot):
-   - ✅ DEDUP MOUNT: se já montou com sucesso, chamadas seguintes viram no-op (não loga 3x)
-   - ✅ DEDUP RESTORE: restorePacks só roda de verdade quando TEMPLATE_REGISTRY existir; depois disso, não repete
-   - Mantém: IDB ArrayBuffer, Viewer, JSZip loader robusto, Auto ZIP->APP pack + restore packs
+   RControl Factory — /app/js/core/zip_vault.js — v1.1a SAFE (TEMPLATES PACKS -> IDB + LIMIT + DELETE)
+   FIX CRÍTICO (iPhone quota/localStorage):
+   - ✅ NÃO salva packs grandes (ZIP->APP template pack) no localStorage
+     -> agora: payload do pack vai para IndexedDB (DB: RCF_VAULT_DB, store: kv)
+     -> localStorage guarda só índice pequeno (rcf:vault:app:index) + meta
+   - ✅ Limite de templates (default maxTemplates=6) + prune automático (remove payload IDB + pointer)
+   - ✅ Delete template: remove pointer + apaga payload do IDB
+   - ✅ Mensagem clara se storage estiver cheio
+   - Mantém: VAULT files no IDB store "files", Viewer, JSZip fallback CDN
+   - Mantém: UI mount force (VAULT nunca "some")
 */
 
 (function () {
   "use strict";
 
-  if (window.RCF_ZIP_VAULT && (window.RCF_ZIP_VAULT.__v10g || window.RCF_ZIP_VAULT.__v10i || window.RCF_ZIP_VAULT.__v10j)) return;
+  if (window.RCF_ZIP_VAULT && window.RCF_ZIP_VAULT.__v11a) return;
 
   const PREFIX = "rcf:";
   const LS_INDEX_KEY = PREFIX + "vault:index";
   const LS_LAST_KEY  = PREFIX + "vault:last";
   const LS_CFG_KEY   = PREFIX + "vault:cfg";
 
-  const LS_APP_INDEX = PREFIX + "vault:app:index";
-  const LS_APP_KEY   = (id) => PREFIX + "vault:app:" + id;
+  const LS_APP_INDEX = PREFIX + "vault:app:index"; // meta-only
+  const IDB_PACK_KEY = (id) => "zipapp-pack:" + String(id); // in IDB kv store
 
   const IDB_DB = "RCF_VAULT_DB";
-  const IDB_VER = 1;
-  const IDB_STORE = "files";
+  const IDB_VER = 2; // bump to create kv store
+  const IDB_STORE_FILES = "files";
+  const IDB_STORE_KV = "kv";
 
   const safeJsonParse = (s, fb) => { try { return JSON.parse(s); } catch { return fb; } };
   const safeJsonStringify = (o) => { try { return JSON.stringify(o); } catch { return String(o); } };
@@ -33,6 +38,14 @@
   }
 
   function nowISO() { return new Date().toISOString(); }
+
+  function uiMsgQuotaHint() {
+    return [
+      "❌ Storage cheio (quota iPhone).",
+      "✅ Apague templates antigos (ZIP->APP) e/ou apps antigos, ou limpe dados do site.",
+      "Safari: Ajustes > Avançado > Dados dos Sites > rcontrol... > Remover.",
+    ].join("\n");
+  }
 
   function mimeByPath(p) {
     const s = String(p || "").toLowerCase();
@@ -70,27 +83,7 @@
   }
 
   // =========================================================
-  // SESSION GUARDS (DEDUP mount/restore dentro do mesmo boot)
-  // =========================================================
-  const __SESSION = (function(){
-    try {
-      if (!window.__RCF_ZIP_VAULT_SESSION__) {
-        window.__RCF_ZIP_VAULT_SESSION__ = {
-          mountOk: false,
-          mountTag: "",
-          restoreOk: false,
-          restoreTag: "",
-          restoreAttempts: 0
-        };
-      }
-      return window.__RCF_ZIP_VAULT_SESSION__;
-    } catch {
-      return { mountOk:false, mountTag:"", restoreOk:false, restoreTag:"", restoreAttempts:0 };
-    }
-  })();
-
-  // =========================================================
-  // IDB
+  // IDB (files + kv)
   // =========================================================
   let __db = null;
   let __opening = null;
@@ -105,7 +98,8 @@
 
         req.onupgradeneeded = () => {
           const db = req.result;
-          if (!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE);
+          if (!db.objectStoreNames.contains(IDB_STORE_FILES)) db.createObjectStore(IDB_STORE_FILES);
+          if (!db.objectStoreNames.contains(IDB_STORE_KV)) db.createObjectStore(IDB_STORE_KV);
         };
 
         req.onsuccess = () => { __db = req.result; resolve(__db); };
@@ -118,12 +112,12 @@
     return __opening;
   }
 
-  async function idbPut(key, val) {
+  async function idbPut(store, key, val) {
     const db = await idbOpen();
     return new Promise((resolve, reject) => {
       try {
-        const tx = db.transaction(IDB_STORE, "readwrite");
-        const st = tx.objectStore(IDB_STORE);
+        const tx = db.transaction(store, "readwrite");
+        const st = tx.objectStore(store);
         const rq = st.put(val, key);
         rq.onsuccess = () => resolve(true);
         rq.onerror = () => reject(rq.error);
@@ -131,12 +125,12 @@
     });
   }
 
-  async function idbGet(key) {
+  async function idbGet(store, key) {
     const db = await idbOpen();
     return new Promise((resolve, reject) => {
       try {
-        const tx = db.transaction(IDB_STORE, "readonly");
-        const st = tx.objectStore(IDB_STORE);
+        const tx = db.transaction(store, "readonly");
+        const st = tx.objectStore(store);
         const rq = st.get(key);
         rq.onsuccess = () => resolve(rq.result);
         rq.onerror = () => reject(rq.error);
@@ -144,12 +138,12 @@
     });
   }
 
-  async function idbDel(key) {
+  async function idbDel(store, key) {
     const db = await idbOpen();
     return new Promise((resolve, reject) => {
       try {
-        const tx = db.transaction(IDB_STORE, "readwrite");
-        const st = tx.objectStore(IDB_STORE);
+        const tx = db.transaction(store, "readwrite");
+        const st = tx.objectStore(store);
         const rq = st.delete(key);
         rq.onsuccess = () => resolve(true);
         rq.onerror = () => reject(rq.error);
@@ -157,12 +151,12 @@
     });
   }
 
-  async function idbClearAll() {
+  async function idbClearAll(store) {
     const db = await idbOpen();
     return new Promise((resolve, reject) => {
       try {
-        const tx = db.transaction(IDB_STORE, "readwrite");
-        const st = tx.objectStore(IDB_STORE);
+        const tx = db.transaction(store, "readwrite");
+        const st = tx.objectStore(store);
         const rq = st.clear();
         rq.onsuccess = () => resolve(true);
         rq.onerror = () => reject(rq.error);
@@ -171,7 +165,7 @@
   }
 
   // =========================================================
-  // localStorage index/cfg
+  // localStorage index/cfg (small)
   // =========================================================
   function readIndex() {
     return safeJsonParse(localStorage.getItem(LS_INDEX_KEY) || "[]", []);
@@ -180,15 +174,25 @@
     try { localStorage.setItem(LS_INDEX_KEY, safeJsonStringify(list || [])); } catch {}
   }
 
+  function readAppIndex() {
+    const x = safeJsonParse(localStorage.getItem(LS_APP_INDEX) || "[]", []);
+    return Array.isArray(x) ? x : [];
+  }
+  function writeAppIndex(list) {
+    try { localStorage.setItem(LS_APP_INDEX, safeJsonStringify(list || [])); return true; }
+    catch (e) { log("ERR", "Falha ao salvar app index (quota)", String(e?.message || e)); return false; }
+  }
+
   function getCfg() {
-    // ✅ merge forte: sempre injeta defaults
     const cur = safeJsonParse(localStorage.getItem(LS_CFG_KEY) || "{}", {});
     const def = {
       keepTextCacheMax: 180000,
       autoMountUI: true,
       autoZipToApp: true,
-      autoZipMaxBytesLS: 900000,
-      autoSelectGenerator: true
+      autoZipMaxBytesLS: 900000, // legacy (não usado p/ pack, agora vai pro IDB)
+      autoSelectGenerator: true,
+      maxTemplates: 6,
+      localJSZipPath: "/app/vendor/jszip.min.js"
     };
     return Object.assign(def, cur || {});
   }
@@ -247,11 +251,17 @@
   async function ensureJSZip() {
     if (window.JSZip) return true;
 
+    const cfg = getCfg();
+    const local = String(cfg.localJSZipPath || "/app/vendor/jszip.min.js");
+
     const candidates = [
+      local,
       "/app/vendor/jszip.min.js",
       "/vendor/jszip.min.js",
       "/js/vendor/jszip.min.js",
-      "/app/js/vendor/jszip.min.js"
+      "/app/js/vendor/jszip.min.js",
+      "./app/vendor/jszip.min.js",
+      "./vendor/jszip.min.js",
     ];
 
     for (const src of candidates) {
@@ -297,11 +307,8 @@
   }
 
   // =========================================================
-  // AUTO ZIP->APP pack
+  // ZIP->APP Pack (Templates) -> IDB kv
   // =========================================================
-  function readAppIndex() { return safeJsonParse(localStorage.getItem(LS_APP_INDEX) || "[]", []); }
-  function writeAppIndex(list) { try { localStorage.setItem(LS_APP_INDEX, safeJsonStringify(list || [])); } catch {} }
-
   function stripCommonRoot(paths) {
     const arr = (paths || []).map(p => normPath(p)).filter(Boolean);
     if (!arr.length) return { root:"", out:arr };
@@ -398,15 +405,65 @@
     } catch { return false; }
   }
 
+  async function savePackToIDB(templateId, pack) {
+    const key = IDB_PACK_KEY(templateId);
+    await idbPut(IDB_STORE_KV, key, pack);
+    return key;
+  }
+
+  async function loadPackFromIDB(templateId) {
+    const key = IDB_PACK_KEY(templateId);
+    return await idbGet(IDB_STORE_KV, key);
+  }
+
+  async function deletePackFromIDB(templateId) {
+    const key = IDB_PACK_KEY(templateId);
+    await idbDel(IDB_STORE_KV, key);
+    return true;
+  }
+
+  async function pruneTemplates(maxKeep) {
+    const n = Math.max(0, Number(maxKeep || 0) || 0);
+    const idx = readAppIndex();
+    if (!idx.length) return 0;
+    if (idx.length <= n) return 0;
+
+    const keep = idx.slice(0, n);
+    const drop = idx.slice(n);
+
+    let removed = 0;
+    for (const it of drop) {
+      const id = it && it.id ? String(it.id) : "";
+      if (!id) continue;
+      try { await deletePackFromIDB(id); } catch {}
+      removed++;
+    }
+
+    const ok = writeAppIndex(keep);
+    if (!ok) log("WARN", "prune: falha ao salvar app index (quota) — tente limpar dados do site");
+    return removed;
+  }
+
+  async function deleteTemplate(templateId) {
+    const id = String(templateId || "").trim();
+    if (!id) throw new Error("templateId vazio");
+
+    const idx = readAppIndex();
+    const next = idx.filter(x => String(x.id || "") !== id);
+
+    try { await deletePackFromIDB(id); } catch {}
+
+    const ok = writeAppIndex(next);
+    if (!ok) throw new Error("Falha ao salvar index (quota). " + uiMsgQuotaHint());
+
+    try { window.dispatchEvent(new CustomEvent("RCF:TEMPLATES_UPDATED", { detail: { id, action: "delete" } })); } catch {}
+    log("OK", "ZIP->APP template deleted ✅ " + id);
+    return true;
+  }
+
   const AutoZipToApp = {
     async fromJob(meta) {
       const cfg = getCfg();
-      const max = Number(cfg.autoZipMaxBytesLS || 0) || 0;
-      if (max > 0 && (Number(meta.bytes) || 0) > max) {
-        log("WARN", "ZIP->APP: ZIP grande demais p/ localStorage. bytes=" + meta.bytes + " max=" + max);
-        return { ok:false, err:"zip_too_big" };
-      }
-
       const all = Vault.index();
       const jobList = all.filter(it => it && it.jobId === meta.jobId).map(it => it.path);
       const stripped = stripCommonRoot(jobList);
@@ -434,7 +491,7 @@
       const templateId = "zipapp-" + String(meta.jobId).replace(/[^a-zA-Z0-9_-]/g, "");
 
       const pack = {
-        kind: "rcf-zipapp-pack",
+        kind: "rcf-zipapp-pack-v1",
         templateId,
         jobId: meta.jobId,
         name: meta.name || "",
@@ -446,14 +503,35 @@
         files: filesPack
       };
 
-      try { localStorage.setItem(LS_APP_KEY(templateId), safeJsonStringify(pack)); } catch {}
+      // 1) payload -> IDB (kv)
+      try {
+        await savePackToIDB(templateId, pack);
+      } catch (e) {
+        log("ERR", "ZIP->APP pack falhou ao salvar no IDB (storage cheio?) :: " + (e?.message || e));
+        return { ok:false, err:"idb_fail", hint: uiMsgQuotaHint() };
+      }
 
+      // 2) index meta -> localStorage (small)
       try {
         const idx = readAppIndex();
         const next = idx.filter(x => x && x.id !== templateId);
         next.unshift({ id: templateId, jobId: meta.jobId, name: pack.name, title: pack.title, createdAt: pack.createdAt, bytes: pack.bytes, count: pack.count });
-        writeAppIndex(next.slice(0, 30));
-      } catch {}
+        const ok = writeAppIndex(next.slice(0, 40));
+        if (!ok) {
+          // rollback payload
+          try { await deletePackFromIDB(templateId); } catch {}
+          return { ok:false, err:"quota_index", hint: uiMsgQuotaHint() };
+        }
+
+        // prune templates
+        const removed = await pruneTemplates(cfg.maxTemplates || 6);
+        if (removed) log("OK", "ZIP->APP prune ✅ removed=" + removed);
+
+      } catch (e) {
+        try { await deletePackFromIDB(templateId); } catch {}
+        log("ERR", "ZIP->APP index fail :: " + (e?.message || e));
+        return { ok:false, err:"index_fail", hint: uiMsgQuotaHint() };
+      }
 
       const okReg = registerZipAsTemplate(pack);
       if (okReg) log("OK", "ZIP->APP pronto ✅ template=" + templateId + " title=" + title);
@@ -467,29 +545,35 @@
       return { ok:true, templateId, title };
     },
 
-    restorePacks() {
+    async restorePacks() {
       try {
         const idx = readAppIndex();
         if (!idx || !idx.length) return 0;
+
         let ok = 0;
         for (const it of idx) {
           const id = it && it.id ? String(it.id) : "";
           if (!id) continue;
-          const raw = localStorage.getItem(LS_APP_KEY(id)) || "";
-          const pack = safeJsonParse(raw, null);
-          if (pack && pack.templateId) if (registerZipAsTemplate(pack)) ok++;
+
+          const pack = await loadPackFromIDB(id);
+          if (pack && pack.templateId) {
+            if (registerZipAsTemplate(pack)) ok++;
+          }
         }
+
         if (ok) log("OK", "ZIP->APP restore ✅ templates=" + ok);
         return ok;
-      } catch { return 0; }
+      } catch (e) {
+        log("WARN", "ZIP->APP restore erro: " + (e?.message || e));
+        return 0;
+      }
     }
   };
 
   // =========================================================
-  // Vault core
+  // Vault core (files store)
   // =========================================================
   const Vault = {
-    __v10g: true,
     _lock: false,
     _job: null,
 
@@ -501,7 +585,7 @@
 
     async getFile(path) {
       const p = normPath(path);
-      return (await idbGet("file:" + p)) || null;
+      return (await idbGet(IDB_STORE_FILES, "file:" + p)) || null;
     },
 
     async openAsObjectURL(path) {
@@ -517,7 +601,7 @@
     },
 
     async clearAll() {
-      await idbClearAll();
+      await idbClearAll(IDB_STORE_FILES);
       writeIndex([]);
       try { localStorage.removeItem(LS_LAST_KEY); } catch {}
       log("OK", "VAULT clearAll ✅");
@@ -528,7 +612,7 @@
       if (this._lock) return { ok:false, err:"locked" };
       this._lock = true;
 
-      // Dedup (iOS pode disparar 2x o mesmo trigger em sequência): ignora reimport do mesmo arquivo por ~2s
+      // Dedup iOS: ignora reimport do mesmo arquivo por ~2s
       try {
         const sig = String((file && file.name) || "") + "|" + String((file && file.size) || 0) + "|" + String((file && file.lastModified) || 0);
         const now = Date.now();
@@ -574,8 +658,8 @@
           const key = "file:" + rp;
           const rec = { path: rp, mime, size, ab, source: "zip:" + String(file.name || "import"), importedAt: startedAt, jobId };
 
-          await idbPut(key, rec);
-          importedKeys.push(key);
+          await idbPut(IDB_STORE_FILES, key, rec);
+          importedKeys.push({ store: IDB_STORE_FILES, key });
           jobPaths.push(rp);
 
           idxMap.set(rp, { path: rp, mime, size, importedAt: startedAt, source: rec.source, jobId });
@@ -595,7 +679,8 @@
         try {
           const cfg = getCfg();
           if (cfg.autoZipToApp) {
-            await AutoZipToApp.fromJob({ jobId, startedAt, name: file.name || "", bytes: this._job.bytes, count: files.length, paths: jobPaths });
+            const r = await AutoZipToApp.fromJob({ jobId, startedAt, name: file.name || "", bytes: this._job.bytes, count: files.length, paths: jobPaths });
+            if (!r.ok) log("WARN", "AUTO ZIP->APP falhou (não trava): " + (r.err || "erro") + (r.hint ? (" :: " + r.hint) : ""));
           }
         } catch (e) {
           log("WARN", "AUTO ZIP->APP falhou (não trava): " + (e?.message || e));
@@ -603,7 +688,11 @@
 
         return { ok:true, jobId, count: files.length, bytes: this._job.bytes };
       } catch (e) {
-        try { for (const k of importedKeys) { try { await idbDel(k); } catch {} } } catch {}
+        try {
+          for (const it of importedKeys) {
+            try { await idbDel(it.store, it.key); } catch {}
+          }
+        } catch {}
         log("ERR", "VAULT import fail :: " + (e?.message || e));
         return { ok:false, err:(e?.message || String(e)) };
       } finally {
@@ -616,7 +705,7 @@
   };
 
   // =========================================================
-  // UI (FORÇA aparecer)
+  // UI (FORÇA aparecer) + Templates admin
   // =========================================================
   function escapeHtml(s) {
     return String(s).replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
@@ -667,8 +756,8 @@
       card.id = "rcfVaultCard";
       card.style.marginTop = "12px";
       card.innerHTML = `
-        <h2 style="margin-top:0">VAULT • ZIP Import (PDF safe)</h2>
-        <div class="hint">Importa ZIP e guarda no IndexedDB (iOS safe). ✅</div>
+        <h2 style="margin-top:0">VAULT • ZIP Import (iPhone safe)</h2>
+        <div class="hint">Importa ZIP no IndexedDB. ZIP→APP templates agora ficam no IndexedDB (sem estourar localStorage).</div>
 
         <div class="row" style="flex-wrap:wrap;align-items:center;margin-top:10px">
           <input id="rcfVaultZipInput" type="file" accept=".zip" style="max-width:340px" />
@@ -685,6 +774,12 @@
         </div>
 
         <div id="rcfVaultList" class="files" style="margin-top:10px;max-height:32vh;overflow:auto"></div>
+
+        <div class="row" style="margin-top:10px;align-items:center;flex-wrap:wrap">
+          <button class="btn ghost" id="rcfTplBtnList" type="button">Listar templates ZIP→APP</button>
+          <button class="btn danger" id="rcfTplBtnPrune" type="button">Prune templates (max 6)</button>
+        </div>
+        <div id="rcfTplBox" style="margin-top:10px"></div>
 
         <div id="rcfVaultViewer" style="margin-top:10px;display:none;border:1px solid rgba(255,255,255,.12);border-radius:12px;overflow:hidden">
           <div style="display:flex;gap:10px;align-items:center;padding:10px;border-bottom:1px solid rgba(255,255,255,.10)">
@@ -731,6 +826,9 @@
       const btnRefresh = document.getElementById("rcfVaultBtnRefresh");
       const btnClear = document.getElementById("rcfVaultBtnClear");
       const filter = document.getElementById("rcfVaultFilter");
+
+      const tplBtnList = document.getElementById("rcfTplBtnList");
+      const tplBtnPrune = document.getElementById("rcfTplBtnPrune");
 
       if (btnImport && !btnImport.__bound) {
         btnImport.__bound = true;
@@ -780,6 +878,33 @@
       if (filter && !filter.__bound) {
         filter.__bound = true;
         filter.addEventListener("input", () => UI.renderList(), { passive: true });
+      }
+
+      if (tplBtnList && !tplBtnList.__bound) {
+        tplBtnList.__bound = true;
+        tplBtnList.addEventListener("click", async () => {
+          try {
+            UI.out("Listando templates ZIP→APP…");
+            await UI.renderTemplates();
+            UI.out("Templates listados ✅");
+          } catch (e) {
+            UI.out("❌ Templates erro: " + (e?.message || e) + "\n" + uiMsgQuotaHint());
+          }
+        }, { passive: true });
+      }
+
+      if (tplBtnPrune && !tplBtnPrune.__bound) {
+        tplBtnPrune.__bound = true;
+        tplBtnPrune.addEventListener("click", async () => {
+          try {
+            const cfg = getCfg();
+            const removed = await pruneTemplates(cfg.maxTemplates || 6);
+            UI.out("✅ Prune OK. removed=" + removed);
+            await UI.renderTemplates();
+          } catch (e) {
+            UI.out("❌ Prune erro: " + (e?.message || e) + "\n" + uiMsgQuotaHint());
+          }
+        }, { passive: true });
       }
 
       const vClose = document.getElementById("rcfVaultViewerClose");
@@ -834,6 +959,53 @@
       UI._progress();
     },
 
+    async renderTemplates() {
+      const box = document.getElementById("rcfTplBox");
+      if (!box) return;
+
+      const idx = readAppIndex();
+      if (!idx.length) {
+        box.innerHTML = `<div class="hint">Sem templates ZIP→APP salvos.</div>`;
+        return;
+      }
+
+      const show = idx.slice(0, 12);
+      box.innerHTML = show.map(it => {
+        const id = String(it.id || "");
+        const title = String(it.title || it.name || id);
+        const mb = (Number(it.bytes||0) / (1024*1024)).toFixed(2);
+        return `
+          <div class="row" style="align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.08)">
+            <div style="min-width:0">
+              <div class="badge" style="max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(title)}</div>
+              <div class="hint" style="margin-top:4px">id=${escapeHtml(id)} • ${mb}MB • files=${Number(it.count||0)}</div>
+            </div>
+            <button class="btn danger small" data-tpl-del="${escapeHtml(id)}" type="button">Delete</button>
+          </div>
+        `;
+      }).join("");
+
+      const btns = Array.from(box.querySelectorAll("button[data-tpl-del]"));
+      for (const b of btns) {
+        if (b.__bound) continue;
+        b.__bound = true;
+        b.addEventListener("click", async () => {
+          const id = b.getAttribute("data-tpl-del") || "";
+          if (!id) return;
+          const ok = confirm("Apagar template '" + id + "'? (remove payload do IndexedDB)");
+          if (!ok) return;
+          try {
+            UI.out("Apagando template… " + id);
+            await deleteTemplate(id);
+            UI.out("✅ Template apagado: " + id);
+            await UI.renderTemplates();
+          } catch (e) {
+            UI.out("❌ Delete template falhou: " + (e?.message || e) + "\n" + uiMsgQuotaHint());
+          }
+        }, { passive: true });
+      }
+    },
+
     async openViewer(path) {
       try {
         const viewer = document.getElementById("rcfVaultViewer");
@@ -885,60 +1057,30 @@
   };
 
   // =========================================================
-  // BOOT: FORÇA mount + hooks (DEDUP)
+  // BOOT: FORÇA mount + hooks
   // =========================================================
   function forceMountNow(tag) {
     try {
-      // ✅ DEDUP: se já montou com sucesso, não repete log nem re-monta
-      if (__SESSION.mountOk && UI._mounted) return;
-
       const ok = UI.mount();
-      if (ok) {
-        if (!__SESSION.mountOk) {
-          __SESSION.mountOk = true;
-          __SESSION.mountTag = String(tag || "");
-          log("OK", "VAULT mount OK ✅ via " + tag);
-        }
-      } else {
-        log("WARN", "VAULT mount pending… via " + tag);
-      }
+      if (ok) log("OK", "VAULT mount OK ✅ via " + tag);
+      else log("WARN", "VAULT mount pending… via " + tag);
     } catch (e) {
       log("WARN", "VAULT mount erro via " + tag + " :: " + (e?.message || e));
     }
   }
 
-  function restorePacksOnce(tag) {
-    try {
-      // ✅ só tenta de verdade quando registry existir (senão, deixa as próximas tentarem)
-      const REG = window.RCF_TEMPLATE_REGISTRY;
-      const hasReg = !!(REG && (typeof REG.add === "function"));
-
-      if (__SESSION.restoreOk) return;
-
-      __SESSION.restoreAttempts = Number(__SESSION.restoreAttempts || 0) + 1;
-
-      if (!hasReg) return; // ainda não dá pra registrar templates
-
-      const n = AutoZipToApp.restorePacks();
-      __SESSION.restoreOk = true;
-      __SESSION.restoreTag = String(tag || "");
-      // (AutoZipToApp.restorePacks já loga templates=N quando >0)
-      if (!n) log("OK", "ZIP->APP restore ✅ templates=0 (via " + tag + ")");
-    } catch {}
-  }
-
   function restoreZipAppsLoop() {
-    // ✅ mantém redundância, mas com DEDUP real
-    restorePacksOnce("restore#0");
-    setTimeout(() => restorePacksOnce("restore#900ms"), 900);
-    setTimeout(() => restorePacksOnce("restore#2200ms"), 2200);
+    try { AutoZipToApp.restorePacks(); } catch {}
+    setTimeout(() => { try { AutoZipToApp.restorePacks(); } catch {} }, 900);
+    setTimeout(() => { try { AutoZipToApp.restorePacks(); } catch {} }, 2200);
   }
 
+  // =========================================================
+  // Public API
+  // =========================================================
   window.RCF_ZIP_VAULT = {
-    __v10g: true,
-    __v10i: true,
-    __v10j: true,
-    __v: "1.0j",
+    __v11a: true,
+    __v: "1.1a",
     mount: () => UI.mount(),
     importZip: (file) => Vault.importZipFile(file),
     list: () => Vault.index(),
@@ -951,20 +1093,23 @@
     clearAll: () => Vault.clearAll(),
     cfgGet: () => getCfg(),
     cfgSet: (p) => setCfg(p),
-    zipToAppRestore: () => AutoZipToApp.restorePacks()
+
+    // ZIP->APP packs/templates
+    zipToAppRestore: () => AutoZipToApp.restorePacks(),
+    templatesIndex: () => readAppIndex(),
+    deleteTemplate: (templateId) => deleteTemplate(templateId),
+    pruneTemplates: (maxKeep) => pruneTemplates(maxKeep)
   };
 
   // ✅ monta já
   forceMountNow("immediate");
 
-  // ✅ monta também quando UI estiver pronta (slots criados)
+  // ✅ monta também quando UI estiver pronta
   try {
     window.addEventListener("RCF:UI_READY", () => {
       forceMountNow("RCF:UI_READY");
       setTimeout(() => forceMountNow("RCF:UI_READY+700ms"), 700);
       setTimeout(() => forceMountNow("RCF:UI_READY+1800ms"), 1800);
-      // restore também pode depender de registry ficar pronto
-      restoreZipAppsLoop();
     });
   } catch {}
 
@@ -982,5 +1127,5 @@
     restoreZipAppsLoop();
   }
 
-  log("OK", "zip_vault.js ready ✅ (v1.0j)");
+  log("OK", "zip_vault.js ready ✅ (v1.1a)");
 })();
