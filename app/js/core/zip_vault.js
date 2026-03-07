@@ -1,5 +1,5 @@
 /* FILE: /app/js/core/zip_vault.js
-   RControl Factory — /app/js/core/zip_vault.js — v1.1a SAFE (TEMPLATES PACKS -> IDB + LIMIT + DELETE)
+   RControl Factory — /app/js/core/zip_vault.js — v1.1b SAFE (MOUNT/RESTORE GUARD + TEMPLATES PACKS -> IDB + LIMIT + DELETE)
    FIX CRÍTICO (iPhone quota/localStorage):
    - ✅ NÃO salva packs grandes (ZIP->APP template pack) no localStorage
      -> agora: payload do pack vai para IndexedDB (DB: RCF_VAULT_DB, store: kv)
@@ -9,12 +9,13 @@
    - ✅ Mensagem clara se storage estiver cheio
    - Mantém: VAULT files no IDB store "files", Viewer, JSZip fallback CDN
    - Mantém: UI mount force (VAULT nunca "some")
+   - ✅ Guard interno real: mount 1x efetivo + restore 1x efetivo (gatilhos repetidos são ignorados)
 */
 
 (function () {
   "use strict";
 
-  if (window.RCF_ZIP_VAULT && window.RCF_ZIP_VAULT.__v11a) return;
+  if (window.RCF_ZIP_VAULT && (window.RCF_ZIP_VAULT.__v11b || window.RCF_ZIP_VAULT.__v11a)) return;
 
   const PREFIX = "rcf:";
   const LS_INDEX_KEY = PREFIX + "vault:index";
@@ -1061,27 +1062,76 @@
   // =========================================================
   function forceMountNow(tag) {
     try {
+      if (Boot.mountDone) {
+        log("INFO", "VAULT mount ignorado (já montado) via " + tag + " first=" + (Boot.mountBy || "?"));
+        return true;
+      }
+
       const ok = UI.mount();
-      if (ok) log("OK", "VAULT mount OK ✅ via " + tag);
-      else log("WARN", "VAULT mount pending… via " + tag);
+      if (ok) {
+        Boot.mountDone = true;
+        Boot.mountBy = String(tag || "");
+        log("OK", "VAULT mount OK ✅ via " + tag);
+        return true;
+      }
+
+      log("WARN", "VAULT mount pending… via " + tag);
+      return false;
     } catch (e) {
       log("WARN", "VAULT mount erro via " + tag + " :: " + (e?.message || e));
+      return false;
     }
   }
 
-  function restoreZipAppsLoop() {
-    try { AutoZipToApp.restorePacks(); } catch {}
-    setTimeout(() => { try { AutoZipToApp.restorePacks(); } catch {} }, 900);
-    setTimeout(() => { try { AutoZipToApp.restorePacks(); } catch {} }, 2200);
+  function restoreZipAppsOnce(tag) {
+    if (Boot.restorePromise) {
+      log("INFO", "ZIP->APP restore ignorado (já iniciado) via " + tag);
+      return Boot.restorePromise;
+    }
+
+    Boot.restoreStarted = true;
+    Boot.restorePromise = (async () => {
+      try {
+        const n = await AutoZipToApp.restorePacks();
+        Boot.restoreDone = true;
+        log("OK", "ZIP->APP restore guard OK ✅ via " + tag + " templates=" + Number(n || 0));
+        return n;
+      } catch (e) {
+        log("WARN", "ZIP->APP restore guard erro via " + tag + " :: " + (e?.message || e));
+        return 0;
+      }
+    })();
+
+    return Boot.restorePromise;
   }
+
+  function restoreZipAppsLoop() {
+    try { restoreZipAppsOnce("restore-now"); } catch {}
+    setTimeout(() => { try { restoreZipAppsOnce("restore+900ms"); } catch {} }, 900);
+    setTimeout(() => { try { restoreZipAppsOnce("restore+2200ms"); } catch {} }, 2200);
+  }
+
+
+  const Boot = {
+    mountDone: false,
+    mountBy: "",
+    restoreStarted: false,
+    restoreDone: false,
+    restorePromise: null
+  };
 
   // =========================================================
   // Public API
   // =========================================================
   window.RCF_ZIP_VAULT = {
     __v11a: true,
-    __v: "1.1a",
-    mount: () => UI.mount(),
+    __v11b: true,
+    __v: "1.1b",
+    mount: () => forceMountNow("api:mount"),
+    mountUI: () => forceMountNow("api:mountUI"),
+    injectUI: () => forceMountNow("api:injectUI"),
+    inject: () => forceMountNow("api:inject"),
+    init: () => forceMountNow("api:init"),
     importZip: (file) => Vault.importZipFile(file),
     list: () => Vault.index(),
     get: async (path) => {
@@ -1127,5 +1177,5 @@
     restoreZipAppsLoop();
   }
 
-  log("OK", "zip_vault.js ready ✅ (v1.1a)");
+  log("OK", "zip_vault.js ready ✅ (v1.1b)");
 })();
