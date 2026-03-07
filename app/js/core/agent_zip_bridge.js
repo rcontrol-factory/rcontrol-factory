@@ -1,5 +1,5 @@
 /* FILE: /app/js/core/agent_zip_bridge.js
-   RControl Factory — /app/js/core/agent_zip_bridge.js — v1.1a SAFE (IDB APP STORE + NO-QUOTA localStorage)
+   RControl Factory — /app/js/core/agent_zip_bridge.js — v1.1b SAFE (MOUNT GUARD 1x + IDB APP STORE + NO-QUOTA localStorage)
    FIX CRÍTICO (iPhone quota/localStorage):
    - ✅ NÃO salva payload grande em localStorage (rcf:apps vira só metadata + ponteiros)
    - ✅ Salva payload (files) em IndexedDB (DB: RCF_APPS_DB, store: apps) por appId/slug
@@ -7,13 +7,14 @@
    - ✅ UI clara: "Storage cheio — apague apps/templates ou limpe dados do site"
    - ✅ Delete app: remove pointer do rcf:apps + apaga payload do IDB
    - ✅ Evita reload automático: dispara evento RCF:APPS_UPDATED
+   - ✅ MOUNT GUARD: mountUI efetivo 1x; múltiplos gatilhos/timers passam a ser ignorados após sucesso
    - Mantém: Vault -> files (text/base64) iOS safe
 */
 
 (function () {
   "use strict";
 
-  if (window.RCF_AGENT_ZIP_BRIDGE && window.RCF_AGENT_ZIP_BRIDGE.__v11a) return;
+  if (window.RCF_AGENT_ZIP_BRIDGE && (window.RCF_AGENT_ZIP_BRIDGE.__v11a || window.RCF_AGENT_ZIP_BRIDGE.__v11b)) return;
 
   const PREFIX = "rcf:";
   const KEY_APPS = PREFIX + "apps"; // agora: metadata-only (sem files grandes)
@@ -41,7 +42,7 @@
     return String(str || "")
       .trim()
       .toLowerCase()
-      .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+      .normalize("NFD").replace(/[̀-ͯ]/g, "")
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "");
   }
@@ -116,7 +117,8 @@
       "",
       "Obs: o sistema agora salva payload grande em IndexedDB e localStorage só metadata,",
       "mas se já estiver lotado, você precisa liberar espaço 1x.",
-    ].join("\n");
+    ].join("
+");
   }
 
   // ============================
@@ -389,6 +391,9 @@
   // ==================================
   // UI mount no Agent (slot agent.actions)
   // ==================================
+  let __uiMounted = false;
+  let __mountRetryScheduled = false;
+
   function getSlotEl() {
     try {
       const ui = window.RCF_UI;
@@ -401,10 +406,16 @@
   }
 
   function mountUI() {
+    if (__uiMounted) return true;
+
+    const existing = document.getElementById("rcfZipToAppCard");
+    if (existing) {
+      __uiMounted = true;
+      return true;
+    }
+
     const slot = getSlotEl();
     if (!slot) return false;
-
-    if (document.getElementById("rcfZipToAppCard")) return true;
 
     const card = document.createElement("div");
     card.className = "card";
@@ -478,7 +489,9 @@
               setOut("✅ App apagado: " + slug);
               renderApps();
             } catch (e) {
-              setOut("❌ Delete falhou: " + (e?.message || e) + "\n\n" + uiMsgQuotaHint());
+              setOut("❌ Delete falhou: " + (e?.message || e) + "
+
+" + uiMsgQuotaHint());
             }
           }, { passive: true });
         }
@@ -502,12 +515,18 @@
           const slug = String(inpSlug?.value || "").trim();
           const r = await zipToApp({ name: name || undefined, slug: slug || undefined, stripRootFolder: true });
           setOut(
-            `✅ OK: ${r.app.slug}\nfiles=${r.meta.total} (text=${r.meta.countText} bin=${r.meta.countBin})\nbytes=${r.meta.bytes}\n\nObs: sem reload automático. Vá no Dashboard/Apps e atualize a lista se necessário.`
+            `✅ OK: ${r.app.slug}
+files=${r.meta.total} (text=${r.meta.countText} bin=${r.meta.countBin})
+bytes=${r.meta.bytes}
+
+Obs: sem reload automático. Vá no Dashboard/Apps e atualize a lista se necessário.`
           );
           renderApps();
         } catch (e) {
           const msg = String(e?.message || e);
-          setOut("❌ Falhou: " + msg + "\n\n" + uiMsgQuotaHint());
+          setOut("❌ Falhou: " + msg + "
+
+" + uiMsgQuotaHint());
         }
       }, { passive: true });
     }
@@ -518,7 +537,12 @@
         try {
           const idx = window.RCF_ZIP_VAULT?.list?.() || [];
           const totalBytes = idx.reduce((a, it) => a + (Number(it.size) || 0), 0);
-          setOut(`VAULT stats:\nfiles=${idx.length}\nMB=${(totalBytes/(1024*1024)).toFixed(1)}\nex: ${idx.slice(0, 8).map(x => x.path).join("\n")}${idx.length>8 ? "\n...(mais)" : ""}`);
+          setOut(`VAULT stats:
+files=${idx.length}
+MB=${(totalBytes/(1024*1024)).toFixed(1)}
+ex: ${idx.slice(0, 8).map(x => x.path).join("
+")}${idx.length>8 ? "
+...(mais)" : ""}`);
         } catch (e) {
           setOut("❌ stats erro: " + (e?.message || e));
         }
@@ -548,7 +572,9 @@
           setOut("✅ Purge concluído. Se ainda estiver cheio, apague mais ou limpe dados do site.");
           renderApps();
         } catch (e) {
-          setOut("❌ Purge falhou: " + (e?.message || e) + "\n\n" + uiMsgQuotaHint());
+          setOut("❌ Purge falhou: " + (e?.message || e) + "
+
+" + uiMsgQuotaHint());
         }
       }, { passive: true });
     }
@@ -560,19 +586,39 @@
 
     setOut("Pronto. ✅ Importe ZIP no VAULT e depois clique 'Criar App do ZIP'. (IDB safe)");
     renderApps();
+    __uiMounted = true;
+    __mountRetryScheduled = false;
     return true;
+  }
+
+  function scheduleMountRetries() {
+    if (__uiMounted || __mountRetryScheduled) return;
+    __mountRetryScheduled = true;
+    setTimeout(() => {
+      try {
+        if (!__uiMounted) mountUI();
+      } catch {}
+      if (!__uiMounted) {
+        setTimeout(() => {
+          try { if (!__uiMounted) mountUI(); } catch {}
+          if (__uiMounted) __mountRetryScheduled = false;
+        }, 1000);
+      } else {
+        __mountRetryScheduled = false;
+      }
+    }, 700);
   }
 
   function mountLoop() {
     const ok = mountUI();
-    if (ok) return;
-    setTimeout(() => { try { mountUI(); } catch {} }, 700);
-    setTimeout(() => { try { mountUI(); } catch {} }, 1700);
+    if (ok) return true;
+    scheduleMountRetries();
+    return false;
   }
 
   // expõe API pública (p/ app.js/dashboard integrar depois)
   window.RCF_AGENT_ZIP_BRIDGE = {
-    __v11a: true,
+    __v11b: true,
     mountUI: () => mountUI(),
     zipToApp: (opts) => zipToApp(opts),
     listAppsMeta: () => getAppsMeta(),
@@ -595,5 +641,5 @@
     mountLoop();
   }
 
-  log("OK", "agent_zip_bridge.js ready ✅ (v1.1a)");
+  log("OK", "agent_zip_bridge.js ready ✅ (v1.1b)");
 })();
