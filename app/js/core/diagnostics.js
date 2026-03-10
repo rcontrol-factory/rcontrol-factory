@@ -405,8 +405,9 @@
 })();
 /* === RCF_RANGE_END file:/app/js/core/diagnostics.js === */
 
+
 // --- Doctor AI-ready hook (non-breaking patch) ---
-export async function RCF_runDoctorAI(report){
+window.RCF_runDoctorAI = async function(report){
   try{
     await fetch("/api/admin-ai",{
       method:"POST",
@@ -419,4 +420,4 @@ export async function RCF_runDoctorAI(report){
   }catch(e){
     // endpoint optional
   }
-}
+};
