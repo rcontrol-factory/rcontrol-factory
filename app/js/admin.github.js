@@ -50,9 +50,6 @@
       branch: String(cfg.branch || "main").trim(),
       path: String(cfg.path || "app/import/mother_bundle.json").trim(),
     };
-    if (window.RCF_GH_SYNC?.setRuntimeToken && typeof cfg.token === "string") {
-      try { window.RCF_GH_SYNC.setRuntimeToken(cfg.token); } catch {}
-    }
     localStorage.setItem(LS_CFG_KEY, JSON.stringify(safe));
     return safe;
   }
@@ -196,7 +193,7 @@
 
         <div style="margin-top:10px;">
           <div style="font-size:12px; color: rgba(255,255,255,.65); margin-bottom:6px;">Token (PAT)</div>
-          <input id="ghToken" type="password" autocomplete="off" spellcheck="false" autocapitalize="off" style="width:100%; padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,.12); background: rgba(0,0,0,.25); color:#fff;" placeholder="cole o PAT do GitHub para operações push/pull" />
+          <input id="ghToken" type="password" autocomplete="off" spellcheck="false" style="width:100%; padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,.12); background: rgba(0,0,0,.25); color:#fff;" placeholder="cole o PAT do GitHub para operações push/pull" />
         </div>
 
         <div style="margin-top:12px; display:flex; gap:10px; flex-wrap:wrap;">
@@ -361,7 +358,7 @@
         repo:   repoIn   || String(cur.repo || "").trim(),
         branch: (branchIn || String(cur.branch || "main")).trim(),
         path:   normalizePathInput(pathIn || String(cur.path || "app/import/mother_bundle.json")),
-        token:  tokenIn  || String(window.RCF_GH_SYNC?.getRuntimeToken?.() || "").trim(),
+        token:  tokenIn,
       };
     }
 
@@ -370,7 +367,7 @@
       document.getElementById("ghRepo").value = cfg.repo || "";
       document.getElementById("ghBranch").value = cfg.branch || "main";
       document.getElementById("ghPath").value = cfg.path || "app/import/mother_bundle.json";
-      document.getElementById("ghToken").value = "";
+      document.getElementById("ghToken").value = (window.RCF_GH_SYNC?.getRuntimeToken?.() || "");
     }
 
     // preencher ao criar
@@ -824,7 +821,7 @@
       document.getElementById("ghRepo").value = cfg.repo || "";
       document.getElementById("ghBranch").value = cfg.branch || "main";
       document.getElementById("ghPath").value = cfg.path || "app/import/mother_bundle.json";
-      document.getElementById("ghToken").value = "";
+      document.getElementById("ghToken").value = (window.RCF_GH_SYNC?.getRuntimeToken?.() || "");
     } catch {}
 
     // ✅ restore pages cfg toda vez que abrir
