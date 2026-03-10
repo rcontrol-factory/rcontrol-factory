@@ -1,3 +1,4 @@
+let __RCF_GH_PAT_RUNTIME = null;
 /* RControl Factory — /app/js/core/github_sync.js — v2.4h (FINAL STABLE + FILLERS)
    PATCH sobre v2.4g:
    - ✅ FILLERS: gera bundle completo automaticamente (lista padrão + auto-discovery) quando o bundle local estiver “mínimo”
@@ -518,3 +519,11 @@
     try { window.RCF_LOGGER?.push?.("OK", "RCF_GH_SYNC.test hotfix instalado ✅"); } catch {}
   } catch {}
 })();
+
+
+export function RCF_setGithubPAT_runtime(token){
+  __RCF_GH_PAT_RUNTIME = token || null;
+}
+export function RCF_getGithubPAT_runtime(){
+  return __RCF_GH_PAT_RUNTIME;
+}
