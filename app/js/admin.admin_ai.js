@@ -1,6 +1,6 @@
 /* FILE: /app/js/admin.admin_ai.js
    RControl Factory — Admin AI (Fase IA-1)
-   v1.5 ADMIN-FIXED + CHAT-LITE + SNAPSHOT-RICH
+   v1.6 ADMIN-FIXED + CHAT-LITE + SNAPSHOT-PREVIEW
 
    - fixo no Admin
    - histórico visual tipo chat-lite
@@ -8,15 +8,16 @@
    - ações rápidas + doctor + patch + gerar código
    - usa /api/admin-ai
    - consome snapshot estrutural refinado
+   - mostra preview do snapshot enviado
    - não executa patch automático
 */
 
 (() => {
   "use strict";
 
-  if (window.RCF_ADMIN_AI && window.RCF_ADMIN_AI.__v15) return;
+  if (window.RCF_ADMIN_AI && window.RCF_ADMIN_AI.__v16) return;
 
-  const VERSION = "v1.5";
+  const VERSION = "v1.6";
   const BOX_ID = "rcfAdminAIBox";
   const CHAT_ID = "rcfAdminAIChat";
 
@@ -34,6 +35,11 @@
     return String(s || "").replace(/[&<>"]/g, c => ({
       "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"
     }[c]));
+  }
+
+  function pretty(obj) {
+    try { return JSON.stringify(obj, null, 2); }
+    catch (_) { return String(obj || ""); }
   }
 
   function isAdminViewVisible() {
@@ -67,8 +73,8 @@
     return (
       document.getElementById("rcfAdminSlotIntegrations") ||
       document.querySelector('[data-rcf-slot="admin.integrations"]') ||
-      document.querySelector('#view-admin .integrations') ||
-      document.querySelector('#view-admin') ||
+      document.querySelector("#view-admin .integrations") ||
+      document.querySelector("#view-admin") ||
       document.querySelector('[data-rcf-view="admin"]')
     );
   }
@@ -79,7 +85,7 @@
     box.style.display = isAdminViewVisible() ? "" : "none";
   }
 
-  function collectLogs(limit = 40) {
+  function collectLogs(limit = 30) {
     try {
       const logger = window.RCF_LOGGER;
       if (logger && Array.isArray(logger.items)) {
@@ -189,6 +195,12 @@
     if (el) el.textContent = String(txt || "");
   }
 
+  function setSnapshotPreview(obj) {
+    const el = document.getElementById("rcfAdminAISnapshot");
+    if (!el) return;
+    el.textContent = pretty(obj || {});
+  }
+
   function setButtonsBusy(busy) {
     STATE.busy = !!busy;
 
@@ -256,6 +268,7 @@
     renderChat();
     setStatus("aguardando");
     setResult("Pronto.");
+    setSnapshotPreview({});
   }
 
   function getMode() {
@@ -342,6 +355,7 @@
 
   function buildPayload(mode) {
     const snapshot = buildLeanSnapshot();
+    setSnapshotPreview(snapshot);
 
     if (mode === "analyze-logs") {
       return {
@@ -361,7 +375,7 @@
       return {
         snapshot,
         doctor: collectDoctorReport(),
-        logs: collectLogs(30)
+        logs: collectLogs(25)
       };
     }
 
@@ -495,13 +509,18 @@
 
       <div id="${CHAT_ID}" style="
         margin-top:12px;
-        max-height:34vh;
+        max-height:30vh;
         overflow:auto;
         padding:8px;
         background:rgba(255,255,255,.03);
         border:1px solid rgba(255,255,255,.10);
         border-radius:10px;
       "></div>
+
+      <div style="margin-top:12px">
+        <label class="hint">Snapshot Preview enviado</label>
+        <pre class="mono small" id="rcfAdminAISnapshot" style="margin-top:6px;max-height:18vh;overflow:auto">{"status":"aguardando"}</pre>
+      </div>
 
       <div style="margin-top:12px">
         <label class="hint" for="rcfAdminAIPrompt">Prompt manual</label>
@@ -551,6 +570,7 @@
     __v13: true,
     __v14: true,
     __v15: true,
+    __v16: true,
     version: VERSION,
     mount,
     clearChat
