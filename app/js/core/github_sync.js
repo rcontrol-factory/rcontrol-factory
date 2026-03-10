@@ -8,7 +8,7 @@
 (() => {
   "use strict";
 
-  if (window.RCF_GH_SYNC && window.RCF_GH_SYNC.__v24h_patmask) return;
+  if (window.RCF_GH_SYNC && window.RCF_GH_SYNC.__v24h_patmask2) return;
 
   const LS_CFG_KEY = "rcf:ghcfg";
   const API_BASE = "https://api.github.com";
@@ -468,16 +468,16 @@
 
   window.RCF_GH_SYNC = {
     __v24h: true,
-    __v24h_patmask: true,
+    __v24h_patmask2: true,
     loadConfig,
     saveConfig,
+    setRuntimeToken,
+    getRuntimeToken,
     pull,
     push,
     pushMotherBundle,
     listFillers,          // ✅ novo (UI futura)
-    buildFactoryBundle,   // ✅ novo (debug/manual)
-    setRuntimeToken,
-    getRuntimeToken
+    buildFactoryBundle    // ✅ novo (debug/manual)
   };
 
   log("info", "github_sync.js loaded (v2.4h)");
@@ -500,7 +500,8 @@
         } catch { return {}; }
       })();
 
-      const token = String(opts.token || GH.getRuntimeToken?.() || cfg.ghToken || cfg.pat || "").trim();
+      const runtime = (typeof GH.getRuntimeToken === "function") ? GH.getRuntimeToken() : "";
+      const token = (opts.token || runtime || cfg.token || cfg.ghToken || cfg.pat || "").trim();
       if (!token) return { ok: false, err: "token ausente (rcf:ghcfg.token)" };
 
       try {
