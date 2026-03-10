@@ -2646,7 +2646,7 @@
   } catch {}
 
 
-  
+
   // =========================================================
   // DOCTOR: Delegation (iOS touch-safe)
   // - Alguns botões/itens podem ser montados por módulos externos (ui_bindings etc.)
