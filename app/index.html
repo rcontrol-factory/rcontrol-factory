@@ -6,8 +6,8 @@
   ✅ Mantém o “app root” (#app) simples e estável
 
   PATCH MÍNIMO:
-  - Adicionado: ./js/admin.admin_ai.js
-  - Sem alterar a estrutura principal da Factory
+  - Adicionado: ./js/core/factory_state.js
+  - Mantido: admin.admin_ai.js
 -->
 
 <!doctype html>
@@ -82,6 +82,7 @@
   <!-- Core / boot safety -->
   <script defer src="./js/core/logger.js"></script>
   <script defer src="./js/core/stability_guard.js"></script>
+  <script defer src="./js/core/factory_state.js"></script>
 
   <!-- Storage + GitHub + VFS + MAE + updates -->
   <script defer src="./js/core/storage.js"></script>
@@ -119,7 +120,6 @@
   <!-- Vault / ZIP -->
   <script defer src="./js/core/zip_vault.js"></script>
   <script defer src="./js/core/agent_zip_bridge.js"></script>
-
 </head>
 
 <body>
