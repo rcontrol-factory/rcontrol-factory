@@ -1,5 +1,5 @@
 /* FILE: app/js/core/doctor_scan.js
-   RControl Factory — DOCTOR SCAN — v1.5a (ADMIN SLOT REMOVED + FAB/TOOLS READY + AI HOOK OPTIONAL)
+   RControl Factory — DOCTOR SCAN — v1.5 (ADMIN SLOT REMOVED + FAB/TOOLS READY)
    - ✅ NÃO injeta botão sozinho (evita “botão solto”)
    - ✅ Expõe API: window.RCF_DOCTOR_SCAN.open()
    - ✅ Modal com rolagem iOS: overflow:auto + -webkit-overflow-scrolling + touch-action
@@ -361,13 +361,6 @@
     const rep = await buildReport().catch(e => "Doctor error: " + ((e && e.message) ? e.message : String(e)));
     const modal = openModal(rep);
     try { modal.pre.scrollTop = 0; } catch {}
-    try {
-      fetch("/api/admin-ai", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "factory_diagnosis", payload: rep })
-      }).catch(() => {});
-    } catch {}
     return modal;
   }
 
