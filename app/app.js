@@ -2587,7 +2587,7 @@
   // Doctor (atalho p/ Diagnostics + ScanMap quando disponível)
   // =========================================================
   function runDoctor() {
-    // v8.0.6_DOCTOR_OPEN_FIX
+    // v8.0.5_DOCTOR_LOCK_PARSER_SAFE
     if (runDoctor.__running__) return;
     runDoctor.__running__ = true;
     try { Logger.write("doctor: start"); } catch {}
@@ -2603,9 +2603,17 @@
         window.RCF_DIAGNOSTICS && window.RCF_DIAGNOSTICS.doctor
       ].filter(Boolean);
       for (const obj of candidates) {
-        if (obj === window.RCF_DOCTOR) continue;
-        if (typeof obj.open === "function") { try { Logger.write("doctor: open()"); } catch {} return obj.open(); }
-        if (typeof obj.show === "function") { try { Logger.write("doctor: show()"); } catch {} return obj.show(); }
+        if (typeof obj.open === "function") { obj.open(); try { Logger.write("doctor: open()"); } catch {} return; }
+        if (typeof obj.show === "function") { obj.show(); try { Logger.write("doctor: show()"); } catch {} return; }
+      }
+    } catch {}
+
+    try {
+      const extDoctor = window.RCF_DOCTOR;
+      if (extDoctor && extDoctor !== window && extDoctor.open && extDoctor.open !== window.RCF_DOCTOR?.open) {
+        extDoctor.open();
+        try { Logger.write("doctor: ext open()"); } catch {}
+        return;
       }
     } catch {}
 
