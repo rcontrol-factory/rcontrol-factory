@@ -12,7 +12,7 @@
 (() => {
   "use strict";
 
-  if (window.RCF_ADMIN_GH && window.RCF_ADMIN_GH.__v28a) return;
+  if (window.RCF_ADMIN_GH && window.RCF_ADMIN_GH.__v28a_patmask) return;
 
   const UI_OPEN_KEY = "rcf:ghui:open";
   const LS_CFG_KEY  = "rcf:ghcfg";
@@ -44,14 +44,16 @@
 
   function saveCfg(cfg){
     if (window.RCF_GH_SYNC?.saveConfig) return window.RCF_GH_SYNC.saveConfig(cfg);
+    const token = String(cfg.token || "").trim();
     const safe = {
       owner: String(cfg.owner || "").trim(),
       repo: String(cfg.repo || "").trim(),
       branch: String(cfg.branch || "main").trim(),
-      path: String(cfg.path || "app/import/mother_bundle.json").trim(),
+      path: String(cfg.path || "app/import/mother_bundle.json").trim()
     };
     localStorage.setItem(LS_CFG_KEY, JSON.stringify(safe));
-    return safe;
+    try { window.RCF_GH_SYNC?.setRuntimeToken?.(token); } catch {}
+    return Object.assign({}, safe, { token });
   }
 
   // ✅ PAGES CFG
@@ -193,7 +195,7 @@
 
         <div style="margin-top:10px;">
           <div style="font-size:12px; color: rgba(255,255,255,.65); margin-bottom:6px;">Token (PAT)</div>
-          <input id="ghToken" type="password" autocomplete="off" spellcheck="false" style="width:100%; padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,.12); background: rgba(0,0,0,.25); color:#fff;" placeholder="cole o PAT do GitHub para operações push/pull" />
+          <input id="ghToken" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" style="width:100%; padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,.12); background: rgba(0,0,0,.25); color:#fff;" placeholder="cole o PAT do GitHub para operações push/pull" />
         </div>
 
         <div style="margin-top:12px; display:flex; gap:10px; flex-wrap:wrap;">
@@ -358,7 +360,7 @@
         repo:   repoIn   || String(cur.repo || "").trim(),
         branch: (branchIn || String(cur.branch || "main")).trim(),
         path:   normalizePathInput(pathIn || String(cur.path || "app/import/mother_bundle.json")),
-        token:  tokenIn  || String(window.RCF_GH_SYNC?.getRuntimeToken?.() || "").trim(),
+        token:  tokenIn  || String(window.RCF_GH_SYNC?.getRuntimeToken?.() || cur.token || "").trim()
       };
     }
 
@@ -368,7 +370,6 @@
       document.getElementById("ghBranch").value = cfg.branch || "main";
       document.getElementById("ghPath").value = cfg.path || "app/import/mother_bundle.json";
       document.getElementById("ghToken").value = "";
-      document.getElementById("ghToken").setAttribute("type", "password");
     }
 
     // preencher ao criar
@@ -720,7 +721,6 @@
     document.getElementById("btnSaveCfg").addEventListener("click", () => {
       const cfg = readInputsMerged();
       saveCfg(cfg);
-      try { const t=document.getElementById("ghToken"); if (t) t.value=""; } catch {}
       setGHOut("OK: ghcfg saved");
       log("ok", "OK: ghcfg saved");
     });
@@ -733,7 +733,6 @@
         setGHOut("Testando token…");
         if (!window.RCF_GH_SYNC?.test) throw new Error("RCF_GH_SYNC.test ausente");
         const res = await window.RCF_GH_SYNC.test(cfg);
-        try { const t=document.getElementById("ghToken"); if (t) t.value=""; } catch {}
 
         setGHOut(String(res || "OK"));
         log("ok", "OK: token test ok");
@@ -751,7 +750,6 @@
         setGHOut("Pull…");
         if (!window.RCF_GH_SYNC?.pull) throw new Error("RCF_GH_SYNC.pull ausente");
         const txt = await window.RCF_GH_SYNC.pull(cfg);
-        try { const t=document.getElementById("ghToken"); if (t) t.value=""; } catch {}
 
         setGHOut("OK: pull ok (bytes=" + String(txt || "").length + ")");
         log("ok", "OK: gh pull ok");
@@ -826,7 +824,6 @@
       document.getElementById("ghBranch").value = cfg.branch || "main";
       document.getElementById("ghPath").value = cfg.path || "app/import/mother_bundle.json";
       document.getElementById("ghToken").value = "";
-      document.getElementById("ghToken").setAttribute("type", "password");
     } catch {}
 
     // ✅ restore pages cfg toda vez que abrir
@@ -916,7 +913,7 @@
     window.addEventListener("popstate",  () => { try { ensureGitHubButton(); } catch {} });
   }
 
-  window.RCF_ADMIN_GH = { __v28a: true, boot, openModal, closeModal };
+  window.RCF_ADMIN_GH = { __v28a: true, __v28a_patmask: true, boot, openModal, closeModal };
 
   if (document.readyState === "loading") {
     window.addEventListener("DOMContentLoaded", boot, { once:true });
