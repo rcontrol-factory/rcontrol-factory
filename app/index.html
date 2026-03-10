@@ -1,186 +1,496 @@
-<!-- FILE: /app/index.html -->
 <!doctype html>
 <html lang="pt-BR">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-<meta name="theme-color" content="#071226" />
+  <meta charset="utf-8" />
+  <meta
+    name="viewport"
+    content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no"
+  />
+  <meta name="theme-color" content="#0b1220" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RControl Factory" />
 
-<title>RControl Factory</title>
+  <title>RControl Factory</title>
 
-<style>
+  <style>
+    :root{
+      --rcf-css-token: "V8_INDEX_SAFE_OK";
+      --bg: #0b1220;
+      --bg-2: #0f172a;
+      --panel: #111827;
+      --panel-2: #0f172a;
+      --text: #e5e7eb;
+      --muted: #94a3b8;
+      --line: rgba(255,255,255,.08);
+      --line-2: rgba(255,255,255,.12);
+      --ok: #22c55e;
+      --warn: #f59e0b;
+      --danger: #ef4444;
+      --accent: #38bdf8;
+      --radius: 14px;
+      --shadow: 0 14px 40px rgba(0,0,0,.28);
+      --topbar-h: 110px;
+      --tools-w: 360px;
+      --fab-z: 9999;
+    }
 
-:root{
---rcf-css-token:"RCF_INDEX_STABLE_V1";
---bg:#071226;
---card:rgba(255,255,255,.05);
---line:rgba(255,255,255,.1);
---text:#eef4ff;
---muted:#aebbd4;
---accent:#61a8ff;
---radius:16px;
-}
+    *{ box-sizing:border-box; }
+    html,body{
+      margin:0;
+      padding:0;
+      width:100%;
+      min-height:100%;
+      background:var(--bg);
+      color:var(--text);
+      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,Helvetica,Arial,sans-serif;
+      -webkit-font-smoothing:antialiased;
+      -moz-osx-font-smoothing:grayscale;
+    }
 
-*{box-sizing:border-box}
+    html{
+      overflow-x:hidden;
+      background:var(--bg);
+    }
 
-html,body{
-margin:0;
-background:var(--bg);
-color:var(--text);
-font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Arial;
-}
+    body{
+      overflow-x:hidden;
+      background:
+        radial-gradient(circle at top, rgba(56,189,248,.08), transparent 30%),
+        linear-gradient(180deg, #08101d 0%, #0b1220 100%);
+    }
 
-#app{
-min-height:100vh;
-}
+    button,input,select,textarea{
+      font:inherit;
+    }
 
-.topbar{
-padding:14px;
-border-bottom:1px solid var(--line);
-}
+    button{
+      cursor:pointer;
+    }
 
-.title{
-font-weight:700;
-font-size:20px;
-}
+    #app{
+      min-height:100vh;
+      width:100%;
+    }
 
-.subtitle{
-font-size:12px;
-color:var(--muted);
-}
+    #rcfRoot{
+      min-height:100vh;
+      width:100%;
+      position:relative;
+    }
 
-.tabs{
-display:flex;
-gap:8px;
-padding:12px 14px;
-overflow-x:auto;
-}
+    .topbar{
+      position:sticky;
+      top:0;
+      z-index:40;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      background:rgba(11,18,32,.82);
+      border-bottom:1px solid var(--line);
+      padding:10px 12px;
+    }
 
-.tab{
-border:1px solid var(--line);
-background:var(--card);
-color:var(--text);
-border-radius:999px;
-padding:8px 14px;
-cursor:pointer;
-}
+    .brand{
+      display:flex;
+      align-items:center;
+      gap:12px;
+      min-width:0;
+    }
 
-.tab.active{
-background:rgba(97,168,255,.2);
-border-color:rgba(97,168,255,.5);
-}
+    .brand .dot{
+      width:12px;
+      height:12px;
+      border-radius:999px;
+      background:linear-gradient(180deg,#34d399,#10b981);
+      box-shadow:0 0 0 4px rgba(16,185,129,.14);
+      flex:0 0 auto;
+    }
 
-.container{
-padding:14px;
-}
+    .brand-text{
+      min-width:0;
+    }
 
-.card{
-background:var(--card);
-border:1px solid var(--line);
-border-radius:var(--radius);
-padding:14px;
-margin-bottom:14px;
-}
+    .title{
+      font-size:18px;
+      font-weight:900;
+      letter-spacing:.2px;
+      line-height:1.15;
+    }
 
-.view{
-display:none;
-}
+    .subtitle{
+      font-size:12px;
+      color:var(--muted);
+      line-height:1.2;
+      margin-top:2px;
+    }
 
-.view.active{
-display:block;
-}
+    .spacer{
+      flex:1 1 auto;
+      min-width:8px;
+    }
 
-.row{
-display:flex;
-gap:10px;
-flex-wrap:wrap;
-margin-bottom:10px;
-}
+    .tabs{
+      display:flex;
+      gap:8px;
+      overflow-x:auto;
+      overflow-y:hidden;
+      padding:8px 0 2px;
+      margin-top:8px;
+      -webkit-overflow-scrolling:touch;
+      scrollbar-width:none;
+    }
 
-.btn{
-border-radius:999px;
-border:1px solid var(--line);
-background:var(--card);
-color:var(--text);
-padding:8px 14px;
-cursor:pointer;
-}
+    .tabs::-webkit-scrollbar{
+      display:none;
+    }
 
-.btn.ok{
-background:rgba(97,168,255,.2);
-}
+    .tab,
+    .btn{
+      border:1px solid var(--line-2);
+      background:rgba(255,255,255,.04);
+      color:var(--text);
+      border-radius:999px;
+      padding:10px 12px;
+      min-height:40px;
+      transition:.18s ease;
+    }
 
-textarea,input{
-width:100%;
-border-radius:12px;
-border:1px solid var(--line);
-background:rgba(255,255,255,.06);
-color:var(--text);
-padding:10px;
-}
+    .tab:hover,
+    .btn:hover{
+      background:rgba(255,255,255,.07);
+    }
 
-textarea{
-min-height:180px;
-}
+    .tab.active{
+      background:rgba(56,189,248,.16);
+      border-color:rgba(56,189,248,.30);
+      color:#fff;
+    }
 
-.apps,.files{
-display:flex;
-flex-direction:column;
-gap:10px;
-}
+    .btn.small{
+      min-height:34px;
+      padding:8px 10px;
+      font-size:12px;
+    }
 
-.app-item,.file-item{
-border:1px solid var(--line);
-border-radius:12px;
-padding:10px;
-background:rgba(255,255,255,.04);
-}
+    .btn.ok{
+      background:rgba(34,197,94,.14);
+      border-color:rgba(34,197,94,.28);
+    }
 
-.file-item.active{
-background:rgba(97,168,255,.15);
-border-color:rgba(97,168,255,.4);
-}
+    .btn.ghost{
+      background:rgba(255,255,255,.03);
+    }
 
-.mono{
-font-family:monospace;
-font-size:12px;
-background:rgba(0,0,0,.2);
-padding:10px;
-border-radius:10px;
-border:1px solid var(--line);
-white-space:pre-wrap;
-}
+    .btn.danger{
+      background:rgba(239,68,68,.14);
+      border-color:rgba(239,68,68,.28);
+    }
 
-</style>
+    .container{
+      padding:12px;
+      padding-bottom:110px;
+    }
+
+    .views{
+      display:block;
+      width:100%;
+    }
+
+    .view{
+      display:none;
+    }
+
+    .view.active{
+      display:block;
+    }
+
+    .card{
+      width:100%;
+      background:linear-gradient(180deg, rgba(255,255,255,.045), rgba(255,255,255,.03));
+      border:1px solid var(--line);
+      border-radius:var(--radius);
+      box-shadow:var(--shadow);
+      padding:12px;
+    }
+
+    .hero{
+      margin-top:0;
+    }
+
+    .card + .card,
+    .view .card + .card{
+      margin-top:12px;
+    }
+
+    h1,h2,p,pre{
+      margin-top:0;
+    }
+
+    h1{
+      font-size:24px;
+      margin-bottom:10px;
+    }
+
+    h2{
+      font-size:18px;
+      margin-bottom:8px;
+    }
+
+    p{
+      color:var(--text);
+    }
+
+    .hint{
+      color:var(--muted);
+      font-size:13px;
+    }
+
+    .badge{
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      min-height:36px;
+      padding:8px 12px;
+      border-radius:999px;
+      background:rgba(255,255,255,.05);
+      border:1px solid var(--line);
+      color:var(--text);
+    }
+
+    .status-box,
+    .row{
+      display:flex;
+      gap:10px;
+      align-items:center;
+      flex-wrap:wrap;
+    }
+
+    .row + .row{
+      margin-top:10px;
+    }
+
+    .form input,
+    .form select,
+    .form textarea,
+    input,
+    select,
+    textarea{
+      width:100%;
+      min-height:42px;
+      border-radius:12px;
+      border:1px solid var(--line-2);
+      background:rgba(2,6,23,.72);
+      color:var(--text);
+      padding:10px 12px;
+      outline:none;
+    }
+
+    textarea{
+      min-height:180px;
+      resize:vertical;
+    }
+
+    .editor{
+      border:1px solid var(--line);
+      border-radius:14px;
+      overflow:hidden;
+      background:rgba(2,6,23,.42);
+    }
+
+    .editor-head{
+      padding:10px 12px;
+      border-bottom:1px solid var(--line);
+      color:var(--muted);
+      font-size:13px;
+      background:rgba(255,255,255,.02);
+    }
+
+    #fileContent{
+      width:100%;
+      min-height:52vh;
+      border:0;
+      border-radius:0;
+      background:transparent;
+      color:var(--text);
+      padding:14px;
+      font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;
+      font-size:13px;
+      line-height:1.45;
+    }
+
+    .files,
+    .apps{
+      display:flex;
+      flex-direction:column;
+      gap:8px;
+    }
+
+    .file-item,
+    .app-item{
+      border:1px solid var(--line);
+      border-radius:12px;
+      background:rgba(255,255,255,.03);
+      padding:10px 12px;
+    }
+
+    .file-item{
+      cursor:pointer;
+      word-break:break-word;
+    }
+
+    .file-item.active{
+      background:rgba(56,189,248,.12);
+      border-color:rgba(56,189,248,.28);
+    }
+
+    .mono{
+      width:100%;
+      white-space:pre-wrap;
+      word-break:break-word;
+      background:rgba(2,6,23,.58);
+      border:1px solid var(--line);
+      border-radius:12px;
+      padding:12px;
+      color:#dbeafe;
+      font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;
+      font-size:12px;
+      line-height:1.45;
+      overflow:auto;
+      -webkit-overflow-scrolling:touch;
+      max-height:28vh;
+    }
+
+    .mono.small{
+      max-height:22vh;
+    }
+
+    .tools{
+      position:fixed;
+      top:0;
+      right:0;
+      height:100dvh;
+      width:min(var(--tools-w), 92vw);
+      background:rgba(8,13,24,.98);
+      border-left:1px solid var(--line-2);
+      box-shadow:-18px 0 40px rgba(0,0,0,.35);
+      transform:translateX(105%);
+      transition:transform .22s ease;
+      z-index:5000;
+      display:flex;
+      flex-direction:column;
+    }
+
+    .tools.open{
+      transform:translateX(0);
+    }
+
+    .tools-head{
+      display:flex;
+      align-items:center;
+      gap:10px;
+      padding:12px;
+      border-bottom:1px solid var(--line);
+      min-height:60px;
+    }
+
+    .tools-body{
+      flex:1 1 auto;
+      overflow:auto;
+      -webkit-overflow-scrolling:touch;
+      padding:12px;
+    }
+
+    #rcfFab{
+      position:fixed;
+      right:14px;
+      bottom:14px;
+      width:54px;
+      height:54px;
+      border-radius:999px;
+      border:1px solid rgba(255,255,255,.16);
+      background:rgba(20,28,44,.94);
+      color:#fff;
+      font-size:20px;
+      font-weight:900;
+      box-shadow:0 10px 30px rgba(0,0,0,.35);
+      z-index:var(--fab-z);
+    }
+
+    #rcfFabPanel{
+      position:fixed;
+      right:14px;
+      bottom:78px;
+      width:220px;
+      max-width:calc(100vw - 28px);
+      border-radius:14px;
+      border:1px solid rgba(255,255,255,.12);
+      background:rgba(12,16,26,.97);
+      color:#fff;
+      padding:10px;
+      z-index:var(--fab-z);
+      display:none;
+      box-shadow:0 18px 34px rgba(0,0,0,.38);
+    }
+
+    #rcfFabPanel.open{
+      display:block;
+    }
+
+    #rcfFabPanel .fab-title{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      font-weight:900;
+      margin-bottom:8px;
+    }
+
+    #rcfFabPanel .fab-status{
+      font-size:12px;
+      color:var(--muted);
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      max-width:120px;
+    }
+
+    #rcfFabPanel .fab-row{
+      display:flex;
+      gap:8px;
+      flex-wrap:wrap;
+    }
+
+    #rcfFabPanel .fab-row + .fab-row{
+      margin-top:8px;
+    }
+
+    #rcfFabPanel .fab-row .btn{
+      flex:1 1 auto;
+    }
+
+    .status-pill{
+      display:none;
+    }
+
+    @media (max-width: 720px){
+      .container{
+        padding:10px;
+        padding-bottom:100px;
+      }
+
+      #fileContent{
+        min-height:46vh;
+      }
+    }
+  </style>
 </head>
-
 <body>
+  <div id="app"></div>
 
-<div id="app"></div>
+  <script>
+    window.__RCF_INDEX_BOOTED__ = true;
+  </script>
 
-<!-- CORE -->
-<script src="./js/core/logger.js"></script>
-<script src="./js/core/stability_guard.js"></script>
-<script src="./js/core/factory_state.js"></script>
-<script src="./js/core/context_engine.js"></script>
-<script src="./js/core/github_sync.js"></script>
-
-<!-- ENGINE -->
-<script src="./js/engine/module_registry.js"></script>
-<script src="./js/engine/template_registry.js"></script>
-<script src="./js/engine/patchQueue.js"></script>
-<script src="./js/engine/organizerEngine.js"></script>
-<script src="./js/engine/builder.js"></script>
-<script src="./js/engine/builderEngine.js"></script>
-<script src="./js/engine/applyPipeline.js"></script>
-<script src="./js/engine/engine.js"></script>
-
-<!-- ADMIN -->
-<script src="./js/admin.admin_ai.js"></script>
-<script src="./js/admin.github.js"></script>
-
-<!-- APP ROOT -->
-<script src="./app.js"></script>
-
+  <script src="./app.js"></script>
 </body>
 </html>
