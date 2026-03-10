@@ -55,7 +55,6 @@ export async function onRequestPost(context) {
     }
 
     const model = "gpt-4.1-mini";
-
     const input = buildInput({ action, payload, prompt });
 
     const upstream = await fetch("https://api.openai.com/v1/responses", {
