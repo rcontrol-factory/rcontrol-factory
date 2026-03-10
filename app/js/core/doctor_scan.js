@@ -1,5 +1,5 @@
 /* FILE: app/js/core/doctor_scan.js
-   RControl Factory — DOCTOR SCAN — v1.5 (ADMIN SLOT REMOVED + FAB/TOOLS READY)
+   RControl Factory — DOCTOR SCAN — v1.5a (ADMIN SLOT REMOVED + FAB/TOOLS READY + AI HOOK OPTIONAL)
    - ✅ NÃO injeta botão sozinho (evita “botão solto”)
    - ✅ Expõe API: window.RCF_DOCTOR_SCAN.open()
    - ✅ Modal com rolagem iOS: overflow:auto + -webkit-overflow-scrolling + touch-action
@@ -9,7 +9,7 @@
 (() => {
   "use strict";
 
-  const VERSION = "v1.6";
+  const VERSION = "v1.5";
 
   // evita double init
   if (window.__RCF_DOCTOR_SCAN_BOOTED__) return;
@@ -18,7 +18,6 @@
   const log = (...a) => {
     try { console.log("[DOCTOR]", ...a); } catch {}
     try { window.__RCF_LOGS__?.push?.({ t: Date.now(), tag: "DOCTOR", msg: a.join(" ") }); } catch {}
-    try { window.RCF_LOGGER?.push?.("INFO", a.join(" ")); } catch {}
   };
 
   const $ = (sel, root = document) => root.querySelector(sel);
@@ -300,129 +299,60 @@
     return out;
   }
 
+  async function buildReport() {
+    const sw = await listSW();
+    const ca = await listCaches();
+    const ls = countLocalStorageKeys("rcf:");
+    const mb = readMotherBundleLocal();
+    const rs = resourcesSummary();
 
-function checkModulePresence() {
-  const mods = {
-    stability_guard: !!window.__RCF_STABILITY_GUARD__ || !!window.__RCF_STABILITY_GUARD || !!window.RCF_STABILITY_GUARD,
-    github_sync: !!window.RCF_GH_SYNC,
-    diagnostics: !!window.RCF_DIAGNOSTICS,
-    vfs_overrides: !!window.__RCF_VFS_OVERRIDES__ || !!window.__RCF_VFS__ || !!window.RCF_VFS
-  };
-  const ok = Object.values(mods).every(Boolean);
-  return { ok, mods };
-}
+    const hints = [];
+    if (sw.supported && sw.controller && sw.registrations === 0) {
+      hints.push("- SW controller=true mas registrations=0: pode ser SW antigo/controlando por outra scope.\n  Use: Tools > Unregister SW se ficar preso.");
+    }
+    if (ca.supported && ca.keys === 0) {
+      hints.push("- Cache API vazio (keys=0): ok se você está usando overrides + bundle local.");
+    }
+    if (!mb.present) {
+      hints.push("- mother_bundle_local não encontrado: se o app não estiver puxando o bundle, confira GitHub pull e MAE update.");
+    }
 
-function detectRuntimeVFS() {
-  try {
-    return String(window.__RCF_VFS_RUNTIME || window.__RCF_RUNTIME_VFS || window.RCF_VFS?.runtime || "unknown");
-  } catch {
-    return "unknown";
-  }
-}
-
-function detectUIMounts() {
-  return {
-    Admin: !!(document.getElementById("btnGoAdmin") || document.querySelector('[data-view="admin"]') || document.getElementById("view-admin")),
-    Diagnostics: !!(window.RCF_DIAGNOSTICS || window.RCF_DOCTOR_SCAN),
-    Logs: !!(document.getElementById("btnLogs") || document.querySelector('[data-rcf-action="logs.open"]') || Array.from(document.querySelectorAll("button,a")).some(b => String(b.textContent||"").trim().toLowerCase() === "logs")),
-    GitHub: !!Array.from(document.querySelectorAll("button,a")).find(b => String(b.textContent||"").trim().toLowerCase() === "github")
-  };
-}
-
-async function checkMotherBundlePath() {
-  const out = { path: "app/import/mother_bundle.json", ok: false };
-  try {
-    const res = await fetch("/app/import/mother_bundle.json", { method: "HEAD", cache: "no-store" });
-    out.ok = !!res.ok;
-  } catch {}
-  return out;
-}
-
-async function tryAIAnalysis(reportObj) {
-  try {
-    const res = await fetch("/api/admin-ai", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "factory_diagnosis", payload: reportObj })
-    });
-    if (!res.ok) return null;
-    return await res.text();
-  } catch {
-    return null;
-  }
-}
-
-
-async function buildReport() {
-  const sw = await listSW();
-  const ca = await listCaches();
-  const ls = countLocalStorageKeys("rcf:");
-  const mb = readMotherBundleLocal();
-  const rs = resourcesSummary();
-  const mod = checkModulePresence();
-  const runtimeVFS = detectRuntimeVFS();
-  const mounts = detectUIMounts();
-  const motherPath = await checkMotherBundlePath();
-
-  const reportObj = {
-    ts: nowISO(),
-    version: VERSION,
-    serviceWorker: sw,
-    caches: ca,
-    localStorage: ls,
-    motherBundleLocal: mb,
-    resources: rs,
-    modules: mod,
-    runtimeVFS,
-    uiMounts: mounts,
-    motherBundlePath: motherPath
-  };
-
-  const hints = [];
-  if (sw.supported && sw.controller && sw.registrations === 0) {
-    hints.push("- SW controller=true mas registrations=0: pode ser SW antigo/controlando por outra scope.");
-  }
-  if (ca.supported && ca.keys === 0) {
-    hints.push("- Cache API vazio: ok se você está usando overrides + bundle local.");
-  }
-  if (!mb.present) {
-    hints.push("- mother_bundle_local não encontrado: confira GitHub pull e MAE update.");
-  }
-  if (!motherPath.ok) {
-    hints.push("- app/import/mother_bundle.json ausente ou inacessível.");
-  }
-
-  const lines = [];
-  lines.push(`[${reportObj.ts}] DOCTOR REPORT ${VERSION}`);
-  lines.push("");
-  lines.push(`Service Worker: ${sw.supported ? "OK" : "WARN"} regs=${sw.registrations} controller=${!!sw.controller}`);
-  lines.push(`Caches: ${ca.supported ? "OK" : "WARN"} (${ca.keys})`);
-  lines.push(`Modules: ${mod.ok ? "OK" : "WARN"} ${JSON.stringify(mod.mods)}`);
-  lines.push(`Runtime VFS: ${runtimeVFS}`);
-  lines.push(`UI Mounts: ${JSON.stringify(mounts)}`);
-  lines.push(`Mother Bundle: ${motherPath.ok ? "OK" : "WARN"} (${motherPath.path})`);
-  lines.push("");
-  lines.push(`localStorage: total=${ls.total} rcf=${ls.pref}`);
-  lines.push(`mother_bundle_local: present=${!!mb.present} files=${mb.filesCount} size=${mb.size}`);
-  lines.push(`resources: total=${rs.total} unique=${rs.unique} duplicates=${rs.duplicates}`);
-
-  if (hints.length) {
+    const lines = [];
+    lines.push(`[${nowISO()}] RCF DOCTOR REPORT ${VERSION}`);
     lines.push("");
-    lines.push("Hints:");
-    for (const h of hints) lines.push(h);
-  }
-
-  const aiText = await tryAIAnalysis(reportObj);
-  if (aiText) {
+    lines.push("== Service Worker ==");
+    lines.push(`supported: ${!!sw.supported}`);
+    lines.push(`controller: ${!!sw.controller}`);
+    lines.push(`registrations: ${sw.registrations}`);
+    if (sw.scopes.length) lines.push(`scopes: ${sw.scopes.slice(0, 8).join(" | ")}`);
     lines.push("");
-    lines.push("AI ANALYSIS");
-    lines.push(String(aiText));
-  }
+    lines.push("== Cache API ==");
+    lines.push(`supported: ${!!ca.supported}`);
+    lines.push(`keys: ${ca.keys}`);
+    lines.push("");
+    lines.push("== localStorage ==");
+    lines.push(`total keys: ${ls.total}`);
+    lines.push(`rcf:* keys: ${ls.pref}`);
+    lines.push("");
+    lines.push("== mother_bundle_local ==");
+    lines.push(`present: ${!!mb.present}`);
+    lines.push(`key: ${mb.key}`);
+    lines.push(`size: ${mb.size}`);
+    lines.push(`filesCount: ${mb.filesCount}`);
+    lines.push("");
+    lines.push("== Resources ==");
+    lines.push(`total: ${rs.total}`);
+    lines.push(`unique: ${rs.unique}`);
+    lines.push(`duplicates: ${rs.duplicates}`);
 
-  const finalText = lines.join("\n");
-  try { window.RCF_LOGGER?.push?.("INFO", finalText); } catch {}
-  return finalText;
-}
+    if (hints.length) {
+      lines.push("");
+      lines.push("== Hints (SAFE) ==");
+      for (const h of hints) lines.push(h);
+    }
+
+    return lines.join("\n");
+  }
 
   // =========================================================
   // Public API
@@ -431,16 +361,21 @@ async function buildReport() {
     const rep = await buildReport().catch(e => "Doctor error: " + ((e && e.message) ? e.message : String(e)));
     const modal = openModal(rep);
     try { modal.pre.scrollTop = 0; } catch {}
+    try {
+      fetch("/api/admin-ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "factory_diagnosis", payload: rep })
+      }).catch(() => {});
+    } catch {}
     return modal;
   }
 
   window.RCF_DOCTOR_SCAN = {
     version: VERSION,
     open,
-    show: open,
     scan: buildReport
   };
-  window.RCF_DOCTOR = window.RCF_DOCTOR || { open, show: open, scan: buildReport };
 
   log("doctor_scan.js ready ✅ (" + VERSION + ") API=window.RCF_DOCTOR_SCAN.open()");
 })();
