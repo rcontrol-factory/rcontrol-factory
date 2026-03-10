@@ -2586,59 +2586,47 @@
   // =========================================================
   // Doctor (atalho p/ Diagnostics + ScanMap quando disponível)
   // =========================================================
-  function resolveDoctorExternal() {
-    try {
-      const out = [
-        window.RCF_DOCTOR_SCAN,
-        window.__RCF_DOCTOR__,
-        window.RCF_DIAGNOSTICS && window.RCF_DIAGNOSTICS.doctor
-      ].filter(Boolean);
-
-      for (const obj of out) {
-        if (obj === window.RCF_DOCTOR) continue;
-        if (typeof obj.open === "function" || typeof obj.show === "function") return obj;
-      }
-    } catch {}
-    return null;
-  }
-
   function runDoctor() {
     // v8.0.6_DOCTOR_OPEN_FIX
     if (runDoctor.__running__) return;
     runDoctor.__running__ = true;
     try { Logger.write("doctor: start"); } catch {}
     try {
-      try { window.dispatchEvent(new CustomEvent("RCF:DOCTOR", { detail: { ts: Date.now() } })); } catch {}
+// 1) Permite que módulos externos (doctor/scan) respondam
+    try { window.dispatchEvent(new CustomEvent("RCF:DOCTOR", { detail: { ts: Date.now() } })); } catch {}
 
-      const ext = resolveDoctorExternal();
-      if (ext) {
-        if (typeof ext.open === "function") {
-          try { Logger.write("doctor: open()"); } catch {}
-          return ext.open();
-        }
-        if (typeof ext.show === "function") {
-          try { Logger.write("doctor: show()"); } catch {}
-          return ext.show();
-        }
+    // 2) Se existir UI de Doctor carregada por algum módulo, abre ela
+    try {
+      const candidates = [
+        window.RCF_DOCTOR_SCAN,
+        window.__RCF_DOCTOR__,
+        window.RCF_DIAGNOSTICS && window.RCF_DIAGNOSTICS.doctor
+      ].filter(Boolean);
+      for (const obj of candidates) {
+        if (obj === window.RCF_DOCTOR) continue;
+        if (typeof obj.open === "function") { try { Logger.write("doctor: open()"); } catch {} return obj.open(); }
+        if (typeof obj.show === "function") { try { Logger.write("doctor: show()"); } catch {} return obj.show(); }
       }
+    } catch {}
 
-      try {
-        const D = window.RCF_DIAGNOSTICS;
-        if (D && typeof D.run === "function") D.run({ silent: false });
-      } catch (e) { try { Logger.write("doctor: diagnostics fail " + (e && e.message ? e.message : e)); } catch {} }
+    // 3) Fallback: roda diagnostics + scanmap e joga você para Logs (pra você VER que rodou)
+    try {
+      const D = window.RCF_DIAGNOSTICS;
+      if (D && typeof D.run === "function") D.run({ silent: false });
+    } catch (e) { try { Logger.write("doctor: diagnostics fail " + (e && e.message ? e.message : e)); } catch {} }
 
-      try {
-        const SM = window.RCF_SCANMAP;
-        if (SM && typeof SM.scanNow === "function") SM.scanNow();
-      } catch (e) { try { Logger.write("doctor: scanmap fail " + (e && e.message ? e.message : e)); } catch {} }
+    try {
+      const SM = window.RCF_SCANMAP;
+      if (SM && typeof SM.scanNow === "function") SM.scanNow();
+    } catch (e) { try { Logger.write("doctor: scanmap fail " + (e && e.message ? e.message : e)); } catch {} }
 
-      try { setView("logs"); } catch {}
-      try { Logger.write("doctor: done (fallback)"); } catch {}
+    try { setView("logs"); } catch {}
+    try { Logger.write("doctor: done (fallback)"); } catch {}
     } finally {
       try { Logger.write("doctor: end"); } catch {}
       runDoctor.__running__ = false;
     }
-  }
+}
 
   // =========================================================
   // Doctor export (garante clique via onclick, caso bindTap falhe no iOS)
@@ -2646,12 +2634,7 @@
   try {
     window.RCF_DOCTOR = window.RCF_DOCTOR || {};
     window.RCF_DOCTOR.run = runDoctor;
-    window.RCF_DOCTOR.open = () => {
-      const ext = resolveDoctorExternal();
-      if (ext && typeof ext.open === "function") return ext.open();
-      if (ext && typeof ext.show === "function") return ext.show();
-      return runDoctor();
-    };
+    window.RCF_DOCTOR.open = () => runDoctor();
   } catch {}
 
 
