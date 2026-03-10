@@ -1,565 +1,155 @@
+<!--
+  RControl Factory — INDEX (NORMAL BOOT) vCLEAN-2
+  ✅ Sem SAFE BOOT embutido
+  ✅ Sem loader manual (sem loadScript / sem lista dinâmica / sem watchdog)
+  ✅ Boot via <script defer> padrão
+  ✅ Mantém o “app root” (#app) simples e estável
+
+  PATCH MÍNIMO:
+  - Adicionado: ./js/core/factory_state.js
+  - Adicionado: ./js/core/module_registry.js
+  - Adicionado: ./js/core/context_engine.js
+  - Adicionado: ./js/core/factory_tree.js
+  - Mantido: admin.admin_ai.js
+-->
+
 <!doctype html>
 <html lang="pt-BR">
 <head>
+  <!-- Core -->
   <meta charset="utf-8" />
-  <meta
-    name="viewport"
-    content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no"
-  />
-  <meta name="theme-color" content="#0b1220" />
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="RControl Factory" />
+  <meta http-equiv="x-ua-compatible" content="ie=edge" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
 
   <title>RControl Factory</title>
+  <meta name="theme-color" content="#0b1020" />
+  <meta name="color-scheme" content="dark light" />
 
+  <!-- RCF marker -->
+  <meta name="rcf-index" content="NORMAL_BOOT_2026_02_24_vCLEAN_2" />
+
+  <!-- PWA -->
+  <base href="./" />
+  <link rel="manifest" href="./manifest.json" />
+  <link rel="icon" href="./favicon.ico" />
+  <link rel="apple-touch-icon" href="./icons/icon-192.png" />
+
+  <!-- Styles -->
+  <link rel="stylesheet" href="./styles.css" />
+
+  <!-- Fallback visual mínimo (não é SafeBoot; é só “splash” neutro) -->
   <style>
-    :root{
-      --rcf-css-token: "V8_INDEX_SAFE_AI_RESTORE";
-      --bg: #0b1220;
-      --bg-2: #0f172a;
-      --panel: #111827;
-      --panel-2: #0f172a;
-      --text: #e5e7eb;
-      --muted: #94a3b8;
-      --line: rgba(255,255,255,.08);
-      --line-2: rgba(255,255,255,.12);
-      --ok: #22c55e;
-      --warn: #f59e0b;
-      --danger: #ef4444;
-      --accent: #38bdf8;
-      --radius: 14px;
-      --shadow: 0 14px 40px rgba(0,0,0,.28);
-      --topbar-h: 110px;
-      --tools-w: 360px;
-      --fab-z: 9999;
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      background: #0b1020;
+      color: #eaf0ff;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
     }
-
-    *{ box-sizing:border-box; }
-
-    html,body{
-      margin:0;
-      padding:0;
-      width:100%;
-      min-height:100%;
-      background:var(--bg);
-      color:var(--text);
-      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,Helvetica,Arial,sans-serif;
-      -webkit-font-smoothing:antialiased;
-      -moz-osx-font-smoothing:grayscale;
+    .rcf_splash {
+      min-height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 18px;
+      box-sizing: border-box;
     }
-
-    html{
-      overflow-x:hidden;
-      background:var(--bg);
+    .rcf_splash_card {
+      max-width: 720px;
+      width: 100%;
+      background: rgba(255,255,255,.06);
+      border: 1px solid rgba(255,255,255,.12);
+      border-radius: 18px;
+      padding: 16px 14px;
+      box-sizing: border-box;
     }
-
-    body{
-      overflow-x:hidden;
-      background:
-        radial-gradient(circle at top, rgba(56,189,248,.08), transparent 30%),
-        linear-gradient(180deg, #08101d 0%, #0b1220 100%);
+    .rcf_splash_title {
+      font-size: 18px;
+      font-weight: 900;
+      margin: 0 0 8px 0;
+      letter-spacing: .2px;
     }
-
-    button,input,select,textarea{
-      font:inherit;
-    }
-
-    button{
-      cursor:pointer;
-    }
-
-    #app{
-      min-height:100vh;
-      width:100%;
-    }
-
-    #rcfRoot{
-      min-height:100vh;
-      width:100%;
-      position:relative;
-    }
-
-    .topbar{
-      position:sticky;
-      top:0;
-      z-index:40;
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
-      background:rgba(11,18,32,.82);
-      border-bottom:1px solid var(--line);
-      padding:10px 12px;
-    }
-
-    .brand{
-      display:flex;
-      align-items:center;
-      gap:12px;
-      min-width:0;
-    }
-
-    .brand .dot{
-      width:12px;
-      height:12px;
-      border-radius:999px;
-      background:linear-gradient(180deg,#34d399,#10b981);
-      box-shadow:0 0 0 4px rgba(16,185,129,.14);
-      flex:0 0 auto;
-    }
-
-    .brand-text{
-      min-width:0;
-    }
-
-    .title{
-      font-size:18px;
-      font-weight:900;
-      letter-spacing:.2px;
-      line-height:1.15;
-    }
-
-    .subtitle{
-      font-size:12px;
-      color:var(--muted);
-      line-height:1.2;
-      margin-top:2px;
-    }
-
-    .spacer{
-      flex:1 1 auto;
-      min-width:8px;
-    }
-
-    .tabs{
-      display:flex;
-      gap:8px;
-      overflow-x:auto;
-      overflow-y:hidden;
-      padding:8px 0 2px;
-      margin-top:8px;
-      -webkit-overflow-scrolling:touch;
-      scrollbar-width:none;
-    }
-
-    .tabs::-webkit-scrollbar{
-      display:none;
-    }
-
-    .tab,
-    .btn{
-      border:1px solid var(--line-2);
-      background:rgba(255,255,255,.04);
-      color:var(--text);
-      border-radius:999px;
-      padding:10px 12px;
-      min-height:40px;
-      transition:.18s ease;
-    }
-
-    .tab:hover,
-    .btn:hover{
-      background:rgba(255,255,255,.07);
-    }
-
-    .tab.active{
-      background:rgba(56,189,248,.16);
-      border-color:rgba(56,189,248,.30);
-      color:#fff;
-    }
-
-    .btn.small{
-      min-height:34px;
-      padding:8px 10px;
-      font-size:12px;
-    }
-
-    .btn.ok{
-      background:rgba(34,197,94,.14);
-      border-color:rgba(34,197,94,.28);
-    }
-
-    .btn.ghost{
-      background:rgba(255,255,255,.03);
-    }
-
-    .btn.danger{
-      background:rgba(239,68,68,.14);
-      border-color:rgba(239,68,68,.28);
-    }
-
-    .container{
-      padding:12px;
-      padding-bottom:110px;
-    }
-
-    .views{
-      display:block;
-      width:100%;
-    }
-
-    .view{
-      display:none;
-    }
-
-    .view.active{
-      display:block;
-    }
-
-    .card{
-      width:100%;
-      background:linear-gradient(180deg, rgba(255,255,255,.045), rgba(255,255,255,.03));
-      border:1px solid var(--line);
-      border-radius:var(--radius);
-      box-shadow:var(--shadow);
-      padding:12px;
-    }
-
-    .hero{
-      margin-top:0;
-    }
-
-    .card + .card,
-    .view .card + .card{
-      margin-top:12px;
-    }
-
-    h1,h2,p,pre{
-      margin-top:0;
-    }
-
-    h1{
-      font-size:24px;
-      margin-bottom:10px;
-    }
-
-    h2{
-      font-size:18px;
-      margin-bottom:8px;
-    }
-
-    p{
-      color:var(--text);
-    }
-
-    .hint{
-      color:var(--muted);
-      font-size:13px;
-    }
-
-    .badge{
-      display:inline-flex;
-      align-items:center;
-      gap:8px;
-      min-height:36px;
-      padding:8px 12px;
-      border-radius:999px;
-      background:rgba(255,255,255,.05);
-      border:1px solid var(--line);
-      color:var(--text);
-    }
-
-    .status-box,
-    .row{
-      display:flex;
-      gap:10px;
-      align-items:center;
-      flex-wrap:wrap;
-    }
-
-    .row + .row{
-      margin-top:10px;
-    }
-
-    .form input,
-    .form select,
-    .form textarea,
-    input,
-    select,
-    textarea{
-      width:100%;
-      min-height:42px;
-      border-radius:12px;
-      border:1px solid var(--line-2);
-      background:rgba(2,6,23,.72);
-      color:var(--text);
-      padding:10px 12px;
-      outline:none;
-    }
-
-    textarea{
-      min-height:180px;
-      resize:vertical;
-    }
-
-    .editor{
-      border:1px solid var(--line);
-      border-radius:14px;
-      overflow:hidden;
-      background:rgba(2,6,23,.42);
-    }
-
-    .editor-head{
-      padding:10px 12px;
-      border-bottom:1px solid var(--line);
-      color:var(--muted);
-      font-size:13px;
-      background:rgba(255,255,255,.02);
-    }
-
-    #fileContent{
-      width:100%;
-      min-height:52vh;
-      border:0;
-      border-radius:0;
-      background:transparent;
-      color:var(--text);
-      padding:14px;
-      font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;
-      font-size:13px;
-      line-height:1.45;
-    }
-
-    .files,
-    .apps{
-      display:flex;
-      flex-direction:column;
-      gap:8px;
-    }
-
-    .file-item,
-    .app-item{
-      border:1px solid var(--line);
-      border-radius:12px;
-      background:rgba(255,255,255,.03);
-      padding:10px 12px;
-    }
-
-    .file-item{
-      cursor:pointer;
-      word-break:break-word;
-    }
-
-    .file-item.active{
-      background:rgba(56,189,248,.12);
-      border-color:rgba(56,189,248,.28);
-    }
-
-    .mono{
-      width:100%;
-      white-space:pre-wrap;
-      word-break:break-word;
-      background:rgba(2,6,23,.58);
-      border:1px solid var(--line);
-      border-radius:12px;
-      padding:12px;
-      color:#dbeafe;
-      font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;
-      font-size:12px;
-      line-height:1.45;
-      overflow:auto;
-      -webkit-overflow-scrolling:touch;
-      max-height:28vh;
-    }
-
-    .mono.small{
-      max-height:22vh;
-    }
-
-    .tools{
-      position:fixed;
-      top:0;
-      right:0;
-      height:100dvh;
-      width:min(var(--tools-w), 92vw);
-      background:rgba(8,13,24,.98);
-      border-left:1px solid var(--line-2);
-      box-shadow:-18px 0 40px rgba(0,0,0,.35);
-      transform:translateX(105%);
-      transition:transform .22s ease;
-      z-index:5000;
-      display:flex;
-      flex-direction:column;
-    }
-
-    .tools.open{
-      transform:translateX(0);
-    }
-
-    .tools-head{
-      display:flex;
-      align-items:center;
-      gap:10px;
-      padding:12px;
-      border-bottom:1px solid var(--line);
-      min-height:60px;
-    }
-
-    .tools-body{
-      flex:1 1 auto;
-      overflow:auto;
-      -webkit-overflow-scrolling:touch;
-      padding:12px;
-    }
-
-    #rcfFab{
-      position:fixed;
-      right:14px;
-      bottom:14px;
-      width:54px;
-      height:54px;
-      border-radius:999px;
-      border:1px solid rgba(255,255,255,.16);
-      background:rgba(20,28,44,.94);
-      color:#fff;
-      font-size:20px;
-      font-weight:900;
-      box-shadow:0 10px 30px rgba(0,0,0,.35);
-      z-index:var(--fab-z);
-    }
-
-    #rcfFabPanel{
-      position:fixed;
-      right:14px;
-      bottom:78px;
-      width:220px;
-      max-width:calc(100vw - 28px);
-      border-radius:14px;
-      border:1px solid rgba(255,255,255,.12);
-      background:rgba(12,16,26,.97);
-      color:#fff;
-      padding:10px;
-      z-index:var(--fab-z);
-      display:none;
-      box-shadow:0 18px 34px rgba(0,0,0,.38);
-    }
-
-    #rcfFabPanel.open{
-      display:block;
-    }
-
-    #rcfFabPanel .fab-title{
-      display:flex;
-      align-items:center;
-      justify-content:space-between;
-      gap:10px;
-      font-weight:900;
-      margin-bottom:8px;
-    }
-
-    #rcfFabPanel .fab-status{
-      font-size:12px;
-      color:var(--muted);
-      white-space:nowrap;
-      overflow:hidden;
-      text-overflow:ellipsis;
-      max-width:120px;
-    }
-
-    #rcfFabPanel .fab-row{
-      display:flex;
-      gap:8px;
-      flex-wrap:wrap;
-    }
-
-    #rcfFabPanel .fab-row + .fab-row{
-      margin-top:8px;
-    }
-
-    #rcfFabPanel .fab-row .btn{
-      flex:1 1 auto;
-    }
-
-    .status-pill{
-      display:none;
-    }
-
-    @media (max-width: 720px){
-      .container{
-        padding:10px;
-        padding-bottom:100px;
-      }
-
-      #fileContent{
-        min-height:46vh;
-      }
+    .rcf_splash_hint {
+      opacity: .86;
+      font-size: 13px;
+      line-height: 1.35;
+      margin: 0;
     }
   </style>
+
+  <!--
+    BOOT PADRÃO (scripts estáticos com defer)
+    IMPORTANTE: não mudar ordem sem necessidade.
+  -->
+
+  <!-- Core / boot safety -->
+  <script defer src="./js/core/logger.js"></script>
+  <script defer src="./js/core/stability_guard.js"></script>
+  <script defer src="./js/core/factory_state.js"></script>
+  <script defer src="./js/core/module_registry.js"></script>
+  <script defer src="./js/core/context_engine.js"></script>
+  <script defer src="./js/core/factory_tree.js"></script>
+
+  <!-- Storage + GitHub + VFS + MAE + updates -->
+  <script defer src="./js/core/storage.js"></script>
+  <script defer src="./js/core/github_sync.js"></script>
+  <script defer src="./js/core/vfs_overrides.js"></script>
+  <script defer src="./js/core/vfs_shim.js"></script>
+  <script defer src="./js/core/mother_selfupdate.js"></script>
+
+  <!-- Errors + UI safety/compact -->
+  <script defer src="./js/core/errors.js"></script>
+  <script defer src="./js/core/ui_safety.js"></script>
+  <script defer src="./js/core/ui_compact_outputs.js"></script>
+
+  <!-- UI bindings + diagnostics + doctor + preview -->
+  <script defer src="./js/core/ui_bindings.js"></script>
+  <script defer src="./js/core/diagnostics.js"></script>
+  <script defer src="./js/core/doctor_scan.js"></script>
+  <script defer src="./js/core/preview_runner.js"></script>
+
+  <!-- Injector + engine pipeline -->
+  <script defer src="./js/core/injector.js"></script>
+  <script defer src="./js/engine/template_registry.js"></script>
+  <script defer src="./js/engine/module_registry.js"></script>
+  <script defer src="./js/engine/builder.js"></script>
+  <script defer src="./js/engine/engine.js"></script>
+
+  <!-- Pages links + Admin GH + Admin AI -->
+  <script defer src="./js/core/pages_links.js"></script>
+  <script defer src="./js/admin.github.js"></script>
+  <script defer src="./js/admin.admin_ai.js"></script>
+
+  <!-- App main -->
+  <script defer src="./app.js"></script>
+
+  <!-- Vault / ZIP -->
+  <script defer src="./js/core/zip_vault.js"></script>
+  <script defer src="./js/core/agent_zip_bridge.js"></script>
 </head>
+
 <body>
-  <div id="app"></div>
+  <noscript>Ative o JavaScript para usar a RControl Factory.</noscript>
 
-  <script>
-    window.__RCF_INDEX_BOOTED__ = true;
+  <!-- Root único e fixo -->
+  <div id="app">
+    <!-- Splash neutro (o app substitui/atualiza o conteúdo ao montar) -->
+    <div class="rcf_splash" aria-label="RCF carregando">
+      <div class="rcf_splash_card">
+        <h1 class="rcf_splash_title">RControl Factory</h1>
+        <p class="rcf_splash_hint">
+          Carregando módulos…<br/>
+          Se ficar preso, use o Safe Boot separado (emergência).
+        </p>
+      </div>
+    </div>
+  </div>
 
-    (function () {
-      "use strict";
-
-      const log = (...args) => {
-        try { console.log("[RCF:index]", ...args); } catch {}
-      };
-
-      const CANDIDATES = [
-        "./js/core/ui_bindings.js",
-        "./js/engine/engine.js",
-        "./js/admin.openai.js",
-        "./js/admin.ai.js",
-        "./js/admin.openai.bridge.js",
-        "./js/admin.openai.panel.js",
-        "./js/admin.integrations.ai.js",
-        "./js/modules/admin_ai.js",
-        "./js/modules/admin_openai.js"
-      ];
-
-      function loadScript(src) {
-        return new Promise((resolve) => {
-          try {
-            const s = document.createElement("script");
-            s.src = src;
-            s.async = false;
-            s.onload = () => {
-              log("loaded:", src);
-              resolve({ ok: true, src });
-            };
-            s.onerror = () => {
-              log("skip missing:", src);
-              resolve({ ok: false, src });
-            };
-            document.head.appendChild(s);
-          } catch (e) {
-            log("load fail:", src, e && e.message ? e.message : e);
-            resolve({ ok: false, src, err: e && e.message ? e.message : String(e) });
-          }
-        });
-      }
-
-      async function loadOptionalAdminModules() {
-        const out = [];
-        for (const src of CANDIDATES) {
-          out.push(await loadScript(src));
-        }
-        try { window.__RCF_OPTIONAL_LOADS__ = out; } catch {}
-      }
-
-      window.__RCF_LOAD_OPTIONALS__ = loadOptionalAdminModules;
-    })();
-  </script>
-
-  <script>
-    (async function () {
-      "use strict";
-      try {
-        if (typeof window.__RCF_LOAD_OPTIONALS__ === "function") {
-          await window.__RCF_LOAD_OPTIONALS__();
-        }
-      } catch (e) {
-        try { console.log("[RCF:index] optional loader fail:", e && e.message ? e.message : e); } catch {}
-      }
-
-      const main = document.createElement("script");
-      main.src = "./app.js";
-      main.async = false;
-      document.body.appendChild(main);
-    })();
-  </script>
+  <!--
+    Sem SAFE BOOT aqui.
+    Sem loader JS aqui.
+    Sem timers aqui.
+    Sem listeners globais aqui.
+  -->
 </body>
 </html>
