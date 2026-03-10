@@ -1,6 +1,6 @@
 /* FILE: /app/js/admin.admin_ai.js
    RControl Factory — Admin AI (Fase IA-1)
-   v1.2 ADMIN-FIXED + CHAT-LITE + PATCH/GERAR CÓDIGO
+   v1.3 ADMIN-FIXED + CHAT-LITE + CONTEXT-RICH
 
    - fixo no Admin
    - não aparece solto em outras views
@@ -8,16 +8,16 @@
    - múltiplas perguntas sem reload
    - ações rápidas + doctor + patch + gerar código
    - usa /api/admin-ai
+   - consome melhor RCF_CONTEXT
    - não executa patch automático
-   - patch mínimo / não mexe no boot
 */
 
 (() => {
   "use strict";
 
-  if (window.RCF_ADMIN_AI && window.RCF_ADMIN_AI.__v12) return;
+  if (window.RCF_ADMIN_AI && window.RCF_ADMIN_AI.__v13) return;
 
-  const VERSION = "v1.2";
+  const VERSION = "v1.3";
   const BOX_ID = "rcfAdminAIBox";
   const CHAT_ID = "rcfAdminAIChat";
 
@@ -27,8 +27,8 @@
   };
 
   function log(level, msg) {
-    try { window.RCF_LOGGER?.push?.(level, "[ADMIN_AI] " + msg); } catch {}
-    try { console.log("[ADMIN_AI]", level, msg); } catch {}
+    try { window.RCF_LOGGER?.push?.(level, "[ADMIN_AI] " + msg); } catch (_) {}
+    try { console.log("[ADMIN_AI]", level, msg); } catch (_) {}
   }
 
   function esc(s) {
@@ -38,28 +38,20 @@
   }
 
   function isAdminViewVisible() {
-    const candidates = [
-      document.getElementById("view-admin"),
-      document.querySelector('[data-rcf-view="admin"]'),
-      document.querySelector('#tab-admin'),
-      document.querySelector('.view-admin')
-    ].filter(Boolean);
-
-    for (const el of candidates) {
-      try {
-        const style = window.getComputedStyle(el);
-        if (style.display !== "none" && style.visibility !== "hidden") {
-          return true;
-        }
-      } catch {}
-    }
-
     try {
-      const activeBtn = document.querySelector('.tab.active,[aria-selected="true"],.is-active');
-      if (activeBtn && /admin/i.test(activeBtn.textContent || "")) {
-        return true;
-      }
-    } catch {}
+      const activeView =
+        document.querySelector(".view.active") ||
+        document.querySelector("[data-rcf-view].active");
+
+      if (!activeView) return false;
+
+      const id =
+        activeView.id ||
+        activeView.getAttribute("data-rcf-view") ||
+        "";
+
+      return /admin/i.test(id);
+    } catch (_) {}
 
     return false;
   }
@@ -71,7 +63,7 @@
         const slot = ui.getSlot("admin.integrations");
         if (slot) return slot;
       }
-    } catch {}
+    } catch (_) {}
 
     return (
       document.getElementById("rcfAdminSlotIntegrations") ||
@@ -85,35 +77,7 @@
   function syncVisibility() {
     const box = document.getElementById(BOX_ID);
     if (!box) return;
-
     box.style.display = isAdminViewVisible() ? "" : "none";
-  }
-
-  function collectFactoryInfo() {
-    let doctorVersion = "unknown";
-    let doctorLast = null;
-
-    try {
-      doctorVersion = window.RCF_DOCTOR_SCAN?.version || "unknown";
-      doctorLast = window.RCF_DOCTOR_SCAN?.lastReport || null;
-    } catch {}
-
-    return {
-      href: location.href,
-      runtimeVFS: window.__RCF_VFS_RUNTIME || window.RCF_RUNTIME || "unknown",
-      version: window.RCF_VERSION || "unknown",
-      hasLogger: !!window.RCF_LOGGER,
-      hasDoctor: !!window.RCF_DOCTOR_SCAN,
-      hasGitHub: !!window.RCF_GH_SYNC,
-      hasVault: !!window.RCF_ZIP_VAULT,
-      hasBridge: !!window.RCF_AGENT_ZIP_BRIDGE,
-      hasDiagnostics: !!window.RCF_DIAGNOSTICS,
-      hasAdminAIBackend: true,
-      doctorVersion,
-      doctorLast,
-      userAgent: navigator.userAgent,
-      ts: new Date().toISOString()
-    };
   }
 
   function collectLogs(limit = 120) {
@@ -122,19 +86,37 @@
       if (logger && Array.isArray(logger.items)) {
         return logger.items.slice(-limit);
       }
-    } catch {}
+    } catch (_) {}
     return [];
   }
 
   function collectDoctorReport() {
     try {
+      if (window.RCF_FACTORY_STATE?.getState?.().doctorLastRun) {
+        return window.RCF_FACTORY_STATE.getState().doctorLastRun;
+      }
+    } catch (_) {}
+
+    try {
       if (window.RCF_DOCTOR_SCAN?.lastReport) {
         return window.RCF_DOCTOR_SCAN.lastReport;
       }
-    } catch {}
+    } catch (_) {}
 
     return {
       note: "Doctor report não encontrado ainda. Rode o Doctor antes.",
+      ts: new Date().toISOString()
+    };
+  }
+
+  function collectContext() {
+    try {
+      if (window.RCF_CONTEXT && typeof window.RCF_CONTEXT.getContext === "function") {
+        return window.RCF_CONTEXT.getContext();
+      }
+    } catch (_) {}
+    return {
+      fallback: true,
       ts: new Date().toISOString()
     };
   }
@@ -208,7 +190,7 @@
       `;
     }).join("");
 
-    try { box.scrollTop = box.scrollHeight; } catch {}
+    try { box.scrollTop = box.scrollHeight; } catch (_) {}
   }
 
   function clearChat() {
@@ -304,26 +286,26 @@
     const prompt = buildPromptFromMode(mode, customPrompt);
 
     let payload = {
-      factory: collectFactoryInfo()
+      context: collectContext()
     };
 
     if (mode === "analyze-logs") {
       payload = {
-        factory: collectFactoryInfo(),
+        context: collectContext(),
         logs: collectLogs()
       };
     }
 
     if (mode === "factory_diagnosis") {
       payload = {
-        factory: collectFactoryInfo(),
+        context: collectContext(),
         doctor: collectDoctorReport()
       };
     }
 
     if (mode === "propose-patch" || mode === "generate-code") {
       payload = {
-        factory: collectFactoryInfo(),
+        context: collectContext(),
         logs: collectLogs(80),
         doctor: collectDoctorReport()
       };
@@ -486,8 +468,8 @@
 
   function mountLoop() {
     if (mount()) return true;
-    setTimeout(() => { try { mount(); } catch {} }, 700);
-    setTimeout(() => { try { mount(); } catch {} }, 1600);
+    setTimeout(() => { try { mount(); } catch (_) {} }, 700);
+    setTimeout(() => { try { mount(); } catch (_) {} }, 1600);
     return false;
   }
 
@@ -498,26 +480,27 @@
         setTimeout(syncVisibility, 50);
         setTimeout(syncVisibility, 250);
       }, { passive: true });
-    } catch {}
+    } catch (_) {}
   }
 
   window.RCF_ADMIN_AI = {
     __v1: true,
     __v11: true,
     __v12: true,
+    __v13: true,
     version: VERSION,
     mount,
     clearChat
   };
 
   try {
-    window.addEventListener("RCF:UI_READY", () => { try { mountLoop(); } catch {} }, { passive: true });
-  } catch {}
+    window.addEventListener("RCF:UI_READY", () => { try { mountLoop(); } catch (_) {} }, { passive: true });
+  } catch (_) {}
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", () => {
-      try { mountLoop(); } catch {}
-      try { startVisibilitySync(); } catch {}
+      try { mountLoop(); } catch (_) {}
+      try { startVisibilitySync(); } catch (_) {}
     }, { once: true });
   } else {
     mountLoop();
