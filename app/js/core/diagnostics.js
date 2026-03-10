@@ -404,3 +404,19 @@
   log("ok", "core/diagnostics.js ready ✅ (v7.2 BOOT TRACE)");
 })();
 /* === RCF_RANGE_END file:/app/js/core/diagnostics.js === */
+
+// --- Doctor AI-ready hook (non-breaking patch) ---
+export async function RCF_runDoctorAI(report){
+  try{
+    await fetch("/api/admin-ai",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        action:"factory_diagnosis",
+        payload:report
+      })
+    });
+  }catch(e){
+    // endpoint optional
+  }
+}
