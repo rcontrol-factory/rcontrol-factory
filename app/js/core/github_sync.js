@@ -8,7 +8,7 @@
 (() => {
   "use strict";
 
-  if (window.RCF_GH_SYNC && window.RCF_GH_SYNC.__v24h) return;
+  if (window.RCF_GH_SYNC && window.RCF_GH_SYNC.__v24h_patmask) return;
 
   const LS_CFG_KEY = "rcf:ghcfg";
   const API_BASE = "https://api.github.com";
@@ -56,25 +56,34 @@
     const inCfg = cfg || {};
     const norm = normalizeBundlePath(inCfg.path || FIXED_BUNDLE_PATH);
 
+    if (typeof inCfg.token === "string") {
+      RUNTIME_PAT = String(inCfg.token || "").trim() || null;
+    }
+
     const safe = {
       owner: String(inCfg.owner || "").trim(),
       repo: String(inCfg.repo || "").trim(),
       branch: String(inCfg.branch || "main").trim(),
-      path: norm.normalized,
+      path: norm.normalized
     };
-
-    const incomingToken = String(inCfg.token || "").trim();
-    if (incomingToken) RUNTIME_PAT = incomingToken;
 
     localStorage.setItem(LS_CFG_KEY, JSON.stringify(safe));
     log("ok", "OK: ghcfg saved");
-    return safe;
+    return Object.assign({}, safe, { token: String(RUNTIME_PAT || "").trim() });
+  }
+
+  function setRuntimeToken(token) {
+    RUNTIME_PAT = String(token || "").trim() || null;
+    return !!RUNTIME_PAT;
+  }
+
+  function getRuntimeToken() {
+    return String(RUNTIME_PAT || "").trim();
   }
 
   function headers(cfg) {
     const h = { "Accept": "application/vnd.github+json" };
-    const token = String((cfg && cfg.token) || RUNTIME_PAT || "").trim();
-    if (token) h["Authorization"] = "token " + token;
+    if (cfg.token) h["Authorization"] = "token " + cfg.token;
     return h;
   }
 
@@ -459,6 +468,7 @@
 
   window.RCF_GH_SYNC = {
     __v24h: true,
+    __v24h_patmask: true,
     loadConfig,
     saveConfig,
     pull,
@@ -466,9 +476,8 @@
     pushMotherBundle,
     listFillers,          // ✅ novo (UI futura)
     buildFactoryBundle,   // ✅ novo (debug/manual)
-    setRuntimeToken(token) { RUNTIME_PAT = String(token || "").trim() || null; return !!RUNTIME_PAT; },
-    getRuntimeToken() { return String(RUNTIME_PAT || ""); },
-    clearRuntimeToken() { RUNTIME_PAT = null; return true; }
+    setRuntimeToken,
+    getRuntimeToken
   };
 
   log("info", "github_sync.js loaded (v2.4h)");
@@ -492,7 +501,7 @@
       })();
 
       const token = String(opts.token || GH.getRuntimeToken?.() || cfg.ghToken || cfg.pat || "").trim();
-      if (!token) return { ok: false, err: "token ausente (somente sessão atual)" };
+      if (!token) return { ok: false, err: "token ausente (rcf:ghcfg.token)" };
 
       try {
         const res = await fetch("https://api.github.com/user", {
