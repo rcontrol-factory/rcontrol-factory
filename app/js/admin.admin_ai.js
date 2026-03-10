@@ -1,23 +1,22 @@
 /* FILE: /app/js/admin.admin_ai.js
    RControl Factory — Admin AI (Fase IA-1)
-   v1.4 ADMIN-FIXED + CHAT-LITE + CONTEXT-REFINED
+   v1.5 ADMIN-FIXED + CHAT-LITE + SNAPSHOT-RICH
 
    - fixo no Admin
-   - não aparece solto em outras views
    - histórico visual tipo chat-lite
    - múltiplas perguntas sem reload
    - ações rápidas + doctor + patch + gerar código
    - usa /api/admin-ai
-   - consome contexto refinado
+   - consome snapshot estrutural refinado
    - não executa patch automático
 */
 
 (() => {
   "use strict";
 
-  if (window.RCF_ADMIN_AI && window.RCF_ADMIN_AI.__v14) return;
+  if (window.RCF_ADMIN_AI && window.RCF_ADMIN_AI.__v15) return;
 
-  const VERSION = "v1.4";
+  const VERSION = "v1.5";
   const BOX_ID = "rcfAdminAIBox";
   const CHAT_ID = "rcfAdminAIChat";
 
@@ -80,7 +79,7 @@
     box.style.display = isAdminViewVisible() ? "" : "none";
   }
 
-  function collectLogs(limit = 60) {
+  function collectLogs(limit = 40) {
     try {
       const logger = window.RCF_LOGGER;
       if (logger && Array.isArray(logger.items)) {
@@ -109,8 +108,11 @@
     };
   }
 
-  function getContextRaw() {
+  function getSnapshotRaw() {
     try {
+      if (window.RCF_CONTEXT && typeof window.RCF_CONTEXT.getSnapshot === "function") {
+        return window.RCF_CONTEXT.getSnapshot();
+      }
       if (window.RCF_CONTEXT && typeof window.RCF_CONTEXT.getContext === "function") {
         return window.RCF_CONTEXT.getContext();
       }
@@ -118,13 +120,13 @@
     return null;
   }
 
-  function buildLeanContext() {
-    const raw = getContextRaw() || {};
+  function buildLeanSnapshot() {
+    const raw = getSnapshotRaw() || {};
     const factory = raw.factory || {};
     const modules = raw.modules || {};
     const doctor = raw.doctor || {};
     const environment = raw.environment || {};
-    const activeModules = Array.isArray(modules.active) ? modules.active : [];
+    const tree = raw.tree || {};
 
     return {
       factory: {
@@ -141,7 +143,7 @@
         lastRun: doctor.lastRun || null
       },
       modules: {
-        active: activeModules,
+        active: Array.isArray(modules.active) ? modules.active : [],
         status: {
           logger: !!modules.logger,
           doctor: !!modules.doctor,
@@ -154,6 +156,11 @@
           contextEngine: !!modules.contextEngine
         }
       },
+      tree: {
+        pathsCount: Number(tree.pathsCount || 0),
+        summary: tree.summary || {},
+        samples: Array.isArray(tree.samples) ? tree.samples.slice(0, 12) : []
+      },
       flags: {
         hasLogger: !!factory.flags?.hasLogger,
         hasDoctor: !!factory.flags?.hasDoctor,
@@ -161,7 +168,8 @@
         hasAdminAI: !!factory.flags?.hasAdminAI,
         hasFactoryState: !!factory.flags?.hasFactoryState,
         hasModuleRegistry: !!factory.flags?.hasModuleRegistry,
-        hasContextEngine: !!factory.flags?.hasContextEngine
+        hasContextEngine: !!factory.flags?.hasContextEngine,
+        hasFactoryTree: !!factory.flags?.hasFactoryTree
       },
       environment: {
         platform: environment.platform || "",
@@ -333,31 +341,31 @@
   }
 
   function buildPayload(mode) {
-    const context = buildLeanContext();
+    const snapshot = buildLeanSnapshot();
 
     if (mode === "analyze-logs") {
       return {
-        context,
+        snapshot,
         logs: collectLogs()
       };
     }
 
     if (mode === "factory_diagnosis") {
       return {
-        context,
+        snapshot,
         doctor: collectDoctorReport()
       };
     }
 
     if (mode === "propose-patch" || mode === "generate-code") {
       return {
-        context,
+        snapshot,
         doctor: collectDoctorReport(),
-        logs: collectLogs(40)
+        logs: collectLogs(30)
       };
     }
 
-    return { context };
+    return { snapshot };
   }
 
   function handleModeAction(mode, customPrompt) {
@@ -542,6 +550,7 @@
     __v12: true,
     __v13: true,
     __v14: true,
+    __v15: true,
     version: VERSION,
     mount,
     clearChat
