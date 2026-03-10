@@ -1,20 +1,20 @@
 <!--
-  RControl Factory — INDEX (NORMAL BOOT) vCLEAN-2 PADRÃO RESTAURADO
-  ✅ Sem SAFE BOOT embutido
-  ✅ Sem loader manual (sem loadScript / sem lista dinâmica / sem watchdog)
-  ✅ Boot via <script defer> padrão
-  ✅ Mantém o “app root” (#app) simples e estável
+  RControl Factory — INDEX (NORMAL BOOT) vCLEAN-2 PADRÃO RESTAURADO + VISUAL SAFE
+  ✅ Mantém boot normal estável
+  ✅ Mantém ordem original dos scripts
   ✅ Mantém admin.admin_ai.js
   ✅ Mantém doctor_scan.js
-  ✅ Mantém estrutura estável que você recuperou
+  ✅ Mantém root #app simples e estável
+  ✅ Sem SAFE BOOT embutido
+  ✅ Sem loader manual
+  ✅ Sem listeners globais extras
 
-  PATCH MÍNIMO:
-  - Mantido: ./js/core/factory_state.js
-  - Mantido: ./js/core/module_registry.js
-  - Mantido: ./js/core/context_engine.js
-  - Mantido: ./js/core/factory_tree.js
-  - Mantido: admin.admin_ai.js
-  - Mantido: ordem estável do boot normal
+  PATCH MÍNIMO VISUAL:
+  - token CSS para diagnostics
+  - meta iOS/PWA seguros
+  - splash visual mais profissional
+  - fundo refinado
+  - sem alterar arquitetura do boot
 -->
 
 <!doctype html>
@@ -29,8 +29,13 @@
   <meta name="theme-color" content="#0b1020" />
   <meta name="color-scheme" content="dark light" />
 
+  <!-- iOS / PWA -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RControl Factory" />
+
   <!-- RCF marker -->
-  <meta name="rcf-index" content="NORMAL_BOOT_2026_02_24_vCLEAN_2_PADRAO_RESTAURADO" />
+  <meta name="rcf-index" content="NORMAL_BOOT_2026_02_24_vCLEAN_2_PADRAO_RESTAURADO_VISUAL_SAFE" />
 
   <!-- PWA -->
   <base href="./" />
@@ -41,43 +46,190 @@
   <!-- Styles -->
   <link rel="stylesheet" href="./styles.css" />
 
-  <!-- Fallback visual mínimo (não é SafeBoot; é só “splash” neutro) -->
+  <!--
+    Fallback visual mínimo e elegante
+    - não é SafeBoot
+    - não controla fluxo
+    - só entrega uma apresentação mais profissional enquanto app.js monta
+  -->
   <style>
-    html, body { height: 100%; }
-    body {
-      margin: 0;
-      background: #0b1020;
-      color: #eaf0ff;
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    :root{
+      --rcf-css-token: "RCF_INDEX_VCLEAN2_VISUAL_SAFE";
+      --bg: #0b1020;
+      --bg-2: #0f172a;
+      --panel: rgba(255,255,255,.06);
+      --line: rgba(255,255,255,.12);
+      --line-soft: rgba(255,255,255,.08);
+      --text: #eaf0ff;
+      --muted: #a8b3cf;
+      --accent: #38bdf8;
+      --accent-2: #22c55e;
+      --shadow: 0 18px 50px rgba(0,0,0,.32);
+      --radius: 18px;
     }
-    .rcf_splash {
+
+    html, body {
       min-height: 100%;
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      background:
+        radial-gradient(circle at top, rgba(56,189,248,.10), transparent 30%),
+        linear-gradient(180deg, #08101d 0%, #0b1020 100%);
+      color: var(--text);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    body {
+      overflow-x: hidden;
+    }
+
+    #app {
+      min-height: 100vh;
+      width: 100%;
+    }
+
+    .rcf_splash {
+      min-height: 100vh;
       display: flex;
       align-items: center;
       justify-content: center;
-      padding: 18px;
+      padding: 20px;
       box-sizing: border-box;
     }
+
     .rcf_splash_card {
-      max-width: 720px;
+      position: relative;
+      max-width: 760px;
       width: 100%;
-      background: rgba(255,255,255,.06);
-      border: 1px solid rgba(255,255,255,.12);
-      border-radius: 18px;
-      padding: 16px 14px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 18px 16px;
       box-sizing: border-box;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      overflow: hidden;
     }
+
+    .rcf_splash_card::before {
+      content: "";
+      position: absolute;
+      inset: 0 auto auto 0;
+      width: 100%;
+      height: 1px;
+      background: linear-gradient(90deg, rgba(56,189,248,.0), rgba(56,189,248,.45), rgba(34,197,94,.25), rgba(56,189,248,0));
+      pointer-events: none;
+    }
+
+    .rcf_brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 10px;
+      min-width: 0;
+    }
+
+    .rcf_brand_dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 999px;
+      background: linear-gradient(180deg, var(--accent-2), #10b981);
+      box-shadow: 0 0 0 4px rgba(34,197,94,.12);
+      flex: 0 0 auto;
+    }
+
+    .rcf_brand_text {
+      min-width: 0;
+    }
+
     .rcf_splash_title {
       font-size: 18px;
       font-weight: 900;
-      margin: 0 0 8px 0;
-      letter-spacing: .2px;
-    }
-    .rcf_splash_hint {
-      opacity: .86;
-      font-size: 13px;
-      line-height: 1.35;
       margin: 0;
+      letter-spacing: .2px;
+      line-height: 1.15;
+    }
+
+    .rcf_splash_subtitle {
+      margin: 2px 0 0 0;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.2;
+    }
+
+    .rcf_splash_hint {
+      opacity: .92;
+      color: var(--text);
+      font-size: 13px;
+      line-height: 1.45;
+      margin: 12px 0 0 0;
+    }
+
+    .rcf_splash_hint strong {
+      color: #ffffff;
+      font-weight: 800;
+    }
+
+    .rcf_splash_meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 14px;
+    }
+
+    .rcf_chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 34px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: rgba(255,255,255,.04);
+      border: 1px solid var(--line-soft);
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1;
+      box-sizing: border-box;
+    }
+
+    .rcf_chip_ok {
+      color: #d8ffe8;
+      border-color: rgba(34,197,94,.20);
+      background: rgba(34,197,94,.08);
+    }
+
+    .rcf_chip_info {
+      color: #dbeafe;
+      border-color: rgba(56,189,248,.22);
+      background: rgba(56,189,248,.08);
+    }
+
+    @media (max-width: 640px) {
+      .rcf_splash {
+        padding: 16px;
+      }
+
+      .rcf_splash_card {
+        padding: 16px 14px;
+        border-radius: 16px;
+      }
+
+      .rcf_splash_title {
+        font-size: 17px;
+      }
+
+      .rcf_splash_hint {
+        font-size: 12.5px;
+      }
+
+      .rcf_chip {
+        font-size: 11.5px;
+        padding: 7px 11px;
+      }
     }
   </style>
 
@@ -137,14 +289,27 @@
 
   <!-- Root único e fixo -->
   <div id="app">
-    <!-- Splash neutro (o app substitui/atualiza o conteúdo ao montar) -->
+    <!-- Splash neutro/bonito; o app substitui ao montar -->
     <div class="rcf_splash" aria-label="RCF carregando">
       <div class="rcf_splash_card">
-        <h1 class="rcf_splash_title">RControl Factory</h1>
+        <div class="rcf_brand">
+          <div class="rcf_brand_dot"></div>
+          <div class="rcf_brand_text">
+            <h1 class="rcf_splash_title">RControl Factory</h1>
+            <p class="rcf_splash_subtitle">Factory interna • PWA • Offline-first</p>
+          </div>
+        </div>
+
         <p class="rcf_splash_hint">
-          Carregando módulos…<br/>
-          Se ficar preso, use o Safe Boot separado (emergência).
+          <strong>Carregando módulos…</strong><br />
+          Se a tela ficar presa, use o Safe Boot separado apenas como emergência.
         </p>
+
+        <div class="rcf_splash_meta" aria-hidden="true">
+          <div class="rcf_chip rcf_chip_ok">Boot normal</div>
+          <div class="rcf_chip rcf_chip_info">Doctor ativo</div>
+          <div class="rcf_chip">Admin AI mantido</div>
+        </div>
       </div>
     </div>
   </div>
