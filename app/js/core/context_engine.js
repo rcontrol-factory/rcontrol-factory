@@ -1,10 +1,11 @@
 /* FILE: /app/js/core/context_engine.js
    RControl Factory — Context Engine
-   v1.1 SAFE / PATCH MÍNIMO
+   v1.2 SAFE / PATCH MÍNIMO
 
    Objetivo:
    - consolidar contexto estrutural da Factory
    - servir a Admin AI com contexto melhor
+   - consumir melhor factory_state + module_registry + doctor
    - não mexer em boot, MAE, Injector SAFE, Vault ou Bridge
    - funcionar como script clássico
 */
@@ -12,9 +13,9 @@
 (function (global) {
   "use strict";
 
-  if (global.RCF_CONTEXT && global.RCF_CONTEXT.__v11) return;
+  if (global.RCF_CONTEXT && global.RCF_CONTEXT.__v12) return;
 
-  var VERSION = "v1.1";
+  var VERSION = "v1.2";
 
   function safe(fn, fallback) {
     try {
@@ -58,13 +59,12 @@
   }
 
   function getDoctorInfo() {
-    var info = {
+    return {
       ready: !!global.RCF_DOCTOR_SCAN,
       version: safe(function () { return global.RCF_DOCTOR_SCAN.version; }, "unknown"),
-      lastRun: safe(function () { return global.RCF_DOCTOR_SCAN.lastReport; }, null)
+      lastRun: safe(function () { return global.RCF_FACTORY_STATE.getState().doctorLastRun; }, null) ||
+               safe(function () { return global.RCF_DOCTOR_SCAN.lastReport; }, null)
     };
-
-    return info;
   }
 
   function getFlags() {
@@ -77,7 +77,8 @@
       hasAdminAI: !!global.RCF_ADMIN_AI,
       hasFactoryState: !!global.RCF_FACTORY_STATE,
       hasModuleRegistry: !!global.RCF_MODULE_REGISTRY,
-      hasDiagnostics: !!global.RCF_DIAGNOSTICS
+      hasDiagnostics: !!global.RCF_DIAGNOSTICS,
+      hasContextEngine: true
     };
   }
 
@@ -107,6 +108,7 @@
       userAgent: fs.userAgent || env.userAgent || "",
       loggerReady: !!fs.loggerReady,
       doctorReady: !!fs.doctorReady,
+      modules: clone(fs.modules || {}),
       ts: env.ts,
       flags: flags
     };
@@ -141,6 +143,7 @@
       runtimeVFS: ctx.factory.runtimeVFS,
       doctorVersion: ctx.doctor.version,
       doctorLast: ctx.doctor.lastRun,
+      activeModules: clone(ctx.modules.active || []),
       flags: ctx.factory.flags,
       ts: ctx.environment.ts
     };
@@ -149,6 +152,7 @@
   global.RCF_CONTEXT = {
     __v1: true,
     __v11: true,
+    __v12: true,
     version: VERSION,
     getContext: buildContext,
     summary: summary
