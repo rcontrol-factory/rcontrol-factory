@@ -1,4 +1,3 @@
-let __RCF_GH_PAT_RUNTIME = null;
 /* RControl Factory — /app/js/core/github_sync.js — v2.4h (FINAL STABLE + FILLERS)
    PATCH sobre v2.4g:
    - ✅ FILLERS: gera bundle completo automaticamente (lista padrão + auto-discovery) quando o bundle local estiver “mínimo”
@@ -14,6 +13,7 @@ let __RCF_GH_PAT_RUNTIME = null;
   const LS_CFG_KEY = "rcf:ghcfg";
   const API_BASE = "https://api.github.com";
   const FIXED_BUNDLE_PATH = "app/import/mother_bundle.json";
+  let RUNTIME_PAT = null;
 
   // bundle local (compat com MAE)
   const LS_BUNDLE_KEY = "rcf:mother_bundle_local";
@@ -45,7 +45,7 @@ let __RCF_GH_PAT_RUNTIME = null;
       repo: String(c.repo || "").trim(),
       branch: String(c.branch || "main").trim(),
       path: norm.normalized,
-      token: String(c.token || "").trim()
+      token: String(RUNTIME_PAT || "").trim()
     };
 
     log("info", "bundle path normalized", { raw: norm.raw, path: cfg.path, fixed: true });
@@ -61,8 +61,10 @@ let __RCF_GH_PAT_RUNTIME = null;
       repo: String(inCfg.repo || "").trim(),
       branch: String(inCfg.branch || "main").trim(),
       path: norm.normalized,
-      token: String(inCfg.token || "").trim()
     };
+
+    const incomingToken = String(inCfg.token || "").trim();
+    if (incomingToken) RUNTIME_PAT = incomingToken;
 
     localStorage.setItem(LS_CFG_KEY, JSON.stringify(safe));
     log("ok", "OK: ghcfg saved");
@@ -71,7 +73,8 @@ let __RCF_GH_PAT_RUNTIME = null;
 
   function headers(cfg) {
     const h = { "Accept": "application/vnd.github+json" };
-    if (cfg.token) h["Authorization"] = "token " + cfg.token;
+    const token = String((cfg && cfg.token) || RUNTIME_PAT || "").trim();
+    if (token) h["Authorization"] = "token " + token;
     return h;
   }
 
@@ -462,7 +465,10 @@ let __RCF_GH_PAT_RUNTIME = null;
     push,
     pushMotherBundle,
     listFillers,          // ✅ novo (UI futura)
-    buildFactoryBundle    // ✅ novo (debug/manual)
+    buildFactoryBundle,   // ✅ novo (debug/manual)
+    setRuntimeToken(token) { RUNTIME_PAT = String(token || "").trim() || null; return !!RUNTIME_PAT; },
+    getRuntimeToken() { return String(RUNTIME_PAT || ""); },
+    clearRuntimeToken() { RUNTIME_PAT = null; return true; }
   };
 
   log("info", "github_sync.js loaded (v2.4h)");
@@ -485,8 +491,8 @@ let __RCF_GH_PAT_RUNTIME = null;
         } catch { return {}; }
       })();
 
-      const token = (opts.token || cfg.token || cfg.ghToken || cfg.pat || "").trim();
-      if (!token) return { ok: false, err: "token ausente (rcf:ghcfg.token)" };
+      const token = String(opts.token || GH.getRuntimeToken?.() || cfg.ghToken || cfg.pat || "").trim();
+      if (!token) return { ok: false, err: "token ausente (somente sessão atual)" };
 
       try {
         const res = await fetch("https://api.github.com/user", {
@@ -519,11 +525,3 @@ let __RCF_GH_PAT_RUNTIME = null;
     try { window.RCF_LOGGER?.push?.("OK", "RCF_GH_SYNC.test hotfix instalado ✅"); } catch {}
   } catch {}
 })();
-
-
-export function RCF_setGithubPAT_runtime(token){
-  __RCF_GH_PAT_RUNTIME = token || null;
-}
-export function RCF_getGithubPAT_runtime(){
-  return __RCF_GH_PAT_RUNTIME;
-}
