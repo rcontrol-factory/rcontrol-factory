@@ -1,22 +1,22 @@
 /* FILE: /app/js/core/factory_state.js
    RControl Factory — Factory State Engine
-   v1.0 SAFE / PATCH MÍNIMO
+   v1.1 SAFE / PATCH MÍNIMO
 
    Objetivo:
    - registrar estado operacional mínimo da Factory
    - não usar Vault para metadados operacionais
    - expor API global via window.RCF_FACTORY_STATE
    - funcionar como script clássico
-   - integrar de forma leve com boot/logger/doctor
+   - integrar de forma leve com boot/logger/doctor/module registry
 */
 
 ;(function(global){
   "use strict";
 
-  if (global.RCF_FACTORY_STATE && global.RCF_FACTORY_STATE.__v10) return;
+  if (global.RCF_FACTORY_STATE && global.RCF_FACTORY_STATE.__v11) return;
 
   var STORAGE_KEY = "rcf:factory_state";
-  var VERSION = "v1.0";
+  var VERSION = "v1.1";
 
   var state = {
     factoryVersion: null,
@@ -30,7 +30,10 @@
     doctorLastRun: null,
     userAgent: null,
     environment: null,
-    modules: {}
+    modules: {},
+    health: {
+      lastRefresh: null
+    }
   };
 
   function nowISO() {
@@ -126,7 +129,10 @@
       loggerReady: !!global.RCF_LOGGER,
       doctorReady: !!global.RCF_DOCTOR_SCAN,
       userAgent: (global.navigator && global.navigator.userAgent) ? global.navigator.userAgent : null,
-      environment: detectEnvironment()
+      environment: detectEnvironment(),
+      health: {
+        lastRefresh: nowISO()
+      }
     };
 
     state = safeMerge(clone(state), base);
@@ -158,6 +164,16 @@
     return true;
   }
 
+  function setModules(mods) {
+    if (!mods || typeof mods !== "object") return false;
+    Object.keys(mods).forEach(function(name){
+      state.modules[String(name)] = !!mods[name];
+    });
+    state.lastUpdate = nowISO();
+    persist();
+    return true;
+  }
+
   function markBoot(status) {
     state.bootStatus = String(status || "unknown");
     state.lastUpdate = nowISO();
@@ -183,6 +199,7 @@
     state.doctorReady = !!global.RCF_DOCTOR_SCAN;
     state.environment = detectEnvironment();
     state.userAgent = (global.navigator && global.navigator.userAgent) ? global.navigator.userAgent : null;
+    state.health.lastRefresh = nowISO();
     state.lastUpdate = nowISO();
     persist();
     return true;
@@ -199,17 +216,20 @@
       loggerReady: state.loggerReady,
       doctorReady: state.doctorReady,
       doctorLastRun: state.doctorLastRun,
-      environment: state.environment
+      environment: state.environment,
+      modules: clone(state.modules)
     };
   }
 
   global.RCF_FACTORY_STATE = {
     __v10: true,
+    __v11: true,
     version: VERSION,
     init: init,
     getState: getState,
     setState: setState,
     setModule: setModule,
+    setModules: setModules,
     markBoot: markBoot,
     markDoctorRun: markDoctorRun,
     refreshRuntime: refreshRuntime,
@@ -217,5 +237,9 @@
     loadState: load,
     status: status
   };
+
+  try {
+    init();
+  } catch (_) {}
 
 })(window);
