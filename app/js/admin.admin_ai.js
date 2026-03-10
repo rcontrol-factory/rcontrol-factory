@@ -1,6 +1,6 @@
 /* FILE: /app/js/admin.admin_ai.js
    RControl Factory — Admin AI (Fase IA-1)
-   v1.3 ADMIN-FIXED + CHAT-LITE + CONTEXT-RICH
+   v1.4 ADMIN-FIXED + CHAT-LITE + CONTEXT-REFINED
 
    - fixo no Admin
    - não aparece solto em outras views
@@ -8,16 +8,16 @@
    - múltiplas perguntas sem reload
    - ações rápidas + doctor + patch + gerar código
    - usa /api/admin-ai
-   - consome melhor RCF_CONTEXT
+   - consome contexto refinado
    - não executa patch automático
 */
 
 (() => {
   "use strict";
 
-  if (window.RCF_ADMIN_AI && window.RCF_ADMIN_AI.__v13) return;
+  if (window.RCF_ADMIN_AI && window.RCF_ADMIN_AI.__v14) return;
 
-  const VERSION = "v1.3";
+  const VERSION = "v1.4";
   const BOX_ID = "rcfAdminAIBox";
   const CHAT_ID = "rcfAdminAIChat";
 
@@ -80,7 +80,7 @@
     box.style.display = isAdminViewVisible() ? "" : "none";
   }
 
-  function collectLogs(limit = 120) {
+  function collectLogs(limit = 60) {
     try {
       const logger = window.RCF_LOGGER;
       if (logger && Array.isArray(logger.items)) {
@@ -109,15 +109,65 @@
     };
   }
 
-  function collectContext() {
+  function getContextRaw() {
     try {
       if (window.RCF_CONTEXT && typeof window.RCF_CONTEXT.getContext === "function") {
         return window.RCF_CONTEXT.getContext();
       }
     } catch (_) {}
+    return null;
+  }
+
+  function buildLeanContext() {
+    const raw = getContextRaw() || {};
+    const factory = raw.factory || {};
+    const modules = raw.modules || {};
+    const doctor = raw.doctor || {};
+    const environment = raw.environment || {};
+    const activeModules = Array.isArray(modules.active) ? modules.active : [];
+
     return {
-      fallback: true,
-      ts: new Date().toISOString()
+      factory: {
+        version: factory.version || "unknown",
+        bootStatus: factory.bootStatus || "unknown",
+        runtimeVFS: factory.runtimeVFS || "unknown",
+        loggerReady: !!factory.loggerReady,
+        doctorReady: !!factory.doctorReady,
+        environment: factory.environment || "unknown",
+        lastUpdate: factory.lastUpdate || null
+      },
+      doctor: {
+        version: doctor.version || "unknown",
+        lastRun: doctor.lastRun || null
+      },
+      modules: {
+        active: activeModules,
+        status: {
+          logger: !!modules.logger,
+          doctor: !!modules.doctor,
+          github: !!modules.github,
+          vault: !!modules.vault,
+          bridge: !!modules.bridge,
+          adminAI: !!modules.adminAI,
+          factoryState: !!modules.factoryState,
+          moduleRegistry: !!modules.moduleRegistry,
+          contextEngine: !!modules.contextEngine
+        }
+      },
+      flags: {
+        hasLogger: !!factory.flags?.hasLogger,
+        hasDoctor: !!factory.flags?.hasDoctor,
+        hasGitHub: !!factory.flags?.hasGitHub,
+        hasAdminAI: !!factory.flags?.hasAdminAI,
+        hasFactoryState: !!factory.flags?.hasFactoryState,
+        hasModuleRegistry: !!factory.flags?.hasModuleRegistry,
+        hasContextEngine: !!factory.flags?.hasContextEngine
+      },
+      environment: {
+        platform: environment.platform || "",
+        language: environment.language || "",
+        ts: environment.ts || new Date().toISOString()
+      }
     };
   }
 
@@ -282,34 +332,37 @@
     }
   }
 
-  function handleModeAction(mode, customPrompt) {
-    const prompt = buildPromptFromMode(mode, customPrompt);
-
-    let payload = {
-      context: collectContext()
-    };
+  function buildPayload(mode) {
+    const context = buildLeanContext();
 
     if (mode === "analyze-logs") {
-      payload = {
-        context: collectContext(),
+      return {
+        context,
         logs: collectLogs()
       };
     }
 
     if (mode === "factory_diagnosis") {
-      payload = {
-        context: collectContext(),
+      return {
+        context,
         doctor: collectDoctorReport()
       };
     }
 
     if (mode === "propose-patch" || mode === "generate-code") {
-      payload = {
-        context: collectContext(),
-        logs: collectLogs(80),
-        doctor: collectDoctorReport()
+      return {
+        context,
+        doctor: collectDoctorReport(),
+        logs: collectLogs(40)
       };
     }
+
+    return { context };
+  }
+
+  function handleModeAction(mode, customPrompt) {
+    const prompt = buildPromptFromMode(mode, customPrompt);
+    const payload = buildPayload(mode);
 
     pushChat("user", prompt);
     callAdminAI(mode, payload, prompt);
@@ -488,6 +541,7 @@
     __v11: true,
     __v12: true,
     __v13: true,
+    __v14: true,
     version: VERSION,
     mount,
     clearChat
