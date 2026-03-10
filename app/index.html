@@ -5,9 +5,9 @@
   ✅ Boot via <script defer> padrão
   ✅ Mantém o “app root” (#app) simples e estável
 
-  NOTA:
-  - Safe Boot deve ficar em arquivo separado (ex.: /app/safe.html) e só ser usado em emergência.
-  - Este index não injeta UI extra nem intercepta eventos.
+  PATCH MÍNIMO:
+  - Adicionado: ./js/admin.admin_ai.js
+  - Sem alterar a estrutura principal da Factory
 -->
 
 <!doctype html>
@@ -95,7 +95,7 @@
   <script defer src="./js/core/ui_safety.js"></script>
   <script defer src="./js/core/ui_compact_outputs.js"></script>
 
-  <!-- UI bindings + diagnostics + preview -->
+  <!-- UI bindings + diagnostics + doctor + preview -->
   <script defer src="./js/core/ui_bindings.js"></script>
   <script defer src="./js/core/diagnostics.js"></script>
   <script defer src="./js/core/doctor_scan.js"></script>
@@ -108,9 +108,10 @@
   <script defer src="./js/engine/builder.js"></script>
   <script defer src="./js/engine/engine.js"></script>
 
-  <!-- Pages links + Admin GH -->
+  <!-- Pages links + Admin GH + Admin AI -->
   <script defer src="./js/core/pages_links.js"></script>
   <script defer src="./js/admin.github.js"></script>
+  <script defer src="./js/admin.admin_ai.js"></script>
 
   <!-- App main -->
   <script defer src="./app.js"></script>
