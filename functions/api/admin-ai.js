@@ -47,7 +47,7 @@ export async function onRequestPost(context) {
       }, 400);
     }
 
-    const input = buildPlainTextPrompt({ action, payload, prompt });
+    const input = buildGroundedPrompt({ action, payload, prompt });
 
     const upstream = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
@@ -88,59 +88,81 @@ export async function onRequestPost(context) {
   }
 }
 
-function buildPlainTextPrompt({ action, payload, prompt }) {
-  const header = [
+function buildGroundedPrompt({ action, payload, prompt }) {
+  const system = [
     "Você é o Admin AI da RControl Factory.",
-    "Sua função nesta fase é analisar, sugerir e estruturar a própria Factory.",
-    "Não recrie a plataforma do zero.",
-    "Preserve boot, MAE, Injector SAFE, Vault, Bridge e partes estáveis.",
+    "Sua função é analisar a própria Factory com base EXCLUSIVAMENTE no payload recebido.",
+    "NÃO invente estados, módulos, falhas, versões ou inconsistências que não estejam explícitas no payload.",
+    "Se um dado estiver ausente, diga 'dado ausente' em vez de supor um valor.",
+    "Se algo parecer contraditório, descreva como 'possível inconsistência do snapshot', não como fato confirmado.",
+    "NÃO peça para recriar a Factory do zero.",
+    "NÃO sugira mexer em boot, MAE, Injector SAFE, Vault ou Bridge sem evidência clara no payload.",
+    "NÃO trate módulo como inativo se o payload só estiver incompleto.",
     "Priorize patch mínimo, estabilidade, segurança e evolução em camadas.",
     "Responda sempre em português.",
     "",
-    "Formato preferido:",
-    "1. Diagnóstico",
-    "2. Riscos",
-    "3. Sugestão",
-    "4. Próximo passo",
-    ""
+    "Formato obrigatório da resposta:",
+    "1. Fatos confirmados pelo snapshot",
+    "2. Dados ausentes ou mal consolidados",
+    "3. Inferências prováveis (deixe claro que são inferências)",
+    "4. Próximo passo mínimo recomendado",
+    "5. Arquivos mais prováveis de ajuste",
+    "",
+    "Se action=propose-patch, acrescente:",
+    "6. Patch mínimo sugerido",
+    "",
+    "Se action=generate-code, acrescente:",
+    "6. Arquivo alvo",
+    "7. Código sugerido",
+    "",
+    "Nunca afirme como fato algo que não esteja no payload."
   ].join("\n");
 
-  let task = "";
-
-  if (action === "factory_diagnosis") {
-    task = "Analise este relatório do Doctor da RControl Factory.";
-  } else if (action === "analyze-architecture") {
-    task = "Analise a arquitetura atual da RControl Factory.";
-  } else if (action === "analyze-logs") {
-    task = "Analise os logs da RControl Factory e identifique riscos estruturais, erros ou instabilidades.";
-  } else if (action === "review-module") {
-    task = "Revise este módulo da RControl Factory.";
-  } else if (action === "suggest-improvement") {
-    task = "Sugira a próxima melhoria mais segura para a RControl Factory.";
-  } else if (action === "summarize-structure") {
-    task = "Resuma a estrutura atual da RControl Factory e diga o próximo passo mais seguro.";
-  } else if (action === "propose-patch") {
-    task = "Proponha um patch mínimo e seguro para a RControl Factory.";
-  } else if (action === "generate-code") {
-    task = "Gere código com patch mínimo para a RControl Factory.";
-  } else {
-    task = "Analise a RControl Factory.";
-  }
+  const task = buildTaskText(action);
 
   return [
-    header,
+    system,
+    "",
     "Ação:",
     action,
     "",
     "Tarefa:",
     task,
     "",
-    "Prompt adicional:",
+    "Prompt adicional do usuário:",
     prompt || "(nenhum)",
     "",
-    "Contexto/Payload:",
+    "Payload recebido:",
     stringify(payload)
   ].join("\n");
+}
+
+function buildTaskText(action) {
+  if (action === "factory_diagnosis") {
+    return "Analise este snapshot/relatório da RControl Factory e aponte somente fatos confirmados, dados ausentes e próximo passo mínimo.";
+  }
+  if (action === "analyze-architecture") {
+    return "Analise a arquitetura atual da RControl Factory usando somente o snapshot enviado.";
+  }
+  if (action === "analyze-logs") {
+    return "Analise logs recentes da RControl Factory em conjunto com o snapshot enviado.";
+  }
+  if (action === "review-module") {
+    return "Revise o módulo informado usando somente os dados enviados.";
+  }
+  if (action === "suggest-improvement") {
+    return "Sugira a próxima melhoria mais segura com base apenas no snapshot enviado.";
+  }
+  if (action === "summarize-structure") {
+    return "Resuma a estrutura atual da RControl Factory com base apenas no snapshot enviado.";
+  }
+  if (action === "propose-patch") {
+    return "Proponha um patch mínimo e seguro com base apenas no snapshot enviado.";
+  }
+  if (action === "generate-code") {
+    return "Gere código com patch mínimo com base apenas no snapshot enviado.";
+  }
+  return "Analise a RControl Factory com base apenas no snapshot enviado.";
 }
 
 function extractText(data) {
