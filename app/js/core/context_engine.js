@@ -1,21 +1,20 @@
 /* FILE: /app/js/core/context_engine.js
    RControl Factory — Context Engine
-   v1.2 SAFE / PATCH MÍNIMO
+   v1.3 SAFE / PATCH MÍNIMO
 
    Objetivo:
    - consolidar contexto estrutural da Factory
-   - servir a Admin AI com contexto melhor
-   - consumir melhor factory_state + module_registry + doctor
-   - não mexer em boot, MAE, Injector SAFE, Vault ou Bridge
+   - entregar snapshot mais explícito para Admin AI
+   - integrar melhor factory_state + module_registry + factory_tree + doctor
    - funcionar como script clássico
 */
 
 (function (global) {
   "use strict";
 
-  if (global.RCF_CONTEXT && global.RCF_CONTEXT.__v12) return;
+  if (global.RCF_CONTEXT && global.RCF_CONTEXT.__v13) return;
 
-  var VERSION = "v1.2";
+  var VERSION = "v1.3";
 
   function safe(fn, fallback) {
     try {
@@ -59,12 +58,36 @@
   }
 
   function getDoctorInfo() {
+    var lastFromState = safe(function () {
+      return global.RCF_FACTORY_STATE.getState().doctorLastRun;
+    }, null);
+
+    var lastFromDoctor = safe(function () {
+      return global.RCF_DOCTOR_SCAN.lastReport;
+    }, null);
+
     return {
       ready: !!global.RCF_DOCTOR_SCAN,
       version: safe(function () { return global.RCF_DOCTOR_SCAN.version; }, "unknown"),
-      lastRun: safe(function () { return global.RCF_FACTORY_STATE.getState().doctorLastRun; }, null) ||
-               safe(function () { return global.RCF_DOCTOR_SCAN.lastReport; }, null)
+      lastRun: lastFromState || lastFromDoctor || null
     };
+  }
+
+  function getTreeInfo() {
+    return safe(function () {
+      if (!global.RCF_FACTORY_TREE) return {};
+      return {
+        summary: typeof global.RCF_FACTORY_TREE.summary === "function"
+          ? global.RCF_FACTORY_TREE.summary()
+          : {},
+        tree: typeof global.RCF_FACTORY_TREE.getTree === "function"
+          ? global.RCF_FACTORY_TREE.getTree()
+          : {},
+        allPaths: typeof global.RCF_FACTORY_TREE.getAllPaths === "function"
+          ? global.RCF_FACTORY_TREE.getAllPaths()
+          : []
+      };
+    }, {});
   }
 
   function getFlags() {
@@ -77,8 +100,9 @@
       hasAdminAI: !!global.RCF_ADMIN_AI,
       hasFactoryState: !!global.RCF_FACTORY_STATE,
       hasModuleRegistry: !!global.RCF_MODULE_REGISTRY,
-      hasDiagnostics: !!global.RCF_DIAGNOSTICS,
-      hasContextEngine: true
+      hasContextEngine: true,
+      hasFactoryTree: !!global.RCF_FACTORY_TREE,
+      hasDiagnostics: !!global.RCF_DIAGNOSTICS
     };
   }
 
@@ -114,11 +138,12 @@
     };
   }
 
-  function buildContext() {
+  function buildSnapshot() {
     var factory = buildFactoryBlock();
     var doctor = getDoctorInfo();
     var modules = getModuleSummary();
     var environment = getEnvironment();
+    var tree = getTreeInfo();
 
     return {
       version: VERSION,
@@ -129,12 +154,18 @@
         lastRun: doctor.lastRun || null
       },
       modules: clone(modules),
+      tree: {
+        summary: clone(tree.summary || {}),
+        pathsCount: Array.isArray(tree.allPaths) ? tree.allPaths.length : 0,
+        samples: Array.isArray(tree.allPaths) ? tree.allPaths.slice(0, 20) : [],
+        grouped: clone(tree.tree || {})
+      },
       environment: environment
     };
   }
 
   function summary() {
-    var ctx = buildContext();
+    var ctx = buildSnapshot();
 
     return {
       version: VERSION,
@@ -144,6 +175,7 @@
       doctorVersion: ctx.doctor.version,
       doctorLast: ctx.doctor.lastRun,
       activeModules: clone(ctx.modules.active || []),
+      treeCount: ctx.tree.pathsCount || 0,
       flags: ctx.factory.flags,
       ts: ctx.environment.ts
     };
@@ -153,8 +185,10 @@
     __v1: true,
     __v11: true,
     __v12: true,
+    __v13: true,
     version: VERSION,
-    getContext: buildContext,
+    getContext: buildSnapshot,
+    getSnapshot: buildSnapshot,
     summary: summary
   };
 
