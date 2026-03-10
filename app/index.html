@@ -1,155 +1,256 @@
-<!--
-  RControl Factory — INDEX (NORMAL BOOT) vCLEAN-2
-  ✅ Sem SAFE BOOT embutido
-  ✅ Sem loader manual (sem loadScript / sem lista dinâmica / sem watchdog)
-  ✅ Boot via <script defer> padrão
-  ✅ Mantém o “app root” (#app) simples e estável
-
-  PATCH MÍNIMO:
-  - Adicionado: ./js/core/factory_state.js
-  - Adicionado: ./js/core/module_registry.js
-  - Adicionado: ./js/core/context_engine.js
-  - Adicionado: ./js/core/factory_tree.js
-  - Mantido: admin.admin_ai.js
--->
-
+<!-- FILE: app/index.html -->
 <!doctype html>
 <html lang="pt-BR">
 <head>
-  <!-- Core -->
   <meta charset="utf-8" />
-  <meta http-equiv="x-ua-compatible" content="ie=edge" />
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta
+    name="viewport"
+    content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no"
+  />
+  <meta name="theme-color" content="#0b1220" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RCF" />
 
   <title>RControl Factory</title>
-  <meta name="theme-color" content="#0b1020" />
-  <meta name="color-scheme" content="dark light" />
 
-  <!-- RCF marker -->
-  <meta name="rcf-index" content="NORMAL_BOOT_2026_02_24_vCLEAN_2" />
-
-  <!-- PWA -->
-  <base href="./" />
-  <link rel="manifest" href="./manifest.json" />
-  <link rel="icon" href="./favicon.ico" />
+  <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="apple-touch-icon" href="./icons/icon-192.png" />
 
-  <!-- Styles -->
-  <link rel="stylesheet" href="./styles.css" />
-
-  <!-- Fallback visual mínimo (não é SafeBoot; é só “splash” neutro) -->
   <style>
-    html, body { height: 100%; }
-    body {
-      margin: 0;
-      background: #0b1020;
-      color: #eaf0ff;
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    :root{
+      --bg:#0b1220;
+      --panel:#121a2b;
+      --panel-2:#0f1727;
+      --line:rgba(255,255,255,.08);
+      --text:#f5f7fb;
+      --muted:#9fb0cc;
+      --brand:#4f8cff;
+      --ok:#23c483;
+      --warn:#f59e0b;
+      --danger:#ef4444;
+      --shadow:0 10px 30px rgba(0,0,0,.28);
+      --radius:16px;
+      --rcf-css-token:"RCF_INDEX_V8_BASE";
     }
-    .rcf_splash {
-      min-height: 100%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 18px;
-      box-sizing: border-box;
+
+    *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+    html,body{ margin:0; padding:0; min-height:100%; background:var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,Arial,sans-serif; }
+    body{
+      overscroll-behavior-y:none;
+      -webkit-font-smoothing:antialiased;
+      -moz-osx-font-smoothing:grayscale;
     }
-    .rcf_splash_card {
-      max-width: 720px;
-      width: 100%;
-      background: rgba(255,255,255,.06);
-      border: 1px solid rgba(255,255,255,.12);
-      border-radius: 18px;
-      padding: 16px 14px;
-      box-sizing: border-box;
+
+    #app{
+      min-height:100vh;
     }
-    .rcf_splash_title {
-      font-size: 18px;
-      font-weight: 900;
-      margin: 0 0 8px 0;
-      letter-spacing: .2px;
+
+    .boot{
+      min-height:100vh;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      padding:24px;
+      background:
+        radial-gradient(1200px 500px at 20% -10%, rgba(79,140,255,.18), transparent 60%),
+        radial-gradient(900px 400px at 100% 0%, rgba(35,196,131,.12), transparent 55%),
+        var(--bg);
     }
-    .rcf_splash_hint {
-      opacity: .86;
-      font-size: 13px;
-      line-height: 1.35;
-      margin: 0;
+
+    .boot-card{
+      width:min(100%, 760px);
+      background:linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.015));
+      border:1px solid var(--line);
+      border-radius:20px;
+      box-shadow:var(--shadow);
+      padding:22px;
+    }
+
+    .boot-top{
+      display:flex;
+      align-items:center;
+      gap:12px;
+      margin-bottom:12px;
+    }
+
+    .boot-dot{
+      width:14px;
+      height:14px;
+      border-radius:999px;
+      background:linear-gradient(180deg, #6ea4ff, #3d74ff);
+      box-shadow:0 0 0 6px rgba(79,140,255,.14);
+      flex:0 0 auto;
+    }
+
+    .boot-title{
+      font-size:20px;
+      font-weight:800;
+      letter-spacing:.2px;
+    }
+
+    .boot-sub{
+      color:var(--muted);
+      font-size:13px;
+      margin-top:2px;
+    }
+
+    .boot-msg{
+      margin-top:14px;
+      padding:14px 16px;
+      border-radius:14px;
+      background:rgba(255,255,255,.03);
+      border:1px solid var(--line);
+      color:#dbe7ff;
+      white-space:pre-wrap;
+      word-break:break-word;
+    }
+
+    .boot-actions{
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+      margin-top:16px;
+    }
+
+    .btn{
+      appearance:none;
+      border:0;
+      border-radius:999px;
+      padding:12px 16px;
+      font-size:14px;
+      font-weight:700;
+      cursor:pointer;
+    }
+
+    .btn.primary{
+      background:var(--brand);
+      color:#fff;
+    }
+
+    .btn.ghost{
+      background:rgba(255,255,255,.06);
+      color:#fff;
+      border:1px solid var(--line);
+    }
+
+    .hint{
+      margin-top:12px;
+      color:var(--muted);
+      font-size:12px;
+      line-height:1.5;
     }
   </style>
-
-  <!--
-    BOOT PADRÃO (scripts estáticos com defer)
-    IMPORTANTE: não mudar ordem sem necessidade.
-  -->
-
-  <!-- Core / boot safety -->
-  <script defer src="./js/core/logger.js"></script>
-  <script defer src="./js/core/stability_guard.js"></script>
-  <script defer src="./js/core/factory_state.js"></script>
-  <script defer src="./js/core/module_registry.js"></script>
-  <script defer src="./js/core/context_engine.js"></script>
-  <script defer src="./js/core/factory_tree.js"></script>
-
-  <!-- Storage + GitHub + VFS + MAE + updates -->
-  <script defer src="./js/core/storage.js"></script>
-  <script defer src="./js/core/github_sync.js"></script>
-  <script defer src="./js/core/vfs_overrides.js"></script>
-  <script defer src="./js/core/vfs_shim.js"></script>
-  <script defer src="./js/core/mother_selfupdate.js"></script>
-
-  <!-- Errors + UI safety/compact -->
-  <script defer src="./js/core/errors.js"></script>
-  <script defer src="./js/core/ui_safety.js"></script>
-  <script defer src="./js/core/ui_compact_outputs.js"></script>
-
-  <!-- UI bindings + diagnostics + doctor + preview -->
-  <script defer src="./js/core/ui_bindings.js"></script>
-  <script defer src="./js/core/diagnostics.js"></script>
-  <script defer src="./js/core/doctor_scan.js"></script>
-  <script defer src="./js/core/preview_runner.js"></script>
-
-  <!-- Injector + engine pipeline -->
-  <script defer src="./js/core/injector.js"></script>
-  <script defer src="./js/engine/template_registry.js"></script>
-  <script defer src="./js/engine/module_registry.js"></script>
-  <script defer src="./js/engine/builder.js"></script>
-  <script defer src="./js/engine/engine.js"></script>
-
-  <!-- Pages links + Admin GH + Admin AI -->
-  <script defer src="./js/core/pages_links.js"></script>
-  <script defer src="./js/admin.github.js"></script>
-  <script defer src="./js/admin.admin_ai.js"></script>
-
-  <!-- App main -->
-  <script defer src="./app.js"></script>
-
-  <!-- Vault / ZIP -->
-  <script defer src="./js/core/zip_vault.js"></script>
-  <script defer src="./js/core/agent_zip_bridge.js"></script>
 </head>
-
 <body>
-  <noscript>Ative o JavaScript para usar a RControl Factory.</noscript>
-
-  <!-- Root único e fixo -->
   <div id="app">
-    <!-- Splash neutro (o app substitui/atualiza o conteúdo ao montar) -->
-    <div class="rcf_splash" aria-label="RCF carregando">
-      <div class="rcf_splash_card">
-        <h1 class="rcf_splash_title">RControl Factory</h1>
-        <p class="rcf_splash_hint">
-          Carregando módulos…<br/>
-          Se ficar preso, use o Safe Boot separado (emergência).
-        </p>
+    <div class="boot" id="bootScreen">
+      <div class="boot-card">
+        <div class="boot-top">
+          <div class="boot-dot"></div>
+          <div>
+            <div class="boot-title">RControl Factory</div>
+            <div class="boot-sub">Inicializando ambiente seguro…</div>
+          </div>
+        </div>
+
+        <div class="boot-msg" id="bootMsg">Carregando interface…</div>
+
+        <div class="boot-actions">
+          <button class="btn ghost" id="bootReloadBtn" type="button">Recarregar</button>
+          <button class="btn ghost" id="bootClearBtn" type="button">Limpar cache local</button>
+        </div>
+
+        <div class="hint">
+          Se travar no Safari/iPhone: limpar cache, unregister do Service Worker e recarregar.
+        </div>
       </div>
     </div>
   </div>
 
-  <!--
-    Sem SAFE BOOT aqui.
-    Sem loader JS aqui.
-    Sem timers aqui.
-    Sem listeners globais aqui.
-  -->
+  <script>
+    (function () {
+      "use strict";
+
+      function setBoot(text) {
+        try {
+          var el = document.getElementById("bootMsg");
+          if (el) el.textContent = String(text || "");
+        } catch {}
+      }
+
+      function clearLocalFactoryData() {
+        try {
+          var keysToDelete = [];
+          for (var i = 0; i < localStorage.length; i++) {
+            var k = localStorage.key(i);
+            if (!k) continue;
+            if (
+              k.indexOf("rcf:") === 0 ||
+              k.indexOf("RCF_") === 0 ||
+              k === "__RCF_BOOT_STATE__"
+            ) {
+              keysToDelete.push(k);
+            }
+          }
+          keysToDelete.forEach(function (k) {
+            try { localStorage.removeItem(k); } catch {}
+          });
+        } catch {}
+      }
+
+      try {
+        var reloadBtn = document.getElementById("bootReloadBtn");
+        if (reloadBtn) {
+          reloadBtn.addEventListener("click", function () {
+            location.reload();
+          }, { passive:true });
+        }
+
+        var clearBtn = document.getElementById("bootClearBtn");
+        if (clearBtn) {
+          clearBtn.addEventListener("click", async function () {
+            setBoot("Limpando dados locais…");
+            try { clearLocalFactoryData(); } catch {}
+
+            try {
+              if ("caches" in window) {
+                var keys = await caches.keys();
+                await Promise.all(keys.map(function (k) { return caches.delete(k); }));
+              }
+            } catch {}
+
+            try {
+              if ("serviceWorker" in navigator) {
+                var regs = await navigator.serviceWorker.getRegistrations();
+                for (var i = 0; i < regs.length; i++) {
+                  try { await regs[i].unregister(); } catch {}
+                }
+              }
+            } catch {}
+
+            setBoot("Limpeza concluída. Recarregando…");
+            setTimeout(function () { location.reload(); }, 500);
+          });
+        }
+      } catch {}
+
+      setBoot("Carregando módulos principais…");
+    })();
+  </script>
+
+  <!-- CORE -->
+  <script src="./js/core/diagnostics.js"></script>
+  <script src="./js/core/github_sync.js"></script>
+  <script src="./js/core/ui_bindings.js"></script>
+
+  <!-- ENGINE -->
+  <script src="./js/engine/errorEngine.js"></script>
+
+  <!-- ADMIN / INTEGRAÇÕES -->
+  <script src="./js/admin.github.js"></script>
+
+  <!-- APP ROOT -->
+  <script src="./app.js"></script>
 </body>
 </html>
