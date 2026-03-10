@@ -12,7 +12,7 @@
 (() => {
   "use strict";
 
-  if (window.RCF_ADMIN_GH && window.RCF_ADMIN_GH.__v28a_patmask) return;
+  if (window.RCF_ADMIN_GH && window.RCF_ADMIN_GH.__v28a) return;
 
   const UI_OPEN_KEY = "rcf:ghui:open";
   const LS_CFG_KEY  = "rcf:ghcfg";
@@ -44,16 +44,17 @@
 
   function saveCfg(cfg){
     if (window.RCF_GH_SYNC?.saveConfig) return window.RCF_GH_SYNC.saveConfig(cfg);
-    const token = String(cfg.token || "").trim();
     const safe = {
       owner: String(cfg.owner || "").trim(),
       repo: String(cfg.repo || "").trim(),
       branch: String(cfg.branch || "main").trim(),
-      path: String(cfg.path || "app/import/mother_bundle.json").trim()
+      path: String(cfg.path || "app/import/mother_bundle.json").trim(),
     };
+    if (window.RCF_GH_SYNC?.setRuntimeToken && typeof cfg.token === "string") {
+      try { window.RCF_GH_SYNC.setRuntimeToken(cfg.token); } catch {}
+    }
     localStorage.setItem(LS_CFG_KEY, JSON.stringify(safe));
-    try { window.RCF_GH_SYNC?.setRuntimeToken?.(token); } catch {}
-    return Object.assign({}, safe, { token });
+    return safe;
   }
 
   // ✅ PAGES CFG
@@ -195,7 +196,7 @@
 
         <div style="margin-top:10px;">
           <div style="font-size:12px; color: rgba(255,255,255,.65); margin-bottom:6px;">Token (PAT)</div>
-          <input id="ghToken" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" style="width:100%; padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,.12); background: rgba(0,0,0,.25); color:#fff;" placeholder="cole o PAT do GitHub para operações push/pull" />
+          <input id="ghToken" type="password" autocomplete="off" spellcheck="false" autocapitalize="off" style="width:100%; padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,.12); background: rgba(0,0,0,.25); color:#fff;" placeholder="cole o PAT do GitHub para operações push/pull" />
         </div>
 
         <div style="margin-top:12px; display:flex; gap:10px; flex-wrap:wrap;">
@@ -360,7 +361,7 @@
         repo:   repoIn   || String(cur.repo || "").trim(),
         branch: (branchIn || String(cur.branch || "main")).trim(),
         path:   normalizePathInput(pathIn || String(cur.path || "app/import/mother_bundle.json")),
-        token:  tokenIn  || String(window.RCF_GH_SYNC?.getRuntimeToken?.() || cur.token || "").trim()
+        token:  tokenIn  || String(window.RCF_GH_SYNC?.getRuntimeToken?.() || "").trim(),
       };
     }
 
@@ -913,7 +914,7 @@
     window.addEventListener("popstate",  () => { try { ensureGitHubButton(); } catch {} });
   }
 
-  window.RCF_ADMIN_GH = { __v28a: true, __v28a_patmask: true, boot, openModal, closeModal };
+  window.RCF_ADMIN_GH = { __v28a: true, boot, openModal, closeModal };
 
   if (document.readyState === "loading") {
     window.addEventListener("DOMContentLoaded", boot, { once:true });
