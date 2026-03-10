@@ -15,7 +15,7 @@
 
   <style>
     :root{
-      --rcf-css-token: "V8_INDEX_SAFE_OK";
+      --rcf-css-token: "V8_INDEX_SAFE_AI_RESTORE";
       --bg: #0b1220;
       --bg-2: #0f172a;
       --panel: #111827;
@@ -36,6 +36,7 @@
     }
 
     *{ box-sizing:border-box; }
+
     html,body{
       margin:0;
       padding:0;
@@ -489,8 +490,76 @@
 
   <script>
     window.__RCF_INDEX_BOOTED__ = true;
+
+    (function () {
+      "use strict";
+
+      const log = (...args) => {
+        try { console.log("[RCF:index]", ...args); } catch {}
+      };
+
+      const CANDIDATES = [
+        "./js/core/ui_bindings.js",
+        "./js/engine/engine.js",
+        "./js/admin.openai.js",
+        "./js/admin.ai.js",
+        "./js/admin.openai.bridge.js",
+        "./js/admin.openai.panel.js",
+        "./js/admin.integrations.ai.js",
+        "./js/modules/admin_ai.js",
+        "./js/modules/admin_openai.js"
+      ];
+
+      function loadScript(src) {
+        return new Promise((resolve) => {
+          try {
+            const s = document.createElement("script");
+            s.src = src;
+            s.async = false;
+            s.onload = () => {
+              log("loaded:", src);
+              resolve({ ok: true, src });
+            };
+            s.onerror = () => {
+              log("skip missing:", src);
+              resolve({ ok: false, src });
+            };
+            document.head.appendChild(s);
+          } catch (e) {
+            log("load fail:", src, e && e.message ? e.message : e);
+            resolve({ ok: false, src, err: e && e.message ? e.message : String(e) });
+          }
+        });
+      }
+
+      async function loadOptionalAdminModules() {
+        const out = [];
+        for (const src of CANDIDATES) {
+          out.push(await loadScript(src));
+        }
+        try { window.__RCF_OPTIONAL_LOADS__ = out; } catch {}
+      }
+
+      window.__RCF_LOAD_OPTIONALS__ = loadOptionalAdminModules;
+    })();
   </script>
 
-  <script src="./app.js"></script>
+  <script>
+    (async function () {
+      "use strict";
+      try {
+        if (typeof window.__RCF_LOAD_OPTIONALS__ === "function") {
+          await window.__RCF_LOAD_OPTIONALS__();
+        }
+      } catch (e) {
+        try { console.log("[RCF:index] optional loader fail:", e && e.message ? e.message : e); } catch {}
+      }
+
+      const main = document.createElement("script");
+      main.src = "./app.js";
+      main.async = false;
+      document.body.appendChild(main);
+    })();
+  </script>
 </body>
 </html>
