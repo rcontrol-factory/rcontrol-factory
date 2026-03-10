@@ -1,4 +1,4 @@
-/* RControl Factory — /app/js/core/github_sync.js — v2.4h (FINAL STABLE + FILLERS)
+/* RControl Factory — /app/js/core/github_sync.js — v2.4h SAFE PAT SESSION
    PATCH sobre v2.4g:
    - ✅ FILLERS: gera bundle completo automaticamente (lista padrão + auto-discovery) quando o bundle local estiver “mínimo”
    - ✅ pushMotherBundle passa a empurrar esse bundle completo pro GitHub (resolve root: mother_bundle.json com files=1)
@@ -8,12 +8,12 @@
 (() => {
   "use strict";
 
-  if (window.RCF_GH_SYNC && window.RCF_GH_SYNC.__v24h_patmask2) return;
+  if (window.RCF_GH_SYNC && window.RCF_GH_SYNC.__v24h) return;
 
   const LS_CFG_KEY = "rcf:ghcfg";
   const API_BASE = "https://api.github.com";
   const FIXED_BUNDLE_PATH = "app/import/mother_bundle.json";
-  let RUNTIME_PAT = null;
+  let RUNTIME_TOKEN = "";
 
   // bundle local (compat com MAE)
   const LS_BUNDLE_KEY = "rcf:mother_bundle_local";
@@ -45,7 +45,7 @@
       repo: String(c.repo || "").trim(),
       branch: String(c.branch || "main").trim(),
       path: norm.normalized,
-      token: String(RUNTIME_PAT || "").trim()
+      token: String(RUNTIME_TOKEN || "").trim()
     };
 
     log("info", "bundle path normalized", { raw: norm.raw, path: cfg.path, fixed: true });
@@ -56,10 +56,6 @@
     const inCfg = cfg || {};
     const norm = normalizeBundlePath(inCfg.path || FIXED_BUNDLE_PATH);
 
-    if (typeof inCfg.token === "string") {
-      RUNTIME_PAT = String(inCfg.token || "").trim() || null;
-    }
-
     const safe = {
       owner: String(inCfg.owner || "").trim(),
       repo: String(inCfg.repo || "").trim(),
@@ -67,23 +63,16 @@
       path: norm.normalized
     };
 
+    if (typeof inCfg.token === "string") RUNTIME_TOKEN = String(inCfg.token || "").trim();
     localStorage.setItem(LS_CFG_KEY, JSON.stringify(safe));
     log("ok", "OK: ghcfg saved");
-    return Object.assign({}, safe, { token: String(RUNTIME_PAT || "").trim() });
-  }
-
-  function setRuntimeToken(token) {
-    RUNTIME_PAT = String(token || "").trim() || null;
-    return !!RUNTIME_PAT;
-  }
-
-  function getRuntimeToken() {
-    return String(RUNTIME_PAT || "").trim();
+    return safe;
   }
 
   function headers(cfg) {
     const h = { "Accept": "application/vnd.github+json" };
-    if (cfg.token) h["Authorization"] = "token " + cfg.token;
+    const tok = String((cfg && cfg.token) || RUNTIME_TOKEN || "").trim();
+    if (tok) h["Authorization"] = "token " + tok;
     return h;
   }
 
@@ -468,16 +457,16 @@
 
   window.RCF_GH_SYNC = {
     __v24h: true,
-    __v24h_patmask2: true,
     loadConfig,
     saveConfig,
-    setRuntimeToken,
-    getRuntimeToken,
     pull,
     push,
     pushMotherBundle,
     listFillers,          // ✅ novo (UI futura)
-    buildFactoryBundle    // ✅ novo (debug/manual)
+    buildFactoryBundle,   // ✅ novo (debug/manual)
+    setRuntimeToken(token){ RUNTIME_TOKEN = String(token || "").trim(); return !!RUNTIME_TOKEN; },
+    clearRuntimeToken(){ RUNTIME_TOKEN = ""; return true; },
+    getRuntimeToken(){ return String(RUNTIME_TOKEN || ""); }
   };
 
   log("info", "github_sync.js loaded (v2.4h)");
@@ -500,8 +489,7 @@
         } catch { return {}; }
       })();
 
-      const runtime = (typeof GH.getRuntimeToken === "function") ? GH.getRuntimeToken() : "";
-      const token = (opts.token || runtime || cfg.token || cfg.ghToken || cfg.pat || "").trim();
+      const token = String(opts.token || RUNTIME_TOKEN || cfg.token || cfg.ghToken || cfg.pat || "").trim();
       if (!token) return { ok: false, err: "token ausente (rcf:ghcfg.token)" };
 
       try {
