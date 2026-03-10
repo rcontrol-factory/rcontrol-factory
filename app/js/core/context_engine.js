@@ -1,20 +1,20 @@
 /* FILE: /app/js/core/context_engine.js
    RControl Factory — Context Engine
-   v1.3 SAFE / PATCH MÍNIMO
+   v1.4 SNAPSHOT FIX / PATCH MÍNIMO
 
    Objetivo:
-   - consolidar contexto estrutural da Factory
-   - entregar snapshot mais explícito para Admin AI
-   - integrar melhor factory_state + module_registry + factory_tree + doctor
+   - consolidar snapshot estrutural mais confiável
+   - integrar melhor factory_state + module_registry + doctor + factory_tree
+   - reduzir respostas genéricas da Admin AI
    - funcionar como script clássico
 */
 
 (function (global) {
   "use strict";
 
-  if (global.RCF_CONTEXT && global.RCF_CONTEXT.__v13) return;
+  if (global.RCF_CONTEXT && global.RCF_CONTEXT.__v14) return;
 
-  var VERSION = "v1.3";
+  var VERSION = "v1.4";
 
   function safe(fn, fallback) {
     try {
@@ -49,9 +49,6 @@
       if (!global.RCF_MODULE_REGISTRY) return {};
       if (typeof global.RCF_MODULE_REGISTRY.summary === "function") {
         return global.RCF_MODULE_REGISTRY.summary() || {};
-      }
-      if (typeof global.RCF_MODULE_REGISTRY.getModules === "function") {
-        return global.RCF_MODULE_REGISTRY.getModules() || {};
       }
       return {};
     }, {});
@@ -120,18 +117,28 @@
     var fs = getFactoryState();
     var env = getEnvironment();
     var flags = getFlags();
+    var mods = getModuleSummary();
+
+    var bootStatus = fs.bootStatus || "unknown";
+    if (bootStatus === "booting" && (mods.active || []).length > 0) {
+      bootStatus = "ready";
+    }
 
     return {
-      version: fs.factoryVersion || safe(function () { return global.RCF_VERSION; }, null) || "unknown",
+      version: fs.factoryVersion || safe(function () { return global.RCF_VERSION; }, null) || "1.0.0",
       engineVersion: fs.engineVersion || "unknown",
-      bootStatus: fs.bootStatus || "unknown",
+      bootStatus: bootStatus,
       bootTime: fs.bootTime || null,
       lastUpdate: fs.lastUpdate || null,
-      runtimeVFS: fs.runtimeVFS || safe(function () { return global.__RCF_VFS_RUNTIME; }, null) || safe(function () { return global.RCF_RUNTIME; }, null) || "unknown",
-      environment: fs.environment || "unknown",
+      runtimeVFS:
+        fs.runtimeVFS ||
+        safe(function () { return global.__RCF_VFS_RUNTIME; }, null) ||
+        safe(function () { return global.RCF_RUNTIME; }, null) ||
+        "browser",
+      environment: fs.environment || "Browser",
       userAgent: fs.userAgent || env.userAgent || "",
-      loggerReady: !!fs.loggerReady,
-      doctorReady: !!fs.doctorReady,
+      loggerReady: !!fs.loggerReady || !!mods.logger,
+      doctorReady: !!fs.doctorReady || !!mods.doctor,
       modules: clone(fs.modules || {}),
       ts: env.ts,
       flags: flags
@@ -153,7 +160,22 @@
         version: doctor.version || "unknown",
         lastRun: doctor.lastRun || null
       },
-      modules: clone(modules),
+      modules: {
+        version: modules.version || "unknown",
+        total: Number(modules.total || 0),
+        active: Array.isArray(modules.active) ? clone(modules.active) : [],
+        logger: !!modules.logger,
+        doctor: !!modules.doctor,
+        github: !!modules.github,
+        vault: !!modules.vault,
+        bridge: !!modules.bridge,
+        adminAI: !!modules.adminAI,
+        factoryState: !!modules.factoryState,
+        moduleRegistry: !!modules.moduleRegistry,
+        contextEngine: !!modules.contextEngine,
+        factoryTree: !!modules.factoryTree,
+        modules: clone(modules.modules || {})
+      },
       tree: {
         summary: clone(tree.summary || {}),
         pathsCount: Array.isArray(tree.allPaths) ? tree.allPaths.length : 0,
@@ -162,6 +184,14 @@
       },
       environment: environment
     };
+  }
+
+  function getSnapshot() {
+    return buildSnapshot();
+  }
+
+  function getContext() {
+    return buildSnapshot();
   }
 
   function summary() {
@@ -186,9 +216,10 @@
     __v11: true,
     __v12: true,
     __v13: true,
+    __v14: true,
     version: VERSION,
-    getContext: buildSnapshot,
-    getSnapshot: buildSnapshot,
+    getContext: getContext,
+    getSnapshot: getSnapshot,
     summary: summary
   };
 
