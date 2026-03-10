@@ -1,35 +1,36 @@
 /* FILE: /app/js/core/factory_state.js
    RControl Factory — Factory State Engine
-   v1.1 SAFE / PATCH MÍNIMO
+   v1.3 STABLE / PATCH MÍNIMO
 
    Objetivo:
    - registrar estado operacional mínimo da Factory
-   - não usar Vault para metadados operacionais
+   - refletir melhor o boot real
+   - consolidar runtimeVFS
+   - registrar módulos ativos
    - expor API global via window.RCF_FACTORY_STATE
    - funcionar como script clássico
-   - integrar de forma leve com boot/logger/doctor/module registry
 */
 
-;(function(global){
+;(function (global) {
   "use strict";
 
-  if (global.RCF_FACTORY_STATE && global.RCF_FACTORY_STATE.__v11) return;
+  if (global.RCF_FACTORY_STATE && global.RCF_FACTORY_STATE.__v13) return;
 
   var STORAGE_KEY = "rcf:factory_state";
-  var VERSION = "v1.1";
+  var VERSION = "v1.3";
 
   var state = {
-    factoryVersion: null,
+    factoryVersion: "1.0.0",
     engineVersion: VERSION,
-    bootStatus: "not-started",
+    bootStatus: "booting",
     bootTime: null,
     lastUpdate: null,
-    runtimeVFS: null,
+    runtimeVFS: "browser",
     loggerReady: false,
     doctorReady: false,
     doctorLastRun: null,
     userAgent: null,
-    environment: null,
+    environment: "Browser",
     modules: {},
     health: {
       lastRefresh: null
@@ -63,6 +64,18 @@
     }
   }
 
+  function detectRuntimeVFS() {
+    try {
+      if (global.__RCF_VFS_RUNTIME) return String(global.__RCF_VFS_RUNTIME);
+    } catch (_) {}
+
+    try {
+      if (global.RCF_RUNTIME) return String(global.RCF_RUNTIME);
+    } catch (_) {}
+
+    return "browser";
+  }
+
   function log(level, msg) {
     try { global.RCF_LOGGER?.push?.(level, "[FACTORY_STATE] " + msg); } catch (_) {}
     try { console.log("[FACTORY_STATE]", level, msg); } catch (_) {}
@@ -71,7 +84,7 @@
   function safeMerge(target, patch) {
     if (!patch || typeof patch !== "object") return target;
 
-    Object.keys(patch).forEach(function(key){
+    Object.keys(patch).forEach(function (key) {
       var val = patch[key];
 
       if (
@@ -122,10 +135,10 @@
     load();
 
     var base = {
-      factoryVersion: global.RCF_VERSION || state.factoryVersion || null,
-      bootStatus: "booting",
+      factoryVersion: global.RCF_VERSION || state.factoryVersion || "1.0.0",
+      bootStatus: state.bootStatus || "booting",
       bootTime: state.bootTime || nowISO(),
-      runtimeVFS: global.__RCF_VFS_RUNTIME || global.RCF_RUNTIME || state.runtimeVFS || "unknown",
+      runtimeVFS: detectRuntimeVFS(),
       loggerReady: !!global.RCF_LOGGER,
       doctorReady: !!global.RCF_DOCTOR_SCAN,
       userAgent: (global.navigator && global.navigator.userAgent) ? global.navigator.userAgent : null,
@@ -166,7 +179,7 @@
 
   function setModules(mods) {
     if (!mods || typeof mods !== "object") return false;
-    Object.keys(mods).forEach(function(name){
+    Object.keys(mods).forEach(function (name) {
       state.modules[String(name)] = !!mods[name];
     });
     state.lastUpdate = nowISO();
@@ -174,8 +187,37 @@
     return true;
   }
 
+  function registerModule(name) {
+    return setModule(name, true);
+  }
+
   function markBoot(status) {
     state.bootStatus = String(status || "unknown");
+    state.lastUpdate = nowISO();
+    persist();
+    return true;
+  }
+
+  function setBootStatus(status) {
+    return markBoot(status);
+  }
+
+  function setRuntime(runtime) {
+    state.runtimeVFS = String(runtime || "browser");
+    state.lastUpdate = nowISO();
+    persist();
+    return true;
+  }
+
+  function setLoggerReady(flag) {
+    state.loggerReady = !!flag;
+    state.lastUpdate = nowISO();
+    persist();
+    return true;
+  }
+
+  function setDoctorReady(flag) {
+    state.doctorReady = !!flag;
     state.lastUpdate = nowISO();
     persist();
     return true;
@@ -193,13 +235,18 @@
   }
 
   function refreshRuntime() {
-    state.factoryVersion = global.RCF_VERSION || state.factoryVersion || null;
-    state.runtimeVFS = global.__RCF_VFS_RUNTIME || global.RCF_RUNTIME || state.runtimeVFS || "unknown";
+    state.factoryVersion = global.RCF_VERSION || state.factoryVersion || "1.0.0";
+    state.runtimeVFS = detectRuntimeVFS();
     state.loggerReady = !!global.RCF_LOGGER;
     state.doctorReady = !!global.RCF_DOCTOR_SCAN;
     state.environment = detectEnvironment();
     state.userAgent = (global.navigator && global.navigator.userAgent) ? global.navigator.userAgent : null;
     state.health.lastRefresh = nowISO();
+
+    if (state.bootStatus === "booting" && state.loggerReady) {
+      state.bootStatus = "ready";
+    }
+
     state.lastUpdate = nowISO();
     persist();
     return true;
@@ -222,15 +269,23 @@
   }
 
   global.RCF_FACTORY_STATE = {
+    __v1: true,
     __v10: true,
     __v11: true,
+    __v12: true,
+    __v13: true,
     version: VERSION,
     init: init,
     getState: getState,
     setState: setState,
     setModule: setModule,
     setModules: setModules,
+    registerModule: registerModule,
     markBoot: markBoot,
+    setBootStatus: setBootStatus,
+    setRuntime: setRuntime,
+    setLoggerReady: setLoggerReady,
+    setDoctorReady: setDoctorReady,
     markDoctorRun: markDoctorRun,
     refreshRuntime: refreshRuntime,
     persistState: persist,
@@ -240,6 +295,18 @@
 
   try {
     init();
+    setLoggerReady(!!global.RCF_LOGGER);
+    setDoctorReady(!!global.RCF_DOCTOR_SCAN);
+    refreshRuntime();
+  } catch (_) {}
+
+  try {
+    global.addEventListener("load", function () {
+      try {
+        refreshRuntime();
+        markBoot("ready");
+      } catch (_) {}
+    }, { once: true });
   } catch (_) {}
 
 })(window);
