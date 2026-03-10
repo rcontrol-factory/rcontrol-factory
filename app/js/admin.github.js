@@ -922,3 +922,11 @@
 
   log("ok", "admin.github.js ready ✅ (v2.8a)");
 })();
+
+// SECURITY PATCH: token must be session-only
+export function RCF_clearGithubTokenField(input){
+  if(input){
+    input.value = "";
+    input.placeholder = "cole o PAT do GitHub para operações push/pull";
+  }
+}
