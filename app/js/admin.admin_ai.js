@@ -1,149 +1,223 @@
-<!--
-  RControl Factory — INDEX (NORMAL BOOT) vCLEAN-2
-  ✅ Sem SAFE BOOT embutido
-  ✅ Sem loader manual (sem loadScript / sem lista dinâmica / sem watchdog)
-  ✅ Boot via <script defer> padrão
-  ✅ Mantém o “app root” (#app) simples e estável
+/* FILE: /app/js/admin.admin_ai.js
+   RControl Factory — Admin AI (Fase IA-1)
+   - monta no slot admin.integrations
+   - chat-lite com prompt manual + ações rápidas
+   - usa /api/admin-ai
+   - não executa patch automático
+   - patch mínimo / não mexe no boot
+*/
 
-  PATCH MÍNIMO:
-  - Adicionado: ./js/admin.admin_ai.js
-  - Sem alterar a estrutura principal da Factory
--->
+(() => {
+  "use strict";
 
-<!doctype html>
-<html lang="pt-BR">
-<head>
-  <!-- Core -->
-  <meta charset="utf-8" />
-  <meta http-equiv="x-ua-compatible" content="ie=edge" />
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  if (window.RCF_ADMIN_AI && window.RCF_ADMIN_AI.__v1) return;
 
-  <title>RControl Factory</title>
-  <meta name="theme-color" content="#0b1020" />
-  <meta name="color-scheme" content="dark light" />
+  const VERSION = "v1.0";
+  const BOX_ID = "rcfAdminAIBox";
 
-  <!-- RCF marker -->
-  <meta name="rcf-index" content="NORMAL_BOOT_2026_02_24_vCLEAN_2" />
+  function log(level, msg) {
+    try { window.RCF_LOGGER?.push?.(level, "[ADMIN_AI] " + msg); } catch {}
+    try { console.log("[ADMIN_AI]", level, msg); } catch {}
+  }
 
-  <!-- PWA -->
-  <base href="./" />
-  <link rel="manifest" href="./manifest.json" />
-  <link rel="icon" href="./favicon.ico" />
-  <link rel="apple-touch-icon" href="./icons/icon-192.png" />
+  function esc(s) {
+    return String(s || "").replace(/[&<>"]/g, c => ({
+      "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"
+    }[c]));
+  }
 
-  <!-- Styles -->
-  <link rel="stylesheet" href="./styles.css" />
+  function getSlot() {
+    try {
+      const ui = window.RCF_UI;
+      if (ui && typeof ui.getSlot === "function") {
+        const slot = ui.getSlot("admin.integrations");
+        if (slot) return slot;
+      }
+    } catch {}
 
-  <!-- Fallback visual mínimo (não é SafeBoot; é só “splash” neutro) -->
-  <style>
-    html, body { height: 100%; }
-    body {
-      margin: 0;
-      background: #0b1020;
-      color: #eaf0ff;
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    return (
+      document.getElementById("rcfAdminSlotIntegrations") ||
+      document.querySelector('[data-rcf-slot="admin.integrations"]') ||
+      document.getElementById("view-admin") ||
+      document.body
+    );
+  }
+
+  function collectFactoryInfo() {
+    const info = {
+      href: location.href,
+      runtimeVFS: window.__RCF_VFS_RUNTIME || "unknown",
+      hasLogger: !!window.RCF_LOGGER,
+      hasDoctor: !!window.RCF_DOCTOR_SCAN,
+      hasGitHub: !!window.RCF_GH_SYNC,
+      hasVault: !!window.RCF_ZIP_VAULT,
+      hasBridge: !!window.RCF_AGENT_ZIP_BRIDGE,
+      userAgent: navigator.userAgent,
+      ts: new Date().toISOString()
+    };
+    return info;
+  }
+
+  function collectLogs(limit = 120) {
+    try {
+      const logger = window.RCF_LOGGER;
+      if (logger && Array.isArray(logger.items)) {
+        return logger.items.slice(-limit);
+      }
+    } catch {}
+    return [];
+  }
+
+  function setStatus(txt) {
+    const el = document.getElementById("rcfAdminAIStatus");
+    if (el) el.textContent = String(txt || "");
+  }
+
+  function setResult(txt) {
+    const el = document.getElementById("rcfAdminAIResult");
+    if (el) el.textContent = String(txt || "");
+  }
+
+  async function callAdminAI(action, payload, prompt) {
+    setStatus("carregando...");
+    setResult("");
+
+    try {
+      const res = await fetch("/api/admin-ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action,
+          payload,
+          prompt
+        })
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok || !data.ok) {
+        setStatus("erro");
+        setResult(JSON.stringify(data, null, 2) || "Erro ao chamar /api/admin-ai");
+        log("ERR", "falha em /api/admin-ai");
+        return;
+      }
+
+      setStatus("concluído");
+      setResult(data.analysis || JSON.stringify(data, null, 2));
+      log("OK", "resposta recebida action=" + action);
+    } catch (e) {
+      setStatus("erro");
+      setResult(String(e?.message || e || "Erro de rede"));
+      log("ERR", "erro de rede /api/admin-ai");
     }
-    .rcf_splash {
-      min-height: 100%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 18px;
-      box-sizing: border-box;
+  }
+
+  function bindBox() {
+    const btnFactory = document.getElementById("rcfAdminAIAnalyzeFactory");
+    const btnLogs = document.getElementById("rcfAdminAIAnalyzeLogs");
+    const btnSuggest = document.getElementById("rcfAdminAISuggest");
+    const btnSend = document.getElementById("rcfAdminAISend");
+    const promptEl = document.getElementById("rcfAdminAIPrompt");
+
+    if (btnFactory && !btnFactory.__bound) {
+      btnFactory.__bound = true;
+      btnFactory.addEventListener("click", () => {
+        callAdminAI("analyze-architecture", collectFactoryInfo(), "");
+      }, { passive: true });
     }
-    .rcf_splash_card {
-      max-width: 720px;
-      width: 100%;
-      background: rgba(255,255,255,.06);
-      border: 1px solid rgba(255,255,255,.12);
-      border-radius: 18px;
-      padding: 16px 14px;
-      box-sizing: border-box;
+
+    if (btnLogs && !btnLogs.__bound) {
+      btnLogs.__bound = true;
+      btnLogs.addEventListener("click", () => {
+        callAdminAI("analyze-logs", collectLogs(), "");
+      }, { passive: true });
     }
-    .rcf_splash_title {
-      font-size: 18px;
-      font-weight: 900;
-      margin: 0 0 8px 0;
-      letter-spacing: .2px;
+
+    if (btnSuggest && !btnSuggest.__bound) {
+      btnSuggest.__bound = true;
+      btnSuggest.addEventListener("click", () => {
+        callAdminAI("suggest-improvement", collectFactoryInfo(), "");
+      }, { passive: true });
     }
-    .rcf_splash_hint {
-      opacity: .86;
-      font-size: 13px;
-      line-height: 1.35;
-      margin: 0;
+
+    if (btnSend && !btnSend.__bound) {
+      btnSend.__bound = true;
+      btnSend.addEventListener("click", () => {
+        const prompt = String(promptEl?.value || "").trim();
+        if (!prompt) {
+          setStatus("aguardando");
+          setResult("Digite uma instrução primeiro.");
+          return;
+        }
+        callAdminAI("summarize-structure", collectFactoryInfo(), prompt);
+      }, { passive: true });
     }
-  </style>
+  }
 
-  <!--
-    BOOT PADRÃO (scripts estáticos com defer)
-    IMPORTANTE: não mudar ordem sem necessidade.
-  -->
+  function mount() {
+    if (document.getElementById(BOX_ID)) return true;
 
-  <!-- Core / boot safety -->
-  <script defer src="./js/core/logger.js"></script>
-  <script defer src="./js/core/stability_guard.js"></script>
+    const slot = getSlot();
+    if (!slot) return false;
 
-  <!-- Storage + GitHub + VFS + MAE + updates -->
-  <script defer src="./js/core/storage.js"></script>
-  <script defer src="./js/core/github_sync.js"></script>
-  <script defer src="./js/core/vfs_overrides.js"></script>
-  <script defer src="./js/core/vfs_shim.js"></script>
-  <script defer src="./js/core/mother_selfupdate.js"></script>
+    const box = document.createElement("div");
+    box.id = BOX_ID;
+    box.className = "card";
+    box.style.marginTop = "12px";
+    box.innerHTML = `
+      <h2 style="margin-top:0">Admin AI</h2>
+      <div class="hint">IA administrativa da Factory. Analisa e sugere. Não executa patch automaticamente.</div>
 
-  <!-- Errors + UI safety/compact -->
-  <script defer src="./js/core/errors.js"></script>
-  <script defer src="./js/core/ui_safety.js"></script>
-  <script defer src="./js/core/ui_compact_outputs.js"></script>
-
-  <!-- UI bindings + diagnostics + doctor + preview -->
-  <script defer src="./js/core/ui_bindings.js"></script>
-  <script defer src="./js/core/diagnostics.js"></script>
-  <script defer src="./js/core/doctor_scan.js"></script>
-  <script defer src="./js/core/preview_runner.js"></script>
-
-  <!-- Injector + engine pipeline -->
-  <script defer src="./js/core/injector.js"></script>
-  <script defer src="./js/engine/template_registry.js"></script>
-  <script defer src="./js/engine/module_registry.js"></script>
-  <script defer src="./js/engine/builder.js"></script>
-  <script defer src="./js/engine/engine.js"></script>
-
-  <!-- Pages links + Admin GH + Admin AI -->
-  <script defer src="./js/core/pages_links.js"></script>
-  <script defer src="./js/admin.github.js"></script>
-  <script defer src="./js/admin.admin_ai.js"></script>
-
-  <!-- App main -->
-  <script defer src="./app.js"></script>
-
-  <!-- Vault / ZIP -->
-  <script defer src="./js/core/zip_vault.js"></script>
-  <script defer src="./js/core/agent_zip_bridge.js"></script>
-
-</head>
-
-<body>
-  <noscript>Ative o JavaScript para usar a RControl Factory.</noscript>
-
-  <!-- Root único e fixo -->
-  <div id="app">
-    <!-- Splash neutro (o app substitui/atualiza o conteúdo ao montar) -->
-    <div class="rcf_splash" aria-label="RCF carregando">
-      <div class="rcf_splash_card">
-        <h1 class="rcf_splash_title">RControl Factory</h1>
-        <p class="rcf_splash_hint">
-          Carregando módulos…<br/>
-          Se ficar preso, use o Safe Boot separado (emergência).
-        </p>
+      <div class="row" style="margin-top:10px;gap:10px;flex-wrap:wrap">
+        <button class="btn ghost" id="rcfAdminAIAnalyzeFactory" type="button">Analisar Factory</button>
+        <button class="btn ghost" id="rcfAdminAIAnalyzeLogs" type="button">Analisar Logs</button>
+        <button class="btn ghost" id="rcfAdminAISuggest" type="button">Sugerir melhoria</button>
       </div>
-    </div>
-  </div>
 
-  <!--
-    Sem SAFE BOOT aqui.
-    Sem loader JS aqui.
-    Sem timers aqui.
-    Sem listeners globais aqui.
-  -->
-</body>
-</html>
+      <div style="margin-top:12px">
+        <label class="hint" for="rcfAdminAIPrompt">Prompt manual</label>
+        <textarea id="rcfAdminAIPrompt"
+          placeholder="Ex.: revise a arquitetura da Factory e diga o próximo passo mais seguro"
+          style="width:100%;min-height:100px;margin-top:6px;background:#0c1020;color:#eaf0ff;border:1px solid rgba(255,255,255,.14);border-radius:10px;padding:10px;box-sizing:border-box"></textarea>
+      </div>
+
+      <div class="row" style="margin-top:10px;gap:10px;align-items:center;flex-wrap:wrap">
+        <button class="btn ok" id="rcfAdminAISend" type="button">Enviar</button>
+        <div class="badge" id="rcfAdminAIStatus">aguardando</div>
+      </div>
+
+      <pre class="mono small" id="rcfAdminAIResult" style="margin-top:10px;max-height:36vh;overflow:auto">Pronto.</pre>
+    `;
+
+    slot.appendChild(box);
+    bindBox();
+
+    log("OK", "Admin AI mount ✅ " + VERSION);
+    return true;
+  }
+
+  function mountLoop() {
+    if (mount()) return true;
+    setTimeout(() => { try { mount(); } catch {} }, 700);
+    setTimeout(() => { try { mount(); } catch {} }, 1600);
+    return false;
+  }
+
+  window.RCF_ADMIN_AI = {
+    __v1: true,
+    version: VERSION,
+    mount
+  };
+
+  try {
+    window.addEventListener("RCF:UI_READY", () => { try { mountLoop(); } catch {} }, { passive: true });
+  } catch {}
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", () => { try { mountLoop(); } catch {} }, { once: true });
+  } else {
+    mountLoop();
+  }
+
+  log("OK", "admin.admin_ai.js ready ✅ " + VERSION);
+})();
