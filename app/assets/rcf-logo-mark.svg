@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+
+  <defs>
+
+    <linearGradient id="gearGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4A8DFF"/>
+      <stop offset="100%" stop-color="#2D63D6"/>
+    </linearGradient>
+
+    <linearGradient id="accentGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFB15E"/>
+      <stop offset="100%" stop-color="#FF8A2A"/>
+    </linearGradient>
+
+  </defs>
+
+  <!-- fundo -->
+
+  <circle cx="256" cy="256" r="220"
+  fill="#E6EBF4"/>
+
+  <!-- engrenagem -->
+
+  <path
+  fill="url(#gearGradient)"
+  d="
+  M256 120
+  L296 130
+  L320 110
+  L350 140
+  L330 164
+  L340 204
+  L380 214
+  L380 258
+  L340 268
+  L330 308
+  L350 332
+  L320 362
+  L296 342
+  L256 352
+  L216 342
+  L192 362
+  L162 332
+  L182 308
+  L172 268
+  L132 258
+  L132 214
+  L172 204
+  L182 164
+  L162 140
+  L192 110
+  L216 130
+  Z
+  "/>
+
+  <!-- centro -->
+
+  <circle
+  cx="256"
+  cy="236"
+  r="82"
+  fill="#F2F6FC"/>
+
+  <circle
+  cx="256"
+  cy="236"
+  r="48"
+  fill="url(#accentGradient)"/>
+
+</svg>
