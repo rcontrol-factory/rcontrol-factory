@@ -1,12 +1,12 @@
 <!--
-  RControl Factory — INDEX (NORMAL BOOT) vCLEAN-2+ PADRÃO RESTAURADO SAFE VISUAL
-  ✅ Mantém base restaurada estável
+  RControl Factory — INDEX (NORMAL BOOT) vCLEAN-3
+  ✅ Mantém boot estável
   ✅ Mantém admin.admin_ai.js
   ✅ Mantém doctor_scan.js
   ✅ Mantém ordem estável dos scripts
-  ✅ Mantém boot normal com <script defer>
-  ✅ Patch mínimo visual / anti tela branca PWA
-  ✅ Conecta asset visual do splash sem depender dele para o boot
+  ✅ Mantém #app como root único
+  ✅ Splash visual alinhado ao branding oficial
+  ✅ Patch mínimo seguro para PWA / anti tela branca
   ✅ Sem SAFE BOOT embutido
   ✅ Sem loader manual
   ✅ Sem lógica extra no index
@@ -21,11 +21,11 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
 
   <title>RControl Factory</title>
-  <meta name="theme-color" content="#cfd4de" />
+  <meta name="theme-color" content="#d7dde7" />
   <meta name="color-scheme" content="light dark" />
 
   <!-- RCF marker -->
-  <meta name="rcf-index" content="NORMAL_BOOT_2026_02_24_vCLEAN_2_RESTORED_SAFE_VISUAL_ASSETS_SAFE" />
+  <meta name="rcf-index" content="NORMAL_BOOT_2026_03_RCF_CLEAN_3_VISUAL_SAFE" />
 
   <!-- PWA -->
   <base href="./" />
@@ -33,29 +33,31 @@
   <link rel="icon" href="./favicon.ico" />
   <link rel="apple-touch-icon" href="./icons/icon-192.png" />
 
+  <!-- Assets -->
+  <link rel="preload" as="image" href="./assets/rcf-logo-mark.svg" />
+
   <!-- Styles -->
   <link rel="stylesheet" href="./styles.css" />
 
-  <!-- Fallback visual mínimo e estável (não é SafeBoot; é só splash neutro/leve) -->
+  <!-- Splash mínimo seguro -->
   <style>
     :root{
-      --rcf-bg: #d9dde6;
-      --rcf-bg-2: #c8ced9;
-      --rcf-ink: #1f2a44;
-      --rcf-muted: #55627f;
-      --rcf-line: rgba(34,52,84,.14);
-      --rcf-card: rgba(255,255,255,.52);
+      --rcf-bg: #e7ebf2;
+      --rcf-bg-2: #d8dee8;
+      --rcf-ink: #24314d;
+      --rcf-muted: #6d7890;
+      --rcf-line: rgba(43,61,96,.12);
       --rcf-blue: #4a8dff;
       --rcf-orange: #ff9b3d;
-      --rcf-shadow: 0 14px 34px rgba(34,52,84,.10);
+      --rcf-shadow: 0 18px 36px rgba(36,49,77,.10);
     }
 
     html, body {
       height: 100%;
       min-height: 100%;
       background:
-        radial-gradient(circle at 18% 16%, rgba(255,255,255,.68), rgba(255,255,255,0) 26%),
-        radial-gradient(circle at 82% 84%, rgba(74,141,255,.10), rgba(74,141,255,0) 22%),
+        radial-gradient(circle at 14% 10%, rgba(255,255,255,.86), rgba(255,255,255,0) 25%),
+        radial-gradient(circle at 86% 18%, rgba(74,141,255,.10), rgba(74,141,255,0) 18%),
         linear-gradient(180deg, var(--rcf-bg), var(--rcf-bg-2));
     }
 
@@ -78,33 +80,33 @@
     #app::after {
       content: "";
       position: fixed;
-      inset: auto;
       pointer-events: none;
       z-index: 0;
-      border-radius: 999px;
-      opacity: .12;
     }
 
     #app::before {
-      width: min(72vw, 520px);
-      height: min(72vw, 520px);
-      right: -10vw;
+      right: -9vw;
       top: 6vh;
-      border: 26px solid rgba(91,110,145,.08);
+      width: min(72vw, 540px);
+      height: min(72vw, 540px);
+      border-radius: 50%;
+      border: 26px solid rgba(91,110,145,.06);
       box-shadow:
-        inset 0 0 0 18px rgba(255,255,255,.08),
-        0 0 0 1px rgba(255,255,255,.16);
-      transform: rotate(-10deg);
+        inset 0 0 0 16px rgba(255,255,255,.05),
+        0 0 0 1px rgba(255,255,255,.08);
+      transform: rotate(-8deg);
+      opacity: .9;
     }
 
     #app::after {
-      width: min(48vw, 320px);
-      height: min(48vw, 320px);
-      left: -8vw;
-      bottom: -6vh;
-      border: 18px solid rgba(91,110,145,.06);
-      box-shadow: inset 0 0 0 12px rgba(255,255,255,.06);
-      transform: rotate(12deg);
+      left: 50%;
+      bottom: 10vh;
+      width: min(64vw, 760px);
+      height: min(64vw, 760px);
+      transform: translateX(-50%);
+      background: url("./assets/rcf-logo-mark.svg") center/contain no-repeat;
+      opacity: .03;
+      filter: grayscale(1);
     }
 
     .rcf_splash {
@@ -112,7 +114,11 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      padding: max(18px, env(safe-area-inset-top)) 18px max(18px, env(safe-area-inset-bottom)) 18px;
+      padding:
+        max(18px, env(safe-area-inset-top))
+        18px
+        max(18px, env(safe-area-inset-bottom))
+        18px;
       box-sizing: border-box;
       position: relative;
       z-index: 1;
@@ -120,17 +126,18 @@
 
     .rcf_splash_card {
       position: relative;
-      max-width: 760px;
       width: 100%;
-      box-sizing: border-box;
-      padding: 18px 16px;
-      border-radius: 22px;
+      max-width: 860px;
+      padding: 18px 18px 16px 18px;
+      border-radius: 28px;
       border: 1px solid var(--rcf-line);
       background:
-        linear-gradient(180deg, rgba(255,255,255,.72), rgba(255,255,255,.46));
-      box-shadow: var(--rcf-shadow);
-      backdrop-filter: blur(4px);
-      -webkit-backdrop-filter: blur(4px);
+        linear-gradient(180deg, rgba(255,255,255,.88), rgba(255,255,255,.68));
+      box-shadow:
+        var(--rcf-shadow),
+        inset 0 1px 0 rgba(255,255,255,.76);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
       overflow: hidden;
     }
 
@@ -140,45 +147,36 @@
       inset: 0;
       pointer-events: none;
       background:
-        linear-gradient(120deg, rgba(74,141,255,.10), rgba(74,141,255,0) 20%, rgba(255,155,61,.10) 80%, rgba(255,155,61,0));
-      opacity: .9;
+        linear-gradient(120deg, rgba(74,141,255,.06), rgba(74,141,255,0) 28%, rgba(255,155,61,.05) 80%, rgba(255,155,61,0));
     }
 
     .rcf_splash_head {
       position: relative;
+      z-index: 1;
       display: flex;
       align-items: center;
+      justify-content: space-between;
       gap: 12px;
-      margin-bottom: 10px;
-      z-index: 1;
+      margin-bottom: 14px;
+    }
+
+    .rcf_splash_brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-width: 0;
     }
 
     .rcf_mark {
-      width: 48px;
-      height: 48px;
-      flex: 0 0 48px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
+      width: 54px;
+      height: 54px;
+      flex: 0 0 54px;
       border-radius: 50%;
-      position: relative;
       overflow: hidden;
-      background:
-        radial-gradient(circle at 35% 35%, #31415f, #182236 68%),
-        linear-gradient(135deg, var(--rcf-blue), var(--rcf-orange));
+      background: #fff;
       box-shadow:
-        0 0 0 3px rgba(255,255,255,.58),
-        0 8px 18px rgba(34,52,84,.18);
-    }
-
-    .rcf_mark::before {
-      content: "";
-      position: absolute;
-      inset: -6px;
-      border-radius: 50%;
-      border: 5px solid rgba(76,97,133,.46);
-      clip-path: polygon(8% 34%,18% 26%,30% 8%,44% 4%,56% 4%,70% 8%,82% 26%,92% 34%,96% 46%,96% 56%,92% 68%,82% 78%,70% 92%,56% 96%,44% 96%,30% 92%,18% 78%,8% 68%,4% 56%,4% 46%);
-      pointer-events: none;
+        0 0 0 1px rgba(255,255,255,.78),
+        0 10px 22px rgba(43,61,96,.12);
     }
 
     .rcf_mark img {
@@ -186,21 +184,6 @@
       height: 100%;
       object-fit: cover;
       display: block;
-      position: relative;
-      z-index: 1;
-    }
-
-    .rcf_mark_fallback {
-      position: absolute;
-      inset: 0;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      color: #fff;
-      font-weight: 900;
-      font-size: 12px;
-      letter-spacing: .3px;
-      z-index: 0;
     }
 
     .rcf_brand {
@@ -209,89 +192,128 @@
 
     .rcf_splash_title {
       margin: 0;
-      font-size: clamp(22px, 4vw, 34px);
-      line-height: 1.05;
+      font-size: clamp(24px, 4vw, 38px);
+      line-height: 1;
       font-weight: 900;
-      letter-spacing: .3px;
-      color: #1f2a44;
+      letter-spacing: .2px;
+      color: #24314d;
     }
 
     .rcf_splash_subtitle {
-      margin: 2px 0 0 0;
+      margin: 6px 0 0 0;
       font-size: 12px;
-      letter-spacing: 1.1px;
+      letter-spacing: 1.4px;
       text-transform: uppercase;
       color: var(--rcf-muted);
-      opacity: .95;
     }
 
-    .rcf_splash_hint {
-      position: relative;
-      z-index: 1;
-      margin: 10px 0 0 0;
-      color: #33415f;
-      opacity: .94;
-      font-size: 14px;
-      line-height: 1.45;
+    .rcf_splash_action {
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      border: 1px solid rgba(43,61,96,.08);
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.94), rgba(255,255,255,.72));
+      box-shadow:
+        0 10px 18px rgba(43,61,96,.08),
+        inset 0 1px 0 rgba(255,255,255,.75);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: #7f8798;
+      font-size: 18px;
     }
 
-    .rcf_splash_row {
+    .rcf_splash_tabs {
       position: relative;
       z-index: 1;
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 10px;
-      margin-top: 14px;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
     }
 
-    .rcf_chip {
-      min-height: 54px;
+    .rcf_splash_tab {
+      min-height: 62px;
+      border-radius: 999px;
+      border: 1px solid rgba(43,61,96,.10);
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.92), rgba(255,255,255,.72));
       display: flex;
-      flex-direction: column;
+      align-items: center;
       justify-content: center;
-      padding: 10px 12px;
-      border-radius: 16px;
-      border: 1px solid rgba(34,52,84,.10);
-      background: rgba(255,255,255,.42);
-      box-shadow: inset 0 1px 0 rgba(255,255,255,.45);
+      font-size: 14px;
+      font-weight: 800;
+      color: #384865;
+      box-shadow:
+        0 8px 18px rgba(43,61,96,.06),
+        inset 0 1px 0 rgba(255,255,255,.76);
+      position: relative;
+      overflow: hidden;
     }
 
-    .rcf_chip strong {
-      display: block;
-      font-size: 13px;
-      line-height: 1.15;
-      color: #23314f;
+    .rcf_splash_tab.is-active {
+      color: #1c3e75;
+      border-color: rgba(74,141,255,.18);
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.96), rgba(228,236,252,.88));
+      box-shadow:
+        0 12px 22px rgba(74,141,255,.10),
+        inset 0 0 0 1px rgba(74,141,255,.10),
+        inset 0 1px 0 rgba(255,255,255,.82);
     }
 
-    .rcf_chip span {
-      display: block;
-      margin-top: 3px;
-      font-size: 12px;
-      color: #5d6882;
+    .rcf_splash_tab.is-active::after {
+      content: "";
+      position: absolute;
+      left: 20px;
+      right: 20px;
+      bottom: 7px;
+      height: 3px;
+      border-radius: 999px;
+      background: linear-gradient(90deg, rgba(74,141,255,.18), rgba(74,141,255,.88), rgba(255,155,61,.22));
     }
 
     @media (max-width: 720px) {
       .rcf_splash_card {
-        padding: 16px 14px;
-        border-radius: 18px;
+        padding: 14px;
+        border-radius: 24px;
       }
 
-      .rcf_splash_row {
-        grid-template-columns: 1fr;
+      .rcf_splash_head {
+        align-items: flex-start;
       }
 
       .rcf_mark {
-        width: 42px;
-        height: 42px;
-        flex-basis: 42px;
+        width: 48px;
+        height: 48px;
+        flex-basis: 48px;
       }
 
-      .rcf_mark_fallback {
-        font-size: 11px;
+      .rcf_splash_title {
+        font-size: 26px;
       }
 
-      .rcf_splash_hint {
-        font-size: 13px;
+      .rcf_splash_tabs {
+        grid-template-columns: repeat(4, minmax(120px, 1fr));
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+        padding-bottom: 2px;
+      }
+
+      .rcf_splash_tabs::-webkit-scrollbar {
+        display: none;
+      }
+
+      .rcf_splash_tab {
+        min-width: 140px;
+        min-height: 56px;
+      }
+
+      #app::after {
+        bottom: 24vh;
+        width: min(88vw, 520px);
+        height: min(88vw, 520px);
       }
     }
   </style>
@@ -350,50 +372,32 @@
 <body>
   <noscript>Ative o JavaScript para usar a RControl Factory.</noscript>
 
-  <!-- Root único e fixo -->
   <div id="app">
-    <!-- Splash neutro/leve (o app substitui/atualiza o conteúdo ao montar) -->
     <div class="rcf_splash" aria-label="RCF carregando">
       <div class="rcf_splash_card">
         <div class="rcf_splash_head">
-          <div class="rcf_mark" aria-hidden="true">
-            <img src="./assets/rcf-logo-mark.svg" alt="" />
-            <span class="rcf_mark_fallback">RCF</span>
+          <div class="rcf_splash_brand">
+            <div class="rcf_mark" aria-hidden="true">
+              <img src="./assets/rcf-logo-mark.svg" alt="" />
+            </div>
+
+            <div class="rcf_brand">
+              <h1 class="rcf_splash_title">RCF</h1>
+              <p class="rcf_splash_subtitle">Factory interna • PWA • Offline-first</p>
+            </div>
           </div>
-          <div class="rcf_brand">
-            <h1 class="rcf_splash_title">RControl Factory</h1>
-            <p class="rcf_splash_subtitle">by RControl</p>
-          </div>
+
+          <div class="rcf_splash_action" aria-hidden="true">⚙</div>
         </div>
 
-        <p class="rcf_splash_hint">
-          Inicializando a Factory com carregamento estável para PWA.<br />
-          Se ficar preso, use o Safe Boot separado (emergência).
-        </p>
-
-        <div class="rcf_splash_row" aria-hidden="true">
-          <div class="rcf_chip">
-            <strong>Dashboard</strong>
-            <span>Status e controle</span>
-          </div>
-          <div class="rcf_chip">
-            <strong>Apps e Editor</strong>
-            <span>Projetos e código</span>
-          </div>
-          <div class="rcf_chip">
-            <strong>Factory AI</strong>
-            <span>Módulos e automação</span>
-          </div>
+        <div class="rcf_splash_tabs" aria-hidden="true">
+          <div class="rcf_splash_tab is-active">Dashboard</div>
+          <div class="rcf_splash_tab">New App</div>
+          <div class="rcf_splash_tab">Editor</div>
+          <div class="rcf_splash_tab">Generator</div>
         </div>
       </div>
     </div>
   </div>
-
-  <!--
-    Sem SAFE BOOT aqui.
-    Sem loader JS aqui.
-    Sem timers aqui.
-    Sem listeners globais aqui.
-  -->
 </body>
 </html>
