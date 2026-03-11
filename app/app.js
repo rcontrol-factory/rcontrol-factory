@@ -1,4 +1,4 @@
- FILE: app/app.js
+  FILE: app/app.js
    RControl Factory - /app/app.js - V8.0.2 PADRAO (Doctor FAB-only, no global delegation)
    - Arquivo completo (1 peca) pra copiar/colar
    - FIX: Apps list layout
