@@ -545,8 +545,8 @@
   // UI: Compact CSS
   // =========================================================
   const UI = {
-    brandTitle: "RCF",
-    brandSubtitle: "Factory interna • PWA • Offline-first",
+    brandTitle: "FACTORY",
+    brandSubtitle: "by RCONTROL",
     compactEnabled: true
   };
 
@@ -818,9 +818,34 @@
 
         <main class="container views" id="views" data-rcf-panel="views">
           <section class="view card hero" id="view-dashboard" data-rcf-view="dashboard">
-            <h1>Dashboard</h1>
-            <p>Central do projeto. Selecione um app e comece a editar.</p>
-            <div class="status-box">
+            <div class="row" style="align-items:flex-start;gap:14px">
+              <div style="flex:1 1 360px;min-width:260px">
+                <h1>Factory</h1>
+                <p>Painel principal da RControl Factory. Entre nos apps, acompanhe o status e abra as áreas da plataforma sem sair do fluxo.</p>
+              </div>
+              <div class="badge" id="dashStatusBadge" style="min-height:42px">Sistema online ✅</div>
+            </div>
+
+            <div class="row" style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:14px" id="dashStatsGrid">
+              <div class="card" style="padding:14px;border-radius:18px">
+                <div class="hint">Apps ativos</div>
+                <div id="dashStatApps" style="font-size:28px;font-weight:900;line-height:1.05;margin-top:4px">0</div>
+              </div>
+              <div class="card" style="padding:14px;border-radius:18px">
+                <div class="hint">Projetos</div>
+                <div id="dashStatProjects" style="font-size:28px;font-weight:900;line-height:1.05;margin-top:4px">0</div>
+              </div>
+              <div class="card" style="padding:14px;border-radius:18px">
+                <div class="hint">Factory AI</div>
+                <div id="dashStatAi" style="font-size:28px;font-weight:900;line-height:1.05;margin-top:4px">ON</div>
+              </div>
+              <div class="card" style="padding:14px;border-radius:18px">
+                <div class="hint">Builds</div>
+                <div id="dashStatBuilds" style="font-size:28px;font-weight:900;line-height:1.05;margin-top:4px">0</div>
+              </div>
+            </div>
+
+            <div class="status-box" style="margin-top:14px">
               <div class="badge" id="activeAppText">Sem app ativo ✅</div>
               <div class="spacer"></div>
               <button class="btn small" id="btnCreateNewApp" type="button" data-rcf-action="nav.newapp">Criar App</button>
@@ -828,7 +853,22 @@
               <button class="btn small ghost" id="btnExportBackup" type="button" data-rcf-action="backup.export">Backup (JSON)</button>
             </div>
 
-            <h2 style="margin-top:14px">Apps</h2>
+            <div class="row" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:14px" id="dashShortcuts">
+              <button class="card btn ghost" id="btnDashOpenApps" type="button" style="display:flex;flex-direction:column;align-items:flex-start;justify-content:center;min-height:110px;border-radius:20px">
+                <span style="font-size:13px;opacity:.8">Apps</span>
+                <strong style="font-size:18px;line-height:1.15">Projetos e editor</strong>
+              </button>
+              <button class="card btn ghost" id="btnDashOpenAgent" type="button" style="display:flex;flex-direction:column;align-items:flex-start;justify-content:center;min-height:110px;border-radius:20px">
+                <span style="font-size:13px;opacity:.8">Factory AI</span>
+                <strong style="font-size:18px;line-height:1.15">Agente, contexto e automação</strong>
+              </button>
+              <button class="card btn ghost" id="btnDashOpenSystem" type="button" style="display:flex;flex-direction:column;align-items:flex-start;justify-content:center;min-height:110px;border-radius:20px">
+                <span style="font-size:13px;opacity:.8">System</span>
+                <strong style="font-size:18px;line-height:1.15">Admin, logs e diagnósticos</strong>
+              </button>
+            </div>
+
+            <h2 style="margin-top:16px">Apps</h2>
             <div id="appsList" class="apps" data-rcf-slot="apps.list"></div>
           </section>
 
@@ -1217,7 +1257,7 @@
       const now = Date.now();
 
       // ignore redundant same-view requests
-      if (typeof State === "object" && State && State.view === viewName) return;
+      if (typeof State === "object" && State && State.active && State.active.view === name) return;
 
       // simple reentrancy lock (no globals)
       if (setView.__busy__) {
@@ -1345,6 +1385,7 @@
     saveAll();
     renderAppsList();
     renderFilesList();
+    renderDashboardSummary();
 
     uiMsg("#editorOut", "✅ App apagado.");
     Logger.write("app deleted:", s);
@@ -1354,6 +1395,33 @@
     try { syncFabStatusText(); } catch {}
 
     return true;
+  }
+
+  function renderDashboardSummary() {
+    try {
+      const appsCount = Array.isArray(State.apps) ? State.apps.length : 0;
+      const active = getActiveApp();
+      const activeFiles = active && active.files ? Object.keys(active.files).length : 0;
+
+      const setTxt = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = String(txt); };
+      setTxt("dashStatApps", appsCount);
+      setTxt("dashStatProjects", appsCount);
+      setTxt("dashStatAi", window.RCF_AGENT_ZIP_BRIDGE || window.RCF_AGENT_RUNTIME || window.RCF_ENGINE ? "ON" : "—");
+      setTxt("dashStatBuilds", activeFiles || 0);
+
+      const badge = document.getElementById("dashStatusBadge");
+      if (badge) badge.textContent = active ? `App ativo: ${active.name} ✅` : "Sistema online ✅";
+
+      const grid = document.getElementById("dashStatsGrid");
+      const shortcuts = document.getElementById("dashShortcuts");
+      if (window.innerWidth <= 720) {
+        if (grid) grid.style.gridTemplateColumns = "repeat(2,minmax(0,1fr))";
+        if (shortcuts) shortcuts.style.gridTemplateColumns = "1fr";
+      } else {
+        if (grid) grid.style.gridTemplateColumns = "repeat(4,minmax(0,1fr))";
+        if (shortcuts) shortcuts.style.gridTemplateColumns = "repeat(3,minmax(0,1fr))";
+      }
+    } catch {}
   }
 
   function renderAppsList() {
@@ -1458,6 +1526,7 @@
 
     renderAppsList();
     renderFilesList();
+    renderDashboardSummary();
     if (State.active.file) openFile(State.active.file);
 
     Logger.write("app selected:", slug);
@@ -1486,6 +1555,7 @@
     State.apps.push(app);
     saveAll();
     renderAppsList();
+    renderDashboardSummary();
     setActiveApp(slug);
 
     return { ok: true, msg: `✅ App criado: ${nameClean} (${slug})` };
@@ -2673,6 +2743,9 @@
 
     bindTap($("#btnCreateNewApp"), () => setView("newapp"));
     bindTap($("#btnOpenEditor"), () => setView("editor"));
+    bindTap($("#btnDashOpenApps"), () => setView("editor"));
+    bindTap($("#btnDashOpenAgent"), () => setView("agent"));
+    bindTap($("#btnDashOpenSystem"), () => setView("admin"));
 
     bindTap($("#btnExportBackup"), () => {
       const payload = JSON.stringify({ apps: State.apps, cfg: State.cfg, active: State.active }, null, 2);
@@ -2980,6 +3053,7 @@
   function hydrateUIFromState() {
     refreshLogsViews();
     renderAppsList();
+    renderDashboardSummary();
 
     const app = getActiveApp();
     if (app) {
