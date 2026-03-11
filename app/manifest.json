@@ -1,32 +1,38 @@
 {
   "name": "RControl Factory",
   "short_name": "RCF",
-  "description": "RControl Factory — App Factory interna para criação, edição e gerenciamento de aplicativos.",
+  "description": "RControl Factory — plataforma interna para criação, edição e gerenciamento de aplicativos.",
+
   "start_url": "./index.html",
   "scope": "./",
+
   "display": "standalone",
   "orientation": "any",
+
   "background_color": "#d9dde6",
   "theme_color": "#cfd4de",
-  "icons": [
-    {
-      "src": "./icons/icon-192.png",
-      "sizes": "192x192",
-      "type": "image/png",
-      "purpose": "any maskable"
-    },
-    {
-      "src": "./icons/icon-512.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "any maskable"
-    }
-  ],
+
+  "lang": "pt-BR",
+  "dir": "ltr",
+
   "categories": [
     "developer",
     "productivity",
     "tools"
   ],
-  "lang": "pt-BR",
-  "dir": "ltr"
+
+  "icons": [
+    {
+      "src": "./assets/icon-192.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "./assets/icon-512.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
 }
