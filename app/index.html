@@ -1,20 +1,14 @@
 <!--
-  RControl Factory — INDEX (NORMAL BOOT) vCLEAN-2 PADRÃO RESTAURADO + VISUAL SAFE
-  ✅ Mantém boot normal estável
-  ✅ Mantém ordem original dos scripts
+  RControl Factory — INDEX (NORMAL BOOT) vCLEAN-2+ PADRÃO RESTAURADO SAFE VISUAL
+  ✅ Mantém base restaurada estável
   ✅ Mantém admin.admin_ai.js
   ✅ Mantém doctor_scan.js
-  ✅ Mantém root #app simples e estável
+  ✅ Mantém ordem estável dos scripts
+  ✅ Mantém boot normal com <script defer>
+  ✅ Patch mínimo visual / anti tela branca PWA
   ✅ Sem SAFE BOOT embutido
   ✅ Sem loader manual
-  ✅ Sem listeners globais extras
-
-  PATCH MÍNIMO VISUAL:
-  - token CSS para diagnostics
-  - meta iOS/PWA seguros
-  - splash visual mais profissional
-  - fundo refinado
-  - sem alterar arquitetura do boot
+  ✅ Sem lógica extra no index
 -->
 
 <!doctype html>
@@ -26,16 +20,11 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
 
   <title>RControl Factory</title>
-  <meta name="theme-color" content="#0b1020" />
-  <meta name="color-scheme" content="dark light" />
-
-  <!-- iOS / PWA -->
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="RControl Factory" />
+  <meta name="theme-color" content="#cfd4de" />
+  <meta name="color-scheme" content="light dark" />
 
   <!-- RCF marker -->
-  <meta name="rcf-index" content="NORMAL_BOOT_2026_02_24_vCLEAN_2_PADRAO_RESTAURADO_VISUAL_SAFE" />
+  <meta name="rcf-index" content="NORMAL_BOOT_2026_02_24_vCLEAN_2_RESTORED_SAFE_VISUAL" />
 
   <!-- PWA -->
   <base href="./" />
@@ -46,49 +35,75 @@
   <!-- Styles -->
   <link rel="stylesheet" href="./styles.css" />
 
-  <!--
-    Fallback visual mínimo e elegante
-    - não é SafeBoot
-    - não controla fluxo
-    - só entrega uma apresentação mais profissional enquanto app.js monta
-  -->
+  <!-- Fallback visual mínimo e estável (não é SafeBoot; é só splash neutro/leve) -->
   <style>
     :root{
-      --rcf-css-token: "RCF_INDEX_VCLEAN2_VISUAL_SAFE";
-      --bg: #0b1020;
-      --bg-2: #0f172a;
-      --panel: rgba(255,255,255,.06);
-      --line: rgba(255,255,255,.12);
-      --line-soft: rgba(255,255,255,.08);
-      --text: #eaf0ff;
-      --muted: #a8b3cf;
-      --accent: #38bdf8;
-      --accent-2: #22c55e;
-      --shadow: 0 18px 50px rgba(0,0,0,.32);
-      --radius: 18px;
+      --rcf-bg: #d9dde6;
+      --rcf-bg-2: #c8ced9;
+      --rcf-ink: #1f2a44;
+      --rcf-muted: #55627f;
+      --rcf-line: rgba(34,52,84,.14);
+      --rcf-card: rgba(255,255,255,.52);
+      --rcf-blue: #4a8dff;
+      --rcf-orange: #ff9b3d;
+      --rcf-shadow: 0 14px 34px rgba(34,52,84,.10);
     }
 
     html, body {
-      min-height: 100%;
       height: 100%;
-      margin: 0;
-      padding: 0;
+      min-height: 100%;
       background:
-        radial-gradient(circle at top, rgba(56,189,248,.10), transparent 30%),
-        linear-gradient(180deg, #08101d 0%, #0b1020 100%);
-      color: var(--text);
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-      -webkit-font-smoothing: antialiased;
-      -moz-osx-font-smoothing: grayscale;
+        radial-gradient(circle at 18% 16%, rgba(255,255,255,.68), rgba(255,255,255,0) 26%),
+        radial-gradient(circle at 82% 84%, rgba(74,141,255,.10), rgba(74,141,255,0) 22%),
+        linear-gradient(180deg, var(--rcf-bg), var(--rcf-bg-2));
     }
 
     body {
+      margin: 0;
+      color: var(--rcf-ink);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
       overflow-x: hidden;
     }
 
     #app {
-      min-height: 100vh;
-      width: 100%;
+      min-height: 100%;
+      position: relative;
+      background: transparent;
+    }
+
+    #app::before,
+    #app::after {
+      content: "";
+      position: fixed;
+      inset: auto;
+      pointer-events: none;
+      z-index: 0;
+      border-radius: 999px;
+      opacity: .12;
+    }
+
+    #app::before {
+      width: min(72vw, 520px);
+      height: min(72vw, 520px);
+      right: -10vw;
+      top: 6vh;
+      border: 26px solid rgba(91,110,145,.08);
+      box-shadow:
+        inset 0 0 0 18px rgba(255,255,255,.08),
+        0 0 0 1px rgba(255,255,255,.16);
+      transform: rotate(-10deg);
+    }
+
+    #app::after {
+      width: min(48vw, 320px);
+      height: min(48vw, 320px);
+      left: -8vw;
+      bottom: -6vh;
+      border: 18px solid rgba(91,110,145,.06);
+      box-shadow: inset 0 0 0 12px rgba(255,255,255,.06);
+      transform: rotate(12deg);
     }
 
     .rcf_splash {
@@ -96,139 +111,164 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      padding: 20px;
+      padding: max(18px, env(safe-area-inset-top)) 18px max(18px, env(safe-area-inset-bottom)) 18px;
       box-sizing: border-box;
+      position: relative;
+      z-index: 1;
     }
 
     .rcf_splash_card {
       position: relative;
       max-width: 760px;
       width: 100%;
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: var(--radius);
-      padding: 18px 16px;
       box-sizing: border-box;
-      box-shadow: var(--shadow);
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
+      padding: 18px 16px;
+      border-radius: 22px;
+      border: 1px solid var(--rcf-line);
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.72), rgba(255,255,255,.46));
+      box-shadow: var(--rcf-shadow);
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
       overflow: hidden;
     }
 
     .rcf_splash_card::before {
       content: "";
       position: absolute;
-      inset: 0 auto auto 0;
-      width: 100%;
-      height: 1px;
-      background: linear-gradient(90deg, rgba(56,189,248,.0), rgba(56,189,248,.45), rgba(34,197,94,.25), rgba(56,189,248,0));
+      inset: 0;
       pointer-events: none;
+      background:
+        linear-gradient(120deg, rgba(74,141,255,.10), rgba(74,141,255,0) 20%, rgba(255,155,61,.10) 80%, rgba(255,155,61,0));
+      opacity: .9;
     }
 
-    .rcf_brand {
+    .rcf_splash_head {
+      position: relative;
       display: flex;
       align-items: center;
       gap: 12px;
       margin-bottom: 10px;
-      min-width: 0;
+      z-index: 1;
     }
 
-    .rcf_brand_dot {
-      width: 12px;
-      height: 12px;
-      border-radius: 999px;
-      background: linear-gradient(180deg, var(--accent-2), #10b981);
-      box-shadow: 0 0 0 4px rgba(34,197,94,.12);
-      flex: 0 0 auto;
+    .rcf_mark {
+      width: 44px;
+      height: 44px;
+      flex: 0 0 44px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+      font-weight: 900;
+      font-size: 12px;
+      letter-spacing: .3px;
+      color: #fff;
+      background:
+        radial-gradient(circle at 35% 35%, #31415f, #182236 68%),
+        linear-gradient(135deg, var(--rcf-blue), var(--rcf-orange));
+      box-shadow:
+        0 0 0 3px rgba(255,255,255,.58),
+        0 8px 18px rgba(34,52,84,.18);
+      position: relative;
     }
 
-    .rcf_brand_text {
+    .rcf_mark::before {
+      content: "";
+      position: absolute;
+      inset: -6px;
+      border-radius: 50%;
+      border: 5px solid rgba(76,97,133,.46);
+      clip-path: polygon(8% 34%,18% 26%,30% 8%,44% 4%,56% 4%,70% 8%,82% 26%,92% 34%,96% 46%,96% 56%,92% 68%,82% 78%,70% 92%,56% 96%,44% 96%,30% 92%,18% 78%,8% 68%,4% 56%,4% 46%);
+      pointer-events: none;
+    }
+
+    .rcf_brand {
       min-width: 0;
     }
 
     .rcf_splash_title {
-      font-size: 18px;
-      font-weight: 900;
       margin: 0;
-      letter-spacing: .2px;
-      line-height: 1.15;
+      font-size: clamp(22px, 4vw, 34px);
+      line-height: 1.05;
+      font-weight: 900;
+      letter-spacing: .3px;
+      color: #1f2a44;
     }
 
     .rcf_splash_subtitle {
       margin: 2px 0 0 0;
       font-size: 12px;
-      color: var(--muted);
-      line-height: 1.2;
+      letter-spacing: 1.1px;
+      text-transform: uppercase;
+      color: var(--rcf-muted);
+      opacity: .95;
     }
 
     .rcf_splash_hint {
-      opacity: .92;
-      color: var(--text);
-      font-size: 13px;
+      position: relative;
+      z-index: 1;
+      margin: 10px 0 0 0;
+      color: #33415f;
+      opacity: .94;
+      font-size: 14px;
       line-height: 1.45;
-      margin: 12px 0 0 0;
     }
 
-    .rcf_splash_hint strong {
-      color: #ffffff;
-      font-weight: 800;
-    }
-
-    .rcf_splash_meta {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
+    .rcf_splash_row {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
       margin-top: 14px;
     }
 
     .rcf_chip {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      min-height: 34px;
-      padding: 8px 12px;
-      border-radius: 999px;
-      background: rgba(255,255,255,.04);
-      border: 1px solid var(--line-soft);
-      color: var(--muted);
+      min-height: 54px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 10px 12px;
+      border-radius: 16px;
+      border: 1px solid rgba(34,52,84,.10);
+      background: rgba(255,255,255,.42);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.45);
+    }
+
+    .rcf_chip strong {
+      display: block;
+      font-size: 13px;
+      line-height: 1.15;
+      color: #23314f;
+    }
+
+    .rcf_chip span {
+      display: block;
+      margin-top: 3px;
       font-size: 12px;
-      line-height: 1;
-      box-sizing: border-box;
+      color: #5d6882;
     }
 
-    .rcf_chip_ok {
-      color: #d8ffe8;
-      border-color: rgba(34,197,94,.20);
-      background: rgba(34,197,94,.08);
-    }
-
-    .rcf_chip_info {
-      color: #dbeafe;
-      border-color: rgba(56,189,248,.22);
-      background: rgba(56,189,248,.08);
-    }
-
-    @media (max-width: 640px) {
-      .rcf_splash {
-        padding: 16px;
-      }
-
+    @media (max-width: 720px) {
       .rcf_splash_card {
         padding: 16px 14px;
-        border-radius: 16px;
+        border-radius: 18px;
       }
 
-      .rcf_splash_title {
-        font-size: 17px;
+      .rcf_splash_row {
+        grid-template-columns: 1fr;
+      }
+
+      .rcf_mark {
+        width: 40px;
+        height: 40px;
+        flex-basis: 40px;
+        font-size: 11px;
       }
 
       .rcf_splash_hint {
-        font-size: 12.5px;
-      }
-
-      .rcf_chip {
-        font-size: 11.5px;
-        padding: 7px 11px;
+        font-size: 13px;
       }
     }
   </style>
@@ -289,26 +329,35 @@
 
   <!-- Root único e fixo -->
   <div id="app">
-    <!-- Splash neutro/bonito; o app substitui ao montar -->
+    <!-- Splash neutro/leve (o app substitui/atualiza o conteúdo ao montar) -->
     <div class="rcf_splash" aria-label="RCF carregando">
       <div class="rcf_splash_card">
-        <div class="rcf_brand">
-          <div class="rcf_brand_dot"></div>
-          <div class="rcf_brand_text">
+        <div class="rcf_splash_head">
+          <div class="rcf_mark" aria-hidden="true">RCF</div>
+          <div class="rcf_brand">
             <h1 class="rcf_splash_title">RControl Factory</h1>
-            <p class="rcf_splash_subtitle">Factory interna • PWA • Offline-first</p>
+            <p class="rcf_splash_subtitle">by RControl</p>
           </div>
         </div>
 
         <p class="rcf_splash_hint">
-          <strong>Carregando módulos…</strong><br />
-          Se a tela ficar presa, use o Safe Boot separado apenas como emergência.
+          Inicializando a Factory com carregamento estável para PWA.<br />
+          Se ficar preso, use o Safe Boot separado (emergência).
         </p>
 
-        <div class="rcf_splash_meta" aria-hidden="true">
-          <div class="rcf_chip rcf_chip_ok">Boot normal</div>
-          <div class="rcf_chip rcf_chip_info">Doctor ativo</div>
-          <div class="rcf_chip">Admin AI mantido</div>
+        <div class="rcf_splash_row" aria-hidden="true">
+          <div class="rcf_chip">
+            <strong>Dashboard</strong>
+            <span>Status e controle</span>
+          </div>
+          <div class="rcf_chip">
+            <strong>Apps e Editor</strong>
+            <span>Projetos e código</span>
+          </div>
+          <div class="rcf_chip">
+            <strong>Factory AI</strong>
+            <span>Módulos e automação</span>
+          </div>
         </div>
       </div>
     </div>
