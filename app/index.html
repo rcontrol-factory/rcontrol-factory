@@ -1,11 +1,11 @@
 <!--
-  RControl Factory — INDEX (NORMAL BOOT) vCLEAN-3
+  RControl Factory — INDEX (NORMAL BOOT) vCLEAN-3b
   ✅ Mantém boot estável
   ✅ Mantém admin.admin_ai.js
   ✅ Mantém doctor_scan.js
   ✅ Mantém ordem estável dos scripts
   ✅ Mantém #app como root único
-  ✅ Splash visual alinhado ao branding oficial
+  ✅ Ajusta branding/logo com assets oficiais
   ✅ Patch mínimo seguro para PWA / anti tela branca
   ✅ Sem SAFE BOOT embutido
   ✅ Sem loader manual
@@ -25,15 +25,16 @@
   <meta name="color-scheme" content="light dark" />
 
   <!-- RCF marker -->
-  <meta name="rcf-index" content="NORMAL_BOOT_2026_03_RCF_CLEAN_3_VISUAL_SAFE" />
+  <meta name="rcf-index" content="NORMAL_BOOT_2026_03_RCF_CLEAN_3B_BRANDING_SAFE" />
 
   <!-- PWA -->
   <base href="./" />
   <link rel="manifest" href="./manifest.json" />
-  <link rel="icon" href="./favicon.ico" />
-  <link rel="apple-touch-icon" href="./icons/icon-192.png" />
+  <link rel="icon" href="./assets/favicon-32.png" sizes="32x32" type="image/png" />
+  <link rel="apple-touch-icon" href="./assets/apple-touch-icon.png" />
 
   <!-- Assets -->
+  <link rel="preload" as="image" href="./assets/factory-icon-master.png" />
   <link rel="preload" as="image" href="./assets/rcf-logo-mark.svg" />
 
   <!-- Styles -->
@@ -197,6 +198,7 @@
       font-weight: 900;
       letter-spacing: .2px;
       color: #24314d;
+      text-transform: uppercase;
     }
 
     .rcf_splash_subtitle {
@@ -378,12 +380,12 @@
         <div class="rcf_splash_head">
           <div class="rcf_splash_brand">
             <div class="rcf_mark" aria-hidden="true">
-              <img src="./assets/rcf-logo-mark.svg" alt="" />
+              <img src="./assets/factory-icon-master.png" alt="" />
             </div>
 
             <div class="rcf_brand">
-              <h1 class="rcf_splash_title">RCF</h1>
-              <p class="rcf_splash_subtitle">Factory interna • PWA • Offline-first</p>
+              <h1 class="rcf_splash_title">FACTORY</h1>
+              <p class="rcf_splash_subtitle">by RCONTROL</p>
             </div>
           </div>
 
