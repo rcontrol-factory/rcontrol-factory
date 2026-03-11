@@ -824,6 +824,27 @@
           .rcfActivityList{display:grid;gap:8px}
           .rcfActivityItem{padding:10px 12px;border:1px solid rgba(38,58,92,.10);border-radius:14px;background:rgba(255,255,255,.58);font-size:13px;color:var(--rcf-text-2,#33415f)}
           .rcfAiPanel{display:grid;gap:12px;margin-top:8px}
+          .rcfMobileModules{display:none}
+          .rcfMobileModuleCard{display:flex;align-items:center;gap:15px;width:100%;padding:19px 17px;border:1px solid rgba(46,65,97,.10);border-radius:24px;background:linear-gradient(180deg,rgba(255,255,255,.94),rgba(255,255,255,.70));box-shadow:0 16px 32px rgba(25,38,66,.10),inset 0 1px 0 rgba(255,255,255,.66);text-align:left;color:var(--rcf-text,#1f2a44);position:relative;overflow:hidden;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+          .rcfMobileModuleCard::before{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(120deg,rgba(74,141,255,.08),rgba(74,141,255,0) 28%,rgba(255,155,61,.08) 78%,rgba(255,155,61,0))}
+          .rcfMobileModuleCard::after{content:"";position:absolute;right:-28px;bottom:-18px;width:96px;height:96px;border-radius:50%;border:10px solid rgba(91,110,145,.05);box-shadow:inset 0 0 0 7px rgba(255,255,255,.05);pointer-events:none}
+          .rcfMobileModuleCard > *{position:relative;z-index:1}
+          .rcfMobileModuleIcon{display:inline-flex;align-items:center;justify-content:center;width:58px;height:58px;border-radius:19px;flex:0 0 58px;position:relative;background:linear-gradient(180deg,rgba(255,255,255,.88),rgba(214,223,236,.88));box-shadow:0 12px 24px rgba(25,38,66,.12),inset 0 1px 0 rgba(255,255,255,.78)}
+          .rcfMobileModuleIcon::before,.rcfMobileModuleIcon::after{content:"";position:absolute;display:block}
+          .rcfMobileModuleIcon.mod-dashboard::before{width:28px;height:28px;border-radius:50%;border:3px solid #456fd6;box-shadow:0 0 0 6px rgba(74,141,255,.14) inset}
+          .rcfMobileModuleIcon.mod-dashboard::after{width:10px;height:10px;border-radius:50%;background:linear-gradient(180deg,#89d7ff,#4a8dff);box-shadow:-10px 6px 0 0 #5f7be7,10px -4px 0 0 #ffb15e,3px 13px 0 0 #7fd5c0}
+          .rcfMobileModuleIcon.mod-apps::before{width:28px;height:28px;border-radius:9px;background:linear-gradient(180deg,#ffd380,#ffb15e);left:12px;top:14px;box-shadow:12px -8px 0 0 #5b7ee9,-2px 10px 0 0 #264da7}
+          .rcfMobileModuleIcon.mod-apps::after{width:16px;height:12px;border-radius:4px;background:rgba(255,255,255,.66);left:21px;top:23px}
+          .rcfMobileModuleIcon.mod-editor::before{width:26px;height:34px;border-radius:8px;background:linear-gradient(180deg,#31568f,#1b2d50);transform:rotate(-12deg);box-shadow:0 0 0 2px rgba(255,255,255,.25) inset}
+          .rcfMobileModuleIcon.mod-editor::after{width:14px;height:3px;border-radius:999px;background:#ffb15e;transform:rotate(-12deg);top:30px;left:22px;box-shadow:-2px -7px 0 0 rgba(255,255,255,.78),-4px -14px 0 0 rgba(255,255,255,.54)}
+          .rcfMobileModuleIcon.mod-agent::before{width:26px;height:26px;border-radius:50%;background:radial-gradient(circle at 35% 35%,#9ce1ff,#4a8dff 58%,#2f70e6 100%);box-shadow:0 0 0 5px rgba(74,141,255,.12)}
+          .rcfMobileModuleIcon.mod-agent::after{width:24px;height:24px;border:3px solid rgba(46,79,151,.64);border-left-color:transparent;border-bottom-color:transparent;border-radius:50%;transform:rotate(28deg);top:15px;left:17px}
+          .rcfMobileModuleIcon.mod-factory::before{width:30px;height:30px;border-radius:50%;border:5px solid #2f70e6;box-shadow:0 0 0 4px rgba(255,177,94,.44) inset}
+          .rcfMobileModuleIcon.mod-factory::after{width:12px;height:12px;border-radius:50%;background:linear-gradient(180deg,#ffb15e,#ff8a2a);box-shadow:0 -20px 0 -2px #3f77ec,14px -14px 0 -2px #3f77ec,20px 0 0 -2px #3f77ec,14px 14px 0 -2px #3f77ec,0 20px 0 -2px #3f77ec,-14px 14px 0 -2px #3f77ec,-20px 0 0 -2px #3f77ec,-14px -14px 0 -2px #3f77ec}
+          .rcfMobileModuleText{min-width:0;flex:1 1 auto}
+          .rcfMobileModuleTitle{font-size:18px;font-weight:900;line-height:1.05;color:var(--rcf-text,#1f2a44);letter-spacing:.1px}
+          .rcfMobileModuleSub{margin-top:6px;font-size:12px;line-height:1.3;color:var(--rcf-muted,#647089)}
+          .rcfMobileModuleArrow{font-size:24px;font-weight:900;color:rgba(31,42,68,.58);flex:0 0 auto;transform:translateY(-1px)}
           .rcfBottomNav{display:none}
           @media (max-width:980px){
             .rcfShellGrid{grid-template-columns:1fr}
@@ -833,8 +854,32 @@
           }
           @media (max-width:720px){
             .rcfSidebar{display:none}
-            .rcfBottomNav{position:fixed;left:max(10px,env(safe-area-inset-left));right:max(10px,env(safe-area-inset-right));bottom:max(10px,env(safe-area-inset-bottom));z-index:130;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;padding:10px;border:1px solid rgba(38,58,92,.12);border-radius:22px;background:linear-gradient(180deg,rgba(255,255,255,.92),rgba(255,255,255,.74));backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);box-shadow:0 22px 48px rgba(25,38,66,.16)}
-            .rcfBottomNav .tab{min-width:0;width:100%;padding:9px 8px;font-size:11px}
+            .topbar{padding:14px 12px 10px !important;border-radius:26px !important;margin-bottom:12px !important}
+            .brand{align-items:flex-start !important}
+            .factory-logo-header{height:62px !important;max-width:min(84vw, 342px) !important}
+            .tabs{display:none !important}
+            .container{padding-bottom:112px !important}
+            .hero{padding:12px !important;border-radius:24px !important;background:linear-gradient(180deg,rgba(255,255,255,.78),rgba(255,255,255,.60)) !important}
+            .hero h1{font-size:24px !important;line-height:1.05 !important}
+            .hero p{font-size:13px !important}
+            .rcfDashHero{gap:12px !important}
+            .rcfDashHeroHead{order:2 !important}
+            .rcfDashHeroHead > div:first-child{display:none !important}
+            .status-box{display:grid !important;grid-template-columns:1fr !important;gap:8px !important;margin-top:0 !important}
+            .status-box .badge{grid-column:1 / -1 !important}
+            .status-box .btn{display:none !important}
+            .rcfMobileModules{display:grid !important;order:1 !important;gap:12px !important;margin-top:0 !important}
+            .rcfDashMetrics{order:3 !important;grid-template-columns:1fr !important;gap:10px !important}
+            .rcfMetricCard{padding:14px 16px !important;border-radius:18px !important}
+            .rcfMetricValue{font-size:28px !important}
+            .rcfDashPanels{order:4 !important;gap:10px !important}
+            .rcfDashPanel{padding:14px !important;border-radius:18px !important}
+            #appsList{display:grid !important;grid-template-columns:1fr !important;gap:10px !important}
+            #appsList .app-item{padding:14px !important;border-radius:18px !important;flex-direction:column !important;align-items:stretch !important}
+            #appsList .app-actions{width:100% !important;display:grid !important;grid-template-columns:1fr 1fr 1fr !important;gap:8px !important}
+            #appsList .app-actions .btn{width:100% !important;min-height:40px !important}
+            .rcfBottomNav{position:fixed;left:max(10px,env(safe-area-inset-left));right:max(10px,env(safe-area-inset-right));bottom:max(10px,env(safe-area-inset-bottom));z-index:130;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;padding:10px;border:1px solid rgba(38,58,92,.12);border-radius:22px;background:linear-gradient(180deg,rgba(255,255,255,.95),rgba(255,255,255,.80));backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);box-shadow:0 22px 48px rgba(25,38,66,.16)}
+            .rcfBottomNav .tab{min-width:0 !important;width:100% !important;padding:8px 6px !important;font-size:11px !important;line-height:1.1 !important;min-height:46px !important;border-radius:16px !important}
             #rcfFab{bottom:calc(max(10px,env(safe-area-inset-bottom)) + 86px)}
             #rcfFabPanel{bottom:calc(max(10px,env(safe-area-inset-bottom)) + 152px)}
           }
@@ -861,7 +906,7 @@
               <button class="tab rcfSideBtn" data-view="settings" type="button">System</button>
               <button class="tab rcfSideBtn" data-view="logs" type="button">Logs</button>
               <button class="tab rcfSideBtn" data-view="admin" type="button">GitHub Sync</button>
-              <button class="tab rcfSideBtn" id="btnSidebarTools" type="button">Tools</button>
+              <button class="tab rcfSideBtn" id="btnSidebarTools" type="button">⚙️</button>
             </nav>
 
             <div class="rcfSideFooter">
@@ -926,6 +971,49 @@
                   <div class="rcfMetricLabel">Builds</div>
                   <div class="rcfMetricValue" id="dashBuildsCount">00</div>
                 </div>
+              </div>
+
+              <div class="rcfMobileModules" aria-label="Módulos principais">
+                <button class="rcfMobileModuleCard" data-view="dashboard" type="button">
+                  <span class="rcfMobileModuleIcon mod-dashboard" aria-hidden="true"></span>
+                  <span class="rcfMobileModuleText">
+                    <span class="rcfMobileModuleTitle">Dashboard</span>
+                    <span class="rcfMobileModuleSub">Status &amp; Controle</span>
+                  </span>
+                  <span class="rcfMobileModuleArrow" aria-hidden="true">›</span>
+                </button>
+                <button class="rcfMobileModuleCard" data-view="newapp" type="button">
+                  <span class="rcfMobileModuleIcon mod-apps" aria-hidden="true"></span>
+                  <span class="rcfMobileModuleText">
+                    <span class="rcfMobileModuleTitle">Apps</span>
+                    <span class="rcfMobileModuleSub">Criar &amp; Gerenciar</span>
+                  </span>
+                  <span class="rcfMobileModuleArrow" aria-hidden="true">›</span>
+                </button>
+                <button class="rcfMobileModuleCard" data-view="editor" type="button">
+                  <span class="rcfMobileModuleIcon mod-editor" aria-hidden="true"></span>
+                  <span class="rcfMobileModuleText">
+                    <span class="rcfMobileModuleTitle">Editor</span>
+                    <span class="rcfMobileModuleSub">Projetos &amp; Código</span>
+                  </span>
+                  <span class="rcfMobileModuleArrow" aria-hidden="true">›</span>
+                </button>
+                <button class="rcfMobileModuleCard" data-view="agent" type="button">
+                  <span class="rcfMobileModuleIcon mod-agent" aria-hidden="true"></span>
+                  <span class="rcfMobileModuleText">
+                    <span class="rcfMobileModuleTitle">Agent</span>
+                    <span class="rcfMobileModuleSub">IA + Automação</span>
+                  </span>
+                  <span class="rcfMobileModuleArrow" aria-hidden="true">›</span>
+                </button>
+                <button class="rcfMobileModuleCard" data-view="admin" type="button">
+                  <span class="rcfMobileModuleIcon mod-factory" aria-hidden="true"></span>
+                  <span class="rcfMobileModuleText">
+                    <span class="rcfMobileModuleTitle">Factory</span>
+                    <span class="rcfMobileModuleSub">Sistema &amp; Tools</span>
+                  </span>
+                  <span class="rcfMobileModuleArrow" aria-hidden="true">›</span>
+                </button>
               </div>
 
               <div class="rcfDashPanels">
