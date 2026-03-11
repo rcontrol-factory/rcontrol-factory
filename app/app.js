@@ -826,36 +826,36 @@
           .rcfActivityItem{padding:10px 12px;border:1px solid rgba(38,58,92,.10);border-radius:14px;background:rgba(255,255,255,.58);font-size:13px;color:var(--rcf-text-2,#33415f)}
           .rcfAiPanel{display:grid;gap:12px;margin-top:8px}
           .rcfMobileModules{display:none}
-          .rcfMobileModuleCard{display:flex;align-items:center;gap:16px;width:100%;padding:20px 18px;border:1px solid rgba(63,84,122,.10);border-radius:28px;background:
-              linear-gradient(180deg,rgba(255,255,255,.92),rgba(244,248,255,.78) 52%,rgba(233,239,248,.74));
-              box-shadow:0 18px 44px rgba(24,40,73,.12),inset 0 1px 0 rgba(255,255,255,.88),inset 0 -16px 28px rgba(176,190,214,.10);
-              text-align:left;color:var(--rcf-text,#1f2a44);position:relative;overflow:hidden;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+          .rcfMobileModuleCard{display:flex;align-items:center;gap:15px;width:100%;padding:18px 17px;border:1px solid rgba(63,84,122,.08);border-radius:26px;background:
+              linear-gradient(180deg,rgba(255,255,255,.90),rgba(246,249,253,.78) 54%,rgba(238,242,248,.74));
+              box-shadow:0 12px 28px rgba(24,40,73,.08),inset 0 1px 0 rgba(255,255,255,.84);
+              text-align:left;color:var(--rcf-text,#1f2a44);position:relative;overflow:hidden;backdrop-filter:blur(9px);-webkit-backdrop-filter:blur(9px)}
           .rcfMobileModuleCard::before{content:"";position:absolute;inset:0;pointer-events:none;background:
-              radial-gradient(circle at 12% 14%,rgba(255,255,255,.84),rgba(255,255,255,0) 28%),
-              linear-gradient(135deg,rgba(79,137,255,.10),rgba(79,137,255,0) 28%,rgba(255,171,88,.09) 86%,rgba(255,171,88,0))}
-          .rcfMobileModuleCard::after{content:"";position:absolute;right:-14px;top:-18px;width:124px;height:124px;border-radius:50%;
-              background:radial-gradient(circle,rgba(136,174,255,.16),rgba(136,174,255,0) 68%);
-              pointer-events:none;filter:blur(2px)}
+              radial-gradient(circle at 12% 14%,rgba(255,255,255,.72),rgba(255,255,255,0) 24%),
+              linear-gradient(135deg,rgba(79,137,255,.05),rgba(79,137,255,0) 26%,rgba(255,171,88,.04) 86%,rgba(255,171,88,0))}
+          .rcfMobileModuleCard::after{content:"";position:absolute;right:-20px;top:-24px;width:104px;height:104px;border-radius:50%;
+              background:radial-gradient(circle,rgba(136,174,255,.08),rgba(136,174,255,0) 70%);
+              pointer-events:none;filter:blur(1px)}
           .rcfMobileModuleCard > *{position:relative;z-index:1}
-          .rcfMobileModuleIcon{display:inline-flex;align-items:center;justify-content:center;width:60px;height:60px;border-radius:20px;flex:0 0 60px;position:relative;
-              background:linear-gradient(180deg,rgba(255,255,255,.98),rgba(225,233,246,.96));
-              border:1px solid rgba(88,112,155,.08);
-              box-shadow:0 14px 28px rgba(25,38,66,.12),inset 0 1px 0 rgba(255,255,255,.94),inset 0 -8px 16px rgba(173,188,213,.10)}
+          .rcfMobileModuleIcon{display:inline-flex;align-items:center;justify-content:center;width:58px;height:58px;border-radius:19px;flex:0 0 58px;position:relative;
+              background:linear-gradient(180deg,rgba(255,255,255,.96),rgba(231,237,246,.94));
+              border:1px solid rgba(88,112,155,.07);
+              box-shadow:0 9px 18px rgba(25,38,66,.08),inset 0 1px 0 rgba(255,255,255,.90)}
           .rcfMobileModuleIcon::before,.rcfMobileModuleIcon::after{content:"";position:absolute;display:block}
-          .rcfMobileModuleIcon.mod-dashboard::before{width:29px;height:29px;border-radius:50%;border:3px solid #496fdb;box-shadow:0 0 0 7px rgba(74,141,255,.10) inset}
-          .rcfMobileModuleIcon.mod-dashboard::after{width:10px;height:10px;border-radius:50%;background:linear-gradient(180deg,#9adfff,#4a8dff);box-shadow:-10px 7px 0 0 #6d85ea,10px -5px 0 0 #ffb66b,3px 14px 0 0 #87d9c7}
-          .rcfMobileModuleIcon.mod-apps::before{width:29px;height:29px;border-radius:10px;background:linear-gradient(180deg,#ffd993,#ffb566);left:11px;top:14px;box-shadow:13px -9px 0 0 #6888ee,-2px 10px 0 0 #27498e}
+          .rcfMobileModuleIcon.mod-dashboard::before{width:28px;height:28px;border-radius:50%;border:3px solid #496fdb;box-shadow:0 0 0 5px rgba(74,141,255,.08) inset}
+          .rcfMobileModuleIcon.mod-dashboard::after{width:9px;height:9px;border-radius:50%;background:linear-gradient(180deg,#9adfff,#4a8dff);box-shadow:-9px 6px 0 0 #6d85ea,9px -4px 0 0 #ffb66b,3px 12px 0 0 #87d9c7}
+          .rcfMobileModuleIcon.mod-apps::before{width:28px;height:28px;border-radius:9px;background:linear-gradient(180deg,#ffd993,#ffb566);left:11px;top:14px;box-shadow:12px -8px 0 0 #6888ee,-2px 9px 0 0 #27498e}
           .rcfMobileModuleIcon.mod-apps::after{width:17px;height:12px;border-radius:4px;background:rgba(255,255,255,.74);left:21px;top:24px}
           .rcfMobileModuleIcon.mod-editor::before{width:27px;height:35px;border-radius:9px;background:linear-gradient(180deg,#355a90,#1a2f53);transform:rotate(-12deg);box-shadow:0 0 0 2px rgba(255,255,255,.30) inset}
           .rcfMobileModuleIcon.mod-editor::after{width:14px;height:3px;border-radius:999px;background:#ffb567;transform:rotate(-12deg);top:31px;left:23px;box-shadow:-2px -7px 0 0 rgba(255,255,255,.84),-4px -14px 0 0 rgba(255,255,255,.56)}
-          .rcfMobileModuleIcon.mod-agent::before{width:27px;height:27px;border-radius:50%;background:radial-gradient(circle at 35% 35%,#a7e4ff,#4a8dff 58%,#2f70e6 100%);box-shadow:0 0 0 6px rgba(74,141,255,.10)}
+          .rcfMobileModuleIcon.mod-agent::before{width:27px;height:27px;border-radius:50%;background:radial-gradient(circle at 35% 35%,#a7e4ff,#4a8dff 58%,#2f70e6 100%);box-shadow:0 0 0 4px rgba(74,141,255,.08)}
           .rcfMobileModuleIcon.mod-agent::after{width:24px;height:24px;border:3px solid rgba(46,79,151,.64);border-left-color:transparent;border-bottom-color:transparent;border-radius:50%;transform:rotate(28deg);top:15px;left:18px}
-          .rcfMobileModuleIcon.mod-factory::before{width:31px;height:31px;border-radius:50%;border:5px solid #2f70e6;box-shadow:0 0 0 4px rgba(255,177,94,.36) inset}
+          .rcfMobileModuleIcon.mod-factory::before{width:30px;height:30px;border-radius:50%;border:4px solid #2f70e6;box-shadow:0 0 0 3px rgba(255,177,94,.24) inset}
           .rcfMobileModuleIcon.mod-factory::after{width:12px;height:12px;border-radius:50%;background:linear-gradient(180deg,#ffb15e,#ff8a2a);box-shadow:0 -20px 0 -2px #3f77ec,14px -14px 0 -2px #3f77ec,20px 0 0 -2px #3f77ec,14px 14px 0 -2px #3f77ec,0 20px 0 -2px #3f77ec,-14px 14px 0 -2px #3f77ec,-20px 0 0 -2px #3f77ec,-14px -14px 0 -2px #3f77ec}
           .rcfMobileModuleText{min-width:0;flex:1 1 auto}
           .rcfMobileModuleTitle{font-size:18px;font-weight:900;line-height:1.04;color:var(--rcf-text,#1f2a44);letter-spacing:.1px}
-          .rcfMobileModuleSub{margin-top:6px;font-size:12px;line-height:1.28;color:rgba(80,92,118,.90)}
-          .rcfMobileModuleArrow{font-size:27px;font-weight:800;color:rgba(31,42,68,.42);flex:0 0 auto;transform:translateY(-1px)}
+          .rcfMobileModuleSub{margin-top:5px;font-size:12px;line-height:1.26;color:rgba(80,92,118,.82)}
+          .rcfMobileModuleArrow{font-size:25px;font-weight:700;color:rgba(31,42,68,.34);flex:0 0 auto;transform:translateY(-1px)}
           .rcfBottomNav{display:none}
           @media (max-width:980px){
             .rcfShellGrid{grid-template-columns:1fr}
@@ -867,53 +867,52 @@
             #rcfRoot{padding-top:max(10px,env(safe-area-inset-top)) !important}
             .rcfSidebar{display:none}
             .rcfMainStage::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;background:
-              radial-gradient(circle at 20% 10%,rgba(255,255,255,.72),rgba(255,255,255,0) 22%),
-              radial-gradient(circle at 82% 22%,rgba(99,145,255,.16),rgba(99,145,255,0) 18%),
-              radial-gradient(circle at 70% 72%,rgba(255,185,120,.12),rgba(255,185,120,0) 20%),
-              linear-gradient(180deg,rgba(231,237,246,.78),rgba(217,224,236,.44));}
-            .topbar{position:relative;padding:16px 14px 12px !important;border-radius:30px !important;margin-bottom:14px !important;background:
-              linear-gradient(180deg,rgba(255,255,255,.90),rgba(245,248,253,.72) 58%,rgba(235,240,248,.66)) !important;
-              box-shadow:0 20px 42px rgba(24,40,73,.12), inset 0 1px 0 rgba(255,255,255,.92) !important;
-              border:1px solid rgba(70,96,145,.10) !important;
+              radial-gradient(circle at 18% 10%,rgba(255,255,255,.56),rgba(255,255,255,0) 20%),
+              radial-gradient(circle at 82% 18%,rgba(99,145,255,.10),rgba(99,145,255,0) 16%),
+              linear-gradient(180deg,rgba(233,238,246,.72),rgba(220,227,237,.42));}
+            .topbar{position:relative;padding:14px 13px 11px !important;border-radius:26px !important;margin-bottom:13px !important;background:
+              linear-gradient(180deg,rgba(255,255,255,.88),rgba(246,249,253,.76) 58%,rgba(238,242,248,.70)) !important;
+              box-shadow:0 12px 28px rgba(24,40,73,.08), inset 0 1px 0 rgba(255,255,255,.88) !important;
+              border:1px solid rgba(70,96,145,.08) !important;
               overflow:hidden}
             .topbar::before{content:"";position:absolute;inset:0;pointer-events:none;background:
-              radial-gradient(circle at 8% 12%,rgba(255,255,255,.92),rgba(255,255,255,0) 20%),
-              linear-gradient(135deg,rgba(95,145,255,.11),rgba(95,145,255,0) 30%,rgba(255,181,110,.10) 86%,rgba(255,181,110,0))}
-            .brand{position:relative;z-index:1;align-items:flex-start !important;gap:8px !important}
-            .factory-logo-header{height:66px !important;max-width:min(86vw, 356px) !important;filter:drop-shadow(0 6px 14px rgba(24,40,73,.08))}
-            #btnOpenTools{min-height:34px !important;padding:8px 12px !important;border-radius:999px !important;background:rgba(255,255,255,.56) !important;border:1px solid rgba(70,96,145,.10) !important;box-shadow:0 8px 18px rgba(24,40,73,.07) !important;color:rgba(42,58,94,.78) !important;font-size:12px !important}
+              radial-gradient(circle at 8% 12%,rgba(255,255,255,.76),rgba(255,255,255,0) 18%),
+              linear-gradient(135deg,rgba(95,145,255,.06),rgba(95,145,255,0) 28%,rgba(255,181,110,.04) 86%,rgba(255,181,110,0))}
+            .brand{position:relative;z-index:1;align-items:center !important;gap:8px !important}
+            .factory-logo-header{height:62px !important;max-width:min(84vw, 344px) !important;filter:drop-shadow(0 4px 10px rgba(24,40,73,.05))}
+            .btn.small#btnOpenTools,#btnOpenTools{min-height:32px !important;padding:7px 11px !important;border-radius:999px !important;background:rgba(255,255,255,.44) !important;border:1px solid rgba(70,96,145,.08) !important;box-shadow:0 4px 10px rgba(24,40,73,.04) !important;color:rgba(42,58,94,.72) !important;font-size:11.5px !important}
             .tabs{display:none !important}
             .container{position:relative;z-index:1;padding-bottom:118px !important}
-            .hero{padding:14px !important;border-radius:28px !important;background:
-              linear-gradient(180deg,rgba(255,255,255,.84),rgba(245,248,253,.72) 56%,rgba(234,240,248,.68)) !important;
-              border:1px solid rgba(70,96,145,.10) !important;
-              box-shadow:0 20px 46px rgba(24,40,73,.12), inset 0 1px 0 rgba(255,255,255,.90) !important;
+            .hero{padding:13px !important;border-radius:24px !important;background:
+              linear-gradient(180deg,rgba(255,255,255,.82),rgba(247,249,253,.74) 56%,rgba(238,242,248,.70)) !important;
+              border:1px solid rgba(70,96,145,.08) !important;
+              box-shadow:0 12px 28px rgba(24,40,73,.08), inset 0 1px 0 rgba(255,255,255,.86) !important;
               overflow:hidden}
             .hero::before{content:"";position:absolute;inset:0;pointer-events:none;background:
-              radial-gradient(circle at 12% 14%,rgba(255,255,255,.88),rgba(255,255,255,0) 24%),
-              linear-gradient(135deg,rgba(95,145,255,.08),rgba(95,145,255,0) 36%,rgba(255,181,110,.08) 92%,rgba(255,181,110,0))}
+              radial-gradient(circle at 12% 14%,rgba(255,255,255,.72),rgba(255,255,255,0) 20%),
+              linear-gradient(135deg,rgba(95,145,255,.04),rgba(95,145,255,0) 34%,rgba(255,181,110,.03) 92%,rgba(255,181,110,0))}
             .hero h1{font-size:24px !important;line-height:1.02 !important}
             .hero p{font-size:13px !important}
             .rcfDashHero{gap:13px !important}
             .rcfDashHeroHead{order:2 !important}
             .rcfDashHeroHead > div:first-child{display:none !important}
-            .status-box{display:grid !important;grid-template-columns:1fr !important;gap:9px !important;margin-top:0 !important}
-            .status-box .badge{grid-column:1 / -1 !important;min-height:42px !important;border-radius:16px !important;background:rgba(255,255,255,.62) !important}
+            .status-box{display:grid !important;grid-template-columns:1fr !important;gap:8px !important;margin-top:0 !important}
+            .status-box .badge{grid-column:1 / -1 !important;min-height:40px !important;border-radius:15px !important;background:rgba(255,255,255,.58) !important}
             .status-box .btn{display:none !important}
-            .rcfMobileModules{display:grid !important;order:1 !important;gap:14px !important;margin-top:0 !important}
-            .rcfDashMetrics{order:3 !important;grid-template-columns:1fr !important;gap:10px !important;opacity:.92}
-            .rcfMetricCard{padding:14px 16px !important;border-radius:22px !important;background:linear-gradient(180deg,rgba(255,255,255,.72),rgba(244,248,253,.60)) !important}
+            .rcfMobileModules{display:grid !important;order:1 !important;gap:12px !important;margin-top:0 !important}
+            .rcfDashMetrics{order:3 !important;grid-template-columns:1fr !important;gap:9px !important;opacity:.90}
+            .rcfMetricCard{padding:13px 15px !important;border-radius:20px !important;background:linear-gradient(180deg,rgba(255,255,255,.70),rgba(245,248,253,.60)) !important}
             .rcfMetricValue{font-size:28px !important}
-            .rcfDashPanels{order:4 !important;gap:12px !important}
-            .rcfDashPanel{padding:15px !important;border-radius:22px !important;background:linear-gradient(180deg,rgba(255,255,255,.78),rgba(244,248,253,.64)) !important}
+            .rcfDashPanels{order:4 !important;gap:10px !important}
+            .rcfDashPanel{padding:14px !important;border-radius:20px !important;background:linear-gradient(180deg,rgba(255,255,255,.76),rgba(245,248,253,.64)) !important}
             #appsList{display:grid !important;grid-template-columns:1fr !important;gap:10px !important}
             #appsList .app-item{padding:14px !important;border-radius:18px !important;flex-direction:column !important;align-items:stretch !important}
             #appsList .app-actions{width:100% !important;display:grid !important;grid-template-columns:1fr 1fr 1fr !important;gap:8px !important}
             #appsList .app-actions .btn{width:100% !important;min-height:40px !important}
-            .rcfBottomNav{position:fixed;left:max(10px,env(safe-area-inset-left));right:max(10px,env(safe-area-inset-right));bottom:max(10px,env(safe-area-inset-bottom));z-index:130;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;padding:10px;border:1px solid rgba(70,96,145,.10);border-radius:24px;background:
-              linear-gradient(180deg,rgba(255,255,255,.94),rgba(244,248,253,.78));backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);box-shadow:0 24px 48px rgba(24,40,73,.16), inset 0 1px 0 rgba(255,255,255,.90)}
-            .rcfBottomNav .tab{min-width:0 !important;width:100% !important;padding:8px 6px !important;font-size:11px !important;line-height:1.1 !important;min-height:48px !important;border-radius:17px !important;background:transparent !important;border-color:transparent !important;box-shadow:none !important;color:rgba(56,70,98,.74) !important}
-            .rcfBottomNav .tab.active{background:linear-gradient(180deg,rgba(95,145,255,.16),rgba(95,145,255,.08)) !important;border:1px solid rgba(95,145,255,.14) !important;color:#294d95 !important;box-shadow:inset 0 1px 0 rgba(255,255,255,.70) !important}
+            .rcfBottomNav{position:fixed;left:max(10px,env(safe-area-inset-left));right:max(10px,env(safe-area-inset-right));bottom:max(10px,env(safe-area-inset-bottom));z-index:130;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:7px;padding:9px;border:1px solid rgba(70,96,145,.08);border-radius:22px;background:
+              linear-gradient(180deg,rgba(255,255,255,.92),rgba(246,249,253,.80));backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);box-shadow:0 14px 30px rgba(24,40,73,.09), inset 0 1px 0 rgba(255,255,255,.86)}
+            .rcfBottomNav .tab{min-width:0 !important;width:100% !important;padding:8px 6px !important;font-size:11px !important;line-height:1.1 !important;min-height:46px !important;border-radius:16px !important;background:transparent !important;border-color:transparent !important;box-shadow:none !important;color:rgba(56,70,98,.70) !important}
+            .rcfBottomNav .tab.active{background:linear-gradient(180deg,rgba(95,145,255,.13),rgba(95,145,255,.07)) !important;border:1px solid rgba(95,145,255,.12) !important;color:#294d95 !important;box-shadow:inset 0 1px 0 rgba(255,255,255,.64) !important}
             #rcfFab{bottom:calc(max(10px,env(safe-area-inset-bottom)) + 92px)}
             #rcfFabPanel{bottom:calc(max(10px,env(safe-area-inset-bottom)) + 160px)}
           }
