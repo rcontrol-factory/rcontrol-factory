@@ -1,4 +1,4 @@
-/* FILE: app/app.js
+ FILE: app/app.js
    RControl Factory - /app/app.js - V8.0.2 PADRAO (Doctor FAB-only, no global delegation)
    - Arquivo completo (1 peca) pra copiar/colar
    - FIX: Apps list layout
@@ -537,6 +537,7 @@
   window.RCF = window.RCF || {};
   window.RCF.state = State;
   window.RCF.log = (...a) => Logger.write(...a);
+  window.RCF.setView = (name) => setView(name);
 
   // compat global: alguns módulos chamam log() direto
   try { if (!window.log) window.log = (...a) => Logger.write(...a); } catch {}
@@ -550,188 +551,328 @@
     compactEnabled: true
   };
 
-  function injectCompactCSSOnce() {
+
+  let __uiRuntimeLoadPromise = null;
+
+  function loadUiRuntimeOnce() {
     try {
-      if (!UI.compactEnabled) return;
-      if (document.getElementById("rcfCompactCss")) return;
+      if (window.RCF_UI_RUNTIME) return Promise.resolve(window.RCF_UI_RUNTIME);
+      if (__uiRuntimeLoadPromise) return __uiRuntimeLoadPromise;
 
-      const css = `
-:root { --rcf-compact: 1; }
+      __uiRuntimeLoadPromise = new Promise((resolve, reject) => {
+        try {
+          const existing = document.querySelector('script[data-rcf-ui-runtime="1"]');
+          if (existing) {
+            existing.addEventListener('load', () => resolve(window.RCF_UI_RUNTIME || null), { once: true });
+            existing.addEventListener('error', () => reject(new Error('ui_runtime load failed')), { once: true });
+            return;
+          }
 
-#rcfRoot .topbar{ padding: 8px 10px !important; }
-#rcfRoot .brand{ gap: 10px !important; }
-#rcfRoot .factory-logo-header{
-  display:block !important;
-  height:64px !important;
-  width:auto !important;
-  object-fit:contain !important;
-  max-width:min(72vw, 360px) !important;
-}
-#rcfRoot .brand .title{ font-size: 18px !important; line-height: 1.15 !important; letter-spacing:.2px; }
-#rcfRoot .brand .subtitle{ font-size: 12px !important; opacity:.82 !important; }
+          const s = document.createElement('script');
+          s.src = './js/core/ui_runtime.js';
+          s.defer = true;
+          s.async = false;
+          s.setAttribute('data-rcf-ui-runtime', '1');
+          s.onload = () => resolve(window.RCF_UI_RUNTIME || null);
+          s.onerror = () => reject(new Error('ui_runtime load failed'));
+          document.head.appendChild(s);
+        } catch (e) {
+          reject(e);
+        }
+      });
 
-/* PATCH: remover pill do topo (sem remover a função safeSetStatus) */
-#rcfRoot .status-pill{ display:none !important; }
-
-#rcfRoot .tabs{
-  display:flex !important;
-  gap: 8px !important;
-  overflow-x: auto !important;
-  overflow-y: hidden !important;
-  -webkit-overflow-scrolling: touch !important;
-  padding: 6px 0 2px !important;
-  margin-top: 8px !important;
-  scrollbar-width: none !important;
-}
-#rcfRoot .tabs::-webkit-scrollbar{ display:none !important; }
-#rcfRoot .tabs .tab{
-  flex: 0 0 auto !important;
-  min-width: 96px !important;
-  padding: 10px 12px !important;
-  font-size: 13px !important;
-  border-radius: 999px !important;
-}
-
-#rcfRoot .container{ padding-top: 10px !important; }
-#rcfRoot .card{ padding: 12px !important; border-radius: 14px !important; }
-#rcfRoot .card h1{ font-size: 24px !important; margin: 0 0 10px !important; }
-#rcfRoot .card h2{ font-size: 18px !important; margin: 10px 0 8px !important; }
-
-#rcfRoot .row{ gap: 10px !important; }
-#rcfRoot .btn{ padding: 10px 12px !important; font-size: 13px !important; border-radius: 999px !important; }
-#rcfRoot .btn.small{ padding: 8px 10px !important; font-size: 12px !important; }
-#rcfRoot input, #rcfRoot select, #rcfRoot textarea{ font-size: 14px !important; }
-
-#rcfRoot pre.mono{ max-height: 24vh !important; overflow:auto !important; -webkit-overflow-scrolling: touch !important; }
-#rcfRoot pre.mono.small{ max-height: 20vh !important; }
-
-/* logs gerais */
-#rcfRoot #logsBox, #rcfRoot #logsOut, #rcfRoot #logsViewBox{
-  max-height: 22vh !important; overflow:auto !important; -webkit-overflow-scrolling: touch !important;
-}
-
-/* PATCH: Admin injector log compacto/colapsável */
-#rcfRoot #injLog{
-  max-height: 18vh !important;
-  overflow:auto !important;
-  -webkit-overflow-scrolling: touch !important;
-}
-#rcfRoot .rcf-collapsed{
-  max-height: 0 !important;
-  padding-top: 0 !important;
-  padding-bottom: 0 !important;
-  border: 0 !important;
-  overflow: hidden !important;
-}
-#rcfRoot #injPayload{ max-height: 22vh !important; }
-#rcfRoot #diffOut{ max-height: 20vh !important; }
-#rcfRoot .tools .tools-body pre{ max-height: 28vh !important; }
-
-/* PATCH: Apps list layout (nome grande não empurra botões) */
-#appsList .app-item{
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  gap:10px;
-}
-#appsList .app-meta{
-  flex:1 1 auto;
-  min-width:0;
-}
-#appsList .app-name,
-#appsList .app-slug{
-  white-space:nowrap;
-  overflow:hidden;
-  text-overflow:ellipsis;
-}
-#appsList .app-actions{
-  flex:0 0 auto;
-  display:flex;
-  gap:8px;
-  align-items:center;
-}
-
-/* PATCH: FAB (bolinha) + painel */
-#rcfFab{
-  position:fixed !important;
-  right: 14px !important;
-  bottom: 14px !important;
-  width: 54px !important;
-  height: 54px !important;
-  border-radius: 999px !important;
-  border: 1px solid rgba(255,255,255,.16) !important;
-  background: rgba(20,28,44,.92) !important;
-  color: #fff !important;
-  font-size: 20px !important;
-  font-weight: 900 !important;
-  box-shadow: 0 10px 30px rgba(0,0,0,.35) !important;
-  z-index: 9999 !important;
-}
-
-#rcfFabPanel{
-  position:fixed !important;
-  right: 14px !important;
-  bottom: 78px !important;
-  width: 220px !important;
-  border-radius: 14px !important;
-  border: 1px solid rgba(255,255,255,.12) !important;
-  background: rgba(12,16,26,.96) !important;
-  color:#fff !important;
-  padding: 10px !important;
-  z-index: 9999 !important;
-  display:none !important;
-}
-#rcfFabPanel.open{ display:block !important; }
-
-#rcfFabPanel .fab-title{
-  font-weight:900 !important;
-  margin-bottom:8px !important;
-  display:flex !important;
-  align-items:center !important;
-  justify-content:space-between !important;
-  gap:10px !important;
-}
-#rcfFabPanel .fab-status{
-  font-size:12px !important;
-  opacity:.85 !important;
-  white-space:nowrap !important;
-  max-width: 120px !important;
-  overflow:hidden !important;
-  text-overflow:ellipsis !important;
-}
-#rcfFabPanel .fab-row{
-  display:flex !important;
-  gap:8px !important;
-  flex-wrap:wrap !important;
-}
-#rcfFabPanel .fab-row .btn{
-  flex: 1 1 auto !important;
-}
-
-@media (max-width:900px){
-  #rcfRoot .factory-logo-header{
-    height:52px !important;
-    max-width:min(70vw, 300px) !important;
+      return __uiRuntimeLoadPromise;
+    } catch (e) {
+      return Promise.reject(e);
+    }
   }
-}
 
-@media (max-width: 520px){
-  #rcfRoot .brand .title{ font-size: 17px !important; }
-  #rcfRoot .brand .subtitle{ font-size: 11px !important; }
-  #rcfRoot .tabs .tab{ min-width: 90px !important; padding: 9px 11px !important; }
-  #rcfRoot .card{ padding: 10px !important; }
-  #rcfRoot pre.mono{ max-height: 20vh !important; }
-}
-      `.trim();
+  function initUiRuntime() {
+    try {
+      const rt = window.RCF_UI_RUNTIME;
+      if (!rt || typeof rt.init !== 'function') return null;
+      rt.init({
+        State, Logger, Storage, UI,
+        saveAll, bindTap, slugify, escapeHtml, escapeAttr, uiMsg, textContentSafe,
+        $, $$, nowISO,
+        helpers: {
+          deleteApp,
+          getActiveApp: () => (State.active.appSlug ? (State.apps.find(a => a.slug === State.active.appSlug) || null) : null),
+          ensureAppFiles: (app) => {
+            if (!app.files) app.files = {};
+            if (typeof app.files !== 'object') app.files = {};
+          }
+        }
+      });
+      return rt;
+    } catch (e) {
+      try { Logger.write('ui_runtime init err:', e?.message || e); } catch {}
+      return null;
+    }
+  }
 
-      const st = document.createElement("style");
-      st.id = "rcfCompactCss";
-      st.textContent = css;
-      document.head.appendChild(st);
+  function getUiRuntime() {
+    try { return window.RCF_UI_RUNTIME || null; } catch { return null; }
+  }
 
-      try { window.RCF_LOGGER?.push?.("OK", "ui_compact: injected ✅"); } catch {}
+
+  const __uiFallbackUsed = Object.create(null);
+  function noteUiFallback(name) {
+    try {
+      const key = String(name || 'ui');
+      if (__uiFallbackUsed[key]) return;
+      __uiFallbackUsed[key] = true;
+      Logger.write('ui_runtime fallback:', key);
     } catch {}
   }
+
+  const UiRuntimeFallback = {
+    openTools(open) {
+      noteUiFallback('openTools');
+      const d = $("#toolsDrawer");
+      if (!d) return;
+      if (open) d.classList.add("open");
+      else d.classList.remove("open");
+    },
+    openFabPanel(open) {
+      noteUiFallback('openFabPanel');
+      const p = $("#rcfFabPanel");
+      if (!p) return;
+      if (open) p.classList.add("open");
+      else p.classList.remove("open");
+    },
+    toggleFabPanel() {
+      noteUiFallback('toggleFabPanel');
+      const p = $("#rcfFabPanel");
+      if (!p) return;
+      p.classList.toggle("open");
+    },
+    syncFabStatusText() {
+      noteUiFallback('syncFabStatusText');
+      try {
+        const st = $("#statusText")?.textContent || "";
+        const fab = $("#fabStatus");
+        if (fab) fab.textContent = String(st || "OK ✅");
+      } catch {}
+    },
+    setInjectorLogCollapsed(collapsed) {
+      noteUiFallback('setInjectorLogCollapsed');
+      try {
+        const pre = $("#injLog");
+        const btn = $("#btnToggleInjectorLog");
+        if (!pre || !btn) return;
+        const wantCollapsed = !!collapsed;
+        if (wantCollapsed) pre.classList.add("rcf-collapsed");
+        else pre.classList.remove("rcf-collapsed");
+        btn.textContent = wantCollapsed ? "Mostrar log" : "Esconder log";
+      } catch {}
+    },
+    toggleInjectorLogCollapsed() {
+      noteUiFallback('toggleInjectorLogCollapsed');
+      try {
+        const pre = $("#injLog");
+        if (!pre) return;
+        const isCollapsed = pre.classList.contains("rcf-collapsed");
+        UiRuntimeFallback.setInjectorLogCollapsed(!isCollapsed);
+      } catch {}
+    },
+    refreshDashboardUI() {
+      noteUiFallback('refreshDashboardUI');
+      try {
+        const appsCount = Array.isArray(State.apps) ? State.apps.length : 0;
+        const activeApp = getActiveApp();
+        const aiOnline = !!(window.RCF_ENGINE || window.RCF_AGENT_ZIP_BRIDGE || window.RCF_AI);
+
+        const elApps = $("#dashAppsCount");
+        if (elApps) elApps.textContent = String(appsCount).padStart(2, "0");
+
+        const elProjects = $("#dashProjectsCount");
+        if (elProjects) elProjects.textContent = String(appsCount).padStart(2, "0");
+
+        const elBuilds = $("#dashBuildsCount");
+        if (elBuilds) elBuilds.textContent = String(appsCount).padStart(2, "0");
+
+        const elAi = $("#dashAiStatus");
+        if (elAi) elAi.textContent = aiOnline ? "ON" : "--";
+
+        const aiBadge = $("#dashAiBadge");
+        if (aiBadge) aiBadge.textContent = aiOnline ? "IA online ✅" : "IA aguardando…";
+
+        const sideStatus = $("#rcfSidebarStatus");
+        if (sideStatus) sideStatus.textContent = activeApp ? `Ativo: ${activeApp.slug}` : "Factory pronta ✅";
+
+        const box = $("#dashActivityList");
+        if (box) {
+          const logs = Logger.getAll ? Logger.getAll() : [];
+          const recent = logs.slice(-4).reverse();
+          if (!recent.length) box.innerHTML = `<div class="hint">Aguardando atividade...</div>`;
+          else box.innerHTML = recent.map(line => `<div class="rcfActivityItem">${escapeHtml(String(line))}</div>`).join("");
+        }
+      } catch {}
+    },
+    renderAppsList() {
+      noteUiFallback('renderAppsList');
+      const box = $("#appsList");
+      if (!box) return;
+
+      UiRuntimeFallback.refreshDashboardUI();
+      if (!State.apps.length) {
+        box.innerHTML = `<div class="hint">Nenhum app salvo ainda.</div>`;
+        UiRuntimeFallback.refreshDashboardUI();
+        return;
+      }
+
+      box.innerHTML = "";
+      State.apps.forEach(app => {
+        const row = document.createElement("div");
+        row.className = "app-item";
+        row.innerHTML = `
+          <div class="app-meta">
+            <div class="app-name" style="font-weight:800">${escapeHtml(app.name)}</div>
+            <div class="app-slug hint">${escapeHtml(app.slug)}</div>
+          </div>
+          <div class="app-actions">
+            <button class="btn small" data-act="select" data-slug="${escapeAttr(app.slug)}" type="button">Selecionar</button>
+            <button class="btn small" data-act="edit" data-slug="${escapeAttr(app.slug)}" type="button">Editor</button>
+            <button class="btn small danger" data-act="delete" data-slug="${escapeAttr(app.slug)}" type="button">Apagar</button>
+          </div>
+        `;
+        box.appendChild(row);
+      });
+
+      $$('[data-act="select"]', box).forEach(btn => bindTap(btn, () => UiRuntimeFallback.setActiveApp(btn.getAttribute("data-slug"))));
+      $$('[data-act="edit"]', box).forEach(btn => bindTap(btn, () => {
+        UiRuntimeFallback.setActiveApp(btn.getAttribute("data-slug"));
+        setView("editor");
+      }));
+      $$('[data-act="delete"]', box).forEach(btn => bindTap(btn, () => {
+        const slug = btn.getAttribute("data-slug");
+        deleteApp(slug);
+      }));
+    },
+    renderFilesList() {
+      noteUiFallback('renderFilesList');
+      const box = $("#filesList");
+      if (!box) return;
+
+      const app = getActiveApp();
+      if (!app) {
+        box.innerHTML = `<div class="hint">Selecione um app para ver arquivos.</div>`;
+        return;
+      }
+
+      ensureAppFiles(app);
+      const files = Object.keys(app.files);
+      if (!files.length) {
+        box.innerHTML = `<div class="hint">App sem arquivos.</div>`;
+        return;
+      }
+
+      box.innerHTML = "";
+      files.forEach(fname => {
+        const item = document.createElement("div");
+        item.className = "file-item" + (State.active.file === fname ? " active" : "");
+        item.textContent = fname;
+        bindTap(item, () => UiRuntimeFallback.openFile(fname));
+        box.appendChild(item);
+      });
+    },
+    openFile(fname) {
+      noteUiFallback('openFile');
+      const app = getActiveApp();
+      if (!app) return false;
+
+      ensureAppFiles(app);
+      if (!(fname in app.files)) return false;
+
+      State.active.file = fname;
+      saveAll();
+
+      const head = $("#editorHead");
+      if (head) head.textContent = `Arquivo atual: ${fname}`;
+
+      const ta = $("#fileContent");
+      if (ta) ta.value = String(app.files[fname] ?? "");
+
+      UiRuntimeFallback.renderFilesList();
+      return true;
+    },
+    setActiveApp(slug) {
+      noteUiFallback('setActiveApp');
+      const app = State.apps.find(a => a.slug === slug);
+      if (!app) return false;
+
+      ensureAppFiles(app);
+      State.active.appSlug = slug;
+      State.active.file = State.active.file || Object.keys(app.files || {})[0] || null;
+      saveAll();
+
+      const text = $("#activeAppText");
+      if (text) textContentSafe(text, `App ativo: ${app.name} (${app.slug}) ✅`);
+
+      UiRuntimeFallback.renderAppsList();
+      UiRuntimeFallback.renderFilesList();
+      if (State.active.file) UiRuntimeFallback.openFile(State.active.file);
+
+      Logger.write("app selected:", slug);
+      return true;
+    },
+    createApp(name, slugMaybe) {
+      noteUiFallback('createApp');
+      const nameClean = String(name || "").trim();
+      if (!nameClean) return { ok: false, msg: "Nome inválido" };
+
+      let slug = slugify(slugMaybe || nameClean);
+      if (!slug) return { ok: false, msg: "Slug inválido" };
+      if (State.apps.some(a => a.slug === slug)) return { ok: false, msg: "Slug já existe" };
+
+      const app = {
+        name: nameClean,
+        slug,
+        createdAt: nowISO(),
+        files: {
+          "index.html": `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${nameClean}</title></head><body><h1>${nameClean}</h1><script src="app.js"></script></body></html>`,
+          "styles.css": `body{font-family:system-ui;margin:0;padding:24px;background:#0b1220;color:#fff}`,
+          "app.js": `console.log("${nameClean}");`
+        }
+      };
+
+      State.apps.push(app);
+      saveAll();
+      UiRuntimeFallback.renderAppsList();
+      UiRuntimeFallback.setActiveApp(slug);
+
+      return { ok: true, msg: `✅ App criado: ${nameClean} (${slug})` };
+    },
+    saveFile() {
+      noteUiFallback('saveFile');
+      const app = getActiveApp();
+      if (!app) return uiMsg("#editorOut", "⚠️ Sem app ativo.");
+
+      const fname = State.active.file;
+      if (!fname) return uiMsg("#editorOut", "⚠️ Sem arquivo ativo.");
+
+      const ta = $("#fileContent");
+      ensureAppFiles(app);
+      app.files[fname] = ta ? String(ta.value || "") : "";
+
+      saveAll();
+      uiMsg("#editorOut", "✅ Arquivo salvo.");
+      Logger.write("file saved:", app.slug, fname);
+    }
+  };
+
+  
+function injectCompactCSSOnce(){
+  if(document.getElementById("rcfShellCss")) return;
+  const link=document.createElement("link");
+  link.id="rcfShellCss";
+  link.rel="stylesheet";
+  link.href="./css/factory-shell.css";
+  document.head.appendChild(link);
+}
+
+
 
   // =========================================================
   // VFS Overrides (localStorage)
@@ -802,121 +943,7 @@
     root.innerHTML = `
       
         
-<style id="rcfShellEnhancer">
-          .rcfShellGrid{display:grid;grid-template-columns:280px minmax(0,1fr);gap:16px;align-items:start;max-width:1440px;margin:0 auto}
-          .rcfSidebar{position:sticky;top:12px;display:flex;flex-direction:column;gap:14px;min-height:calc(100vh - 24px)}
-          .rcfSidebarBrand{display:flex;align-items:center;gap:12px}
-          .rcfSidebarBrand img{width:44px;height:44px;border-radius:50%;object-fit:cover;box-shadow:0 8px 18px rgba(34,52,84,.18)}
-          .rcfSidebarBrandText{min-width:0}
-          .rcfSidebarBrandTitle{font-size:18px;font-weight:900;line-height:1;color:var(--rcf-text,#1f2a44)}
-          .rcfSidebarBrandSub{margin-top:4px;font-size:11px;letter-spacing:.9px;text-transform:uppercase;color:var(--rcf-muted,#647089)}
-          .rcfSideNav{display:grid;gap:8px}
-          .rcfSideBtn{justify-content:flex-start;width:100%;padding-left:14px;padding-right:14px}
-          .rcfSideFooter{margin-top:auto;display:grid;gap:8px}
-          .rcfMainStage{min-width:0;position:relative}
-          .rcfDashHero{display:grid;gap:14px}
-          .rcfDashHeroHead{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap}
-          .rcfDashMetrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
-          .rcfMetricCard,.rcfDashPanel{position:relative;border:1px solid var(--rcf-line,rgba(38,58,92,.12));border-radius:18px;background:linear-gradient(180deg,rgba(255,255,255,.72),rgba(255,255,255,.54));box-shadow:0 8px 20px rgba(25,38,66,.08);padding:14px}
-          .rcfMetricLabel{font-size:12px;font-weight:800;color:var(--rcf-muted,#647089);text-transform:uppercase;letter-spacing:.8px}
-          .rcfMetricValue{margin-top:8px;font-size:34px;line-height:1;font-weight:900;color:var(--rcf-text,#1f2a44)}
-          .rcfDashPanels{display:grid;grid-template-columns:1.35fr .95fr .95fr;gap:12px;align-items:start}
-          .rcfDashPanelWide{grid-column:auto}
-          .rcfActivityList{display:grid;gap:8px}
-          .rcfActivityItem{padding:10px 12px;border:1px solid rgba(38,58,92,.10);border-radius:14px;background:rgba(255,255,255,.58);font-size:13px;color:var(--rcf-text-2,#33415f)}
-          .rcfAiPanel{display:grid;gap:12px;margin-top:8px}
-          .rcfMobileModules{display:none}
-          .rcfMobileModuleCard{display:flex;align-items:center;gap:15px;width:100%;padding:18px 17px;border:1px solid rgba(63,84,122,.08);border-radius:26px;background:
-              linear-gradient(180deg,rgba(255,255,255,.90),rgba(246,249,253,.78) 54%,rgba(238,242,248,.74));
-              box-shadow:0 12px 28px rgba(24,40,73,.08),inset 0 1px 0 rgba(255,255,255,.84);
-              text-align:left;color:var(--rcf-text,#1f2a44);position:relative;overflow:hidden;backdrop-filter:blur(9px);-webkit-backdrop-filter:blur(9px)}
-          .rcfMobileModuleCard::before{content:"";position:absolute;inset:0;pointer-events:none;background:
-              radial-gradient(circle at 12% 14%,rgba(255,255,255,.72),rgba(255,255,255,0) 24%),
-              linear-gradient(135deg,rgba(79,137,255,.05),rgba(79,137,255,0) 26%,rgba(255,171,88,.04) 86%,rgba(255,171,88,0))}
-          .rcfMobileModuleCard::after{content:"";position:absolute;right:-20px;top:-24px;width:104px;height:104px;border-radius:50%;
-              background:radial-gradient(circle,rgba(136,174,255,.08),rgba(136,174,255,0) 70%);
-              pointer-events:none;filter:blur(1px)}
-          .rcfMobileModuleCard > *{position:relative;z-index:1}
-          .rcfMobileModuleIcon{display:inline-flex;align-items:center;justify-content:center;width:58px;height:58px;border-radius:19px;flex:0 0 58px;position:relative;
-              background:linear-gradient(180deg,rgba(255,255,255,.96),rgba(231,237,246,.94));
-              border:1px solid rgba(88,112,155,.07);
-              box-shadow:0 9px 18px rgba(25,38,66,.08),inset 0 1px 0 rgba(255,255,255,.90)}
-          .rcfMobileModuleIcon::before,.rcfMobileModuleIcon::after{content:"";position:absolute;display:block}
-          .rcfMobileModuleIcon.mod-dashboard::before{width:28px;height:28px;border-radius:50%;border:3px solid #496fdb;box-shadow:0 0 0 5px rgba(74,141,255,.08) inset}
-          .rcfMobileModuleIcon.mod-dashboard::after{width:9px;height:9px;border-radius:50%;background:linear-gradient(180deg,#9adfff,#4a8dff);box-shadow:-9px 6px 0 0 #6d85ea,9px -4px 0 0 #ffb66b,3px 12px 0 0 #87d9c7}
-          .rcfMobileModuleIcon.mod-apps::before{width:28px;height:28px;border-radius:9px;background:linear-gradient(180deg,#ffd993,#ffb566);left:11px;top:14px;box-shadow:12px -8px 0 0 #6888ee,-2px 9px 0 0 #27498e}
-          .rcfMobileModuleIcon.mod-apps::after{width:17px;height:12px;border-radius:4px;background:rgba(255,255,255,.74);left:21px;top:24px}
-          .rcfMobileModuleIcon.mod-editor::before{width:27px;height:35px;border-radius:9px;background:linear-gradient(180deg,#355a90,#1a2f53);transform:rotate(-12deg);box-shadow:0 0 0 2px rgba(255,255,255,.30) inset}
-          .rcfMobileModuleIcon.mod-editor::after{width:14px;height:3px;border-radius:999px;background:#ffb567;transform:rotate(-12deg);top:31px;left:23px;box-shadow:-2px -7px 0 0 rgba(255,255,255,.84),-4px -14px 0 0 rgba(255,255,255,.56)}
-          .rcfMobileModuleIcon.mod-agent::before{width:27px;height:27px;border-radius:50%;background:radial-gradient(circle at 35% 35%,#a7e4ff,#4a8dff 58%,#2f70e6 100%);box-shadow:0 0 0 4px rgba(74,141,255,.08)}
-          .rcfMobileModuleIcon.mod-agent::after{width:24px;height:24px;border:3px solid rgba(46,79,151,.64);border-left-color:transparent;border-bottom-color:transparent;border-radius:50%;transform:rotate(28deg);top:15px;left:18px}
-          .rcfMobileModuleIcon.mod-factory::before{width:30px;height:30px;border-radius:50%;border:4px solid #2f70e6;box-shadow:0 0 0 3px rgba(255,177,94,.24) inset}
-          .rcfMobileModuleIcon.mod-factory::after{width:12px;height:12px;border-radius:50%;background:linear-gradient(180deg,#ffb15e,#ff8a2a);box-shadow:0 -20px 0 -2px #3f77ec,14px -14px 0 -2px #3f77ec,20px 0 0 -2px #3f77ec,14px 14px 0 -2px #3f77ec,0 20px 0 -2px #3f77ec,-14px 14px 0 -2px #3f77ec,-20px 0 0 -2px #3f77ec,-14px -14px 0 -2px #3f77ec}
-          .rcfMobileModuleText{min-width:0;flex:1 1 auto}
-          .rcfMobileModuleTitle{font-size:18px;font-weight:900;line-height:1.04;color:var(--rcf-text,#1f2a44);letter-spacing:.1px}
-          .rcfMobileModuleSub{margin-top:5px;font-size:12px;line-height:1.26;color:rgba(80,92,118,.82)}
-          .rcfMobileModuleArrow{font-size:25px;font-weight:700;color:rgba(31,42,68,.34);flex:0 0 auto;transform:translateY(-1px)}
-          .rcfBottomNav{display:none}
-          @media (max-width:980px){
-            .rcfShellGrid{grid-template-columns:1fr}
-            .rcfSidebar{position:relative;top:auto;min-height:auto}
-            .rcfDashMetrics{grid-template-columns:repeat(2,minmax(0,1fr))}
-            .rcfDashPanels{grid-template-columns:1fr}
-          }
-          @media (max-width:720px){
-            #rcfRoot{padding-top:max(10px,env(safe-area-inset-top)) !important}
-            .rcfSidebar{display:none}
-            .rcfMainStage::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;background:
-              radial-gradient(circle at 18% 10%,rgba(255,255,255,.56),rgba(255,255,255,0) 20%),
-              radial-gradient(circle at 82% 18%,rgba(99,145,255,.10),rgba(99,145,255,0) 16%),
-              linear-gradient(180deg,rgba(233,238,246,.72),rgba(220,227,237,.42));}
-            .topbar{position:relative;padding:14px 13px 11px !important;border-radius:26px !important;margin-bottom:13px !important;background:
-              linear-gradient(180deg,rgba(255,255,255,.88),rgba(246,249,253,.76) 58%,rgba(238,242,248,.70)) !important;
-              box-shadow:0 12px 28px rgba(24,40,73,.08), inset 0 1px 0 rgba(255,255,255,.88) !important;
-              border:1px solid rgba(70,96,145,.08) !important;
-              overflow:hidden}
-            .topbar::before{content:"";position:absolute;inset:0;pointer-events:none;background:
-              radial-gradient(circle at 8% 12%,rgba(255,255,255,.76),rgba(255,255,255,0) 18%),
-              linear-gradient(135deg,rgba(95,145,255,.06),rgba(95,145,255,0) 28%,rgba(255,181,110,.04) 86%,rgba(255,181,110,0))}
-            .brand{position:relative;z-index:1;align-items:center !important;gap:8px !important}
-            .factory-logo-header{height:62px !important;max-width:min(84vw, 344px) !important;filter:drop-shadow(0 4px 10px rgba(24,40,73,.05))}
-            .btn.small#btnOpenTools,#btnOpenTools{min-height:32px !important;padding:7px 11px !important;border-radius:999px !important;background:rgba(255,255,255,.44) !important;border:1px solid rgba(70,96,145,.08) !important;box-shadow:0 4px 10px rgba(24,40,73,.04) !important;color:rgba(42,58,94,.72) !important;font-size:11.5px !important}
-            .tabs{display:none !important}
-            .container{position:relative;z-index:1;padding-bottom:118px !important}
-            .hero{padding:13px !important;border-radius:24px !important;background:
-              linear-gradient(180deg,rgba(255,255,255,.82),rgba(247,249,253,.74) 56%,rgba(238,242,248,.70)) !important;
-              border:1px solid rgba(70,96,145,.08) !important;
-              box-shadow:0 12px 28px rgba(24,40,73,.08), inset 0 1px 0 rgba(255,255,255,.86) !important;
-              overflow:hidden}
-            .hero::before{content:"";position:absolute;inset:0;pointer-events:none;background:
-              radial-gradient(circle at 12% 14%,rgba(255,255,255,.72),rgba(255,255,255,0) 20%),
-              linear-gradient(135deg,rgba(95,145,255,.04),rgba(95,145,255,0) 34%,rgba(255,181,110,.03) 92%,rgba(255,181,110,0))}
-            .hero h1{font-size:24px !important;line-height:1.02 !important}
-            .hero p{font-size:13px !important}
-            .rcfDashHero{gap:13px !important}
-            .rcfDashHeroHead{order:2 !important}
-            .rcfDashHeroHead > div:first-child{display:none !important}
-            .status-box{display:grid !important;grid-template-columns:1fr !important;gap:8px !important;margin-top:0 !important}
-            .status-box .badge{grid-column:1 / -1 !important;min-height:40px !important;border-radius:15px !important;background:rgba(255,255,255,.58) !important}
-            .status-box .btn{display:none !important}
-            .rcfMobileModules{display:grid !important;order:1 !important;gap:12px !important;margin-top:0 !important}
-            .rcfDashMetrics{order:3 !important;grid-template-columns:1fr !important;gap:9px !important;opacity:.90}
-            .rcfMetricCard{padding:13px 15px !important;border-radius:20px !important;background:linear-gradient(180deg,rgba(255,255,255,.70),rgba(245,248,253,.60)) !important}
-            .rcfMetricValue{font-size:28px !important}
-            .rcfDashPanels{order:4 !important;gap:10px !important}
-            .rcfDashPanel{padding:14px !important;border-radius:20px !important;background:linear-gradient(180deg,rgba(255,255,255,.76),rgba(245,248,253,.64)) !important}
-            #appsList{display:grid !important;grid-template-columns:1fr !important;gap:10px !important}
-            #appsList .app-item{padding:14px !important;border-radius:18px !important;flex-direction:column !important;align-items:stretch !important}
-            #appsList .app-actions{width:100% !important;display:grid !important;grid-template-columns:1fr 1fr 1fr !important;gap:8px !important}
-            #appsList .app-actions .btn{width:100% !important;min-height:40px !important}
-            .rcfBottomNav{position:fixed;left:max(10px,env(safe-area-inset-left));right:max(10px,env(safe-area-inset-right));bottom:max(10px,env(safe-area-inset-bottom));z-index:130;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:7px;padding:9px;border:1px solid rgba(70,96,145,.08);border-radius:22px;background:
-              linear-gradient(180deg,rgba(255,255,255,.92),rgba(246,249,253,.80));backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);box-shadow:0 14px 30px rgba(24,40,73,.09), inset 0 1px 0 rgba(255,255,255,.86)}
-            .rcfBottomNav .tab{min-width:0 !important;width:100% !important;padding:8px 6px !important;font-size:11px !important;line-height:1.1 !important;min-height:46px !important;border-radius:16px !important;background:transparent !important;border-color:transparent !important;box-shadow:none !important;color:rgba(56,70,98,.70) !important}
-            .rcfBottomNav .tab.active{background:linear-gradient(180deg,rgba(95,145,255,.13),rgba(95,145,255,.07)) !important;border:1px solid rgba(95,145,255,.12) !important;color:#294d95 !important;box-shadow:inset 0 1px 0 rgba(255,255,255,.64) !important}
-            #rcfFab{bottom:calc(max(10px,env(safe-area-inset-bottom)) + 92px)}
-            #rcfFabPanel{bottom:calc(max(10px,env(safe-area-inset-bottom)) + 160px)}
-          }
-        </style>
+
 
 
       <div id="rcfRoot" data-rcf-app="rcf.factory">
@@ -1511,56 +1538,35 @@
   }
 
   function openTools(open) {
-    const d = $("#toolsDrawer");
-    if (!d) return;
-    if (open) d.classList.add("open");
-    else d.classList.remove("open");
+    const rt = getUiRuntime();
+    return rt?.openTools?.(open) ?? UiRuntimeFallback.openTools(open);
   }
 
   // PATCH: FAB open/close
   function openFabPanel(open) {
-    const p = $("#rcfFabPanel");
-    if (!p) return;
-    if (open) p.classList.add("open");
-    else p.classList.remove("open");
+    const rt = getUiRuntime();
+    return rt?.openFabPanel?.(open) ?? UiRuntimeFallback.openFabPanel(open);
   }
 
   function toggleFabPanel() {
-    const p = $("#rcfFabPanel");
-    if (!p) return;
-    p.classList.toggle("open");
+    const rt = getUiRuntime();
+    return rt?.toggleFabPanel?.() ?? UiRuntimeFallback.toggleFabPanel();
   }
 
   function syncFabStatusText() {
-    try {
-      const st = $("#statusText")?.textContent || "";
-      const fab = $("#fabStatus");
-      if (fab) fab.textContent = String(st || "OK ✅");
-    } catch {}
+    const rt = getUiRuntime();
+    return rt?.syncFabStatusText?.() ?? UiRuntimeFallback.syncFabStatusText();
   }
 
   // PATCH: Admin log toggle
   function setInjectorLogCollapsed(collapsed) {
-    try {
-      const pre = $("#injLog");
-      const btn = $("#btnToggleInjectorLog");
-      if (!pre || !btn) return;
-
-      const wantCollapsed = !!collapsed;
-      if (wantCollapsed) pre.classList.add("rcf-collapsed");
-      else pre.classList.remove("rcf-collapsed");
-
-      btn.textContent = wantCollapsed ? "Mostrar log" : "Esconder log";
-    } catch {}
+    const rt = getUiRuntime();
+    return rt?.setInjectorLogCollapsed?.(collapsed) ?? UiRuntimeFallback.setInjectorLogCollapsed(collapsed);
   }
 
   function toggleInjectorLogCollapsed() {
-    try {
-      const pre = $("#injLog");
-      if (!pre) return;
-      const isCollapsed = pre.classList.contains("rcf-collapsed");
-      setInjectorLogCollapsed(!isCollapsed);
-    } catch {}
+    const rt = getUiRuntime();
+    return rt?.toggleInjectorLogCollapsed?.() ?? UiRuntimeFallback.toggleInjectorLogCollapsed();
   }
 
   // =========================================================
@@ -1611,193 +1617,38 @@
 
 
   function refreshDashboardUI() {
-    try {
-      const appsCount = Array.isArray(State.apps) ? State.apps.length : 0;
-      const activeApp = getActiveApp();
-      const aiOnline = !!(window.RCF_ENGINE || window.RCF_AGENT_ZIP_BRIDGE || window.RCF_AI);
-
-      const elApps = $("#dashAppsCount");
-      if (elApps) elApps.textContent = String(appsCount).padStart(2, "0");
-
-      const elProjects = $("#dashProjectsCount");
-      if (elProjects) elProjects.textContent = String(appsCount).padStart(2, "0");
-
-      const elBuilds = $("#dashBuildsCount");
-      if (elBuilds) elBuilds.textContent = String(appsCount).padStart(2, "0");
-
-      const elAi = $("#dashAiStatus");
-      if (elAi) elAi.textContent = aiOnline ? "ON" : "--";
-
-      const aiBadge = $("#dashAiBadge");
-      if (aiBadge) aiBadge.textContent = aiOnline ? "IA online ✅" : "IA aguardando…";
-
-      const sideStatus = $("#rcfSidebarStatus");
-      if (sideStatus) sideStatus.textContent = activeApp ? `Ativo: ${activeApp.slug}` : "Factory pronta ✅";
-
-      const box = $("#dashActivityList");
-      if (box) {
-        const logs = Logger.getAll ? Logger.getAll() : [];
-        const recent = logs.slice(-4).reverse();
-        if (!recent.length) {
-          box.innerHTML = `<div class="hint">Aguardando atividade...</div>`;
-        } else {
-          box.innerHTML = recent.map(line => `<div class="rcfActivityItem">${escapeHtml(String(line))}</div>`).join("");
-        }
-      }
-    } catch {}
+    const rt = getUiRuntime();
+    return rt?.refreshDashboardUI?.() ?? UiRuntimeFallback.refreshDashboardUI();
   }
 
   function renderAppsList() {
-    const box = $("#appsList");
-    if (!box) return;
-
-    refreshDashboardUI();
-    if (!State.apps.length) {
-      box.innerHTML = `<div class="hint">Nenhum app salvo ainda.</div>`;
-      refreshDashboardUI();
-      return;
-    }
-
-    box.innerHTML = "";
-    State.apps.forEach(app => {
-      const row = document.createElement("div");
-      row.className = "app-item";
-
-      // PATCH: layout meta + actions (ellipsis no CSS)
-      row.innerHTML = `
-        <div class="app-meta">
-          <div class="app-name" style="font-weight:800">${escapeHtml(app.name)}</div>
-          <div class="app-slug hint">${escapeHtml(app.slug)}</div>
-        </div>
-        <div class="app-actions">
-          <button class="btn small" data-act="select" data-slug="${escapeAttr(app.slug)}" type="button">Selecionar</button>
-          <button class="btn small" data-act="edit" data-slug="${escapeAttr(app.slug)}" type="button">Editor</button>
-          <button class="btn small danger" data-act="delete" data-slug="${escapeAttr(app.slug)}" type="button">Apagar</button>
-        </div>
-      `;
-      box.appendChild(row);
-    });
-
-    $$('[data-act="select"]', box).forEach(btn => bindTap(btn, () => setActiveApp(btn.getAttribute("data-slug"))));
-    $$('[data-act="edit"]', box).forEach(btn => bindTap(btn, () => {
-      setActiveApp(btn.getAttribute("data-slug"));
-      setView("editor");
-    }));
-    $$('[data-act="delete"]', box).forEach(btn => bindTap(btn, () => {
-      const slug = btn.getAttribute("data-slug");
-      deleteApp(slug);
-    }));
+    const rt = getUiRuntime();
+    return rt?.renderAppsList?.() ?? UiRuntimeFallback.renderAppsList();
   }
 
   function renderFilesList() {
-    const box = $("#filesList");
-    if (!box) return;
-
-    const app = getActiveApp();
-    if (!app) {
-      box.innerHTML = `<div class="hint">Selecione um app para ver arquivos.</div>`;
-      return;
-    }
-
-    ensureAppFiles(app);
-    const files = Object.keys(app.files);
-    if (!files.length) {
-      box.innerHTML = `<div class="hint">App sem arquivos.</div>`;
-      return;
-    }
-
-    box.innerHTML = "";
-    files.forEach(fname => {
-      const item = document.createElement("div");
-      item.className = "file-item" + (State.active.file === fname ? " active" : "");
-      item.textContent = fname;
-      bindTap(item, () => openFile(fname));
-      box.appendChild(item);
-    });
+    const rt = getUiRuntime();
+    return rt?.renderFilesList?.() ?? UiRuntimeFallback.renderFilesList();
   }
 
   function openFile(fname) {
-    const app = getActiveApp();
-    if (!app) return false;
-
-    ensureAppFiles(app);
-    if (!(fname in app.files)) return false;
-
-    State.active.file = fname;
-    saveAll();
-
-    const head = $("#editorHead");
-    if (head) head.textContent = `Arquivo atual: ${fname}`;
-
-    const ta = $("#fileContent");
-    if (ta) ta.value = String(app.files[fname] ?? "");
-
-    renderFilesList();
-    return true;
+    const rt = getUiRuntime();
+    return rt?.openFile?.(fname) ?? UiRuntimeFallback.openFile(fname) ?? false;
   }
 
   function setActiveApp(slug) {
-    const app = State.apps.find(a => a.slug === slug);
-    if (!app) return false;
-
-    ensureAppFiles(app);
-
-    State.active.appSlug = slug;
-    State.active.file = State.active.file || Object.keys(app.files || {})[0] || null;
-    saveAll();
-
-    const text = $("#activeAppText");
-    if (text) textContentSafe(text, `App ativo: ${app.name} (${app.slug}) ✅`);
-
-    renderAppsList();
-    renderFilesList();
-    if (State.active.file) openFile(State.active.file);
-
-    Logger.write("app selected:", slug);
-    return true;
+    const rt = getUiRuntime();
+    return rt?.setActiveApp?.(slug) ?? UiRuntimeFallback.setActiveApp(slug) ?? false;
   }
 
   function createApp(name, slugMaybe) {
-    const nameClean = String(name || "").trim();
-    if (!nameClean) return { ok: false, msg: "Nome inválido" };
-
-    let slug = slugify(slugMaybe || nameClean);
-    if (!slug) return { ok: false, msg: "Slug inválido" };
-    if (State.apps.some(a => a.slug === slug)) return { ok: false, msg: "Slug já existe" };
-
-    const app = {
-      name: nameClean,
-      slug,
-      createdAt: nowISO(),
-      files: {
-        "index.html": `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${nameClean}</title></head><body><h1>${nameClean}</h1><script src="app.js"></script></body></html>`,
-        "styles.css": `body{font-family:system-ui;margin:0;padding:24px;background:#0b1220;color:#fff}`,
-        "app.js": `console.log("${nameClean}");`
-      }
-    };
-
-    State.apps.push(app);
-    saveAll();
-    renderAppsList();
-    setActiveApp(slug);
-
-    return { ok: true, msg: `✅ App criado: ${nameClean} (${slug})` };
+    const rt = getUiRuntime();
+    return rt?.createApp?.(name, slugMaybe) ?? UiRuntimeFallback.createApp(name, slugMaybe);
   }
 
   function saveFile() {
-    const app = getActiveApp();
-    if (!app) return uiMsg("#editorOut", "⚠️ Sem app ativo.");
-
-    const fname = State.active.file;
-    if (!fname) return uiMsg("#editorOut", "⚠️ Sem arquivo ativo.");
-
-    const ta = $("#fileContent");
-    ensureAppFiles(app);
-    app.files[fname] = ta ? String(ta.value || "") : "";
-
-    saveAll();
-    uiMsg("#editorOut", "✅ Arquivo salvo.");
-    Logger.write("file saved:", app.slug, fname);
+    const rt = getUiRuntime();
+    return rt?.saveFile?.() ?? UiRuntimeFallback.saveFile();
   }
 
   // =========================================================
@@ -3310,11 +3161,13 @@
     try {
       Stability.install();
       injectCompactCSSOnce();
+      try { await loadUiRuntimeOnce(); } catch (e) { Logger.write("ui_runtime load warn:", e?.message || e); }
 
       renderShell();
 
       // PATCH: Registry (depois do shell existir)
       installRCFUIRegistry();
+      initUiRuntime();
 
       // ✅ NEW: UI READY BUS — 1x após registry (slots já existem no shell)
       try { notifyUIReady(); } catch {}
