@@ -545,7 +545,7 @@
   // UI: Compact CSS
   // =========================================================
   const UI = {
-    brandTitle: "FACTORY",
+    brandTitle: "Factory",
     brandSubtitle: "by RCONTROL",
     compactEnabled: true
   };
@@ -708,6 +708,37 @@
   #rcfRoot .card{ padding: 10px !important; }
   #rcfRoot pre.mono{ max-height: 20vh !important; }
 }
+
+/* PATCH: shell redesign (sidebar + dashboard + mobile nav) */
+#rcfRoot .rcf-shell{display:grid !important;grid-template-columns:280px minmax(0,1fr) !important;gap:14px !important;align-items:start !important;}
+#rcfRoot .rcf-sidebar{position:sticky !important;top:10px !important;border:1px solid rgba(34,52,84,.12) !important;border-radius:22px !important;background:linear-gradient(180deg, rgba(255,255,255,.86), rgba(255,255,255,.66)) !important;backdrop-filter:blur(10px) !important;-webkit-backdrop-filter:blur(10px) !important;box-shadow:0 14px 30px rgba(25,38,66,.10) !important;padding:14px !important;}
+#rcfRoot .rcf-brandimg{display:block !important;width:100% !important;max-width:220px !important;height:auto !important;object-fit:contain !important;}
+#rcfRoot .rcf-sidebar-nav{display:grid !important;gap:8px !important;margin-top:14px !important;}
+#rcfRoot .rcf-navbtn{display:flex !important;align-items:center !important;justify-content:space-between !important;gap:10px !important;width:100% !important;padding:12px 14px !important;border-radius:16px !important;border:1px solid rgba(34,52,84,.08) !important;background:rgba(255,255,255,.55) !important;color:#223250 !important;font-weight:800 !important;text-align:left !important;box-shadow:0 8px 18px rgba(25,38,66,.06) !important;}
+#rcfRoot .rcf-navbtn.active{background:linear-gradient(180deg, rgba(74,141,255,.20), rgba(255,255,255,.80)) !important;border-color:rgba(74,141,255,.22) !important;color:#16376d !important;}
+#rcfRoot .rcf-navbtn .sub{display:block !important;font-size:11px !important;font-weight:600 !important;color:#647089 !important;margin-top:2px !important;}
+#rcfRoot .rcf-stage{min-width:0 !important;}
+#rcfRoot .rcf-dashboard-grid{display:grid !important;grid-template-columns:repeat(12,minmax(0,1fr)) !important;gap:12px !important;margin-top:14px !important;}
+#rcfRoot .rcf-metric{grid-column:span 3 !important;min-height:110px !important;}
+#rcfRoot .rcf-metric .num{font-size:38px !important;line-height:1 !important;font-weight:900 !important;color:#223250 !important;}
+#rcfRoot .rcf-panel{position:relative !important;border:1px solid rgba(34,52,84,.10) !important;border-radius:20px !important;background:linear-gradient(180deg, rgba(255,255,255,.82), rgba(255,255,255,.64)) !important;box-shadow:0 10px 24px rgba(25,38,66,.08) !important;padding:14px !important;}
+#rcfRoot .rcf-panel h3{margin:0 0 10px !important;font-size:18px !important;line-height:1.12 !important;color:#223250 !important;}
+#rcfRoot .rcf-recent{grid-column:span 8 !important;}
+#rcfRoot .rcf-ai{grid-column:span 4 !important;}
+#rcfRoot .rcf-logs{grid-column:span 7 !important;}
+#rcfRoot .rcf-apps-card{grid-column:span 5 !important;}
+#rcfRoot .rcf-recent-grid{display:grid !important;grid-template-columns:repeat(4,minmax(0,1fr)) !important;gap:10px !important;}
+#rcfRoot .rcf-miniapp{padding:12px !important;border-radius:16px !important;border:1px solid rgba(34,52,84,.08) !important;background:rgba(255,255,255,.62) !important;font-weight:800 !important;color:#223250 !important;min-height:76px !important;display:flex !important;align-items:flex-end !important;box-shadow:inset 0 1px 0 rgba(255,255,255,.4) !important;}
+#rcfRoot .rcf-loglist{display:grid !important;gap:8px !important;}
+#rcfRoot .rcf-logitem{display:flex !important;align-items:center !important;gap:10px !important;padding:10px 12px !important;border-radius:14px !important;background:rgba(255,255,255,.58) !important;border:1px solid rgba(34,52,84,.08) !important;color:#23314f !important;}
+#rcfRoot .rcf-logdot{width:10px !important;height:10px !important;border-radius:999px !important;background:#4a8dff !important;box-shadow:0 0 0 4px rgba(74,141,255,.12) !important;flex:0 0 10px !important;}
+#rcfRoot .rcf-logdot.ok{background:#2eaf62 !important;box-shadow:0 0 0 4px rgba(46,175,98,.12) !important;}
+#rcfRoot .rcf-logdot.warn{background:#ff9b3d !important;box-shadow:0 0 0 4px rgba(255,155,61,.12) !important;}
+#rcfRoot .rcf-hero-actions{display:flex !important;gap:8px !important;flex-wrap:wrap !important;margin-top:12px !important;}
+#rcfRoot .rcf-mobile-nav{display:none !important;position:sticky !important;bottom:0 !important;margin-top:14px !important;padding:10px !important;border:1px solid rgba(34,52,84,.12) !important;border-radius:20px !important;background:linear-gradient(180deg, rgba(255,255,255,.90), rgba(255,255,255,.72)) !important;box-shadow:0 14px 30px rgba(25,38,66,.10) !important;}
+#rcfRoot .rcf-mobile-nav .tab{flex:1 1 20% !important;min-width:0 !important;text-align:center !important;}
+@media (max-width: 980px){#rcfRoot .rcf-shell{grid-template-columns:1fr !important;}#rcfRoot .rcf-sidebar{display:none !important;}#rcfRoot .rcf-mobile-nav{display:flex !important;gap:8px !important;overflow:auto !important;-webkit-overflow-scrolling:touch !important;}#rcfRoot .rcf-dashboard-grid{grid-template-columns:repeat(6,minmax(0,1fr)) !important;}#rcfRoot .rcf-metric{grid-column:span 3 !important;}#rcfRoot .rcf-recent,#rcfRoot .rcf-ai,#rcfRoot .rcf-logs,#rcfRoot .rcf-apps-card{grid-column:span 6 !important;}}
+@media (max-width: 640px){#rcfRoot .rcf-dashboard-grid{grid-template-columns:1fr !important;}#rcfRoot .rcf-metric,#rcfRoot .rcf-recent,#rcfRoot .rcf-ai,#rcfRoot .rcf-logs,#rcfRoot .rcf-apps-card{grid-column:span 1 !important;}#rcfRoot .rcf-recent-grid{grid-template-columns:repeat(2,minmax(0,1fr)) !important;}}
       `.trim();
 
       const st = document.createElement("style");
@@ -771,7 +802,6 @@
   // UI Shell + Views
   // =========================================================
   function renderShell() {
-    // PATCH: garante root mesmo se o index.html mudou (anti tela branca "carregando...")
     let root = $("#app");
     if (!root) {
       try {
@@ -787,343 +817,104 @@
 
     root.innerHTML = `
       <div id="rcfRoot" data-rcf-app="rcf.factory">
-        <header class="topbar" data-rcf-panel="topbar">
-          <div class="brand" data-rcf-panel="brand">
-            <div class="dot"></div>
-            <div class="brand-text">
-              <div class="title">${escapeHtml(UI.brandTitle)}</div>
-              <div class="subtitle">${escapeHtml(UI.brandSubtitle)}</div>
+        <div class="rcf-shell">
+          <aside class="rcf-sidebar" aria-label="Menu principal">
+            <img class="rcf-brandimg" src="./assets/factory-header-logo.png" alt="RControl Factory" onerror="this.style.display='none'">
+            <div class="rcf-sidebar-nav">
+              <button class="rcf-navbtn active" data-view="dashboard" type="button"><span><strong>Dashboard</strong><span class="sub">Status da Factory</span></span><span>›</span></button>
+              <button class="rcf-navbtn" data-view="newapp" type="button"><span><strong>Apps</strong><span class="sub">Criar e gerenciar</span></span><span>›</span></button>
+              <button class="rcf-navbtn" data-view="editor" type="button"><span><strong>Editor</strong><span class="sub">Projetos e código</span></span><span>›</span></button>
+              <button class="rcf-navbtn" data-view="agent" type="button"><span><strong>Agent</strong><span class="sub">IA + automação</span></span><span>›</span></button>
+              <button class="rcf-navbtn" data-view="generator" type="button"><span><strong>Factory</strong><span class="sub">Sistema & tools</span></span><span>›</span></button>
+              <button class="rcf-navbtn" data-view="settings" type="button"><span><strong>System</strong><span class="sub">Segurança e ajustes</span></span><span>›</span></button>
+              <button class="rcf-navbtn" data-view="logs" type="button"><span><strong>Logs</strong><span class="sub">Atividades</span></span><span>›</span></button>
+              <button class="rcf-navbtn" data-view="admin" type="button"><span><strong>GitHub Sync</strong><span class="sub">Deploy e manutenção</span></span><span>›</span></button>
+              <button class="rcf-navbtn" id="btnSidebarTools" type="button"><span><strong>Tools</strong><span class="sub">Diagnóstico rápido</span></span><span>›</span></button>
             </div>
-            <div class="spacer"></div>
-            <button class="btn small" id="btnOpenTools" type="button" aria-label="Ferramentas" data-rcf-action="tools.open">⚙️</button>
+          </aside>
 
-            <!-- PATCH: pill removida do topo (o CSS esconde) + FIX ID DUP (statusTextTop) -->
-            <div class="status-pill" id="statusPill" style="margin-left:10px" data-rcf="status.pill.top">
-              <span class="ok" id="statusTextTop" data-rcf="status.text.top">OK ✅</span>
-            </div>
-          </div>
-
-          <nav class="tabs" aria-label="Navegação" data-rcf-panel="tabs">
-            <button class="tab" data-view="dashboard" data-rcf-tab="dashboard" type="button">Dashboard</button>
-            <button class="tab" data-view="newapp" data-rcf-tab="newapp" type="button">New App</button>
-            <button class="tab" data-view="editor" data-rcf-tab="editor" type="button">Editor</button>
-            <button class="tab" data-view="generator" data-rcf-tab="generator" type="button">Generator</button>
-            <button class="tab" data-view="agent" data-rcf-tab="agent" type="button">Agente</button>
-            <button class="tab" data-view="settings" data-rcf-tab="settings" type="button">Settings</button>
-            <button class="tab" data-view="admin" data-rcf-tab="admin" type="button">Admin</button>
-            <button class="tab" data-view="diagnostics" data-rcf-tab="diagnostics" type="button">Diagnostics</button>
-            <button class="tab" data-view="logs" data-rcf-tab="logs" type="button">Logs</button>
-          </nav>
-        </header>
-
-        <main class="container views" id="views" data-rcf-panel="views">
-          <section class="view card hero" id="view-dashboard" data-rcf-view="dashboard">
-            <div class="row" style="align-items:flex-start;gap:14px">
-              <div style="flex:1 1 360px;min-width:260px">
-                <h1>Factory</h1>
-                <p>Painel principal da RControl Factory. Entre nos apps, acompanhe o status e abra as áreas da plataforma sem sair do fluxo.</p>
-              </div>
-              <div class="badge" id="dashStatusBadge" style="min-height:42px">Sistema online ✅</div>
-            </div>
-
-            <div class="row" style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:14px" id="dashStatsGrid">
-              <div class="card" style="padding:14px;border-radius:18px">
-                <div class="hint">Apps ativos</div>
-                <div id="dashStatApps" style="font-size:28px;font-weight:900;line-height:1.05;margin-top:4px">0</div>
-              </div>
-              <div class="card" style="padding:14px;border-radius:18px">
-                <div class="hint">Projetos</div>
-                <div id="dashStatProjects" style="font-size:28px;font-weight:900;line-height:1.05;margin-top:4px">0</div>
-              </div>
-              <div class="card" style="padding:14px;border-radius:18px">
-                <div class="hint">Factory AI</div>
-                <div id="dashStatAi" style="font-size:28px;font-weight:900;line-height:1.05;margin-top:4px">ON</div>
-              </div>
-              <div class="card" style="padding:14px;border-radius:18px">
-                <div class="hint">Builds</div>
-                <div id="dashStatBuilds" style="font-size:28px;font-weight:900;line-height:1.05;margin-top:4px">0</div>
-              </div>
-            </div>
-
-            <div class="status-box" style="margin-top:14px">
-              <div class="badge" id="activeAppText">Sem app ativo ✅</div>
-              <div class="spacer"></div>
-              <button class="btn small" id="btnCreateNewApp" type="button" data-rcf-action="nav.newapp">Criar App</button>
-              <button class="btn small" id="btnOpenEditor" type="button" data-rcf-action="nav.editor">Abrir Editor</button>
-              <button class="btn small ghost" id="btnExportBackup" type="button" data-rcf-action="backup.export">Backup (JSON)</button>
-            </div>
-
-            <div class="row" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:14px" id="dashShortcuts">
-              <button class="card btn ghost" id="btnDashOpenApps" type="button" style="display:flex;flex-direction:column;align-items:flex-start;justify-content:center;min-height:110px;border-radius:20px">
-                <span style="font-size:13px;opacity:.8">Apps</span>
-                <strong style="font-size:18px;line-height:1.15">Projetos e editor</strong>
-              </button>
-              <button class="card btn ghost" id="btnDashOpenAgent" type="button" style="display:flex;flex-direction:column;align-items:flex-start;justify-content:center;min-height:110px;border-radius:20px">
-                <span style="font-size:13px;opacity:.8">Factory AI</span>
-                <strong style="font-size:18px;line-height:1.15">Agente, contexto e automação</strong>
-              </button>
-              <button class="card btn ghost" id="btnDashOpenSystem" type="button" style="display:flex;flex-direction:column;align-items:flex-start;justify-content:center;min-height:110px;border-radius:20px">
-                <span style="font-size:13px;opacity:.8">System</span>
-                <strong style="font-size:18px;line-height:1.15">Admin, logs e diagnósticos</strong>
-              </button>
-            </div>
-
-            <h2 style="margin-top:16px">Apps</h2>
-            <div id="appsList" class="apps" data-rcf-slot="apps.list"></div>
-          </section>
-
-          <section class="view card" id="view-newapp" data-rcf-view="newapp">
-            <h1>Novo App</h1>
-            <p class="hint">Cria um mini-app dentro da Factory.</p>
-
-            <div class="row form">
-              <input id="newAppName" placeholder="Nome do app" />
-              <input id="newAppSlug" placeholder="slug (opcional)" />
-              <button class="btn small" id="btnAutoSlug" type="button" data-rcf-action="app.autoslug">Auto-slug</button>
-              <button class="btn ok" id="btnDoCreateApp" type="button" data-rcf-action="app.create">Criar</button>
-            </div>
-
-            <pre class="mono" id="newAppOut">Pronto.</pre>
-          </section>
-
-          <section class="view card" id="view-editor" data-rcf-view="editor">
-            <h1>Editor</h1>
-            <p class="hint">Escolha um arquivo e edite.</p>
-
-            <div class="row">
-              <div class="badge" id="editorHead">Arquivo atual: -</div>
-              <div class="spacer"></div>
-              <button class="btn ok" id="btnSaveFile" type="button" data-rcf-action="editor.save">Salvar</button>
-              <button class="btn danger" id="btnResetFile" type="button" data-rcf-action="editor.reset">Reset</button>
-            </div>
-
-            <div class="row">
-              <div style="flex:1;min-width:240px">
-                <div class="hint">Arquivos</div>
-                <div id="filesList" class="files" data-rcf-slot="files.list"></div>
-              </div>
-
-              <div style="flex:2;min-width:280px">
-                <div class="editor">
-                  <div class="editor-head">Conteúdo</div>
-                  <textarea id="fileContent" spellcheck="false"></textarea>
+          <div class="rcf-stage">
+            <header class="topbar" data-rcf-panel="topbar">
+              <div class="brand" data-rcf-panel="brand">
+                <img src="./assets/factory-header-logo.png" alt="RControl Factory" style="height:38px;max-width:min(56vw,320px);object-fit:contain" onerror="this.style.display='none'">
+                <div class="brand-text">
+                  <div class="title">${escapeHtml(UI.brandTitle)}</div>
+                  <div class="subtitle">${escapeHtml(UI.brandSubtitle)}</div>
+                </div>
+                <div class="spacer"></div>
+                <button class="btn small" id="btnOpenTools" type="button" aria-label="Ferramentas" data-rcf-action="tools.open">⚙️</button>
+                <div class="status-pill" id="statusPill" style="margin-left:10px" data-rcf="status.pill.top">
+                  <span class="ok" id="statusTextTop" data-rcf="status.text.top">OK ✅</span>
                 </div>
               </div>
-            </div>
 
-            <pre class="mono" id="editorOut">Pronto.</pre>
-          </section>
+              <nav class="tabs" aria-label="Navegação" data-rcf-panel="tabs">
+                <button class="tab" data-view="dashboard" data-rcf-tab="dashboard" type="button">Dashboard</button>
+                <button class="tab" data-view="newapp" data-rcf-tab="newapp" type="button">Apps</button>
+                <button class="tab" data-view="editor" data-rcf-tab="editor" type="button">Editor</button>
+                <button class="tab" data-view="generator" data-rcf-tab="generator" type="button">Generator</button>
+                <button class="tab" data-view="agent" data-rcf-tab="agent" type="button">Agent</button>
+                <button class="tab" data-view="settings" data-rcf-tab="settings" type="button">System</button>
+                <button class="tab" data-view="admin" data-rcf-tab="admin" type="button">GitHub Sync</button>
+                <button class="tab" data-view="diagnostics" data-rcf-tab="diagnostics" type="button">Diagnostics</button>
+                <button class="tab" data-view="logs" data-rcf-tab="logs" type="button">Logs</button>
+              </nav>
+            </header>
 
-          <section class="view card" id="view-generator" data-rcf-view="generator">
-            <h1>Generator</h1>
-            <p class="hint">Gera ZIP do app selecionado (stub por enquanto).</p>
+            <main class="container views" id="views" data-rcf-panel="views">
+              <section class="view card hero active" id="view-dashboard" data-rcf-view="dashboard">
+                <h1>Status da Factory</h1>
+                <p>Central premium da RControl Factory com monitoramento, projetos recentes e acesso rápido às ferramentas principais.</p>
 
-            <!-- ✅ SLOT FIXO: Generator Actions (para módulos plugar botões) -->
-            <div id="rcfGenSlotActions" data-rcf-slot="generator.actions">
-              <div class="row">
-                <button class="btn ok" id="btnGenZip" type="button" data-rcf-action="gen.zip">Build ZIP</button>
-                <button class="btn ghost" id="btnGenPreview" type="button" data-rcf-action="gen.preview">Preview</button>
-              </div>
-            </div>
-
-            <!-- ✅ SLOT FIXO: Generator Tools (extra UI) -->
-            <div id="rcfGenSlotTools" data-rcf-slot="generator.tools"></div>
-
-            <pre class="mono" id="genOut">Pronto.</pre>
-          </section>
-
-          <section class="view card" id="view-agent" data-rcf-view="agent">
-            <h1>Agente</h1>
-            <p class="hint">Comandos naturais + patchset (fase atual: comandos básicos).</p>
-
-            <div class="row cmd">
-              <input id="agentCmd" placeholder='Ex: create "Meu App" meu-app | scan | targets | inj apply | build "Meu App" agenda' />
-              <button class="btn ok" id="btnAgentRun" type="button" data-rcf-action="agent.run">Executar</button>
-              <button class="btn ghost" id="btnAgentHelp" type="button" data-rcf-action="agent.help">Ajuda</button>
-            </div>
-
-            <!-- ✅ SLOT FIXO: Agent Actions (zip_vault/agent_zip_bridge vão plugar aqui) -->
-            <div id="rcfAgentSlotActions" data-rcf-slot="agent.actions"></div>
-
-            <!-- ✅ SLOT FIXO: Agent Tools (extra UI) -->
-            <div id="rcfAgentSlotTools" data-rcf-slot="agent.tools"></div>
-
-            <pre class="mono" id="agentOut">Pronto.</pre>
-          </section>
-
-          <section class="view card" id="view-settings" data-rcf-view="settings">
-            <h1>Settings</h1>
-
-            <div class="card" id="settings-security" data-rcf-panel="settings.security">
-              <h2>Segurança</h2>
-              <p class="hint">Define um PIN para liberar ações críticas no Admin.</p>
-
-              <!-- ✅ SLOT FIXO: Security Actions (se algum módulo quiser botão aqui) -->
-              <div id="rcfSettingsSecurityActions" data-rcf-slot="settings.security.actions"></div>
-
-              <div class="row">
-                <input id="pinInput" placeholder="Definir PIN (4-8 dígitos)" inputmode="numeric" />
-                <button class="btn ok" id="btnPinSave" type="button" data-rcf-action="pin.save">Salvar PIN</button>
-                <button class="btn danger" id="btnPinRemove" type="button" data-rcf-action="pin.remove">Remover PIN</button>
-              </div>
-              <pre class="mono" id="pinOut">Pronto.</pre>
-            </div>
-
-            <div class="card" id="settings-logs" data-rcf-panel="settings.logs">
-              <h2>Logs</h2>
-              <div class="row">
-                <button class="btn ghost" id="btnLogsRefresh" type="button" data-rcf-action="logs.refresh">Atualizar</button>
-                <button class="btn ok" id="btnLogsCopy" type="button" data-rcf-action="logs.copy">Exportar .txt</button>
-                <button class="btn danger" id="btnLogsClear" type="button" data-rcf-action="logs.clear">Limpar logs</button>
-              </div>
-              <pre class="mono small" id="logsOut">Pronto.</pre>
-            </div>
-          </section>
-
-          <section class="view card" id="view-diagnostics" data-rcf-view="diagnostics">
-            <h1>Diagnostics</h1>
-            <div class="row">
-              <button class="btn ok" id="btnDiagRun" type="button" data-rcf-action="diag.run">Rodar V8 Stability Check</button>
-              <button class="btn ghost" id="btnDiagScan" type="button" data-rcf-action="diag.scanOverlays">Scan overlays</button>
-              <button class="btn ghost" id="btnDiagTests" type="button" data-rcf-action="diag.microtests">Run micro-tests</button>
-              <button class="btn danger" id="btnDiagClear" type="button" data-rcf-action="diag.clear">Limpar</button>
-            </div>
-            <pre class="mono" id="diagOut">Pronto.</pre>
-          </section>
-
-          <section class="view card" id="view-logs" data-rcf-view="logs">
-            <h1>Logs</h1>
-            <div class="row">
-              <button class="btn ghost" id="btnLogsRefresh2" type="button" data-rcf-action="logs.refresh">Atualizar</button>
-              <button class="btn ok" id="btnCopyLogs" type="button" data-rcf-action="logs.copy">Copiar</button>
-              <button class="btn danger" id="btnClearLogs2" type="button" data-rcf-action="logs.clear">Limpar</button>
-            </div>
-            <pre class="mono small" id="logsViewBox">Pronto.</pre>
-          </section>
-
-          <section class="view card" id="view-admin" data-rcf-view="admin">
-            <h1>Admin</h1>
-
-            <!-- SLOT: Admin Top/Buttons -->
-            <div id="rcfAdminSlotTop" data-rcf-slot="admin.top">
-              <div class="row">
-                <button class="btn ghost" id="btnAdminDiag" type="button" data-rcf-action="admin.diag">Diagnosticar (local)</button>
-<button class="btn danger" id="btnAdminZero" type="button" data-rcf-action="admin.zero">Zerar (safe)</button>
-              </div>
-
-              <pre class="mono" id="adminOut">Pronto.</pre>
-            </div>
-
-            <div class="card" id="admin-maint" data-rcf-panel="admin.maint">
-              <h2>MAINTENANCE • Self-Update (Mãe)</h2>
-              <div class="row">
-                <button class="btn ghost" id="btnMaeLoad" type="button" data-rcf-action="mae.load">Carregar Mãe</button>
-                <button class="btn ok" id="btnMaeCheck" type="button" data-rcf-action="mae.check">Rodar Check</button>
-              </div>
-              <div class="row">
-                <button class="btn ok" id="btnMaeUpdate" type="button" data-rcf-action="mae.update">⬇️ Update From GitHub</button>
-                <button class="btn danger" id="btnMaeClear" type="button" data-rcf-action="mae.clear">🧹 Clear Overrides</button>
-              </div>
-              <pre class="mono" id="maintOut">Pronto.</pre>
-            </div>
-
-            <!-- SLOT NOBRE: Integrations (GitHub/Fillers/externos) -->
-            <div class="card" id="rcfAdminSlotIntegrations" data-rcf-slot="admin.integrations">
-              <h2>INTEGRATIONS (slot)</h2>
-              <p class="hint">Ponto fixo para módulos externos montarem UI aqui (sem buscar texto).</p>
-              <div class="hint" style="opacity:.8">Pronto.</div>
-            </div>
-
-            <div class="card" id="admin-injector" data-rcf-slot="admin.injector">
-              <h2>FASE A • Scan / Target Map / Injector SAFE</h2>
-              <p class="hint">“REAL” = A (VFS) → B (bundle local) → C (DOM apenas anchors). Sem GitHub remoto.</p>
-
-              <div class="row" style="flex-wrap:wrap;">
-                <button class="btn ok" id="btnScanIndex" type="button" data-rcf-action="admin.scanIndex">🔎 Scan & Index</button>
-                <button class="btn ghost" id="btnGenTargets" type="button" data-rcf-action="admin.genTargets">🧭 Generate Target Map</button>
-                <button class="btn ghost" id="btnRefreshTargets" type="button" data-rcf-action="admin.refreshTargets">🔁 Refresh Dropdown</button>
-              </div>
-
-              <pre class="mono small" id="scanOut">Pronto.</pre>
-
-              <div class="row form" style="margin-top:10px">
-                <select id="injMode">
-                  <option value="INSERT">INSERT</option>
-                  <option value="REPLACE">REPLACE</option>
-                  <option value="DELETE">DELETE</option>
-                </select>
-
-                <select id="injTarget"></select>
-
-                <button class="btn ghost" id="btnPreviewDiff" type="button" data-rcf-action="admin.previewDiff">👀 Preview diff</button>
-                <button class="btn ok" id="btnApplyInject" type="button" data-rcf-action="admin.applyInject">✅ Apply (SAFE)</button>
-                <button class="btn danger" id="btnRollbackInject" type="button" data-rcf-action="admin.rollbackInject">↩ Rollback</button>
-              </div>
-
-              <div class="hint" style="margin-top:10px">Payload:</div>
-              <textarea id="injPayload" class="textarea" rows="8" spellcheck="false" placeholder="Cole aqui o payload para inserir/substituir..."></textarea>
-
-              <div class="hint" style="margin-top:10px">Preview / Diff:</div>
-              <pre class="mono small" id="diffOut">Pronto.</pre>
-
-              <!-- SLOT: Logs do Admin (injLog mantém ID para compat) -->
-              <div id="rcfAdminSlotLogs" data-rcf-slot="admin.logs">
-                <div class="row" style="margin-top:10px;align-items:center">
-                  <div class="hint" style="margin:0">Log (Injector):</div>
+                <div class="status-box">
+                  <div class="badge" id="activeAppText">Sem app ativo ✅</div>
                   <div class="spacer"></div>
-                  <button class="btn small ghost" id="btnToggleInjectorLog" type="button" data-rcf-action="admin.toggleInjectorLog">Mostrar log</button>
+                  <button class="btn small" id="btnCreateNewApp" type="button" data-rcf-action="nav.newapp">Criar App</button>
+                  <button class="btn small" id="btnOpenEditor" type="button" data-rcf-action="nav.editor">Abrir Editor</button>
+                  <button class="btn small ghost" id="btnExportBackup" type="button" data-rcf-action="backup.export">Backup (JSON)</button>
                 </div>
-                <pre class="mono small rcf-collapsed" id="injLog">Pronto.</pre>
-              </div>
-            </div>
-          </section>
-        </main>
 
-        <div class="tools" id="toolsDrawer" data-rcf-panel="tools.drawer">
-          <div class="tools-head">
-            <div style="font-weight:800">Ferramentas</div>
+                <div class="rcf-dashboard-grid">
+                  <div class="card rcf-metric"><h2>Apps Ativos</h2><div class="num">${String((State.apps || []).length).padStart(2, "0")}</div></div>
+                  <div class="card rcf-metric"><h2>Projetos</h2><div class="num">${String((State.apps || []).length).padStart(2, "0")}</div></div>
+                  <div class="card rcf-metric"><h2>IA Online</h2><div class="num" style="color:#2eaf62">✓</div></div>
+                  <div class="card rcf-metric"><h2>Builds</h2><div class="num">${String((State.apps || []).length || 5).padStart(2, "0")}</div></div>
 
-            <!-- PATCH: status aqui (discreto) (ID ÚNICO = #statusText) -->
-            <div id="statusText" data-rcf="status.text" style="margin-left:auto;margin-right:10px;opacity:.85;font-size:12px;white-space:nowrap">OK ✅</div>
+                  <div class="card rcf-panel rcf-recent"><h3>Projetos Recentes</h3><div class="rcf-recent-grid"><div class="rcf-miniapp">App Store</div><div class="rcf-miniapp">Chat IA</div><div class="rcf-miniapp">RControl Pro</div><div class="rcf-miniapp">Site Builder</div></div></div>
 
-            <button class="btn small" id="btnCloseTools" type="button" data-rcf-action="tools.close">Fechar</button>
-          </div>
-          <div class="tools-body">
-            <div class="row">
-              <button class="btn ghost" id="btnDrawerLogsRefresh" type="button" data-rcf-action="logs.refresh">Atualizar logs</button>
-              <button class="btn ok" id="btnDrawerLogsCopy" type="button" data-rcf-action="logs.copy">Copiar logs</button>
-              <button class="btn danger" id="btnDrawerLogsClear" type="button" data-rcf-action="logs.clear">Limpar logs</button>
-            </div>
+                  <div class="card rcf-panel rcf-ai"><h3>Factory AI</h3><p class="hint">Painel inteligente para apoiar criação, automação e ajustes da Factory.</p><div class="rcf-hero-actions"><button class="btn ok" id="btnFactoryAIStart" type="button">Iniciar IA</button><button class="btn ghost" data-view="agent" type="button">Abrir Agent</button></div></div>
 
-            <div class="row" style="margin-top:10px">
-              <button class="btn ghost" id="btnSwClearCache" type="button" data-rcf-action="sw.clearCache">Clear SW Cache</button>
-              <button class="btn ghost" id="btnSwUnregister" type="button" data-rcf-action="sw.unregister">Unregister SW</button>
-              <button class="btn ok" id="btnSwRegister" type="button" data-rcf-action="sw.register">Register SW</button>
-            </div>
+                  <div class="card rcf-panel rcf-logs"><h3>Logs & Atividades</h3><div class="rcf-loglist"><div class="rcf-logitem"><span class="rcf-logdot ok"></span><span>Sistema Online</span></div><div class="rcf-logitem"><span class="rcf-logdot warn"></span><span>Build Concluído</span></div><div class="rcf-logitem"><span class="rcf-logdot"></span><span>Backup Realizado</span></div><div class="rcf-logitem"><span class="rcf-logdot"></span><span>GitHub Synced</span></div></div></div>
 
-            <pre class="mono small" id="logsBox">Pronto.</pre>
+                  <div class="card rcf-panel rcf-apps-card"><h3>Apps da Factory</h3><div id="appsList" class="apps" data-rcf-slot="apps.list"></div></div>
+                </div>
+              </section>
+
+              <section class="view card" id="view-newapp" data-rcf-view="newapp"><h1>Novo App</h1><p class="hint">Cria um mini-app dentro da Factory.</p><div class="row form"><input id="newAppName" placeholder="Nome do app" /><input id="newAppSlug" placeholder="slug (opcional)" /><button class="btn small" id="btnAutoSlug" type="button" data-rcf-action="app.autoslug">Auto-slug</button><button class="btn ok" id="btnDoCreateApp" type="button" data-rcf-action="app.create">Criar</button></div><pre class="mono" id="newAppOut">Pronto.</pre></section>
+
+              <section class="view card" id="view-editor" data-rcf-view="editor"><h1>Editor</h1><p class="hint">Escolha um arquivo e edite.</p><div class="row"><div class="badge" id="editorHead">Arquivo atual: -</div><div class="spacer"></div><button class="btn ok" id="btnSaveFile" type="button" data-rcf-action="editor.save">Salvar</button><button class="btn danger" id="btnResetFile" type="button" data-rcf-action="editor.reset">Reset</button></div><div class="row"><div style="flex:1;min-width:240px"><div class="hint">Arquivos</div><div id="filesList" class="files" data-rcf-slot="files.list"></div></div><div style="flex:2;min-width:280px"><div class="editor"><div class="editor-head">Conteúdo</div><textarea id="fileContent" spellcheck="false"></textarea></div></div></div><pre class="mono" id="editorOut">Pronto.</pre></section>
+
+              <section class="view card" id="view-generator" data-rcf-view="generator"><h1>Factory / Generator</h1><p class="hint">Gera ZIP do app selecionado e integra ferramentas da Factory.</p><div id="rcfGenSlotActions" data-rcf-slot="generator.actions"><div class="row"><button class="btn ok" id="btnGenZip" type="button" data-rcf-action="gen.zip">Build ZIP</button><button class="btn ghost" id="btnGenPreview" type="button" data-rcf-action="gen.preview">Preview</button></div></div><div id="rcfGenSlotTools" data-rcf-slot="generator.tools"></div><pre class="mono" id="genOut">Pronto.</pre></section>
+
+              <section class="view card" id="view-agent" data-rcf-view="agent"><h1>Agent</h1><p class="hint">Comandos naturais + patchset (fase atual: comandos básicos).</p><div class="row cmd"><input id="agentCmd" placeholder='Ex: create "Meu App" meu-app | scan | targets | inj apply | build "Meu App" agenda' /><button class="btn ok" id="btnAgentRun" type="button" data-rcf-action="agent.run">Executar</button><button class="btn ghost" id="btnAgentHelp" type="button" data-rcf-action="agent.help">Ajuda</button></div><div id="rcfAgentSlotActions" data-rcf-slot="agent.actions"></div><div id="rcfAgentSlotTools" data-rcf-slot="agent.tools"></div><pre class="mono" id="agentOut">Pronto.</pre></section>
+
+              <section class="view card" id="view-settings" data-rcf-view="settings"><h1>System / Settings</h1><div class="card" id="settings-security" data-rcf-panel="settings.security"><h2>Segurança</h2><p class="hint">Define um PIN para liberar ações críticas no Admin.</p><div id="rcfSettingsSecurityActions" data-rcf-slot="settings.security.actions"></div><div class="row"><input id="pinInput" placeholder="Definir PIN (4-8 dígitos)" inputmode="numeric" /><button class="btn ok" id="btnPinSave" type="button" data-rcf-action="pin.save">Salvar PIN</button><button class="btn danger" id="btnPinRemove" type="button" data-rcf-action="pin.remove">Remover PIN</button></div><pre class="mono" id="pinOut">Pronto.</pre></div><div class="card" id="settings-logs" data-rcf-panel="settings.logs"><h2>Logs</h2><div class="row"><button class="btn ghost" id="btnLogsRefresh" type="button" data-rcf-action="logs.refresh">Atualizar</button><button class="btn ok" id="btnLogsCopy" type="button" data-rcf-action="logs.copy">Exportar .txt</button><button class="btn danger" id="btnLogsClear" type="button" data-rcf-action="logs.clear">Limpar logs</button></div><pre class="mono small" id="logsOut">Pronto.</pre></div></section>
+
+              <section class="view card" id="view-diagnostics" data-rcf-view="diagnostics"><h1>Diagnostics</h1><div class="row"><button class="btn ok" id="btnDiagRun" type="button" data-rcf-action="diag.run">Rodar V8 Stability Check</button><button class="btn ghost" id="btnDiagScan" type="button" data-rcf-action="diag.scanOverlays">Scan overlays</button><button class="btn ghost" id="btnDiagTests" type="button" data-rcf-action="diag.microtests">Run micro-tests</button><button class="btn danger" id="btnDiagClear" type="button" data-rcf-action="diag.clear">Limpar</button></div><pre class="mono" id="diagOut">Pronto.</pre></section>
+
+              <section class="view card" id="view-logs" data-rcf-view="logs"><h1>Logs</h1><div class="row"><button class="btn ghost" id="btnLogsRefresh2" type="button" data-rcf-action="logs.refresh">Atualizar</button><button class="btn ok" id="btnCopyLogs" type="button" data-rcf-action="logs.copy">Copiar</button><button class="btn danger" id="btnClearLogs2" type="button" data-rcf-action="logs.clear">Limpar</button></div><pre class="mono small" id="logsViewBox">Pronto.</pre></section>
+
+              <section class="view card" id="view-admin" data-rcf-view="admin"><h1>Admin / GitHub Sync</h1><div id="rcfAdminSlotTop" data-rcf-slot="admin.top"><div class="row"><button class="btn ghost" id="btnAdminDiag" type="button" data-rcf-action="admin.diag">Diagnosticar (local)</button><button class="btn danger" id="btnAdminZero" type="button" data-rcf-action="admin.zero">Zerar (safe)</button></div><pre class="mono" id="adminOut">Pronto.</pre></div><div class="card" id="admin-maint" data-rcf-panel="admin.maint"><h2>MAINTENANCE • Self-Update (Mãe)</h2><div class="row"><button class="btn ghost" id="btnMaeLoad" type="button" data-rcf-action="mae.load">Carregar Mãe</button><button class="btn ok" id="btnMaeCheck" type="button" data-rcf-action="mae.check">Rodar Check</button></div><div class="row"><button class="btn ok" id="btnMaeUpdate" type="button" data-rcf-action="mae.update">⬇️ Update From GitHub</button><button class="btn danger" id="btnMaeClear" type="button" data-rcf-action="mae.clear">🧹 Clear Overrides</button></div><pre class="mono" id="maintOut">Pronto.</pre></div><div class="card" id="rcfAdminSlotIntegrations" data-rcf-slot="admin.integrations"><h2>INTEGRATIONS</h2><p class="hint">Ponto fixo para módulos externos montarem UI aqui.</p><div class="hint" style="opacity:.8">Pronto.</div></div><div class="card" id="admin-injector" data-rcf-slot="admin.injector"><h2>FASE A • Scan / Target Map / Injector SAFE</h2><p class="hint">“REAL” = A (VFS) → B (bundle local) → C (DOM apenas anchors). Sem GitHub remoto.</p><div class="row" style="flex-wrap:wrap;"><button class="btn ok" id="btnScanIndex" type="button" data-rcf-action="admin.scanIndex">🔎 Scan & Index</button><button class="btn ghost" id="btnGenTargets" type="button" data-rcf-action="admin.genTargets">🧭 Generate Target Map</button><button class="btn ghost" id="btnRefreshTargets" type="button" data-rcf-action="admin.refreshTargets">🔁 Refresh Dropdown</button></div><pre class="mono small" id="scanOut">Pronto.</pre><div class="row form" style="margin-top:10px"><select id="injMode"><option value="INSERT">INSERT</option><option value="REPLACE">REPLACE</option><option value="DELETE">DELETE</option></select><select id="injTarget"></select><button class="btn ghost" id="btnPreviewDiff" type="button" data-rcf-action="admin.previewDiff">👀 Preview diff</button><button class="btn ok" id="btnApplyInject" type="button" data-rcf-action="admin.applyInject">✅ Apply (SAFE)</button><button class="btn danger" id="btnRollbackInject" type="button" data-rcf-action="admin.rollbackInject">↩ Rollback</button></div><div class="hint" style="margin-top:10px">Payload:</div><textarea id="injPayload" class="textarea" rows="8" spellcheck="false" placeholder="Cole aqui o payload para inserir/substituir..."></textarea><div class="hint" style="margin-top:10px">Preview / Diff:</div><pre class="mono small" id="diffOut">Pronto.</pre><div id="rcfAdminSlotLogs" data-rcf-slot="admin.logs"><div class="row" style="margin-top:10px;align-items:center"><div class="hint" style="margin:0">Log (Injector):</div><div class="spacer"></div><button class="btn small ghost" id="btnToggleInjectorLog" type="button" data-rcf-action="admin.toggleInjectorLog">Mostrar log</button></div><pre class="mono small rcf-collapsed" id="injLog">Pronto.</pre></div></div></section>
+            </main>
+
+            <nav class="rcf-mobile-nav" aria-label="Navegação mobile"><button class="tab active" data-view="dashboard" type="button">Home</button><button class="tab" data-view="newapp" type="button">Apps</button><button class="tab" data-view="editor" type="button">Editor</button><button class="tab" data-view="agent" type="button">Agent</button><button class="tab" data-view="generator" type="button">Factory</button></nav>
           </div>
         </div>
 
-        <!-- PATCH: FAB + painel -->
+        <div class="tools" id="toolsDrawer" data-rcf-panel="tools.drawer"><div class="tools-head"><div style="font-weight:800">Ferramentas</div><div id="statusText" data-rcf="status.text" style="margin-left:auto;margin-right:10px;opacity:.85;font-size:12px;white-space:nowrap">OK ✅</div><button class="btn small" id="btnCloseTools" type="button" data-rcf-action="tools.close">Fechar</button></div><div class="tools-body"><div class="row"><button class="btn ghost" id="btnDrawerLogsRefresh" type="button" data-rcf-action="logs.refresh">Atualizar logs</button><button class="btn ok" id="btnDrawerLogsCopy" type="button" data-rcf-action="logs.copy">Copiar logs</button><button class="btn danger" id="btnDrawerLogsClear" type="button" data-rcf-action="logs.clear">Limpar logs</button></div><div class="row" style="margin-top:10px"><button class="btn ghost" id="btnSwClearCache" type="button" data-rcf-action="sw.clearCache">Clear SW Cache</button><button class="btn ghost" id="btnSwUnregister" type="button" data-rcf-action="sw.unregister">Unregister SW</button><button class="btn ok" id="btnSwRegister" type="button" data-rcf-action="sw.register">Register SW</button></div><pre class="mono small" id="logsBox">Pronto.</pre></div></div>
+
         <button id="rcfFab" type="button" aria-label="Ações rápidas" data-rcf-action="fab.toggle">⚡</button>
-        <div id="rcfFabPanel" role="dialog" aria-label="Ações rápidas" data-rcf-panel="fab.panel">
-          <div class="fab-title">
-            <div>RCF</div>
-            <div class="fab-status" id="fabStatus">OK ✅</div>
-          </div>
-          <div class="fab-row">
-            <button class="btn ghost" id="btnFabTools" type="button" data-rcf-action="fab.tools">Ferramentas</button>
-            <button class="btn ghost" id="btnFabAdmin" type="button" data-rcf-action="fab.admin">Admin</button>
-          </div>
-          <div class="fab-row" style="margin-top:8px">
-            <button class="btn ghost" id="btnFabDoctor" type="button" data-rcf-action="fab.doctor">Doctor</button>
-            <button class="btn ghost" id="btnFabLogs" type="button" data-rcf-action="fab.logs">Logs</button>
-          </div>
-          <div class="fab-row" style="margin-top:8px">
-            <button class="btn danger" id="btnFabClose" type="button" data-rcf-action="fab.close">Fechar</button>
-          </div>
-        </div>
+        <div id="rcfFabPanel" role="dialog" aria-label="Ações rápidas" data-rcf-panel="fab.panel"><div class="fab-title"><div>RCF</div><div class="fab-status" id="fabStatus">OK ✅</div></div><div class="fab-row"><button class="btn ghost" id="btnFabTools" type="button" data-rcf-action="fab.tools">Ferramentas</button><button class="btn ghost" id="btnFabAdmin" type="button" data-rcf-action="fab.admin">Admin</button></div><div class="fab-row" style="margin-top:8px"><button class="btn ghost" id="btnFabDoctor" type="button" data-rcf-action="fab.doctor">Doctor</button><button class="btn ghost" id="btnFabLogs" type="button" data-rcf-action="fab.logs">Logs</button></div><div class="fab-row" style="margin-top:8px"><button class="btn danger" id="btnFabClose" type="button" data-rcf-action="fab.close">Fechar</button></div></div>
       </div>
     `;
   }
@@ -1385,7 +1176,6 @@
     saveAll();
     renderAppsList();
     renderFilesList();
-    renderDashboardSummary();
 
     uiMsg("#editorOut", "✅ App apagado.");
     Logger.write("app deleted:", s);
@@ -1395,33 +1185,6 @@
     try { syncFabStatusText(); } catch {}
 
     return true;
-  }
-
-  function renderDashboardSummary() {
-    try {
-      const appsCount = Array.isArray(State.apps) ? State.apps.length : 0;
-      const active = getActiveApp();
-      const activeFiles = active && active.files ? Object.keys(active.files).length : 0;
-
-      const setTxt = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = String(txt); };
-      setTxt("dashStatApps", appsCount);
-      setTxt("dashStatProjects", appsCount);
-      setTxt("dashStatAi", window.RCF_AGENT_ZIP_BRIDGE || window.RCF_AGENT_RUNTIME || window.RCF_ENGINE ? "ON" : "—");
-      setTxt("dashStatBuilds", activeFiles || 0);
-
-      const badge = document.getElementById("dashStatusBadge");
-      if (badge) badge.textContent = active ? `App ativo: ${active.name} ✅` : "Sistema online ✅";
-
-      const grid = document.getElementById("dashStatsGrid");
-      const shortcuts = document.getElementById("dashShortcuts");
-      if (window.innerWidth <= 720) {
-        if (grid) grid.style.gridTemplateColumns = "repeat(2,minmax(0,1fr))";
-        if (shortcuts) shortcuts.style.gridTemplateColumns = "1fr";
-      } else {
-        if (grid) grid.style.gridTemplateColumns = "repeat(4,minmax(0,1fr))";
-        if (shortcuts) shortcuts.style.gridTemplateColumns = "repeat(3,minmax(0,1fr))";
-      }
-    } catch {}
   }
 
   function renderAppsList() {
@@ -1526,7 +1289,6 @@
 
     renderAppsList();
     renderFilesList();
-    renderDashboardSummary();
     if (State.active.file) openFile(State.active.file);
 
     Logger.write("app selected:", slug);
@@ -1555,7 +1317,6 @@
     State.apps.push(app);
     saveAll();
     renderAppsList();
-    renderDashboardSummary();
     setActiveApp(slug);
 
     return { ok: true, msg: `✅ App criado: ${nameClean} (${slug})` };
@@ -2727,6 +2488,7 @@
   function bindUI() {
     $$("[data-view]").forEach(btn => bindTap(btn, () => setView(btn.getAttribute("data-view"))));
     bindTap($("#btnOpenTools"), () => { openTools(true); openFabPanel(false); });
+    bindTap($("#btnSidebarTools"), () => { openTools(true); openFabPanel(false); });
     bindTap($("#btnCloseTools"), () => openTools(false));
 
     // PATCH: FAB
@@ -2737,15 +2499,13 @@
     bindTap($("#btnFabDoctor"), () => { openFabPanel(false); runDoctor(); });
     // Doctor deve existir SOMENTE no FAB (Admin button, se existir no DOM, é ocultado)
     bindTap($("#btnFabLogs"), () => { openFabPanel(false); setView("logs"); });
+    bindTap($("#btnFactoryAIStart"), () => setView("agent"));
 
     // fecha painel se tocar fora
     // (removido) fechar FAB ao tocar fora — evitamos listener global em document por estabilidade iOS
 
     bindTap($("#btnCreateNewApp"), () => setView("newapp"));
     bindTap($("#btnOpenEditor"), () => setView("editor"));
-    bindTap($("#btnDashOpenApps"), () => setView("editor"));
-    bindTap($("#btnDashOpenAgent"), () => setView("agent"));
-    bindTap($("#btnDashOpenSystem"), () => setView("admin"));
 
     bindTap($("#btnExportBackup"), () => {
       const payload = JSON.stringify({ apps: State.apps, cfg: State.cfg, active: State.active }, null, 2);
@@ -3053,7 +2813,6 @@
   function hydrateUIFromState() {
     refreshLogsViews();
     renderAppsList();
-    renderDashboardSummary();
 
     const app = getActiveApp();
     if (app) {
