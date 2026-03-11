@@ -1,1 +1,221 @@
-.
+:root { --rcf-compact: 1; }
+
+#rcfRoot .topbar{ padding: 8px 10px !important; }
+#rcfRoot .brand{ gap: 10px !important; }
+#rcfRoot .factory-logo-header{
+  display:block !important;
+  height:64px !important;
+  width:auto !important;
+  object-fit:contain !important;
+  max-width:min(72vw, 360px) !important;
+}
+#rcfRoot .brand .title{ font-size: 18px !important; line-height: 1.15 !important; letter-spacing:.2px; }
+#rcfRoot .brand .subtitle{ font-size: 12px !important; opacity:.82 !important; }
+
+/* PATCH: remover pill do topo (sem remover a função safeSetStatus) */
+#rcfRoot .status-pill{ display:none !important; }
+
+#rcfRoot .tabs{
+  display:flex !important;
+  gap: 8px !important;
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
+  -webkit-overflow-scrolling: touch !important;
+  padding: 6px 0 2px !important;
+  margin-top: 8px !important;
+  scrollbar-width: none !important;
+}
+#rcfRoot .tabs::-webkit-scrollbar{ display:none !important; }
+#rcfRoot .tabs .tab{
+  flex: 0 0 auto !important;
+  min-width: 96px !important;
+  padding: 10px 12px !important;
+  font-size: 13px !important;
+  border-radius: 999px !important;
+}
+
+#rcfRoot .container{ padding-top: 10px !important; }
+#rcfRoot .card{ padding: 12px !important; border-radius: 14px !important; }
+#rcfRoot .card h1{ font-size: 24px !important; margin: 0 0 10px !important; }
+#rcfRoot .card h2{ font-size: 18px !important; margin: 10px 0 8px !important; }
+
+#rcfRoot .row{ gap: 10px !important; }
+#rcfRoot .btn{ padding: 10px 12px !important; font-size: 13px !important; border-radius: 999px !important; }
+#rcfRoot .btn.small{ padding: 8px 10px !important; font-size: 12px !important; }
+#rcfRoot input, #rcfRoot select, #rcfRoot textarea{ font-size: 14px !important; }
+
+#rcfRoot pre.mono{ max-height: 24vh !important; overflow:auto !important; -webkit-overflow-scrolling: touch !important; }
+#rcfRoot pre.mono.small{ max-height: 20vh !important; }
+
+/* logs gerais */
+#rcfRoot #logsBox, #rcfRoot #logsOut, #rcfRoot #logsViewBox{
+  max-height: 22vh !important; overflow:auto !important; -webkit-overflow-scrolling: touch !important;
+}
+
+/* PATCH: Admin injector log compacto/colapsável */
+#rcfRoot #injLog{
+  max-height: 18vh !important;
+  overflow:auto !important;
+  -webkit-overflow-scrolling: touch !important;
+}
+#rcfRoot .rcf-collapsed{
+  max-height: 0 !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  border: 0 !important;
+  overflow: hidden !important;
+}
+#rcfRoot #injPayload{ max-height: 22vh !important; }
+#rcfRoot #diffOut{ max-height: 20vh !important; }
+#rcfRoot .tools .tools-body pre{ max-height: 28vh !important; }
+
+/* PATCH: Apps list layout (nome grande não empurra botões) */
+#appsList .app-item{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+}
+#appsList .app-meta{
+  flex:1 1 auto;
+  min-width:0;
+}
+#appsList .app-name,
+#appsList .app-slug{
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+#appsList .app-actions{
+  flex:0 0 auto;
+  display:flex;
+  gap:8px;
+  align-items:center;
+}
+
+/* PATCH: FAB (bolinha) + painel */
+#rcfFab{
+  position:fixed !important;
+  right: 14px !important;
+  bottom: 14px !important;
+  width: 54px !important;
+  height: 54px !important;
+  border-radius: 999px !important;
+  border: 1px solid rgba(255,255,255,.16) !important;
+  background: rgba(20,28,44,.92) !important;
+  color: #fff !important;
+  font-size: 20px !important;
+  font-weight: 900 !important;
+  box-shadow: 0 10px 30px rgba(0,0,0,.35) !important;
+  z-index: 9999 !important;
+}
+
+#rcfFabPanel{
+  position:fixed !important;
+  right: 14px !important;
+  bottom: 78px !important;
+  width: 220px !important;
+  border-radius: 14px !important;
+  border: 1px solid rgba(255,255,255,.12) !important;
+  background: rgba(12,16,26,.96) !important;
+  color:#fff !important;
+  padding: 10px !important;
+  z-index: 9999 !important;
+  display:none !important;
+}
+#rcfFabPanel.open{ display:block !important; }
+
+#rcfFabPanel .fab-title{
+  font-weight:900 !important;
+  margin-bottom:8px !important;
+  display:flex !important;
+  align-items:center !important;
+  justify-content:space-between !important;
+  gap:10px !important;
+}
+#rcfFabPanel .fab-status{
+  font-size:12px !important;
+  opacity:.85 !important;
+  white-space:nowrap !important;
+  max-width: 120px !important;
+  overflow:hidden !important;
+  text-overflow:ellipsis !important;
+}
+#rcfFabPanel .fab-row{
+  display:flex !important;
+  gap:8px !important;
+  flex-wrap:wrap !important;
+}
+#rcfFabPanel .fab-row .btn{
+  flex: 1 1 auto !important;
+}
+
+.rcfShellGrid{display:grid;grid-template-columns:280px minmax(0,1fr);gap:16px;align-items:start;max-width:1440px;margin:0 auto}
+.rcfSidebar{position:sticky;top:12px;display:flex;flex-direction:column;gap:14px;min-height:calc(100vh - 24px)}
+.rcfSidebarBrand{display:flex;align-items:center;gap:12px}
+.rcfSidebarBrand img{width:44px;height:44px;border-radius:50%;object-fit:cover;box-shadow:0 8px 18px rgba(34,52,84,.18)}
+.rcfSidebarBrandText{min-width:0}
+.rcfSidebarBrandTitle{font-size:18px;font-weight:900;line-height:1;color:var(--rcf-text,#1f2a44)}
+.rcfSidebarBrandSub{margin-top:4px;font-size:11px;letter-spacing:.9px;text-transform:uppercase;color:var(--rcf-muted,#647089)}
+.rcfSideNav{display:grid;gap:8px}
+.rcfSideBtn{justify-content:flex-start;width:100%;padding-left:14px;padding-right:14px}
+.rcfSideFooter{margin-top:auto;display:grid;gap:8px}
+.rcfMainStage{min-width:0}
+.rcfDashHero{display:grid;gap:14px}
+.rcfDashHeroHead{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap}
+.rcfDashMetrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.rcfMetricCard,.rcfDashPanel{position:relative;border:1px solid var(--rcf-line,rgba(38,58,92,.12));border-radius:18px;background:linear-gradient(180deg,rgba(255,255,255,.72),rgba(255,255,255,.54));box-shadow:0 8px 20px rgba(25,38,66,.08);padding:14px}
+.rcfMetricLabel{font-size:12px;font-weight:800;color:var(--rcf-muted,#647089);text-transform:uppercase;letter-spacing:.8px}
+.rcfMetricValue{margin-top:8px;font-size:34px;line-height:1;font-weight:900;color:var(--rcf-text,#1f2a44)}
+.rcfDashPanels{display:grid;grid-template-columns:1.35fr .95fr .95fr;gap:12px;align-items:start}
+.rcfDashPanelWide{grid-column:auto}
+.rcfActivityList{display:grid;gap:8px}
+.rcfActivityItem{padding:10px 12px;border:1px solid rgba(38,58,92,.10);border-radius:14px;background:rgba(255,255,255,.58);font-size:13px;color:var(--rcf-text-2,#33415f)}
+.rcfAiPanel{display:grid;gap:12px;margin-top:8px}
+.rcfBottomNav{display:none}
+
+@media (max-width:980px){
+  .rcfShellGrid{grid-template-columns:1fr}
+  .rcfSidebar{position:relative;top:auto;min-height:auto}
+  .rcfDashMetrics{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .rcfDashPanels{grid-template-columns:1fr}
+}
+
+@media (max-width:900px){
+  #rcfRoot .factory-logo-header{
+    height:52px !important;
+    max-width:min(70vw, 300px) !important;
+  }
+}
+
+@media (max-width:720px){
+  .rcfSidebar{display:none}
+  .rcfBottomNav{
+    position:fixed;
+    left:max(10px,env(safe-area-inset-left));
+    right:max(10px,env(safe-area-inset-right));
+    bottom:max(10px,env(safe-area-inset-bottom));
+    z-index:130;
+    display:grid;
+    grid-template-columns:repeat(5,minmax(0,1fr));
+    gap:8px;
+    padding:10px;
+    border:1px solid rgba(38,58,92,.12);
+    border-radius:22px;
+    background:linear-gradient(180deg,rgba(255,255,255,.92),rgba(255,255,255,.74));
+    backdrop-filter:blur(14px);
+    -webkit-backdrop-filter:blur(14px);
+    box-shadow:0 22px 48px rgba(25,38,66,.16)
+  }
+  .rcfBottomNav .tab{min-width:0;width:100%;padding:9px 8px;font-size:11px}
+  #rcfFab{bottom:calc(max(10px,env(safe-area-inset-bottom)) + 86px)}
+  #rcfFabPanel{bottom:calc(max(10px,env(safe-area-inset-bottom)) + 152px)}
+}
+
+@media (max-width: 520px){
+  #rcfRoot .brand .title{ font-size: 17px !important; }
+  #rcfRoot .brand .subtitle{ font-size: 11px !important; }
+  #rcfRoot .tabs .tab{ min-width: 90px !important; padding: 9px 11px !important; }
+  #rcfRoot .card{ padding: 10px !important; }
+  #rcfRoot pre.mono{ max-height: 20vh !important; }
+}
