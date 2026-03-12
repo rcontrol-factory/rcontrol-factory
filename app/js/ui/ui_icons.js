@@ -1,10 +1,24 @@
+/* FILE: /app/js/ui/ui_icons.js
+   Placeholder icon registry for Factory UI
+*/
 (() => {
-  "use strict";
+"use strict";
 
-  window.RCF_UI = window.RCF_UI || {};
+const ICONS = {
+  dashboard:"⬛",
+  apps:"📦",
+  editor:"✏️",
+  generator:"⚙️",
+  agent:"🤖",
+  factory:"🏭",
+  logs:"📜",
+  system:"🛠"
+};
 
-  window.RCF_UI.nomeDoModulo = window.RCF_UI.nomeDoModulo || {
-    init() {},
-    render() { return ""; }
-  };
+function get(name){
+  return ICONS[name] || "•";
+}
+
+window.RCF_UI_ICONS = {get};
+
 })();
