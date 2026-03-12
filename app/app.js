@@ -1,4 +1,4 @@
-  /* FILE: app/app.js
+/* FILE: app/app.js
    RControl Factory - /app/app.js - V8.0.2 PADRAO (Doctor FAB-only, no global delegation)
    - Arquivo completo (1 peca) pra copiar/colar
    - FIX: Apps list layout
@@ -550,17 +550,244 @@
     compactEnabled: true
   };
 
-  
-function injectCompactCSSOnce(){
-  if(document.getElementById("rcfShellCss")) return;
-  const link=document.createElement("link");
-  link.id="rcfShellCss";
-  link.rel="stylesheet";
-  link.href="./css/factory-shell.css";
-  document.head.appendChild(link);
+
+  // =========================================================
+  // UI RUNTIME LOADER (mantém modularização + fallback local)
+  // =========================================================
+  let __uiRuntimePromise = null;
+
+  function getUiRuntime() {
+    try {
+      return (window && window.RCF_UI_RUNTIME && typeof window.RCF_UI_RUNTIME === "object")
+        ? window.RCF_UI_RUNTIME
+        : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function loadUiRuntimeOnce() {
+    try {
+      const existing = getUiRuntime();
+      if (existing) return Promise.resolve(existing);
+      if (__uiRuntimePromise) return __uiRuntimePromise;
+
+      __uiRuntimePromise = new Promise((resolve) => {
+        try {
+          const already = document.querySelector('script[data-rcf-ui-runtime="1"]');
+          if (already) {
+            const done = () => resolve(getUiRuntime());
+            already.addEventListener("load", done, { once: true });
+            already.addEventListener("error", () => resolve(null), { once: true });
+            setTimeout(() => resolve(getUiRuntime()), 1200);
+            return;
+          }
+
+          const sc = document.createElement("script");
+          sc.src = "./js/core/ui_runtime.js";
+          sc.defer = true;
+          sc.async = false;
+          sc.setAttribute("data-rcf-ui-runtime", "1");
+          sc.onload = () => resolve(getUiRuntime());
+          sc.onerror = () => resolve(null);
+          (document.head || document.documentElement).appendChild(sc);
+          setTimeout(() => resolve(getUiRuntime()), 1200);
+        } catch {
+          resolve(null);
+        }
+      });
+
+      return __uiRuntimePromise;
+    } catch {
+      return Promise.resolve(null);
+    }
+  }
+
+  async function initUiRuntime(ctx = {}) {
+    try {
+      const rt = await loadUiRuntimeOnce();
+      if (!rt) return null;
+      if (typeof rt.init === "function") {
+        try {
+          rt.init(ctx);
+        } catch (e) {
+          try { Logger.write("ui_runtime init err:", e?.message || e); } catch {}
+        }
+      }
+      return rt;
+    } catch {
+      return null;
+    }
+  }
+
+  function injectCompactCSSOnce() {
+    try {
+      if (!UI.compactEnabled) return;
+      if (document.getElementById("rcfCompactCss")) return;
+
+      const css = `
+:root { --rcf-compact: 1; }
+
+#rcfRoot .topbar{ padding: 8px 10px !important; }
+#rcfRoot .brand{ gap: 10px !important; }
+#rcfRoot .brand .title{ font-size: 18px !important; line-height: 1.15 !important; letter-spacing:.2px; }
+#rcfRoot .brand .subtitle{ font-size: 12px !important; opacity:.82 !important; }
+
+/* PATCH: remover pill do topo (sem remover a função safeSetStatus) */
+#rcfRoot .status-pill{ display:none !important; }
+
+#rcfRoot .tabs{
+  display:flex !important;
+  gap: 8px !important;
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
+  -webkit-overflow-scrolling: touch !important;
+  padding: 6px 0 2px !important;
+  margin-top: 8px !important;
+  scrollbar-width: none !important;
+}
+#rcfRoot .tabs::-webkit-scrollbar{ display:none !important; }
+#rcfRoot .tabs .tab{
+  flex: 0 0 auto !important;
+  min-width: 96px !important;
+  padding: 10px 12px !important;
+  font-size: 13px !important;
+  border-radius: 999px !important;
 }
 
+#rcfRoot .container{ padding-top: 10px !important; }
+#rcfRoot .card{ padding: 12px !important; border-radius: 14px !important; }
+#rcfRoot .card h1{ font-size: 24px !important; margin: 0 0 10px !important; }
+#rcfRoot .card h2{ font-size: 18px !important; margin: 10px 0 8px !important; }
 
+#rcfRoot .row{ gap: 10px !important; }
+#rcfRoot .btn{ padding: 10px 12px !important; font-size: 13px !important; border-radius: 999px !important; }
+#rcfRoot .btn.small{ padding: 8px 10px !important; font-size: 12px !important; }
+#rcfRoot input, #rcfRoot select, #rcfRoot textarea{ font-size: 14px !important; }
+
+#rcfRoot pre.mono{ max-height: 24vh !important; overflow:auto !important; -webkit-overflow-scrolling: touch !important; }
+#rcfRoot pre.mono.small{ max-height: 20vh !important; }
+
+/* logs gerais */
+#rcfRoot #logsBox, #rcfRoot #logsOut, #rcfRoot #logsViewBox{
+  max-height: 22vh !important; overflow:auto !important; -webkit-overflow-scrolling: touch !important;
+}
+
+/* PATCH: Admin injector log compacto/colapsável */
+#rcfRoot #injLog{
+  max-height: 18vh !important;
+  overflow:auto !important;
+  -webkit-overflow-scrolling: touch !important;
+}
+#rcfRoot .rcf-collapsed{
+  max-height: 0 !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  border: 0 !important;
+  overflow: hidden !important;
+}
+#rcfRoot #injPayload{ max-height: 22vh !important; }
+#rcfRoot #diffOut{ max-height: 20vh !important; }
+#rcfRoot .tools .tools-body pre{ max-height: 28vh !important; }
+
+/* PATCH: Apps list layout (nome grande não empurra botões) */
+#appsList .app-item{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+}
+#appsList .app-meta{
+  flex:1 1 auto;
+  min-width:0;
+}
+#appsList .app-name,
+#appsList .app-slug{
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+#appsList .app-actions{
+  flex:0 0 auto;
+  display:flex;
+  gap:8px;
+  align-items:center;
+}
+
+/* PATCH: FAB (bolinha) + painel */
+#rcfFab{
+  position:fixed !important;
+  right: 14px !important;
+  bottom: 14px !important;
+  width: 54px !important;
+  height: 54px !important;
+  border-radius: 999px !important;
+  border: 1px solid rgba(255,255,255,.16) !important;
+  background: rgba(20,28,44,.92) !important;
+  color: #fff !important;
+  font-size: 20px !important;
+  font-weight: 900 !important;
+  box-shadow: 0 10px 30px rgba(0,0,0,.35) !important;
+  z-index: 9999 !important;
+}
+
+#rcfFabPanel{
+  position:fixed !important;
+  right: 14px !important;
+  bottom: 78px !important;
+  width: 220px !important;
+  border-radius: 14px !important;
+  border: 1px solid rgba(255,255,255,.12) !important;
+  background: rgba(12,16,26,.96) !important;
+  color:#fff !important;
+  padding: 10px !important;
+  z-index: 9999 !important;
+  display:none !important;
+}
+#rcfFabPanel.open{ display:block !important; }
+
+#rcfFabPanel .fab-title{
+  font-weight:900 !important;
+  margin-bottom:8px !important;
+  display:flex !important;
+  align-items:center !important;
+  justify-content:space-between !important;
+  gap:10px !important;
+}
+#rcfFabPanel .fab-status{
+  font-size:12px !important;
+  opacity:.85 !important;
+  white-space:nowrap !important;
+  max-width: 120px !important;
+  overflow:hidden !important;
+  text-overflow:ellipsis !important;
+}
+#rcfFabPanel .fab-row{
+  display:flex !important;
+  gap:8px !important;
+  flex-wrap:wrap !important;
+}
+#rcfFabPanel .fab-row .btn{
+  flex: 1 1 auto !important;
+}
+
+@media (max-width: 520px){
+  #rcfRoot .brand .title{ font-size: 17px !important; }
+  #rcfRoot .brand .subtitle{ font-size: 11px !important; }
+  #rcfRoot .tabs .tab{ min-width: 90px !important; padding: 9px 11px !important; }
+  #rcfRoot .card{ padding: 10px !important; }
+  #rcfRoot pre.mono{ max-height: 20vh !important; }
+}
+      `.trim();
+
+      const st = document.createElement("style");
+      st.id = "rcfCompactCss";
+      st.textContent = css;
+      document.head.appendChild(st);
+
+      try { window.RCF_LOGGER?.push?.("OK", "ui_compact: injected ✅"); } catch {}
+    } catch {}
+  }
 
   // =========================================================
   // VFS Overrides (localStorage)
@@ -629,168 +856,53 @@ function injectCompactCSSOnce(){
     if ($("#rcfRoot")) return;
 
     root.innerHTML = `
-      
-        
-
-
-
       <div id="rcfRoot" data-rcf-app="rcf.factory">
-        <div class="rcfShellGrid">
-          <aside class="card rcfSidebar" data-rcf-panel="sidebar">
-            <div class="rcfSidebarBrand">
-              <img src="./assets/rcf-logo-mark.svg" alt="" />
-              <div class="rcfSidebarBrandText">
-                <div class="rcfSidebarBrandTitle">FACTORY</div>
-                <div class="rcfSidebarBrandSub">by RCONTROL</div>
-              </div>
+        <header class="topbar" data-rcf-panel="topbar">
+          <div class="brand" data-rcf-panel="brand">
+            <div class="dot"></div>
+            <div class="brand-text">
+              <div class="title">${escapeHtml(UI.brandTitle)}</div>
+              <div class="subtitle">${escapeHtml(UI.brandSubtitle)}</div>
+            </div>
+            <div class="spacer"></div>
+            <button class="btn small" id="btnOpenTools" type="button" aria-label="Ferramentas" data-rcf-action="tools.open">⚙️</button>
+
+            <!-- PATCH: pill removida do topo (o CSS esconde) + FIX ID DUP (statusTextTop) -->
+            <div class="status-pill" id="statusPill" style="margin-left:10px" data-rcf="status.pill.top">
+              <span class="ok" id="statusTextTop" data-rcf="status.text.top">OK ✅</span>
+            </div>
+          </div>
+
+          <nav class="tabs" aria-label="Navegação" data-rcf-panel="tabs">
+            <button class="tab" data-view="dashboard" data-rcf-tab="dashboard" type="button">Dashboard</button>
+            <button class="tab" data-view="newapp" data-rcf-tab="newapp" type="button">New App</button>
+            <button class="tab" data-view="editor" data-rcf-tab="editor" type="button">Editor</button>
+            <button class="tab" data-view="generator" data-rcf-tab="generator" type="button">Generator</button>
+            <button class="tab" data-view="agent" data-rcf-tab="agent" type="button">Agente</button>
+            <button class="tab" data-view="settings" data-rcf-tab="settings" type="button">Settings</button>
+            <button class="tab" data-view="admin" data-rcf-tab="admin" type="button">Admin</button>
+            <button class="tab" data-view="diagnostics" data-rcf-tab="diagnostics" type="button">Diagnostics</button>
+            <button class="tab" data-view="logs" data-rcf-tab="logs" type="button">Logs</button>
+          </nav>
+        </header>
+
+        <main class="container views" id="views" data-rcf-panel="views">
+          <section class="view card hero" id="view-dashboard" data-rcf-view="dashboard">
+            <h1>Dashboard</h1>
+            <p>Central do projeto. Selecione um app e comece a editar.</p>
+            <div class="status-box">
+              <div class="badge" id="activeAppText">Sem app ativo ✅</div>
+              <div class="spacer"></div>
+              <button class="btn small" id="btnCreateNewApp" type="button" data-rcf-action="nav.newapp">Criar App</button>
+              <button class="btn small" id="btnOpenEditor" type="button" data-rcf-action="nav.editor">Abrir Editor</button>
+              <button class="btn small ghost" id="btnExportBackup" type="button" data-rcf-action="backup.export">Backup (JSON)</button>
             </div>
 
-            <nav class="rcfSideNav" aria-label="Menu principal">
-              <button class="tab active rcfSideBtn" data-view="dashboard" type="button">Dashboard</button>
-              <button class="tab rcfSideBtn" data-view="newapp" type="button">Apps</button>
-              <button class="tab rcfSideBtn" data-view="editor" type="button">Editor</button>
-              <button class="tab rcfSideBtn" data-view="generator" type="button">Generator</button>
-              <button class="tab rcfSideBtn" data-view="agent" type="button">Agent</button>
-              <button class="tab rcfSideBtn" data-view="admin" type="button">Factory</button>
-              <button class="tab rcfSideBtn" data-view="settings" type="button">System</button>
-              <button class="tab rcfSideBtn" data-view="logs" type="button">Logs</button>
-              <button class="tab rcfSideBtn" data-view="admin" type="button">GitHub Sync</button>
-              <button class="tab rcfSideBtn" id="btnSidebarTools" type="button">Tools</button>
-            </nav>
-
-            <div class="rcfSideFooter">
-              <div class="badge" id="rcfSidebarStatus">Factory pronta ✅</div>
-            </div>
-          </aside>
-
-          <div class="rcfMainStage">
-            <header class="topbar" data-rcf-panel="topbar">
-              <div class="brand" data-rcf-panel="brand">
-                <img src="./assets/factory-header-logo.png" class="factory-logo-header" alt="Factory by RCONTROL">
-                <div class="spacer"></div>
-                <button class="btn small ghost" id="btnOpenTools" type="button" aria-label="Ferramentas" data-rcf-action="tools.open">Tools</button>
-                <div class="status-pill" id="statusPill" style="margin-left:10px" data-rcf="status.pill.top">
-                  <span class="ok" id="statusTextTop" data-rcf="status.text.top">OK ✅</span>
-                </div>
-              </div>
-
-              <nav class="tabs" aria-label="Navegação" data-rcf-panel="tabs">
-                <button class="tab active" data-view="dashboard" data-rcf-tab="dashboard" type="button">Dashboard</button>
-                <button class="tab" data-view="newapp" data-rcf-tab="newapp" type="button">Apps</button>
-                <button class="tab" data-view="editor" data-rcf-tab="editor" type="button">Editor</button>
-                <button class="tab" data-view="generator" data-rcf-tab="generator" type="button">Generator</button>
-                <button class="tab" data-view="agent" data-rcf-tab="agent" type="button">Agent</button>
-                <button class="tab" data-view="admin" data-rcf-tab="admin" type="button">Factory</button>
-                <button class="tab" data-view="settings" data-rcf-tab="settings" type="button">System</button>
-                <button class="tab" data-view="logs" data-rcf-tab="logs" type="button">Logs</button>
-                <button class="tab" data-view="diagnostics" data-rcf-tab="diagnostics" type="button">Diagnostics</button>
-              </nav>
-            </header>
-
-            <main class="container views" id="views" data-rcf-panel="views">
-              <section class="view card hero" id="view-dashboard" data-rcf-view="dashboard">
-            <div class="rcfDashHero">
-              <div class="rcfDashHeroHead">
-                <div>
-                  <h1>Factory Dashboard</h1>
-                  <p>Painel principal da RControl Factory com visão rápida dos apps, atividade e IA.</p>
-                </div>
-                <div class="status-box">
-                  <div class="badge" id="activeAppText">Sem app ativo ✅</div>
-                  <button class="btn small" id="btnCreateNewApp" type="button" data-rcf-action="nav.newapp">Criar App</button>
-                  <button class="btn small" id="btnOpenEditor" type="button" data-rcf-action="nav.editor">Abrir Editor</button>
-                  <button class="btn small ghost" id="btnExportBackup" type="button" data-rcf-action="backup.export">Backup</button>
-                </div>
-              </div>
-
-              <div class="rcfDashMetrics">
-                <div class="rcfMetricCard">
-                  <div class="rcfMetricLabel">Apps Ativos</div>
-                  <div class="rcfMetricValue" id="dashAppsCount">00</div>
-                </div>
-                <div class="rcfMetricCard">
-                  <div class="rcfMetricLabel">Projetos</div>
-                  <div class="rcfMetricValue" id="dashProjectsCount">00</div>
-                </div>
-                <div class="rcfMetricCard">
-                  <div class="rcfMetricLabel">IA Online</div>
-                  <div class="rcfMetricValue" id="dashAiStatus">--</div>
-                </div>
-                <div class="rcfMetricCard">
-                  <div class="rcfMetricLabel">Builds</div>
-                  <div class="rcfMetricValue" id="dashBuildsCount">00</div>
-                </div>
-              </div>
-
-              <div class="rcfMobileModules" aria-label="Módulos principais">
-                <button class="rcfMobileModuleCard" data-view="dashboard" type="button">
-                  <span class="rcfMobileModuleIcon mod-dashboard" aria-hidden="true"></span>
-                  <span class="rcfMobileModuleText">
-                    <span class="rcfMobileModuleTitle">Dashboard</span>
-                    <span class="rcfMobileModuleSub">Status &amp; Controle</span>
-                  </span>
-                  <span class="rcfMobileModuleArrow" aria-hidden="true">›</span>
-                </button>
-                <button class="rcfMobileModuleCard" data-view="newapp" type="button">
-                  <span class="rcfMobileModuleIcon mod-apps" aria-hidden="true"></span>
-                  <span class="rcfMobileModuleText">
-                    <span class="rcfMobileModuleTitle">Apps</span>
-                    <span class="rcfMobileModuleSub">Criar &amp; Gerenciar</span>
-                  </span>
-                  <span class="rcfMobileModuleArrow" aria-hidden="true">›</span>
-                </button>
-                <button class="rcfMobileModuleCard" data-view="editor" type="button">
-                  <span class="rcfMobileModuleIcon mod-editor" aria-hidden="true"></span>
-                  <span class="rcfMobileModuleText">
-                    <span class="rcfMobileModuleTitle">Editor</span>
-                    <span class="rcfMobileModuleSub">Projetos &amp; Código</span>
-                  </span>
-                  <span class="rcfMobileModuleArrow" aria-hidden="true">›</span>
-                </button>
-                <button class="rcfMobileModuleCard" data-view="agent" type="button">
-                  <span class="rcfMobileModuleIcon mod-agent" aria-hidden="true"></span>
-                  <span class="rcfMobileModuleText">
-                    <span class="rcfMobileModuleTitle">Agent</span>
-                    <span class="rcfMobileModuleSub">IA + Automação</span>
-                  </span>
-                  <span class="rcfMobileModuleArrow" aria-hidden="true">›</span>
-                </button>
-                <button class="rcfMobileModuleCard" data-view="admin" type="button">
-                  <span class="rcfMobileModuleIcon mod-factory" aria-hidden="true"></span>
-                  <span class="rcfMobileModuleText">
-                    <span class="rcfMobileModuleTitle">Factory</span>
-                    <span class="rcfMobileModuleSub">Sistema &amp; Tools</span>
-                  </span>
-                  <span class="rcfMobileModuleArrow" aria-hidden="true">›</span>
-                </button>
-              </div>
-
-              <div class="rcfDashPanels">
-                <div class="rcfDashPanel rcfDashPanelWide">
-                  <h2>Projetos Recentes</h2>
-                  <div id="appsList" class="apps" data-rcf-slot="apps.list"></div>
-                </div>
-
-                <div class="rcfDashPanel">
-                  <h2>Logs &amp; Atividades</h2>
-                  <div id="dashActivityList" class="rcfActivityList">
-                    <div class="hint">Aguardando atividade...</div>
-                  </div>
-                </div>
-
-                <div class="rcfDashPanel">
-                  <h2>Factory AI</h2>
-                  <p class="hint">Acesse o agente da Factory para automação, comandos naturais e assistência no fluxo.</p>
-                  <div class="rcfAiPanel">
-                    <div class="badge" id="dashAiBadge">Sistema pronto ✅</div>
-                    <button class="btn ok" id="btnDashStartAI" type="button">Iniciar IA</button>
-                  </div>
-                </div>
-              </div>
-            </div>
+            <h2 style="margin-top:14px">Apps</h2>
+            <div id="appsList" class="apps" data-rcf-slot="apps.list"></div>
           </section>
 
-              <section class="view card" id="view-newapp" data-rcf-view="newapp">
+          <section class="view card" id="view-newapp" data-rcf-view="newapp">
             <h1>Novo App</h1>
             <p class="hint">Cria um mini-app dentro da Factory.</p>
 
@@ -804,7 +916,7 @@ function injectCompactCSSOnce(){
             <pre class="mono" id="newAppOut">Pronto.</pre>
           </section>
 
-              <section class="view card" id="view-editor" data-rcf-view="editor">
+          <section class="view card" id="view-editor" data-rcf-view="editor">
             <h1>Editor</h1>
             <p class="hint">Escolha um arquivo e edite.</p>
 
@@ -832,7 +944,7 @@ function injectCompactCSSOnce(){
             <pre class="mono" id="editorOut">Pronto.</pre>
           </section>
 
-              <section class="view card" id="view-generator" data-rcf-view="generator">
+          <section class="view card" id="view-generator" data-rcf-view="generator">
             <h1>Generator</h1>
             <p class="hint">Gera ZIP do app selecionado (stub por enquanto).</p>
 
@@ -850,7 +962,7 @@ function injectCompactCSSOnce(){
             <pre class="mono" id="genOut">Pronto.</pre>
           </section>
 
-              <section class="view card" id="view-agent" data-rcf-view="agent">
+          <section class="view card" id="view-agent" data-rcf-view="agent">
             <h1>Agente</h1>
             <p class="hint">Comandos naturais + patchset (fase atual: comandos básicos).</p>
 
@@ -869,7 +981,7 @@ function injectCompactCSSOnce(){
             <pre class="mono" id="agentOut">Pronto.</pre>
           </section>
 
-              <section class="view card" id="view-settings" data-rcf-view="settings">
+          <section class="view card" id="view-settings" data-rcf-view="settings">
             <h1>Settings</h1>
 
             <div class="card" id="settings-security" data-rcf-panel="settings.security">
@@ -898,7 +1010,7 @@ function injectCompactCSSOnce(){
             </div>
           </section>
 
-              <section class="view card" id="view-diagnostics" data-rcf-view="diagnostics">
+          <section class="view card" id="view-diagnostics" data-rcf-view="diagnostics">
             <h1>Diagnostics</h1>
             <div class="row">
               <button class="btn ok" id="btnDiagRun" type="button" data-rcf-action="diag.run">Rodar V8 Stability Check</button>
@@ -909,7 +1021,7 @@ function injectCompactCSSOnce(){
             <pre class="mono" id="diagOut">Pronto.</pre>
           </section>
 
-              <section class="view card" id="view-logs" data-rcf-view="logs">
+          <section class="view card" id="view-logs" data-rcf-view="logs">
             <h1>Logs</h1>
             <div class="row">
               <button class="btn ghost" id="btnLogsRefresh2" type="button" data-rcf-action="logs.refresh">Atualizar</button>
@@ -919,7 +1031,7 @@ function injectCompactCSSOnce(){
             <pre class="mono small" id="logsViewBox">Pronto.</pre>
           </section>
 
-              <section class="view card" id="view-admin" data-rcf-view="admin">
+          <section class="view card" id="view-admin" data-rcf-view="admin">
             <h1>Admin</h1>
 
             <!-- SLOT: Admin Top/Buttons -->
@@ -995,19 +1107,9 @@ function injectCompactCSSOnce(){
               </div>
             </div>
           </section>
-            </main>
-          </div>
-        </div>
+        </main>
 
-        <nav class="rcfBottomNav" aria-label="Navegação mobile">
-          <button class="tab active" data-view="dashboard" type="button">Home</button>
-          <button class="tab" data-view="newapp" type="button">Apps</button>
-          <button class="tab" data-view="editor" type="button">Editor</button>
-          <button class="tab" data-view="agent" type="button">Agent</button>
-          <button class="tab" data-view="admin" type="button">Factory</button>
-        </nav>
-
-<div class="tools" id="toolsDrawer" data-rcf-panel="tools.drawer">
+        <div class="tools" id="toolsDrawer" data-rcf-panel="tools.drawer">
           <div class="tools-head">
             <div style="font-weight:800">Ferramentas</div>
 
@@ -1053,10 +1155,10 @@ function injectCompactCSSOnce(){
           </div>
         </div>
       </div>
-            `;
+    `;
   }
 
-  function refreshLogsViews() { Logger._mirrorUI(Logger.getAll()); try { refreshDashboardUI(); } catch {} }
+  function refreshLogsViews() { Logger._mirrorUI(Logger.getAll()); }
 
   // =========================================================
   // PREVIEW TEARDOWN (anti overlay preso / timesheet na frente)
@@ -1185,7 +1287,7 @@ function injectCompactCSSOnce(){
       const now = Date.now();
 
       // ignore redundant same-view requests
-      if (State && State.active && State.active.view === name) return;
+      if (typeof State === "object" && State && State.active && State.active.view === name) return;
 
       // simple reentrancy lock (no globals)
       if (setView.__busy__) {
@@ -1225,7 +1327,18 @@ function injectCompactCSSOnce(){
     Logger.write("view:", name);
   }
 
+  try {
+    window.RCF = window.RCF || {};
+    window.RCF.setView = (name) => setView(name);
+  } catch {}
+
   function openTools(open) {
+    try {
+      const rt = getUiRuntime();
+      if (rt && typeof rt.openTools === "function" && rt.openTools !== openTools) {
+        return rt.openTools(open);
+      }
+    } catch {}
     const d = $("#toolsDrawer");
     if (!d) return;
     if (open) d.classList.add("open");
@@ -1234,6 +1347,12 @@ function injectCompactCSSOnce(){
 
   // PATCH: FAB open/close
   function openFabPanel(open) {
+    try {
+      const rt = getUiRuntime();
+      if (rt && typeof rt.openFabPanel === "function" && rt.openFabPanel !== openFabPanel) {
+        return rt.openFabPanel(open);
+      }
+    } catch {}
     const p = $("#rcfFabPanel");
     if (!p) return;
     if (open) p.classList.add("open");
@@ -1241,12 +1360,24 @@ function injectCompactCSSOnce(){
   }
 
   function toggleFabPanel() {
+    try {
+      const rt = getUiRuntime();
+      if (rt && typeof rt.toggleFabPanel === "function" && rt.toggleFabPanel !== toggleFabPanel) {
+        return rt.toggleFabPanel();
+      }
+    } catch {}
     const p = $("#rcfFabPanel");
     if (!p) return;
     p.classList.toggle("open");
   }
 
   function syncFabStatusText() {
+    try {
+      const rt = getUiRuntime();
+      if (rt && typeof rt.syncFabStatusText === "function" && rt.syncFabStatusText !== syncFabStatusText) {
+        return rt.syncFabStatusText();
+      }
+    } catch {}
     try {
       const st = $("#statusText")?.textContent || "";
       const fab = $("#fabStatus");
@@ -1256,6 +1387,12 @@ function injectCompactCSSOnce(){
 
   // PATCH: Admin log toggle
   function setInjectorLogCollapsed(collapsed) {
+    try {
+      const rt = getUiRuntime();
+      if (rt && typeof rt.setInjectorLogCollapsed === "function" && rt.setInjectorLogCollapsed !== setInjectorLogCollapsed) {
+        return rt.setInjectorLogCollapsed(collapsed);
+      }
+    } catch {}
     try {
       const pre = $("#injLog");
       const btn = $("#btnToggleInjectorLog");
@@ -1270,6 +1407,12 @@ function injectCompactCSSOnce(){
   }
 
   function toggleInjectorLogCollapsed() {
+    try {
+      const rt = getUiRuntime();
+      if (rt && typeof rt.toggleInjectorLogCollapsed === "function" && rt.toggleInjectorLogCollapsed !== toggleInjectorLogCollapsed) {
+        return rt.toggleInjectorLogCollapsed();
+      }
+    } catch {}
     try {
       const pre = $("#injLog");
       if (!pre) return;
@@ -1324,52 +1467,12 @@ function injectCompactCSSOnce(){
     return true;
   }
 
-
-  function refreshDashboardUI() {
-    try {
-      const appsCount = Array.isArray(State.apps) ? State.apps.length : 0;
-      const activeApp = getActiveApp();
-      const aiOnline = !!(window.RCF_ENGINE || window.RCF_AGENT_ZIP_BRIDGE || window.RCF_AI);
-
-      const elApps = $("#dashAppsCount");
-      if (elApps) elApps.textContent = String(appsCount).padStart(2, "0");
-
-      const elProjects = $("#dashProjectsCount");
-      if (elProjects) elProjects.textContent = String(appsCount).padStart(2, "0");
-
-      const elBuilds = $("#dashBuildsCount");
-      if (elBuilds) elBuilds.textContent = String(appsCount).padStart(2, "0");
-
-      const elAi = $("#dashAiStatus");
-      if (elAi) elAi.textContent = aiOnline ? "ON" : "--";
-
-      const aiBadge = $("#dashAiBadge");
-      if (aiBadge) aiBadge.textContent = aiOnline ? "IA online ✅" : "IA aguardando…";
-
-      const sideStatus = $("#rcfSidebarStatus");
-      if (sideStatus) sideStatus.textContent = activeApp ? `Ativo: ${activeApp.slug}` : "Factory pronta ✅";
-
-      const box = $("#dashActivityList");
-      if (box) {
-        const logs = Logger.getAll ? Logger.getAll() : [];
-        const recent = logs.slice(-4).reverse();
-        if (!recent.length) {
-          box.innerHTML = `<div class="hint">Aguardando atividade...</div>`;
-        } else {
-          box.innerHTML = recent.map(line => `<div class="rcfActivityItem">${escapeHtml(String(line))}</div>`).join("");
-        }
-      }
-    } catch {}
-  }
-
   function renderAppsList() {
     const box = $("#appsList");
     if (!box) return;
 
-    refreshDashboardUI();
     if (!State.apps.length) {
       box.innerHTML = `<div class="hint">Nenhum app salvo ainda.</div>`;
-      refreshDashboardUI();
       return;
     }
 
@@ -2607,21 +2710,13 @@ function injectCompactCSSOnce(){
     try {
       const candidates = [
         window.RCF_DOCTOR_SCAN,
+        window.RCF_DOCTOR,
         window.__RCF_DOCTOR__,
         window.RCF_DIAGNOSTICS && window.RCF_DIAGNOSTICS.doctor
       ].filter(Boolean);
       for (const obj of candidates) {
         if (typeof obj.open === "function") { obj.open(); try { Logger.write("doctor: open()"); } catch {} return; }
         if (typeof obj.show === "function") { obj.show(); try { Logger.write("doctor: show()"); } catch {} return; }
-      }
-    } catch {}
-
-    try {
-      const extDoctor = window.RCF_DOCTOR;
-      if (extDoctor && extDoctor !== window && extDoctor.open && extDoctor.open !== window.RCF_DOCTOR?.open) {
-        extDoctor.open();
-        try { Logger.write("doctor: ext open()"); } catch {}
-        return;
       }
     } catch {}
 
@@ -2654,7 +2749,7 @@ function injectCompactCSSOnce(){
   } catch {}
 
 
-
+  
   // =========================================================
   // DOCTOR: Delegation (iOS touch-safe)
   // - Alguns botões/itens podem ser montados por módulos externos (ui_bindings etc.)
@@ -2665,7 +2760,6 @@ function injectCompactCSSOnce(){
   function bindUI() {
     $$("[data-view]").forEach(btn => bindTap(btn, () => setView(btn.getAttribute("data-view"))));
     bindTap($("#btnOpenTools"), () => { openTools(true); openFabPanel(false); });
-    bindTap($("#btnSidebarTools"), () => { openTools(true); openFabPanel(false); });
     bindTap($("#btnCloseTools"), () => openTools(false));
 
     // PATCH: FAB
@@ -2751,7 +2845,6 @@ function injectCompactCSSOnce(){
 
     bindTap($("#btnAgentRun"), () => Agent.route($("#agentCmd")?.value || ""));
     bindTap($("#btnAgentHelp"), () => uiMsg("#agentOut", Agent.help()));
-    bindTap($("#btnDashStartAI"), () => setView("agent"));
 
     const doLogsRefresh = () => {
       refreshLogsViews();
@@ -3015,7 +3108,6 @@ function injectCompactCSSOnce(){
 
     // registry refresh
     try { window.RCF_UI?.refresh?.(); } catch {}
-    try { refreshDashboardUI(); } catch {}
   }
 
   // =========================================================
@@ -3027,6 +3119,13 @@ function injectCompactCSSOnce(){
       injectCompactCSSOnce();
 
       renderShell();
+
+      // PATCH: runtime externo (sem depender dele para bootar)
+      await initUiRuntime({
+        $, $$, State, Storage, Logger,
+        uiMsg, textContentSafe, bindTap, saveAll,
+        safeSetStatus
+      });
 
       // PATCH: Registry (depois do shell existir)
       installRCFUIRegistry();
