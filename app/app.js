@@ -1,4 +1,4 @@
-  FILE: app/app.js
+  /* FILE: app/app.js
    RControl Factory - /app/app.js - V8.0.2 PADRAO (Doctor FAB-only, no global delegation)
    - Arquivo completo (1 peca) pra copiar/colar
    - FIX: Apps list layout
@@ -537,7 +537,6 @@
   window.RCF = window.RCF || {};
   window.RCF.state = State;
   window.RCF.log = (...a) => Logger.write(...a);
-  window.RCF.setView = (name) => setView(name);
 
   // compat global: alguns módulos chamam log() direto
   try { if (!window.log) window.log = (...a) => Logger.write(...a); } catch {}
@@ -549,317 +548,6 @@
     brandTitle: "RCF",
     brandSubtitle: "Factory interna • PWA • Offline-first",
     compactEnabled: true
-  };
-
-
-  let __uiRuntimeLoadPromise = null;
-
-  function loadUiRuntimeOnce() {
-    try {
-      if (window.RCF_UI_RUNTIME) return Promise.resolve(window.RCF_UI_RUNTIME);
-      if (__uiRuntimeLoadPromise) return __uiRuntimeLoadPromise;
-
-      __uiRuntimeLoadPromise = new Promise((resolve, reject) => {
-        try {
-          const existing = document.querySelector('script[data-rcf-ui-runtime="1"]');
-          if (existing) {
-            existing.addEventListener('load', () => resolve(window.RCF_UI_RUNTIME || null), { once: true });
-            existing.addEventListener('error', () => reject(new Error('ui_runtime load failed')), { once: true });
-            return;
-          }
-
-          const s = document.createElement('script');
-          s.src = './js/core/ui_runtime.js';
-          s.defer = true;
-          s.async = false;
-          s.setAttribute('data-rcf-ui-runtime', '1');
-          s.onload = () => resolve(window.RCF_UI_RUNTIME || null);
-          s.onerror = () => reject(new Error('ui_runtime load failed'));
-          document.head.appendChild(s);
-        } catch (e) {
-          reject(e);
-        }
-      });
-
-      return __uiRuntimeLoadPromise;
-    } catch (e) {
-      return Promise.reject(e);
-    }
-  }
-
-  function initUiRuntime() {
-    try {
-      const rt = window.RCF_UI_RUNTIME;
-      if (!rt || typeof rt.init !== 'function') return null;
-      rt.init({
-        State, Logger, Storage, UI,
-        saveAll, bindTap, slugify, escapeHtml, escapeAttr, uiMsg, textContentSafe,
-        $, $$, nowISO,
-        helpers: {
-          deleteApp,
-          getActiveApp: () => (State.active.appSlug ? (State.apps.find(a => a.slug === State.active.appSlug) || null) : null),
-          ensureAppFiles: (app) => {
-            if (!app.files) app.files = {};
-            if (typeof app.files !== 'object') app.files = {};
-          }
-        }
-      });
-      return rt;
-    } catch (e) {
-      try { Logger.write('ui_runtime init err:', e?.message || e); } catch {}
-      return null;
-    }
-  }
-
-  function getUiRuntime() {
-    try { return window.RCF_UI_RUNTIME || null; } catch { return null; }
-  }
-
-
-  const __uiFallbackUsed = Object.create(null);
-  function noteUiFallback(name) {
-    try {
-      const key = String(name || 'ui');
-      if (__uiFallbackUsed[key]) return;
-      __uiFallbackUsed[key] = true;
-      Logger.write('ui_runtime fallback:', key);
-    } catch {}
-  }
-
-  const UiRuntimeFallback = {
-    openTools(open) {
-      noteUiFallback('openTools');
-      const d = $("#toolsDrawer");
-      if (!d) return;
-      if (open) d.classList.add("open");
-      else d.classList.remove("open");
-    },
-    openFabPanel(open) {
-      noteUiFallback('openFabPanel');
-      const p = $("#rcfFabPanel");
-      if (!p) return;
-      if (open) p.classList.add("open");
-      else p.classList.remove("open");
-    },
-    toggleFabPanel() {
-      noteUiFallback('toggleFabPanel');
-      const p = $("#rcfFabPanel");
-      if (!p) return;
-      p.classList.toggle("open");
-    },
-    syncFabStatusText() {
-      noteUiFallback('syncFabStatusText');
-      try {
-        const st = $("#statusText")?.textContent || "";
-        const fab = $("#fabStatus");
-        if (fab) fab.textContent = String(st || "OK ✅");
-      } catch {}
-    },
-    setInjectorLogCollapsed(collapsed) {
-      noteUiFallback('setInjectorLogCollapsed');
-      try {
-        const pre = $("#injLog");
-        const btn = $("#btnToggleInjectorLog");
-        if (!pre || !btn) return;
-        const wantCollapsed = !!collapsed;
-        if (wantCollapsed) pre.classList.add("rcf-collapsed");
-        else pre.classList.remove("rcf-collapsed");
-        btn.textContent = wantCollapsed ? "Mostrar log" : "Esconder log";
-      } catch {}
-    },
-    toggleInjectorLogCollapsed() {
-      noteUiFallback('toggleInjectorLogCollapsed');
-      try {
-        const pre = $("#injLog");
-        if (!pre) return;
-        const isCollapsed = pre.classList.contains("rcf-collapsed");
-        UiRuntimeFallback.setInjectorLogCollapsed(!isCollapsed);
-      } catch {}
-    },
-    refreshDashboardUI() {
-      noteUiFallback('refreshDashboardUI');
-      try {
-        const appsCount = Array.isArray(State.apps) ? State.apps.length : 0;
-        const activeApp = getActiveApp();
-        const aiOnline = !!(window.RCF_ENGINE || window.RCF_AGENT_ZIP_BRIDGE || window.RCF_AI);
-
-        const elApps = $("#dashAppsCount");
-        if (elApps) elApps.textContent = String(appsCount).padStart(2, "0");
-
-        const elProjects = $("#dashProjectsCount");
-        if (elProjects) elProjects.textContent = String(appsCount).padStart(2, "0");
-
-        const elBuilds = $("#dashBuildsCount");
-        if (elBuilds) elBuilds.textContent = String(appsCount).padStart(2, "0");
-
-        const elAi = $("#dashAiStatus");
-        if (elAi) elAi.textContent = aiOnline ? "ON" : "--";
-
-        const aiBadge = $("#dashAiBadge");
-        if (aiBadge) aiBadge.textContent = aiOnline ? "IA online ✅" : "IA aguardando…";
-
-        const sideStatus = $("#rcfSidebarStatus");
-        if (sideStatus) sideStatus.textContent = activeApp ? `Ativo: ${activeApp.slug}` : "Factory pronta ✅";
-
-        const box = $("#dashActivityList");
-        if (box) {
-          const logs = Logger.getAll ? Logger.getAll() : [];
-          const recent = logs.slice(-4).reverse();
-          if (!recent.length) box.innerHTML = `<div class="hint">Aguardando atividade...</div>`;
-          else box.innerHTML = recent.map(line => `<div class="rcfActivityItem">${escapeHtml(String(line))}</div>`).join("");
-        }
-      } catch {}
-    },
-    renderAppsList() {
-      noteUiFallback('renderAppsList');
-      const box = $("#appsList");
-      if (!box) return;
-
-      UiRuntimeFallback.refreshDashboardUI();
-      if (!State.apps.length) {
-        box.innerHTML = `<div class="hint">Nenhum app salvo ainda.</div>`;
-        UiRuntimeFallback.refreshDashboardUI();
-        return;
-      }
-
-      box.innerHTML = "";
-      State.apps.forEach(app => {
-        const row = document.createElement("div");
-        row.className = "app-item";
-        row.innerHTML = `
-          <div class="app-meta">
-            <div class="app-name" style="font-weight:800">${escapeHtml(app.name)}</div>
-            <div class="app-slug hint">${escapeHtml(app.slug)}</div>
-          </div>
-          <div class="app-actions">
-            <button class="btn small" data-act="select" data-slug="${escapeAttr(app.slug)}" type="button">Selecionar</button>
-            <button class="btn small" data-act="edit" data-slug="${escapeAttr(app.slug)}" type="button">Editor</button>
-            <button class="btn small danger" data-act="delete" data-slug="${escapeAttr(app.slug)}" type="button">Apagar</button>
-          </div>
-        `;
-        box.appendChild(row);
-      });
-
-      $$('[data-act="select"]', box).forEach(btn => bindTap(btn, () => UiRuntimeFallback.setActiveApp(btn.getAttribute("data-slug"))));
-      $$('[data-act="edit"]', box).forEach(btn => bindTap(btn, () => {
-        UiRuntimeFallback.setActiveApp(btn.getAttribute("data-slug"));
-        setView("editor");
-      }));
-      $$('[data-act="delete"]', box).forEach(btn => bindTap(btn, () => {
-        const slug = btn.getAttribute("data-slug");
-        deleteApp(slug);
-      }));
-    },
-    renderFilesList() {
-      noteUiFallback('renderFilesList');
-      const box = $("#filesList");
-      if (!box) return;
-
-      const app = getActiveApp();
-      if (!app) {
-        box.innerHTML = `<div class="hint">Selecione um app para ver arquivos.</div>`;
-        return;
-      }
-
-      ensureAppFiles(app);
-      const files = Object.keys(app.files);
-      if (!files.length) {
-        box.innerHTML = `<div class="hint">App sem arquivos.</div>`;
-        return;
-      }
-
-      box.innerHTML = "";
-      files.forEach(fname => {
-        const item = document.createElement("div");
-        item.className = "file-item" + (State.active.file === fname ? " active" : "");
-        item.textContent = fname;
-        bindTap(item, () => UiRuntimeFallback.openFile(fname));
-        box.appendChild(item);
-      });
-    },
-    openFile(fname) {
-      noteUiFallback('openFile');
-      const app = getActiveApp();
-      if (!app) return false;
-
-      ensureAppFiles(app);
-      if (!(fname in app.files)) return false;
-
-      State.active.file = fname;
-      saveAll();
-
-      const head = $("#editorHead");
-      if (head) head.textContent = `Arquivo atual: ${fname}`;
-
-      const ta = $("#fileContent");
-      if (ta) ta.value = String(app.files[fname] ?? "");
-
-      UiRuntimeFallback.renderFilesList();
-      return true;
-    },
-    setActiveApp(slug) {
-      noteUiFallback('setActiveApp');
-      const app = State.apps.find(a => a.slug === slug);
-      if (!app) return false;
-
-      ensureAppFiles(app);
-      State.active.appSlug = slug;
-      State.active.file = State.active.file || Object.keys(app.files || {})[0] || null;
-      saveAll();
-
-      const text = $("#activeAppText");
-      if (text) textContentSafe(text, `App ativo: ${app.name} (${app.slug}) ✅`);
-
-      UiRuntimeFallback.renderAppsList();
-      UiRuntimeFallback.renderFilesList();
-      if (State.active.file) UiRuntimeFallback.openFile(State.active.file);
-
-      Logger.write("app selected:", slug);
-      return true;
-    },
-    createApp(name, slugMaybe) {
-      noteUiFallback('createApp');
-      const nameClean = String(name || "").trim();
-      if (!nameClean) return { ok: false, msg: "Nome inválido" };
-
-      let slug = slugify(slugMaybe || nameClean);
-      if (!slug) return { ok: false, msg: "Slug inválido" };
-      if (State.apps.some(a => a.slug === slug)) return { ok: false, msg: "Slug já existe" };
-
-      const app = {
-        name: nameClean,
-        slug,
-        createdAt: nowISO(),
-        files: {
-          "index.html": `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${nameClean}</title></head><body><h1>${nameClean}</h1><script src="app.js"></script></body></html>`,
-          "styles.css": `body{font-family:system-ui;margin:0;padding:24px;background:#0b1220;color:#fff}`,
-          "app.js": `console.log("${nameClean}");`
-        }
-      };
-
-      State.apps.push(app);
-      saveAll();
-      UiRuntimeFallback.renderAppsList();
-      UiRuntimeFallback.setActiveApp(slug);
-
-      return { ok: true, msg: `✅ App criado: ${nameClean} (${slug})` };
-    },
-    saveFile() {
-      noteUiFallback('saveFile');
-      const app = getActiveApp();
-      if (!app) return uiMsg("#editorOut", "⚠️ Sem app ativo.");
-
-      const fname = State.active.file;
-      if (!fname) return uiMsg("#editorOut", "⚠️ Sem arquivo ativo.");
-
-      const ta = $("#fileContent");
-      ensureAppFiles(app);
-      app.files[fname] = ta ? String(ta.value || "") : "";
-
-      saveAll();
-      uiMsg("#editorOut", "✅ Arquivo salvo.");
-      Logger.write("file saved:", app.slug, fname);
-    }
   };
 
   
@@ -1538,35 +1226,56 @@ function injectCompactCSSOnce(){
   }
 
   function openTools(open) {
-    const rt = getUiRuntime();
-    return rt?.openTools?.(open) ?? UiRuntimeFallback.openTools(open);
+    const d = $("#toolsDrawer");
+    if (!d) return;
+    if (open) d.classList.add("open");
+    else d.classList.remove("open");
   }
 
   // PATCH: FAB open/close
   function openFabPanel(open) {
-    const rt = getUiRuntime();
-    return rt?.openFabPanel?.(open) ?? UiRuntimeFallback.openFabPanel(open);
+    const p = $("#rcfFabPanel");
+    if (!p) return;
+    if (open) p.classList.add("open");
+    else p.classList.remove("open");
   }
 
   function toggleFabPanel() {
-    const rt = getUiRuntime();
-    return rt?.toggleFabPanel?.() ?? UiRuntimeFallback.toggleFabPanel();
+    const p = $("#rcfFabPanel");
+    if (!p) return;
+    p.classList.toggle("open");
   }
 
   function syncFabStatusText() {
-    const rt = getUiRuntime();
-    return rt?.syncFabStatusText?.() ?? UiRuntimeFallback.syncFabStatusText();
+    try {
+      const st = $("#statusText")?.textContent || "";
+      const fab = $("#fabStatus");
+      if (fab) fab.textContent = String(st || "OK ✅");
+    } catch {}
   }
 
   // PATCH: Admin log toggle
   function setInjectorLogCollapsed(collapsed) {
-    const rt = getUiRuntime();
-    return rt?.setInjectorLogCollapsed?.(collapsed) ?? UiRuntimeFallback.setInjectorLogCollapsed(collapsed);
+    try {
+      const pre = $("#injLog");
+      const btn = $("#btnToggleInjectorLog");
+      if (!pre || !btn) return;
+
+      const wantCollapsed = !!collapsed;
+      if (wantCollapsed) pre.classList.add("rcf-collapsed");
+      else pre.classList.remove("rcf-collapsed");
+
+      btn.textContent = wantCollapsed ? "Mostrar log" : "Esconder log";
+    } catch {}
   }
 
   function toggleInjectorLogCollapsed() {
-    const rt = getUiRuntime();
-    return rt?.toggleInjectorLogCollapsed?.() ?? UiRuntimeFallback.toggleInjectorLogCollapsed();
+    try {
+      const pre = $("#injLog");
+      if (!pre) return;
+      const isCollapsed = pre.classList.contains("rcf-collapsed");
+      setInjectorLogCollapsed(!isCollapsed);
+    } catch {}
   }
 
   // =========================================================
@@ -1617,38 +1326,193 @@ function injectCompactCSSOnce(){
 
 
   function refreshDashboardUI() {
-    const rt = getUiRuntime();
-    return rt?.refreshDashboardUI?.() ?? UiRuntimeFallback.refreshDashboardUI();
+    try {
+      const appsCount = Array.isArray(State.apps) ? State.apps.length : 0;
+      const activeApp = getActiveApp();
+      const aiOnline = !!(window.RCF_ENGINE || window.RCF_AGENT_ZIP_BRIDGE || window.RCF_AI);
+
+      const elApps = $("#dashAppsCount");
+      if (elApps) elApps.textContent = String(appsCount).padStart(2, "0");
+
+      const elProjects = $("#dashProjectsCount");
+      if (elProjects) elProjects.textContent = String(appsCount).padStart(2, "0");
+
+      const elBuilds = $("#dashBuildsCount");
+      if (elBuilds) elBuilds.textContent = String(appsCount).padStart(2, "0");
+
+      const elAi = $("#dashAiStatus");
+      if (elAi) elAi.textContent = aiOnline ? "ON" : "--";
+
+      const aiBadge = $("#dashAiBadge");
+      if (aiBadge) aiBadge.textContent = aiOnline ? "IA online ✅" : "IA aguardando…";
+
+      const sideStatus = $("#rcfSidebarStatus");
+      if (sideStatus) sideStatus.textContent = activeApp ? `Ativo: ${activeApp.slug}` : "Factory pronta ✅";
+
+      const box = $("#dashActivityList");
+      if (box) {
+        const logs = Logger.getAll ? Logger.getAll() : [];
+        const recent = logs.slice(-4).reverse();
+        if (!recent.length) {
+          box.innerHTML = `<div class="hint">Aguardando atividade...</div>`;
+        } else {
+          box.innerHTML = recent.map(line => `<div class="rcfActivityItem">${escapeHtml(String(line))}</div>`).join("");
+        }
+      }
+    } catch {}
   }
 
   function renderAppsList() {
-    const rt = getUiRuntime();
-    return rt?.renderAppsList?.() ?? UiRuntimeFallback.renderAppsList();
+    const box = $("#appsList");
+    if (!box) return;
+
+    refreshDashboardUI();
+    if (!State.apps.length) {
+      box.innerHTML = `<div class="hint">Nenhum app salvo ainda.</div>`;
+      refreshDashboardUI();
+      return;
+    }
+
+    box.innerHTML = "";
+    State.apps.forEach(app => {
+      const row = document.createElement("div");
+      row.className = "app-item";
+
+      // PATCH: layout meta + actions (ellipsis no CSS)
+      row.innerHTML = `
+        <div class="app-meta">
+          <div class="app-name" style="font-weight:800">${escapeHtml(app.name)}</div>
+          <div class="app-slug hint">${escapeHtml(app.slug)}</div>
+        </div>
+        <div class="app-actions">
+          <button class="btn small" data-act="select" data-slug="${escapeAttr(app.slug)}" type="button">Selecionar</button>
+          <button class="btn small" data-act="edit" data-slug="${escapeAttr(app.slug)}" type="button">Editor</button>
+          <button class="btn small danger" data-act="delete" data-slug="${escapeAttr(app.slug)}" type="button">Apagar</button>
+        </div>
+      `;
+      box.appendChild(row);
+    });
+
+    $$('[data-act="select"]', box).forEach(btn => bindTap(btn, () => setActiveApp(btn.getAttribute("data-slug"))));
+    $$('[data-act="edit"]', box).forEach(btn => bindTap(btn, () => {
+      setActiveApp(btn.getAttribute("data-slug"));
+      setView("editor");
+    }));
+    $$('[data-act="delete"]', box).forEach(btn => bindTap(btn, () => {
+      const slug = btn.getAttribute("data-slug");
+      deleteApp(slug);
+    }));
   }
 
   function renderFilesList() {
-    const rt = getUiRuntime();
-    return rt?.renderFilesList?.() ?? UiRuntimeFallback.renderFilesList();
+    const box = $("#filesList");
+    if (!box) return;
+
+    const app = getActiveApp();
+    if (!app) {
+      box.innerHTML = `<div class="hint">Selecione um app para ver arquivos.</div>`;
+      return;
+    }
+
+    ensureAppFiles(app);
+    const files = Object.keys(app.files);
+    if (!files.length) {
+      box.innerHTML = `<div class="hint">App sem arquivos.</div>`;
+      return;
+    }
+
+    box.innerHTML = "";
+    files.forEach(fname => {
+      const item = document.createElement("div");
+      item.className = "file-item" + (State.active.file === fname ? " active" : "");
+      item.textContent = fname;
+      bindTap(item, () => openFile(fname));
+      box.appendChild(item);
+    });
   }
 
   function openFile(fname) {
-    const rt = getUiRuntime();
-    return rt?.openFile?.(fname) ?? UiRuntimeFallback.openFile(fname) ?? false;
+    const app = getActiveApp();
+    if (!app) return false;
+
+    ensureAppFiles(app);
+    if (!(fname in app.files)) return false;
+
+    State.active.file = fname;
+    saveAll();
+
+    const head = $("#editorHead");
+    if (head) head.textContent = `Arquivo atual: ${fname}`;
+
+    const ta = $("#fileContent");
+    if (ta) ta.value = String(app.files[fname] ?? "");
+
+    renderFilesList();
+    return true;
   }
 
   function setActiveApp(slug) {
-    const rt = getUiRuntime();
-    return rt?.setActiveApp?.(slug) ?? UiRuntimeFallback.setActiveApp(slug) ?? false;
+    const app = State.apps.find(a => a.slug === slug);
+    if (!app) return false;
+
+    ensureAppFiles(app);
+
+    State.active.appSlug = slug;
+    State.active.file = State.active.file || Object.keys(app.files || {})[0] || null;
+    saveAll();
+
+    const text = $("#activeAppText");
+    if (text) textContentSafe(text, `App ativo: ${app.name} (${app.slug}) ✅`);
+
+    renderAppsList();
+    renderFilesList();
+    if (State.active.file) openFile(State.active.file);
+
+    Logger.write("app selected:", slug);
+    return true;
   }
 
   function createApp(name, slugMaybe) {
-    const rt = getUiRuntime();
-    return rt?.createApp?.(name, slugMaybe) ?? UiRuntimeFallback.createApp(name, slugMaybe);
+    const nameClean = String(name || "").trim();
+    if (!nameClean) return { ok: false, msg: "Nome inválido" };
+
+    let slug = slugify(slugMaybe || nameClean);
+    if (!slug) return { ok: false, msg: "Slug inválido" };
+    if (State.apps.some(a => a.slug === slug)) return { ok: false, msg: "Slug já existe" };
+
+    const app = {
+      name: nameClean,
+      slug,
+      createdAt: nowISO(),
+      files: {
+        "index.html": `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${nameClean}</title></head><body><h1>${nameClean}</h1><script src="app.js"></script></body></html>`,
+        "styles.css": `body{font-family:system-ui;margin:0;padding:24px;background:#0b1220;color:#fff}`,
+        "app.js": `console.log("${nameClean}");`
+      }
+    };
+
+    State.apps.push(app);
+    saveAll();
+    renderAppsList();
+    setActiveApp(slug);
+
+    return { ok: true, msg: `✅ App criado: ${nameClean} (${slug})` };
   }
 
   function saveFile() {
-    const rt = getUiRuntime();
-    return rt?.saveFile?.() ?? UiRuntimeFallback.saveFile();
+    const app = getActiveApp();
+    if (!app) return uiMsg("#editorOut", "⚠️ Sem app ativo.");
+
+    const fname = State.active.file;
+    if (!fname) return uiMsg("#editorOut", "⚠️ Sem arquivo ativo.");
+
+    const ta = $("#fileContent");
+    ensureAppFiles(app);
+    app.files[fname] = ta ? String(ta.value || "") : "";
+
+    saveAll();
+    uiMsg("#editorOut", "✅ Arquivo salvo.");
+    Logger.write("file saved:", app.slug, fname);
   }
 
   // =========================================================
@@ -3161,13 +3025,11 @@ function injectCompactCSSOnce(){
     try {
       Stability.install();
       injectCompactCSSOnce();
-      try { await loadUiRuntimeOnce(); } catch (e) { Logger.write("ui_runtime load warn:", e?.message || e); }
 
       renderShell();
 
       // PATCH: Registry (depois do shell existir)
       installRCFUIRegistry();
-      initUiRuntime();
 
       // ✅ NEW: UI READY BUS — 1x após registry (slots já existem no shell)
       try { notifyUIReady(); } catch {}
