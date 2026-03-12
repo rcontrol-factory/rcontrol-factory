@@ -2,7 +2,7 @@
    RControl Factory — UI Bootstrap
    - Orquestra módulos visuais leves
    - Inicializa dependências da nova UI
-   - Pluga a Factory View nova em slot seguro
+   - Monta em ordem segura
    - Sem quebrar fluxo antigo
 */
 (() => {
@@ -212,10 +212,30 @@
     }
   }
 
+  function ensureHeaderRoot() {
+    try {
+      let root = $("#rcfHeader");
+      if (root) return root;
+
+      const topbar = $(".topbar");
+      if (!topbar) return null;
+
+      root = document.createElement("div");
+      root.id = "rcfHeader";
+      root.setAttribute("data-rcf-ui-slot", "header");
+
+      topbar.insertAdjacentElement("afterbegin", root);
+      return root;
+    } catch {
+      return null;
+    }
+  }
+
   const API = {
     __deps: null,
     __inited: false,
     __mountCount: 0,
+    __remountBusy__: false,
 
     getDeps() {
       if (!this.__deps) this.__deps = buildDeps();
@@ -247,10 +267,22 @@
       return true;
     },
 
-    mountLegacy() {
+    mountShell() {
       callSafe(window.RCF_UI_SHELL, "mount");
+      return true;
+    },
+
+    mountHeader() {
+      try {
+        ensureHeaderRoot();
+      } catch {}
       callSafe(window.RCF_UI_HEADER, "mount");
+      return true;
+    },
+
+    mountLegacyViews() {
       callSafe(window.RCF_UI_VIEWS, "mount");
+      return true;
     },
 
     mountFactoryView() {
@@ -268,11 +300,22 @@
       }
     },
 
+    refreshUi() {
+      try { callSafe(window.RCF_UI_DASHBOARD, "refresh"); } catch {}
+      try { callSafe(window.RCF_UI_VIEWS, "mount"); } catch {}
+      return true;
+    },
+
     mount() {
       try {
         this.initModules();
-        this.mountLegacy();
+
+        this.mountShell();
+        this.mountHeader();
+        this.mountLegacyViews();
         this.mountFactoryView();
+        this.refreshUi();
+
         this.__mountCount++;
         return true;
       } catch {
@@ -292,7 +335,7 @@
         setTimeout(run, 20);
         setTimeout(run, 120);
         setTimeout(run, 360);
-        setTimeout(() => { this.__remountBusy__ = false; }, 500);
+        setTimeout(() => { this.__remountBusy__ = false; }, 520);
       } catch {
         this.__remountBusy__ = false;
       }
