@@ -1,6 +1,8 @@
 /* FILE: /app/js/ui/ui_factory_view.js
    RControl Factory — Factory View Module
-   Estrutura inicial da composição principal da Factory UI
+   - Composição principal da Factory UI
+   - Agora monta dashboard, apps/widgets e projects reais
+   - Mantém fallback seguro
 */
 
 (() => {
@@ -19,11 +21,15 @@
     },
 
     buildDashboardSlot() {
+      const cfg = window.RCF_UI_CONFIG;
+      const title = cfg?.get?.("sections.dashboard.title", "Dashboard") ?? "Dashboard";
+      const subtitle = cfg?.get?.("sections.dashboard.subtitle", "Visão principal da Factory") ?? "Visão principal da Factory";
+
       return `
         <section class="rcfUiFactoryBlock" data-rcf-factory-block="dashboard">
           <div class="rcfUiFactoryBlockHead">
-            <h2>Dashboard</h2>
-            <p class="hint">Visão principal da Factory</p>
+            <h2>${title}</h2>
+            <p class="hint">${subtitle}</p>
           </div>
           <div id="rcfFactoryDashboardSlot"></div>
         </section>
@@ -31,11 +37,15 @@
     },
 
     buildAppsWidgetsSlot() {
+      const cfg = window.RCF_UI_CONFIG;
+      const title = cfg?.get?.("sections.appsWidgets.title", "Apps & Widgets") ?? "Apps & Widgets";
+      const subtitle = cfg?.get?.("sections.appsWidgets.subtitle", "Módulos e integrações da Factory") ?? "Módulos e integrações da Factory";
+
       return `
         <section class="rcfUiFactoryBlock" data-rcf-factory-block="apps-widgets">
           <div class="rcfUiFactoryBlockHead">
-            <h2>Apps & Widgets</h2>
-            <p class="hint">Módulos e integrações da Factory</p>
+            <h2>${title}</h2>
+            <p class="hint">${subtitle}</p>
           </div>
           <div id="rcfFactoryAppsWidgetsSlot"></div>
         </section>
@@ -43,11 +53,15 @@
     },
 
     buildProjectsSlot() {
+      const cfg = window.RCF_UI_CONFIG;
+      const title = cfg?.get?.("sections.projects.title", "Projects") ?? "Projects";
+      const subtitle = cfg?.get?.("sections.projects.subtitle", "Projetos, código e deploy") ?? "Projetos, código e deploy";
+
       return `
         <section class="rcfUiFactoryBlock" data-rcf-factory-block="projects">
           <div class="rcfUiFactoryBlockHead">
-            <h2>Projects</h2>
-            <p class="hint">Projetos, código e deploy</p>
+            <h2>${title}</h2>
+            <p class="hint">${subtitle}</p>
           </div>
           <div id="rcfFactoryProjectsSlot"></div>
         </section>
@@ -64,6 +78,38 @@
       `;
     },
 
+    renderDashboard() {
+      try {
+        if (window.RCF_UI_DASHBOARD?.render) {
+          return !!window.RCF_UI_DASHBOARD.render("#rcfFactoryDashboardSlot");
+        }
+      } catch {}
+      return false;
+    },
+
+    renderAppsWidgets() {
+      try {
+        if (window.RCF_UI_APPS_WIDGETS?.render) {
+          return !!window.RCF_UI_APPS_WIDGETS.render("#rcfFactoryAppsWidgetsSlot");
+        }
+      } catch {}
+      return false;
+    },
+
+    renderProjects() {
+      try {
+        if (window.RCF_UI_PROJECTS?.render) {
+          return !!window.RCF_UI_PROJECTS.render("#rcfFactoryProjectsSlot");
+        }
+      } catch {}
+      return false;
+    },
+
+    refreshChildren() {
+      try { window.RCF_UI_DASHBOARD?.refresh?.(); } catch {}
+      return true;
+    },
+
     render(targetSelector) {
       const d = this.d;
 
@@ -73,22 +119,12 @@
 
         el.innerHTML = this.buildView();
 
-        try {
-          window.RCF_UI_DASHBOARD?.render?.("#rcfFactoryDashboardSlot");
-        } catch {}
+        this.renderDashboard();
+        this.renderAppsWidgets();
+        this.renderProjects();
+        this.refreshChildren();
 
-        try {
-          if (window.RCF_UI_APPS_WIDGETS?.render) {
-            window.RCF_UI_APPS_WIDGETS.render("#rcfFactoryAppsWidgetsSlot");
-          }
-        } catch {}
-
-        try {
-          if (window.RCF_UI_PROJECTS?.render) {
-            window.RCF_UI_PROJECTS.render("#rcfFactoryProjectsSlot");
-          }
-        } catch {}
-
+        el.setAttribute("data-rcf-factory-mounted", "1");
         return true;
       } catch {
         return false;
