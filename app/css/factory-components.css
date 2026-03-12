@@ -1,3 +1,267 @@
-:root{
-  --rcf-theme-ready: "0";
+/* FILE: /app/css/factory_components.css
+   RControl Factory — Factory Components
+   - Base visual dos cards, listas, tabs e code panel
+   - Patch leve
+*/
+
+.rcfUiCard{
+  width:100%;
+  border:1px solid rgba(56,82,126,.10);
+  border-radius:24px;
+  background:
+    radial-gradient(circle at top left, rgba(255,255,255,.78), rgba(255,255,255,0) 24%),
+    linear-gradient(180deg, rgba(255,255,255,.92), rgba(244,248,253,.78));
+  box-shadow:
+    0 14px 28px rgba(22,38,68,.08),
+    inset 0 1px 0 rgba(255,255,255,.86);
+  backdrop-filter:blur(12px);
+  -webkit-backdrop-filter:blur(12px);
+  color:var(--rcf-text,#1f2a44);
+}
+
+.rcfUiCard--menu,
+.rcfUiCard--list{
+  display:flex;
+  align-items:center;
+  gap:14px;
+  text-align:left;
+  padding:16px;
+  position:relative;
+  overflow:hidden;
+}
+
+.rcfUiCard--menu{
+  cursor:pointer;
+}
+
+.rcfUiCard--menu::before,
+.rcfUiCard--list::before{
+  content:"";
+  position:absolute;
+  inset:0;
+  pointer-events:none;
+  background:
+    radial-gradient(circle at 12% 14%, rgba(255,255,255,.72), rgba(255,255,255,0) 24%),
+    linear-gradient(135deg, rgba(79,131,255,.05), rgba(79,131,255,0) 28%, rgba(255,179,107,.04) 88%, rgba(255,179,107,0));
+}
+
+.rcfUiCard > *{
+  position:relative;
+  z-index:1;
+}
+
+.rcfUiCard__iconWrap{
+  flex:0 0 58px;
+  width:58px;
+  height:58px;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  border-radius:19px;
+  background:linear-gradient(180deg, rgba(255,255,255,.96), rgba(231,237,246,.94));
+  border:1px solid rgba(88,112,155,.08);
+  box-shadow:
+    0 9px 18px rgba(25,38,66,.08),
+    inset 0 1px 0 rgba(255,255,255,.90);
+}
+
+.rcfUiCard__body{
+  min-width:0;
+  flex:1 1 auto;
+  display:grid;
+  gap:4px;
+}
+
+.rcfUiCard__title{
+  font-size:17px;
+  line-height:1.06;
+  font-weight:900;
+  color:var(--rcf-text,#1f2a44);
+  letter-spacing:.1px;
+}
+
+.rcfUiCard__subtitle{
+  font-size:12px;
+  line-height:1.3;
+  color:rgba(80,92,118,.84);
+}
+
+.rcfUiCard__arrow{
+  flex:0 0 auto;
+  font-size:24px;
+  line-height:1;
+  color:rgba(31,42,68,.34);
+  transform:translateY(-1px);
+}
+
+.rcfUiListGroup{
+  display:grid;
+  gap:10px;
+  margin-top:10px;
+}
+
+.rcfUiSectionDivider{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  margin:14px 0 10px;
+  color:var(--rcf-muted,#647089);
+  font-size:11px;
+  font-weight:900;
+  letter-spacing:.9px;
+  text-transform:uppercase;
+}
+
+.rcfUiSectionDivider::before,
+.rcfUiSectionDivider::after{
+  content:"";
+  flex:1 1 auto;
+  height:1px;
+  background:rgba(52,76,116,.10);
+}
+
+.rcfUiProjectsHead{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  flex-wrap:wrap;
+}
+
+.rcfUiTabs{
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  padding:5px;
+  border-radius:999px;
+  background:rgba(255,255,255,.62);
+  border:1px solid rgba(60,86,132,.08);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.68);
+}
+
+.rcfUiTab{
+  border:0;
+  background:transparent;
+  color:var(--rcf-text-2,#33415f);
+  border-radius:999px;
+  padding:8px 14px;
+  font-size:12px;
+  font-weight:800;
+}
+
+.rcfUiTab.is-active{
+  background:linear-gradient(180deg, rgba(88,133,255,.16), rgba(88,133,255,.08));
+  border:1px solid rgba(88,133,255,.12);
+  color:#294d95;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.66);
+}
+
+.rcfUiCodePanel{
+  margin-top:12px;
+  border-radius:18px;
+  padding:14px;
+  background:
+    linear-gradient(180deg, rgba(23,31,48,.96), rgba(16,23,37,.96));
+  border:1px solid rgba(255,255,255,.08);
+  box-shadow:
+    0 16px 30px rgba(15,20,34,.16),
+    inset 0 1px 0 rgba(255,255,255,.05);
+  overflow:auto;
+  -webkit-overflow-scrolling:touch;
+}
+
+.rcfUiCodePanel pre{
+  margin:0;
+  white-space:pre-wrap;
+  word-break:break-word;
+  font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;
+  font-size:12px;
+  line-height:1.55;
+  color:#dfe8ff;
+}
+
+.rcfUiProjectsList{
+  display:grid;
+  gap:10px;
+  margin-top:12px;
+}
+
+.rcfUiProjectItem{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  padding:14px;
+  border-radius:18px;
+  border:1px solid rgba(38,58,92,.10);
+  background:rgba(255,255,255,.62);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.72);
+}
+
+.rcfUiProjectItem__left{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  min-width:0;
+  flex:1 1 auto;
+}
+
+.rcfUiProjectItem__dot{
+  width:12px;
+  height:12px;
+  border-radius:50%;
+  flex:0 0 12px;
+  background:linear-gradient(180deg,#7fb3ff,#4f83ff);
+  box-shadow:0 0 0 5px rgba(79,131,255,.10);
+}
+
+.rcfUiProjectItem__meta{
+  min-width:0;
+}
+
+.rcfUiProjectItem__title{
+  font-size:14px;
+  font-weight:900;
+  color:var(--rcf-text,#1f2a44);
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+
+.rcfUiProjectItem__subtitle{
+  margin-top:3px;
+  font-size:12px;
+  color:rgba(80,92,118,.82);
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+
+.rcfUiProjectItem__actions{
+  flex:0 0 auto;
+}
+
+@media (max-width:720px){
+  .rcfUiCard--menu,
+  .rcfUiCard--list{
+    padding:18px 17px;
+    border-radius:26px;
+  }
+
+  .rcfUiCard__title{
+    font-size:18px;
+  }
+
+  .rcfUiCard__subtitle{
+    font-size:12px;
+  }
+
+  .rcfUiCodePanel{
+    border-radius:20px;
+  }
+
+  .rcfUiProjectItem{
+    padding:15px;
+    border-radius:20px;
+  }
 }
