@@ -1,0 +1,133 @@
+/* FILE: /app/css/factory_icons.css
+   RControl Factory — Factory Icons
+   - Ícones reconstruídos em CSS
+   - Sem recorte de imagem
+*/
+
+.rcfUiIcon{
+  position:relative;
+  display:inline-flex;
+  width:30px;
+  height:30px;
+}
+
+.rcfUiIcon::before,
+.rcfUiIcon::after{
+  content:"";
+  position:absolute;
+  display:block;
+}
+
+.rcfUiIcon--dashboard::before{
+  width:28px;
+  height:28px;
+  inset:1px;
+  border-radius:50%;
+  border:3px solid #496fdb;
+  box-shadow:0 0 0 5px rgba(74,141,255,.08) inset;
+}
+
+.rcfUiIcon--dashboard::after{
+  width:9px;
+  height:9px;
+  border-radius:50%;
+  background:linear-gradient(180deg,#9adfff,#4a8dff);
+  top:10px;
+  left:10px;
+  box-shadow:
+    -9px 6px 0 0 #6d85ea,
+    9px -4px 0 0 #ffb66b,
+    3px 12px 0 0 #87d9c7;
+}
+
+.rcfUiIcon--apps::before{
+  width:28px;
+  height:28px;
+  border-radius:9px;
+  background:linear-gradient(180deg,#ffd993,#ffb566);
+  left:1px;
+  top:1px;
+  box-shadow:12px -8px 0 0 #6888ee,-2px 9px 0 0 #27498e;
+}
+
+.rcfUiIcon--apps::after{
+  width:16px;
+  height:11px;
+  border-radius:4px;
+  background:rgba(255,255,255,.76);
+  left:9px;
+  top:10px;
+}
+
+.rcfUiIcon--editor::before{
+  width:27px;
+  height:35px;
+  border-radius:9px;
+  background:linear-gradient(180deg,#355a90,#1a2f53);
+  transform:rotate(-12deg);
+  box-shadow:0 0 0 2px rgba(255,255,255,.30) inset;
+  left:3px;
+  top:-2px;
+}
+
+.rcfUiIcon--editor::after{
+  width:14px;
+  height:3px;
+  border-radius:999px;
+  background:#ffb567;
+  transform:rotate(-12deg);
+  top:18px;
+  left:12px;
+  box-shadow:
+    -2px -7px 0 0 rgba(255,255,255,.84),
+    -4px -14px 0 0 rgba(255,255,255,.56);
+}
+
+.rcfUiIcon--agent::before{
+  width:27px;
+  height:27px;
+  border-radius:50%;
+  background:radial-gradient(circle at 35% 35%,#a7e4ff,#4a8dff 58%,#2f70e6 100%);
+  box-shadow:0 0 0 4px rgba(74,141,255,.08);
+  left:2px;
+  top:2px;
+}
+
+.rcfUiIcon--agent::after{
+  width:24px;
+  height:24px;
+  border:3px solid rgba(46,79,151,.64);
+  border-left-color:transparent;
+  border-bottom-color:transparent;
+  border-radius:50%;
+  transform:rotate(28deg);
+  top:3px;
+  left:5px;
+}
+
+.rcfUiIcon--factory::before{
+  width:30px;
+  height:30px;
+  border-radius:50%;
+  border:4px solid #2f70e6;
+  box-shadow:0 0 0 3px rgba(255,177,94,.24) inset;
+  inset:0;
+}
+
+.rcfUiIcon--factory::after{
+  width:12px;
+  height:12px;
+  border-radius:50%;
+  background:linear-gradient(180deg,#ffb15e,#ff8a2a);
+  left:9px;
+  top:9px;
+  box-shadow:
+    0 -20px 0 -2px #3f77ec,
+    14px -14px 0 -2px #3f77ec,
+    20px 0 0 -2px #3f77ec,
+    14px 14px 0 -2px #3f77ec,
+    0 20px 0 -2px #3f77ec,
+    -14px 14px 0 -2px #3f77ec,
+    -20px 0 0 -2px #3f77ec,
+    -14px -14px 0 -2px #3f77ec;
+}
