@@ -1,6 +1,7 @@
 /* FILE: /app/js/ui/ui_projects.js
    RControl Factory — Projects Module
    Estrutura inicial da tela de projetos
+   - Agora com slot oficial para code panel
 */
 
 (() => {
@@ -83,11 +84,10 @@
         if(cards && cards.buildListItem){
 
           return cards.buildListItem({
-
             title: p.name,
             description: p.description,
-            icon: "◆"
-
+            icon: "◆",
+            actionLabel: "Abrir"
           });
 
         }
@@ -110,13 +110,42 @@
             </div>
 
             <div class="rcfUiListItemActions">
-              <span class="rcfUiCardArrow">›</span>
+              <button class="btn small ghost" type="button">Abrir</button>
             </div>
 
           </div>
         `;
 
       }).join("");
+
+    },
+
+    buildCodeSlot(){
+
+      return `
+        <div
+          class="rcfUiProjectsCodeWrap"
+          data-rcf-projects-code-wrap="1"
+        >
+          <div
+            class="rcfUiProjectsCodeSlot"
+            data-rcf-projects-code-slot
+          ></div>
+        </div>
+      `;
+
+    },
+
+    buildProjectsSlot(){
+
+      return `
+        <div
+          class="rcfUiProjectsBody"
+          data-projects-body
+        >
+          ${this.buildProjectsList()}
+        </div>
+      `;
 
     },
 
@@ -127,17 +156,56 @@
 
           ${this.buildTabs()}
 
-          <div
-            class="rcfUiProjectsBody"
-            data-projects-body
-          >
+          ${this.buildCodeSlot()}
 
-            ${this.buildProjectsList()}
-
-          </div>
+          ${this.buildProjectsSlot()}
 
         </section>
       `;
+
+    },
+
+    bindTabs(root){
+
+      try{
+
+        const tabs = Array.from(root.querySelectorAll("[data-tab]"));
+        const codeWrap = root.querySelector("[data-rcf-projects-code-wrap='1']");
+        const projectsBody = root.querySelector("[data-projects-body]");
+
+        if(!tabs.length || !codeWrap || !projectsBody) return false;
+
+        tabs.forEach(btn => {
+
+          if(btn.__rcf_tab_bound__) return;
+          btn.__rcf_tab_bound__ = true;
+
+          btn.addEventListener("click", () => {
+
+            const tab = btn.getAttribute("data-tab");
+
+            tabs.forEach(x => x.classList.remove("active"));
+            btn.classList.add("active");
+
+            if(tab === "code"){
+              codeWrap.style.display = "";
+              projectsBody.style.display = "none";
+            }else{
+              codeWrap.style.display = "";
+              projectsBody.style.display = "";
+            }
+
+          }, { passive: true });
+
+        });
+
+        return true;
+
+      }catch(e){
+
+        return false;
+
+      }
 
     },
 
@@ -152,6 +220,14 @@
         if(!el) return false;
 
         el.innerHTML = this.buildView();
+
+        this.bindTabs(el);
+
+        try{
+          if(window.RCF_UI_CODE_PANEL?.render){
+            window.RCF_UI_CODE_PANEL.render("[data-rcf-projects-code-slot]");
+          }
+        }catch(e){}
 
         return true;
 
