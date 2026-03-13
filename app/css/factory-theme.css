@@ -304,3 +304,45 @@ a{
   border:1px solid var(--rcf-line-2);
   box-shadow:var(--rcf-shadow-md);
 }
+
+.rcfHidden{
+  display:none !important;
+}
+
+.rcfFlex{
+  display:flex;
+  gap:10px;
+}
+
+.rcfGrid{
+  display:grid;
+  gap:10px;
+}
+
+.rcfBadge{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  padding:4px 8px;
+  border-radius:999px;
+  font-size:11px;
+  font-weight:800;
+  border:1px solid rgba(52,76,116,.14);
+  background:rgba(255,255,255,.6);
+  color:var(--rcf-text-2);
+}
+
+.rcfBadge.success{
+  color:#1f7a54;
+  border-color:rgba(54,179,126,.25);
+}
+
+.rcfBadge.warning{
+  color:#a86a16;
+  border-color:rgba(255,179,107,.24);
+}
+
+.rcfBadge.danger{
+  color:#a03a50;
+  border-color:rgba(224,91,117,.22);
+}
