@@ -36,21 +36,28 @@
     }
   }
 
-  function buildShellHTML(ctx = {}) {
-    const brandTitle = esc(ctx.brandTitle || "RCF");
+  function brandHeaderHTML(ctx = {}) {
+    const brandTitle = esc(ctx.brandTitle || "RControl Factory");
     const brandSubtitle = esc(ctx.brandSubtitle || "FACTORY INTERNA • PWA • OFFLINE-FIRST");
 
+    return `
+      <div class="brand-mark" aria-hidden="true">
+        <img src="./assets/icons/app/app-icon.png" class="factory-mark-img" alt="">
+      </div>
+      <div class="brand-text">
+        <img src="./assets/branding/header-logo.jpeg" class="factory-logo-header" alt="Factory by RCONTROL">
+        <div class="title rcf-visually-hidden">${brandTitle}</div>
+        <div class="subtitle">${brandSubtitle}</div>
+      </div>
+    `;
+  }
+
+  function buildShellHTML(ctx = {}) {
     return `
       <div id="rcfRoot" data-rcf-app="rcf.factory">
         <header class="topbar" data-rcf-panel="topbar">
           <div class="brand" data-rcf-panel="brand">
-            <div class="brand-mark" aria-hidden="true">
-              <img src="./assets/factory-icon-master.jpeg" class="factory-mark-img" alt="">
-            </div>
-            <div class="brand-text">
-              <div class="title">${brandTitle}</div>
-              <div class="subtitle">${brandSubtitle}</div>
-            </div>
+            ${brandHeaderHTML(ctx)}
             <div class="spacer"></div>
             <button class="btn small ghost" id="btnOpenTools" type="button" aria-label="Ferramentas">Tools</button>
             <div class="status-pill" id="statusPill" data-rcf="status.pill.top">
