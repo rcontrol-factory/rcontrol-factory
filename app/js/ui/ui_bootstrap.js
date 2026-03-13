@@ -236,6 +236,7 @@
     __inited: false,
     __mountCount: 0,
     __remountBusy__: false,
+    __bootstrappedOnce__: false,
 
     getDeps() {
       if (!this.__deps) this.__deps = buildDeps();
@@ -273,9 +274,7 @@
     },
 
     mountHeader() {
-      try {
-        ensureHeaderRoot();
-      } catch {}
+      try { ensureHeaderRoot(); } catch {}
       callSafe(window.RCF_UI_HEADER, "mount");
       return true;
     },
@@ -302,6 +301,10 @@
 
     refreshUi() {
       try { callSafe(window.RCF_UI_DASHBOARD, "refresh"); } catch {}
+      try { callSafe(window.RCF_UI_RUNTIME, "refreshDashboardUI"); } catch {}
+      try { callSafe(window.RCF_UI_RUNTIME, "renderAppsList"); } catch {}
+      try { callSafe(window.RCF_UI_RUNTIME, "renderFilesList"); } catch {}
+      try { callSafe(window.RCF_UI_RUNTIME, "syncFabStatusText"); } catch {}
       try { callSafe(window.RCF_UI_VIEWS, "mount"); } catch {}
       return true;
     },
@@ -317,6 +320,7 @@
         this.refreshUi();
 
         this.__mountCount++;
+        this.__bootstrappedOnce__ = true;
         return true;
       } catch {
         return false;
@@ -333,8 +337,12 @@
         };
 
         setTimeout(run, 20);
-        setTimeout(run, 120);
-        setTimeout(run, 360);
+
+        if (!this.__bootstrappedOnce__) {
+          setTimeout(run, 120);
+          setTimeout(run, 320);
+        }
+
         setTimeout(() => { this.__remountBusy__ = false; }, 520);
       } catch {
         this.__remountBusy__ = false;
