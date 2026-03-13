@@ -1,17 +1,19 @@
 /* FILE: app/app.js
-   RControl Factory - /app/app.js - V8.0.2 PADRAO (Doctor FAB-only, no global delegation)
+   RControl Factory - /app/app.js - V8.0.4 PADRAO (Factory IA prep + UI core bridge)
    - Arquivo completo (1 peca) pra copiar/colar
    - FIX: Apps list layout
    - ADD: Dashboard -> botao APAGAR app
    - FIX: Preview preso -> teardownPreviewHard()
    - FIX: Evitar duplo bind do Generator
+   - ADD: bridge loader para ui_state / ui_router / ui_events
+   - ADD: aliases/contexto para Factory IA supervisionada
    - Mantem: boot lock, stability, UI_READY bus
 */
 (() => {
   "use strict";
 
   // BUILD SIGNATURE (cache-bust verification)
-  try { console.info("[RCF] /app/app.js BUILD=V8.0.2_DOCTOR_FAB_ONLY"); } catch {}
+  try { console.info("[RCF] /app/app.js BUILD=V8.0.4_FACTORY_IA_PREP"); } catch {}
 
   // =========================================================
   // GLOBAL LOG ALIAS (compat) — evita: "Can't find variable: log"
@@ -526,22 +528,19 @@
     pending: Storage.get("pending", { patch: null, source: null })
   };
 
-  function saveAll(reason = "saveAll") {
+  function saveAll(reason = "save") {
     Storage.set("cfg", State.cfg);
     Storage.set("apps", State.apps);
     Storage.set("active", State.active);
     Storage.set("pending", State.pending);
-    try { getUiStateBridge()?.syncAll?.(reason); } catch {}
-  }
-
-  function syncUIStateBridge(reason = "sync") {
-    try { getUiStateBridge()?.syncAll?.(reason); } catch {}
+    try { syncUiCoreBridge(reason); } catch {}
   }
 
   // Globals compat
   window.RCF = window.RCF || {};
   window.RCF.state = State;
   window.RCF.log = (...a) => Logger.write(...a);
+  window.RCF.getFactoryIAContext = () => buildFactoryIAContext();
 
   // compat global: alguns módulos chamam log() direto
   try { if (!window.log) window.log = (...a) => Logger.write(...a); } catch {}
@@ -625,80 +624,116 @@
     }
   }
 
-
   // =========================================================
   // UI CORE BRIDGE LOADER (ui_state / ui_router / ui_events)
-  // - reduz peso do app.js
-  // - mantém fallback por timeout (Safari/PWA)
+  // - Prepara a base para Factory IA operar em módulos
+  // - Não trava boot se algum script não existir
   // =========================================================
   let __uiCoreBridgePromise = null;
 
-  function getUiStateBridge() {
-    try { return (window && window.RCF_UI_STATE && typeof window.RCF_UI_STATE === "object") ? window.RCF_UI_STATE : null; }
-    catch { return null; }
+  function getUiStateApi() {
+    try { return (window && window.RCF_UI_STATE && typeof window.RCF_UI_STATE === "object") ? window.RCF_UI_STATE : null; } catch { return null; }
   }
 
-  function getUiRouterBridge() {
-    try { return (window && window.RCF_UI_ROUTER && typeof window.RCF_UI_ROUTER === "object") ? window.RCF_UI_ROUTER : null; }
-    catch { return null; }
+  function getUiRouterApi() {
+    try { return (window && window.RCF_UI_ROUTER && typeof window.RCF_UI_ROUTER === "object") ? window.RCF_UI_ROUTER : null; } catch { return null; }
   }
 
-  function getUiEventsBridge() {
-    try { return (window && window.RCF_UI_EVENTS && typeof window.RCF_UI_EVENTS === "object") ? window.RCF_UI_EVENTS : null; }
-    catch { return null; }
+  function getUiEventsApi() {
+    try { return (window && window.RCF_UI_EVENTS && typeof window.RCF_UI_EVENTS === "object") ? window.RCF_UI_EVENTS : null; } catch { return null; }
   }
 
-  function loadScriptOnce(src, key, timeoutMs = 1400) {
+  function loadScriptOnce(src, marker) {
     return new Promise((resolve) => {
       try {
-        const existing = document.querySelector(`script[data-${key}="1"]`);
-        if (existing) {
-          const done = () => resolve(true);
-          existing.addEventListener("load", done, { once: true });
-          existing.addEventListener("error", () => resolve(false), { once: true });
-          setTimeout(() => resolve(true), timeoutMs);
+        const hit = document.querySelector(`script[${marker}="1"]`);
+        if (hit) {
+          hit.addEventListener("load", () => resolve(true), { once: true });
+          hit.addEventListener("error", () => resolve(false), { once: true });
+          setTimeout(() => resolve(true), 900);
           return;
         }
-
         const sc = document.createElement("script");
         sc.src = src;
         sc.defer = true;
         sc.async = false;
-        sc.setAttribute(`data-${key}`, "1");
+        sc.setAttribute(marker, "1");
         sc.onload = () => resolve(true);
         sc.onerror = () => resolve(false);
         (document.head || document.documentElement).appendChild(sc);
-        setTimeout(() => resolve(true), timeoutMs);
+        setTimeout(() => resolve(false), 1200);
       } catch {
         resolve(false);
       }
     });
   }
 
-  async function initUiCoreBridge(ctx = {}) {
+  async function loadUiCoreBridgeOnce() {
     try {
+      if (getUiStateApi() && getUiRouterApi() && getUiEventsApi()) {
+        return { state: getUiStateApi(), router: getUiRouterApi(), events: getUiEventsApi() };
+      }
       if (__uiCoreBridgePromise) return __uiCoreBridgePromise;
-
       __uiCoreBridgePromise = (async () => {
-        await loadScriptOnce("./js/core/ui_state.js", "rcf-ui-state");
-        await loadScriptOnce("./js/core/ui_router.js", "rcf-ui-router");
-        await loadScriptOnce("./js/core/ui_events.js", "rcf-ui-events");
-
-        try { getUiStateBridge()?.init?.(ctx); } catch (e) { try { Logger.write("ui_state init err:", e?.message || e); } catch {} }
-        try { getUiRouterBridge()?.init?.(ctx); } catch (e) { try { Logger.write("ui_router init err:", e?.message || e); } catch {} }
-        try { getUiEventsBridge()?.init?.(ctx); } catch (e) { try { Logger.write("ui_events init err:", e?.message || e); } catch {} }
-
-        return {
-          state: getUiStateBridge(),
-          router: getUiRouterBridge(),
-          events: getUiEventsBridge()
-        };
+        await loadScriptOnce("./js/core/ui_state.js", "data-rcf-ui-state");
+        await loadScriptOnce("./js/core/ui_router.js", "data-rcf-ui-router");
+        await loadScriptOnce("./js/core/ui_events.js", "data-rcf-ui-events");
+        return { state: getUiStateApi(), router: getUiRouterApi(), events: getUiEventsApi() };
       })();
-
       return await __uiCoreBridgePromise;
     } catch {
       return { state: null, router: null, events: null };
     }
+  }
+
+  function buildFactoryIAContext() {
+    return {
+      get state() { return State; },
+      get ui() { return window.RCF_UI || null; },
+      get status() { return { set: safeSetStatus, syncFab: syncFabStatusText }; },
+      actions: { setView, openTools, openFabPanel, toggleFabPanel },
+      helpers: { $, $$, uiMsg, bindTap, textContentSafe, slugify, escapeHtml, escapeAttr },
+      apps: { getActiveApp, setActiveApp, openFile, renderAppsList, renderFilesList },
+      storage: { Storage, saveAll },
+      logger: Logger
+    };
+  }
+
+  function installFactoryIAAliases() {
+    try {
+      window.RCF_FACTORY_IA = window.RCF_FACTORY_IA || {};
+      window.RCF_FACTORY_IA.getContext = () => buildFactoryIAContext();
+      window.RCF_FACTORY_IA.getMode = () => "supervised";
+      window.RCF_FACTORY_IA.canApply = () => false;
+    } catch {}
+  }
+
+  function syncUiCoreBridge(reason = "sync") {
+    try {
+      const api = getUiStateApi();
+      if (!api) return false;
+      if (typeof api.hydrateFromAppState === "function") {
+        api.hydrateFromAppState(State, { reason });
+        return true;
+      }
+      if (typeof api.syncFromAppState === "function") {
+        api.syncFromAppState(State, { reason });
+        return true;
+      }
+      if (typeof api.setSnapshot === "function") {
+        api.setSnapshot({
+          cfg: State.cfg,
+          apps: State.apps,
+          active: State.active,
+          pending: State.pending,
+          reason
+        });
+        return true;
+      }
+    } catch (e) {
+      try { Logger.write("ui_core_bridge sync err:", e?.message || e); } catch {}
+    }
+    return false;
   }
 
   function injectCompactCSSOnce() {
@@ -1363,23 +1398,50 @@
   }
 
   function setView(name) {
+    // v8.0.6_VIEW_LOCK: prevent cascaded setView loops (admin <-> generator)
     try {
-      const rt = getUiRouterBridge();
-      if (rt && typeof rt.setView === "function") return rt.setView(name);
-    } catch {}
-    if (!name) return;
-    State.active.view = name;
-    saveAll("setView:fallback");
-    $$(".view").forEach(v => v.classList.remove("active"));
-    $$('[data-view]').forEach(b => b.classList.remove("active"));
-    const view = document.getElementById("view-" + String(name).replace(/[^a-z0-9_-]/gi, ""));
-    if (view) view.classList.add("active");
-    $$(`[data-view="${name}"]`).forEach(b => b.classList.add("active"));
-    if (name === "logs" || name === "settings" || name === "admin") refreshLogsViews();
-    Logger.write("view:", name, "fallback");
-    syncUIStateBridge("setView:fallback");
-  }
+      const now = Date.now();
 
+      // ignore redundant same-view requests
+      if (typeof State === "object" && State && State.active && State.active.view === name) return;
+
+      // simple reentrancy lock (no globals)
+      if (setView.__busy__) {
+        const dt = now - (setView.__busy_ts__ || 0);
+        if (dt < 650) return; // ignore rapid reentry
+      }
+      setView.__busy__ = true;
+      setView.__busy_ts__ = now;
+
+      // auto-release lock (sync view changes finish quickly)
+      setTimeout(() => { try { setView.__busy__ = false; } catch {} }, 0);
+      // failsafe release
+      setTimeout(() => { try { setView.__busy__ = false; } catch {} }, 800);
+    } catch {}
+
+    if (!name) return;
+
+    // PATCH: ao sair do generator, mata overlay/preview preso
+    try {
+      const prev = State.active.view;
+      if (prev === "generator" && name !== "generator") teardownPreviewHard();
+    } catch {}
+
+    State.active.view = name;
+    saveAll("view.change");
+
+    $$(".view").forEach(v => v.classList.remove("active"));
+    $$("[data-view]").forEach(b => b.classList.remove("active"));
+
+    const id = "view-" + String(name).replace(/[^a-z0-9_-]/gi, "");
+    const view = document.getElementById(id);
+    if (view) view.classList.add("active");
+
+    $$(`[data-view="${name}"]`).forEach(b => b.classList.add("active"));
+
+    if (name === "logs" || name === "settings" || name === "admin") refreshLogsViews();
+    Logger.write("view:", name);
+  }
 
   try {
     window.RCF = window.RCF || {};
@@ -1388,8 +1450,14 @@
 
   function openTools(open) {
     try {
-      const rt = getUiRouterBridge();
-      if (rt && typeof rt.openTools === "function") return rt.openTools(open);
+      const router = getUiRouterApi();
+      if (router && typeof router.openTools === "function") return router.openTools(open, { root: document });
+    } catch {}
+    try {
+      const rt = getUiRuntime();
+      if (rt && typeof rt.openTools === "function" && rt.openTools !== openTools) {
+        return rt.openTools(open);
+      }
     } catch {}
     const d = $("#toolsDrawer");
     if (!d) return;
@@ -1397,12 +1465,17 @@
     else d.classList.remove("open");
   }
 
-
   // PATCH: FAB open/close
   function openFabPanel(open) {
     try {
-      const rt = getUiRouterBridge();
-      if (rt && typeof rt.openFabPanel === "function") return rt.openFabPanel(open);
+      const router = getUiRouterApi();
+      if (router && typeof router.openFabPanel === "function") return router.openFabPanel(open, { root: document });
+    } catch {}
+    try {
+      const rt = getUiRuntime();
+      if (rt && typeof rt.openFabPanel === "function" && rt.openFabPanel !== openFabPanel) {
+        return rt.openFabPanel(open);
+      }
     } catch {}
     const p = $("#rcfFabPanel");
     if (!p) return;
@@ -1410,22 +1483,32 @@
     else p.classList.remove("open");
   }
 
-
   function toggleFabPanel() {
     try {
-      const rt = getUiRouterBridge();
-      if (rt && typeof rt.toggleFabPanel === "function") return rt.toggleFabPanel();
+      const router = getUiRouterApi();
+      if (router && typeof router.toggleFabPanel === "function") return router.toggleFabPanel({ root: document });
+    } catch {}
+    try {
+      const rt = getUiRuntime();
+      if (rt && typeof rt.toggleFabPanel === "function" && rt.toggleFabPanel !== toggleFabPanel) {
+        return rt.toggleFabPanel();
+      }
     } catch {}
     const p = $("#rcfFabPanel");
     if (!p) return;
     p.classList.toggle("open");
   }
 
-
   function syncFabStatusText() {
     try {
-      const rt = getUiRouterBridge();
-      if (rt && typeof rt.syncFabStatusText === "function") return rt.syncFabStatusText();
+      const events = getUiEventsApi();
+      if (events && typeof events.syncFabStatusText === "function") return events.syncFabStatusText({ root: document });
+    } catch {}
+    try {
+      const rt = getUiRuntime();
+      if (rt && typeof rt.syncFabStatusText === "function" && rt.syncFabStatusText !== syncFabStatusText) {
+        return rt.syncFabStatusText();
+      }
     } catch {}
     try {
       const st = $("#statusText")?.textContent || "";
@@ -1434,37 +1517,49 @@
     } catch {}
   }
 
-
   // PATCH: Admin log toggle
   function setInjectorLogCollapsed(collapsed) {
     try {
-      const rt = getUiRouterBridge();
-      if (rt && typeof rt.setInjectorLogCollapsed === "function") return rt.setInjectorLogCollapsed(collapsed);
+      const events = getUiEventsApi();
+      if (events && typeof events.setInjectorLogCollapsed === "function") return events.setInjectorLogCollapsed(collapsed, { root: document });
+    } catch {}
+    try {
+      const rt = getUiRuntime();
+      if (rt && typeof rt.setInjectorLogCollapsed === "function" && rt.setInjectorLogCollapsed !== setInjectorLogCollapsed) {
+        return rt.setInjectorLogCollapsed(collapsed);
+      }
     } catch {}
     try {
       const pre = $("#injLog");
       const btn = $("#btnToggleInjectorLog");
       if (!pre || !btn) return;
+
       const wantCollapsed = !!collapsed;
       if (wantCollapsed) pre.classList.add("rcf-collapsed");
       else pre.classList.remove("rcf-collapsed");
+
       btn.textContent = wantCollapsed ? "Mostrar log" : "Esconder log";
     } catch {}
   }
 
-
   function toggleInjectorLogCollapsed() {
     try {
-      const rt = getUiRouterBridge();
-      if (rt && typeof rt.toggleInjectorLogCollapsed === "function") return rt.toggleInjectorLogCollapsed();
+      const events = getUiEventsApi();
+      if (events && typeof events.toggleInjectorLogCollapsed === "function") return events.toggleInjectorLogCollapsed({ root: document });
+    } catch {}
+    try {
+      const rt = getUiRuntime();
+      if (rt && typeof rt.toggleInjectorLogCollapsed === "function" && rt.toggleInjectorLogCollapsed !== toggleInjectorLogCollapsed) {
+        return rt.toggleInjectorLogCollapsed();
+      }
     } catch {}
     try {
       const pre = $("#injLog");
       if (!pre) return;
-      setInjectorLogCollapsed(!pre.classList.contains("rcf-collapsed"));
+      const isCollapsed = pre.classList.contains("rcf-collapsed");
+      setInjectorLogCollapsed(!isCollapsed);
     } catch {}
   }
-
 
   // =========================================================
   // Apps / Editor
@@ -1498,10 +1593,9 @@
       if (text) textContentSafe(text, "Sem app ativo ✅");
     }
 
-    saveAll("deleteApp");
+    saveAll("app.delete");
     renderAppsList();
     renderFilesList();
-    syncUIStateBridge("deleteApp");
 
     uiMsg("#editorOut", "✅ App apagado.");
     Logger.write("app deleted:", s);
@@ -1588,8 +1682,7 @@
     if (!(fname in app.files)) return false;
 
     State.active.file = fname;
-    saveAll("openFile");
-    syncUIStateBridge("openFile");
+    saveAll("file.open");
 
     const head = $("#editorHead");
     if (head) head.textContent = `Arquivo atual: ${fname}`;
@@ -1609,8 +1702,7 @@
 
     State.active.appSlug = slug;
     State.active.file = State.active.file || Object.keys(app.files || {})[0] || null;
-    saveAll("setActiveApp");
-    syncUIStateBridge("setActiveApp");
+    saveAll("app.select");
 
     const text = $("#activeAppText");
     if (text) textContentSafe(text, `App ativo: ${app.name} (${app.slug}) ✅`);
@@ -1643,10 +1735,9 @@
     };
 
     State.apps.push(app);
-    saveAll("createApp");
+    saveAll("app.create");
     renderAppsList();
     setActiveApp(slug);
-    syncUIStateBridge("createApp");
 
     return { ok: true, msg: `✅ App criado: ${nameClean} (${slug})` };
   }
@@ -1662,8 +1753,7 @@
     ensureAppFiles(app);
     app.files[fname] = ta ? String(ta.value || "") : "";
 
-    saveAll("saveFile");
-    syncUIStateBridge("saveFile");
+    saveAll("file.save");
     uiMsg("#editorOut", "✅ Arquivo salvo.");
     Logger.write("file saved:", app.slug, fname);
   }
@@ -2808,27 +2898,324 @@
   //         ou que tenham data-rcf-action contendo "doctor".
   // =========================================================
   function bindUI() {
-    try {
-      const ev = getUiEventsBridge();
-      if (ev && typeof ev.bind === "function") {
-        ev.bind();
-        try { getUiRouterBridge()?.bindGlobalCompat?.(); } catch {}
-        return;
-      }
-    } catch {}
-
-    $$('[data-view]').forEach(btn => bindTap(btn, () => setView(btn.getAttribute('data-view'))));
+    $$("[data-view]").forEach(btn => bindTap(btn, () => setView(btn.getAttribute("data-view"))));
     bindTap($("#btnOpenTools"), () => { openTools(true); openFabPanel(false); });
     bindTap($("#btnCloseTools"), () => openTools(false));
+
+    // PATCH: FAB
     bindTap($("#rcfFab"), () => { toggleFabPanel(); syncFabStatusText(); });
     bindTap($("#btnFabClose"), () => openFabPanel(false));
     bindTap($("#btnFabTools"), () => { openFabPanel(false); openTools(true); });
     bindTap($("#btnFabAdmin"), () => { openFabPanel(false); setView("admin"); });
     bindTap($("#btnFabDoctor"), () => { openFabPanel(false); runDoctor(); });
+    // Doctor deve existir SOMENTE no FAB (Admin button, se existir no DOM, é ocultado)
     bindTap($("#btnFabLogs"), () => { openFabPanel(false); setView("logs"); });
-    try { getUiRouterBridge()?.bindGlobalCompat?.(); } catch {}
-  }
 
+    // fecha painel se tocar fora
+    // (removido) fechar FAB ao tocar fora — evitamos listener global em document por estabilidade iOS
+
+    bindTap($("#btnCreateNewApp"), () => setView("newapp"));
+    bindTap($("#btnOpenEditor"), () => setView("editor"));
+
+    bindTap($("#btnExportBackup"), () => {
+      const payload = JSON.stringify({ apps: State.apps, cfg: State.cfg, active: State.active }, null, 2);
+      try { navigator.clipboard.writeText(payload); } catch {}
+      safeSetStatus("Backup copiado ✅");
+      syncFabStatusText();
+      setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 800);
+      Logger.write("backup copied");
+    });
+
+    bindTap($("#btnAutoSlug"), () => {
+      const n = ($("#newAppName")?.value || "");
+      const s = slugify(n);
+      const inSlug = $("#newAppSlug");
+      if (inSlug) inSlug.value = s;
+    });
+
+    bindTap($("#btnDoCreateApp"), () => {
+      const name = ($("#newAppName")?.value || "");
+      const slug = ($("#newAppSlug")?.value || "");
+      const r = createApp(name, slug);
+      uiMsg("#newAppOut", r.msg);
+      if (r.ok) { setView("editor"); safeSetStatus("OK ✅"); }
+      else safeSetStatus("ERRO ❌");
+      syncFabStatusText();
+    });
+
+    bindTap($("#btnSaveFile"), () => saveFile());
+
+    bindTap($("#btnResetFile"), () => {
+      const app = getActiveApp();
+      if (!app || !State.active.file) return uiMsg("#editorOut", "⚠️ Selecione app e arquivo.");
+      ensureAppFiles(app);
+      app.files[State.active.file] = "";
+      saveAll();
+      openFile(State.active.file);
+      uiMsg("#editorOut", "⚠️ Arquivo resetado (limpo).");
+    });
+
+    // PATCH: Evitar duplo bind do Generator (stubs só se NÃO houver módulo real)
+    try {
+      const modulePresent = !!(
+        window.RCF_PREVIEW_RUNNER ||
+        window.RCF_PREVIEW ||
+        window.RCF_ENGINE?.generator ||
+        window.RCF_UI_BINDINGS ||
+        window.__RCF_GEN_BOUND__ // flag defensivo se existir
+      );
+
+      if (modulePresent) {
+        Logger.write("generator:", "bind skip (module present)");
+      } else {
+        // mantém stubs atuais (fallback)
+        bindTap($("#btnGenZip"), async () => {
+          const U = window.RCF_UI_BINDINGS;
+          if (U?.generatorBuildZip) return await U.generatorBuildZip();
+          uiMsg("#genOut", "ZIP: ui_bindings não está pronto.");
+        });
+
+        bindTap($("#btnGenPreview"), () => {
+          const U = window.RCF_UI_BINDINGS;
+          if (U?.generatorPreview) return U.generatorPreview();
+          uiMsg("#genOut", "Preview: ui_bindings não está pronto.");
+        });
+      }
+    } catch {}
+
+    bindTap($("#btnAgentRun"), () => Agent.route($("#agentCmd")?.value || ""));
+    bindTap($("#btnAgentHelp"), () => uiMsg("#agentOut", Agent.help()));
+
+    const doLogsRefresh = () => {
+      refreshLogsViews();
+      safeSetStatus("Logs ✅");
+      syncFabStatusText();
+      setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 600);
+    };
+    const doLogsClear = () => {
+      Logger.clear();
+      doLogsRefresh();
+      safeSetStatus("Logs limpos ✅");
+      syncFabStatusText();
+      setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 600);
+    };
+    const doLogsCopy = async () => {
+      const txt = Logger.getAll().join("\n");
+      try { await navigator.clipboard.writeText(txt); } catch {}
+      safeSetStatus("Logs copiados ✅");
+      syncFabStatusText();
+      setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 800);
+    };
+
+    bindTap($("#btnLogsRefresh"), doLogsRefresh);
+    bindTap($("#btnLogsClear"), doLogsClear);
+    bindTap($("#btnLogsCopy"), doLogsCopy);
+
+    bindTap($("#btnLogsRefresh2"), doLogsRefresh);
+    bindTap($("#btnClearLogs2"), doLogsClear);
+    bindTap($("#btnCopyLogs"), doLogsCopy);
+
+    bindTap($("#btnDrawerLogsRefresh"), doLogsRefresh);
+    bindTap($("#btnDrawerLogsClear"), doLogsClear);
+    bindTap($("#btnDrawerLogsCopy"), doLogsCopy);
+
+    // SW tools
+    bindTap($("#btnSwUnregister"), async () => {
+      const r = await swUnregisterAll();
+      safeSetStatus(r.ok ? `SW unreg: ${r.count} ✅` : "SW unreg ❌");
+      syncFabStatusText();
+      setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 900);
+    });
+
+    bindTap($("#btnSwClearCache"), async () => {
+      const r = await swClearCaches();
+      safeSetStatus(r.ok ? `Cache: ${r.count} ✅` : "Cache ❌");
+      syncFabStatusText();
+      setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 900);
+    });
+
+    bindTap($("#btnSwRegister"), async () => {
+      const r = await swRegister();
+      safeSetStatus(r.ok ? "SW ✅" : "SW ❌");
+      syncFabStatusText();
+      setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 900);
+    });
+
+    // Diagnostics actions
+    bindTap($("#btnDiagRun"), async () => {
+      safeSetStatus("Diag…");
+      syncFabStatusText();
+      await runV8StabilityCheck();
+      setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 700);
+    });
+
+    bindTap($("#btnDiagScan"), () => {
+      try { uiMsg("#diagOut", JSON.stringify(scanOverlays(), null, 2)); }
+      catch (e) { uiMsg("#diagOut", "❌ " + (e?.message || e)); }
+    });
+
+    bindTap($("#btnDiagTests"), () => {
+      try { uiMsg("#diagOut", JSON.stringify(runMicroTests(), null, 2)); }
+      catch (e) { uiMsg("#diagOut", "❌ " + (e?.message || e)); }
+    });
+
+    bindTap($("#btnDiagClear"), () => uiMsg("#diagOut", "Pronto."));
+
+    // PIN
+    bindTap($("#btnPinSave"), () => {
+      const raw = String($("#pinInput")?.value || "").trim();
+      if (!/^\d{4,8}$/.test(raw)) return uiMsg("#pinOut", "⚠️ PIN inválido. Use 4 a 8 dígitos.");
+      Pin.set(raw);
+      uiMsg("#pinOut", "✅ PIN salvo.");
+      Logger.write("pin saved");
+    });
+
+    bindTap($("#btnPinRemove"), () => {
+      Pin.clear();
+      uiMsg("#pinOut", "✅ PIN removido.");
+      Logger.write("pin removed");
+    });
+
+    // Admin quick
+    bindTap($("#btnAdminDiag"), () => uiMsg("#adminOut", "Admin OK."));
+    bindTap($("#btnAdminZero"), () => {
+      Logger.clear();
+      safeSetStatus("Zerado ✅");
+      syncFabStatusText();
+      setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 800);
+      uiMsg("#adminOut", "✅ Zerado (safe). Logs limpos.");
+    });
+
+    // PATCH: toggle injector log
+    bindTap($("#btnToggleInjectorLog"), () => {
+      toggleInjectorLogCollapsed();
+      Logger.write("admin:", "toggle injLog");
+    });
+
+    // Mãe
+    bindTap($("#btnMaeLoad"), async () => {
+      const MAE = window.RCF_MOTHER || window.RCF_MAE;
+      if (!MAE) {
+        uiMsg("#maintOut", "⚠️ RCF_MOTHER/RCF_MAE não está carregada no runtime.");
+        Logger.write("mae:", "absent");
+        return;
+      }
+      uiMsg("#maintOut", "✅ Mãe detectada. Funções: " + Object.keys(MAE).slice(0, 24).join(", "));
+      Logger.write("mae:", "loaded");
+    });
+
+    bindTap($("#btnMaeCheck"), () => {
+      const MAE = window.RCF_MOTHER || window.RCF_MAE;
+      const s = MAE && typeof MAE.status === "function" ? MAE.status() : { ok: false, msg: "status() ausente" };
+      try { alert("CHECK:\n\n" + JSON.stringify(s, null, 2)); } catch {}
+      uiMsg("#maintOut", "Check rodado (alert).");
+      Logger.write("mae check:", safeJsonStringify(s));
+    });
+
+    let maeUpdateLock = false;
+    bindTap($("#btnMaeUpdate"), async () => {
+      const MAE = window.RCF_MOTHER || window.RCF_MAE;
+      if (!MAE || typeof MAE.updateFromGitHub !== "function") {
+        uiMsg("#maintOut", "⚠️ updateFromGitHub() ausente (ou mãe não carregou).");
+        Logger.write("mae update:", "missing");
+        return;
+      }
+      if (maeUpdateLock) {
+        uiMsg("#maintOut", "⏳ Update já está rodando… (aguarde)");
+        Logger.write("mae update:", "blocked (lock)");
+        return;
+      }
+
+      maeUpdateLock = true;
+      uiMsg("#maintOut", "Atualizando…");
+
+      try {
+        const res = await Promise.race([
+          Promise.resolve(MAE.updateFromGitHub()),
+          new Promise((_, rej) => setTimeout(() => rej(new Error("TIMEOUT 15000ms (updateFromGitHub)")), 15000))
+        ]);
+        uiMsg("#maintOut", "✅ Update acionado.");
+        Logger.write("mae update:", "ok", res ? safeJsonStringify(res) : "");
+      } catch (e) {
+        uiMsg("#maintOut", "❌ Falhou: " + (e?.message || e));
+        Logger.write("mae update err:", e?.message || e);
+      } finally {
+        maeUpdateLock = false;
+      }
+    });
+
+    // ✅ FIX: compat com mother_selfupdate.js (clear() ou clearOverrides())
+    bindTap($("#btnMaeClear"), async () => {
+      const MAE = window.RCF_MOTHER || window.RCF_MAE;
+      const clearFn =
+        (MAE && typeof MAE.clearOverrides === "function") ? MAE.clearOverrides.bind(MAE) :
+        (MAE && typeof MAE.clear === "function") ? MAE.clear.bind(MAE) :
+        null;
+
+      if (!clearFn) {
+        uiMsg("#maintOut", "⚠️ clear/clearOverrides() ausente (ou mãe não carregou).");
+        Logger.write("mae clear:", "missing");
+        return;
+      }
+      uiMsg("#maintOut", "Limpando...");
+      try {
+        await clearFn();
+        uiMsg("#maintOut", "✅ Clear acionado.");
+        Logger.write("mae clear:", "ok");
+      } catch (e) {
+        uiMsg("#maintOut", "❌ Falhou: " + (e?.message || e));
+        Logger.write("mae clear err:", e?.message || e);
+      }
+    });
+
+    // FASE A buttons
+    bindTap($("#btnScanIndex"), async () => {
+      safeSetStatus("Scan…");
+      syncFabStatusText();
+      try {
+        const idx = await scanFactoryFiles();
+        uiMsg("#scanOut", `✅ Scan OK\nsource=${idx.meta.source}\nfiles=${idx.meta.count}\nscannedAt=${idx.meta.scannedAt}`);
+        Logger.write("CP1 scan:", `source=${idx.meta.source}`, `files=${idx.meta.count}`);
+      } catch (e) {
+        uiMsg("#scanOut", "❌ Scan falhou: " + (e?.message || e));
+        Logger.write("scan err:", e?.message || e);
+      }
+      setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 700);
+    });
+
+    bindTap($("#btnGenTargets"), () => {
+      const idx = Storage.get("RCF_FILE_INDEX", null);
+      const r = generateTargetMap(idx);
+      if (!r.ok) return uiMsg("#scanOut", "❌ " + (r.err || "falhou gerar map"));
+      uiMsg("#scanOut", `✅ Target Map OK\ncount=${r.map.meta.count}\nsource=${r.map.meta.source}\ncreatedAt=${r.map.meta.createdAt}`);
+      try { populateTargetsDropdown(true); } catch {}
+    });
+
+    bindTap($("#btnRefreshTargets"), () => {
+      populateTargetsDropdown(true);
+      uiMsg("#scanOut", "Dropdown atualizado ✅");
+    });
+
+    bindTap($("#btnPreviewDiff"), async () => {
+      const r = await injectorPreview();
+      if (!r.ok) uiMsg("#diffOut", "❌ " + (r.err || "preview falhou"));
+    });
+
+    bindTap($("#btnApplyInject"), async () => {
+      safeSetStatus("Apply…");
+      syncFabStatusText();
+      const ok = await injectorApplySafe();
+      Logger.write("apply:", ok && ok.ok ? "OK" : "FAIL", "target=" + String($("#injTarget")?.value || ""));
+      setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 900);
+    });
+
+    bindTap($("#btnRollbackInject"), async () => {
+      safeSetStatus("Rollback…");
+      syncFabStatusText();
+      await injectorRollback();
+      setTimeout(() => { safeSetStatus("OK ✅"); syncFabStatusText(); }, 900);
+    });
+  }
 
   // =========================================================
   // Boot hydrate
@@ -2873,6 +3260,9 @@
 
       renderShell();
 
+      // PATCH: módulos UI/core externos (não travam boot)
+      await loadUiCoreBridgeOnce();
+
       // PATCH: runtime externo (sem depender dele para bootar)
       await initUiRuntime({
         $, $$, State, Storage, Logger,
@@ -2882,29 +3272,15 @@
 
       // PATCH: Registry (depois do shell existir)
       installRCFUIRegistry();
-
-      await initUiCoreBridge({
-        $, $$, State, Storage, Logger,
-        uiMsg, textContentSafe, bindTap, saveAll,
-        safeSetStatus, setView, openTools, openFabPanel, toggleFabPanel,
-        syncFabStatusText, setInjectorLogCollapsed, toggleInjectorLogCollapsed,
-        refreshLogsViews, teardownPreviewHard, runDoctor,
-        createApp, setActiveApp, openFile, saveFile,
-        swRegister, swUnregisterAll, swClearCaches,
-        runV8StabilityCheck, scanOverlays, runMicroTests,
-        scanFactoryFiles, generateTargetMap, populateTargetsDropdown,
-        injectorPreview, injectorApplySafe, injectorRollback,
-        Pin, Agent, syncUIStateBridge, getActiveApp, ensureAppFiles,
-        deleteApp, renderAppsList, renderFilesList, hydrateUIFromState
-      });
+      installFactoryIAAliases();
+      syncUiCoreBridge("safeInit.registry");
 
       // ✅ NEW: UI READY BUS — 1x após registry (slots já existem no shell)
       try { notifyUIReady(); } catch {}
 
       bindUI();
       hydrateUIFromState();
-      try { getUiRouterBridge()?.bindGlobalCompat?.(); } catch {}
-      syncUIStateBridge("safeInit");
+      syncUiCoreBridge("safeInit.hydrate");
 
       // Engine hook (não quebra se não existir)
       try { window.RCF_ENGINE?.init?.({ State, Storage, Logger }); Logger.write("engine:", "init ok ✅"); }
