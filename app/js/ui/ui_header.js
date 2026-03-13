@@ -8,8 +8,35 @@
 
   "use strict";
 
-  function qs(sel){
-    try { return document.querySelector(sel); } catch { return null; }
+  function qs(sel, root = document){
+    try { return root.querySelector(sel); } catch { return null; }
+  }
+
+  function escapeHtml(v){
+    return String(v ?? "").replace(/[&<>"]/g, ch => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;"
+    }[ch] || ch));
+  }
+
+  function navTo(view){
+    try{
+      if(window.RCF && typeof window.RCF.setView === "function"){
+        window.RCF.setView(view);
+        return true;
+      }
+    }catch{}
+
+    try{
+      document.dispatchEvent(new CustomEvent("rcf:view", {
+        detail: { view }
+      }));
+      return true;
+    }catch{}
+
+    return false;
   }
 
   const API = {
@@ -18,8 +45,6 @@
 
       const root = qs("#rcfHeader");
       if(!root) return false;
-
-      if(root.getAttribute("data-rcf-header-mounted")==="1") return true;
 
       const cfg = window.RCF_UI_CONFIG;
 
@@ -31,19 +56,40 @@
         cfg?.get?.("branding.subtitle","Factory System")
         ?? "Factory System";
 
-      root.innerHTML = `
+      const currentSig = JSON.stringify({
+        title: String(title),
+        subtitle: String(subtitle)
+      });
 
+      if(root.getAttribute("data-rcf-header-mounted")==="1"
+        && root.getAttribute("data-rcf-header-sig") === currentSig){
+        this.bindActions(root);
+        return true;
+      }
+
+      root.innerHTML = `
         <div class="rcfHeaderInner">
 
           <div class="rcfHeaderBrand">
 
-            <div class="rcfHeaderLogo">
-              <span class="rcfUiIcon rcfUiIcon--factory"></span>
+            <div class="rcfHeaderLogo" aria-hidden="true">
+              <img
+                src="./assets/icons/app/app-icon.png"
+                alt=""
+                class="rcfHeaderLogoImg"
+              />
             </div>
 
             <div class="rcfHeaderTitles">
-              <div class="rcfHeaderTitle">${title}</div>
-              <div class="rcfHeaderSubtitle">${subtitle}</div>
+              <div class="rcfHeaderTitleWrap">
+                <img
+                  src="./assets/branding/header-logo.jpeg"
+                  alt="Factory by RCONTROL"
+                  class="rcfHeaderBrandArt"
+                />
+                <div class="rcfHeaderTitle rcf-visually-hidden">${escapeHtml(title)}</div>
+              </div>
+              <div class="rcfHeaderSubtitle">${escapeHtml(subtitle)}</div>
             </div>
 
           </div>
@@ -51,32 +97,36 @@
           <div class="rcfHeaderActions">
 
             <button class="btn small ghost"
-              data-rcf-header-action="dashboard">
+              data-rcf-header-action="dashboard"
+              type="button">
               Dashboard
             </button>
 
             <button class="btn small ghost"
-              data-rcf-header-action="editor">
+              data-rcf-header-action="editor"
+              type="button">
               Editor
             </button>
 
             <button class="btn small ghost"
-              data-rcf-header-action="agent">
+              data-rcf-header-action="agent"
+              type="button">
               Agent
             </button>
 
             <button class="btn small"
-              data-rcf-header-action="admin">
+              data-rcf-header-action="admin"
+              type="button">
               Factory
             </button>
 
           </div>
 
         </div>
-
       `;
 
       root.setAttribute("data-rcf-header-mounted","1");
+      root.setAttribute("data-rcf-header-sig", currentSig);
 
       this.bindActions(root);
 
@@ -104,9 +154,7 @@
 
             if(!act) return;
 
-            try{
-              window.RCF?.setView?.(act);
-            }catch{}
+            navTo(act);
 
           }, { passive:true });
 
