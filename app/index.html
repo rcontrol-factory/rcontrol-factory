@@ -1,329 +1,167 @@
-<!--
-  RControl Factory — INDEX (NORMAL BOOT) vCLEAN-3c
-  ✅ Mantém boot estável
-  ✅ Mantém admin.admin_ai.js
-  ✅ Mantém doctor_scan.js
-  ✅ Mantém #app como root único
-  ✅ Ajusta ordem para nova UI desacoplada
-  ✅ Carrega ui_runtime/ui_shell/ui_state/ui_router/ui_events antes do app.js
-  ✅ Carrega ui_bootstrap/ui_views antes do app.js
-  ✅ Patch mínimo seguro para PWA / anti tela branca
--->
-
 <!doctype html>
 <html lang="pt-BR">
 <head>
-  <!-- Core -->
   <meta charset="utf-8" />
   <meta http-equiv="x-ua-compatible" content="ie=edge" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
 
   <title>RControl Factory</title>
-  <meta name="theme-color" content="#d7dde7" />
+  <meta name="theme-color" content="#d9dde6" />
   <meta name="color-scheme" content="light dark" />
+  <meta name="rcf-index" content="FACTORY_VISUAL_LAYER_2026_03_13" />
 
-  <!-- RCF marker -->
-  <meta name="rcf-index" content="NORMAL_BOOT_2026_03_RCF_CLEAN_3C_UI_DECOUPLED_SAFE" />
-
-  <!-- PWA -->
   <base href="./" />
   <link rel="manifest" href="./manifest.json" />
-  <link rel="icon" href="./assets/favicon-32.png" sizes="32x32" type="image/png" />
-  <link rel="apple-touch-icon" href="./assets/apple-touch-icon.png" />
+  <link rel="icon" href="./assets/icons/app/app-icon.png" />
+  <link rel="apple-touch-icon" href="./assets/icons/app/app-icon.png" />
 
-  <!-- Assets -->
-  <link rel="preload" as="image" href="./assets/factory-icon-master.png" />
-  <link rel="preload" as="image" href="./assets/rcf-logo-mark.svg" />
+  <link rel="preload" as="image" href="./assets/backgrounds/login-boot-background.jpeg" />
+  <link rel="preload" as="image" href="./assets/backgrounds/internal-background.jpeg" />
+  <link rel="preload" as="image" href="./assets/branding/header-logo.jpeg" />
 
-  <!-- Styles -->
-  <link rel="stylesheet" href="./styles.css" />
+  <link rel="stylesheet" href="./css/factory-theme.css" />
+  <link rel="stylesheet" href="./css/factory-shell.css" />
+  <link rel="stylesheet" href="./css/factory-components.css" />
+  <link rel="stylesheet" href="./css/factory-mobile.css" />
 
-  <!-- Splash mínimo seguro -->
   <style>
-    :root{
-      --rcf-bg: #e7ebf2;
-      --rcf-bg-2: #d8dee8;
-      --rcf-ink: #24314d;
-      --rcf-muted: #6d7890;
-      --rcf-line: rgba(43,61,96,.12);
-      --rcf-blue: #4a8dff;
-      --rcf-orange: #ff9b3d;
-      --rcf-shadow: 0 18px 36px rgba(36,49,77,.10);
-    }
-
     html, body {
-      height: 100%;
       min-height: 100%;
-      background:
-        radial-gradient(circle at 14% 10%, rgba(255,255,255,.86), rgba(255,255,255,0) 25%),
-        radial-gradient(circle at 86% 18%, rgba(74,141,255,.10), rgba(74,141,255,0) 18%),
-        linear-gradient(180deg, var(--rcf-bg), var(--rcf-bg-2));
+      margin: 0;
+      background: #d9dde6;
     }
 
     body {
-      margin: 0;
-      color: var(--rcf-ink);
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #1f2a44;
       -webkit-font-smoothing: antialiased;
       text-rendering: optimizeLegibility;
       overflow-x: hidden;
     }
 
     #app {
-      min-height: 100%;
+      min-height: 100vh;
       position: relative;
-      background: transparent;
+      isolation: isolate;
     }
 
-    #app::before,
-    #app::after {
-      content: "";
-      position: fixed;
-      pointer-events: none;
-      z-index: 0;
-    }
-
-    #app::before {
-      right: -9vw;
-      top: 6vh;
-      width: min(72vw, 540px);
-      height: min(72vw, 540px);
-      border-radius: 50%;
-      border: 26px solid rgba(91,110,145,.06);
-      box-shadow:
-        inset 0 0 0 16px rgba(255,255,255,.05),
-        0 0 0 1px rgba(255,255,255,.08);
-      transform: rotate(-8deg);
-      opacity: .9;
-    }
-
-    #app::after {
-      left: 50%;
-      bottom: 10vh;
-      width: min(64vw, 760px);
-      height: min(64vw, 760px);
-      transform: translateX(-50%);
-      background: url("./assets/rcf-logo-mark.svg") center/contain no-repeat;
-      opacity: .03;
-      filter: grayscale(1);
-    }
-
-    .rcf_splash {
+    .rcf-index-splash {
       min-height: 100vh;
       display: flex;
       align-items: center;
       justify-content: center;
       padding:
-        max(18px, env(safe-area-inset-top))
-        18px
-        max(18px, env(safe-area-inset-bottom))
-        18px;
+        max(20px, env(safe-area-inset-top))
+        20px
+        max(20px, env(safe-area-inset-bottom))
+        20px;
       box-sizing: border-box;
-      position: relative;
-      z-index: 1;
+      background:
+        linear-gradient(rgba(7, 13, 24, .54), rgba(7, 13, 24, .36)),
+        url("./assets/backgrounds/login-boot-background.jpeg") center center / cover no-repeat;
     }
 
-    .rcf_splash_card {
-      position: relative;
-      width: 100%;
-      max-width: 860px;
-      padding: 18px 18px 16px 18px;
+    .rcf-index-card {
+      width: min(100%, 680px);
       border-radius: 28px;
-      border: 1px solid var(--rcf-line);
-      background:
-        linear-gradient(180deg, rgba(255,255,255,.88), rgba(255,255,255,.68));
+      padding: 24px 22px;
+      box-sizing: border-box;
+      border: 1px solid rgba(255,255,255,.14);
+      background: linear-gradient(180deg, rgba(10,18,32,.68), rgba(15,24,42,.54));
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
       box-shadow:
-        var(--rcf-shadow),
-        inset 0 1px 0 rgba(255,255,255,.76);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
-      overflow: hidden;
+        0 24px 60px rgba(0,0,0,.28),
+        inset 0 1px 0 rgba(255,255,255,.10);
+      color: #eef3ff;
     }
 
-    .rcf_splash_card::before {
-      content: "";
-      position: absolute;
-      inset: 0;
-      pointer-events: none;
-      background:
-        linear-gradient(120deg, rgba(74,141,255,.06), rgba(74,141,255,0) 28%, rgba(255,155,61,.05) 80%, rgba(255,155,61,0));
-    }
-
-    .rcf_splash_head {
-      position: relative;
-      z-index: 1;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      margin-bottom: 14px;
-    }
-
-    .rcf_splash_brand {
+    .rcf-index-brand {
       display: flex;
       align-items: center;
       gap: 14px;
       min-width: 0;
     }
 
-    .rcf_mark {
-      width: 54px;
-      height: 54px;
-      flex: 0 0 54px;
-      border-radius: 50%;
-      overflow: hidden;
-      background: #fff;
-      box-shadow:
-        0 0 0 1px rgba(255,255,255,.78),
-        0 10px 22px rgba(43,61,96,.12);
-    }
-
-    .rcf_mark img {
-      width: 100%;
-      height: 100%;
+    .rcf-index-brand-mark {
+      width: 58px;
+      height: 58px;
+      border-radius: 18px;
       object-fit: cover;
+      flex: 0 0 58px;
+      box-shadow: 0 10px 24px rgba(0,0,0,.24);
+      background: rgba(255,255,255,.08);
+    }
+
+    .rcf-index-brand-logo {
       display: block;
+      width: min(100%, 320px);
+      height: auto;
+      object-fit: contain;
+      filter: drop-shadow(0 8px 20px rgba(0,0,0,.18));
     }
 
-    .rcf_brand {
-      min-width: 0;
-    }
-
-    .rcf_splash_title {
-      margin: 0;
-      font-size: clamp(24px, 4vw, 38px);
-      line-height: 1;
+    .rcf-index-title {
+      margin: 18px 0 8px;
+      font-size: clamp(24px, 4vw, 36px);
+      line-height: 1.02;
+      letter-spacing: -.02em;
       font-weight: 900;
-      letter-spacing: .2px;
-      color: #24314d;
-      text-transform: uppercase;
     }
 
-    .rcf_splash_subtitle {
-      margin: 6px 0 0 0;
-      font-size: 12px;
-      letter-spacing: 1.4px;
-      text-transform: uppercase;
-      color: var(--rcf-muted);
-    }
-
-    .rcf_splash_action {
-      width: 44px;
-      height: 44px;
-      border-radius: 50%;
-      border: 1px solid rgba(43,61,96,.08);
-      background:
-        linear-gradient(180deg, rgba(255,255,255,.94), rgba(255,255,255,.72));
-      box-shadow:
-        0 10px 18px rgba(43,61,96,.08),
-        inset 0 1px 0 rgba(255,255,255,.75);
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      color: #7f8798;
-      font-size: 18px;
-    }
-
-    .rcf_splash_tabs {
-      position: relative;
-      z-index: 1;
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 12px;
-    }
-
-    .rcf_splash_tab {
-      min-height: 62px;
-      border-radius: 999px;
-      border: 1px solid rgba(43,61,96,.10);
-      background:
-        linear-gradient(180deg, rgba(255,255,255,.92), rgba(255,255,255,.72));
-      display: flex;
-      align-items: center;
-      justify-content: center;
+    .rcf-index-text {
+      margin: 0;
+      color: rgba(236, 242, 255, .82);
       font-size: 14px;
-      font-weight: 800;
-      color: #384865;
-      box-shadow:
-        0 8px 18px rgba(43,61,96,.06),
-        inset 0 1px 0 rgba(255,255,255,.76);
-      position: relative;
-      overflow: hidden;
+      line-height: 1.5;
     }
 
-    .rcf_splash_tab.is-active {
-      color: #1c3e75;
-      border-color: rgba(74,141,255,.18);
-      background:
-        linear-gradient(180deg, rgba(255,255,255,.96), rgba(228,236,252,.88));
-      box-shadow:
-        0 12px 22px rgba(74,141,255,.10),
-        inset 0 0 0 1px rgba(74,141,255,.10),
-        inset 0 1px 0 rgba(255,255,255,.82);
+    .rcf-index-chips {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 18px;
     }
 
-    .rcf_splash_tab.is-active::after {
-      content: "";
-      position: absolute;
-      left: 20px;
-      right: 20px;
-      bottom: 7px;
-      height: 3px;
-      border-radius: 999px;
-      background: linear-gradient(90deg, rgba(74,141,255,.18), rgba(74,141,255,.88), rgba(255,155,61,.22));
+    .rcf-index-chip {
+      border-radius: 18px;
+      padding: 12px;
+      border: 1px solid rgba(255,255,255,.10);
+      background: rgba(255,255,255,.06);
+      min-height: 62px;
+      box-sizing: border-box;
+    }
+
+    .rcf-index-chip strong {
+      display: block;
+      font-size: 13px;
+      line-height: 1.15;
+      color: #ffffff;
+    }
+
+    .rcf-index-chip span {
+      display: block;
+      margin-top: 4px;
+      font-size: 12px;
+      color: rgba(236, 242, 255, .72);
     }
 
     @media (max-width: 720px) {
-      .rcf_splash_card {
-        padding: 14px;
+      .rcf-index-card {
+        padding: 20px 18px;
         border-radius: 24px;
       }
 
-      .rcf_splash_head {
-        align-items: flex-start;
+      .rcf-index-brand-logo {
+        width: min(100%, 250px);
       }
 
-      .rcf_mark {
-        width: 48px;
-        height: 48px;
-        flex-basis: 48px;
-      }
-
-      .rcf_splash_title {
-        font-size: 26px;
-      }
-
-      .rcf_splash_tabs {
-        grid-template-columns: repeat(4, minmax(120px, 1fr));
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
-        scrollbar-width: none;
-        padding-bottom: 2px;
-      }
-
-      .rcf_splash_tabs::-webkit-scrollbar {
-        display: none;
-      }
-
-      .rcf_splash_tab {
-        min-width: 140px;
-        min-height: 56px;
-      }
-
-      #app::after {
-        bottom: 24vh;
-        width: min(88vw, 520px);
-        height: min(88vw, 520px);
+      .rcf-index-chips {
+        grid-template-columns: 1fr;
       }
     }
   </style>
 
-  <!--
-    BOOT PADRÃO (scripts estáticos com defer)
-    IMPORTANTE: manter módulos de UI desacoplada antes do app.js
-  -->
-
-  <!-- Core / boot safety -->
   <script defer src="./js/core/logger.js"></script>
   <script defer src="./js/core/stability_guard.js"></script>
   <script defer src="./js/core/factory_state.js"></script>
@@ -331,81 +169,74 @@
   <script defer src="./js/core/context_engine.js"></script>
   <script defer src="./js/core/factory_tree.js"></script>
 
-  <!-- Storage + GitHub + VFS + MAE + updates -->
   <script defer src="./js/core/storage.js"></script>
   <script defer src="./js/core/github_sync.js"></script>
   <script defer src="./js/core/vfs_overrides.js"></script>
   <script defer src="./js/core/vfs_shim.js"></script>
   <script defer src="./js/core/mother_selfupdate.js"></script>
 
-  <!-- Errors + UI safety/compact -->
   <script defer src="./js/core/errors.js"></script>
   <script defer src="./js/core/ui_safety.js"></script>
   <script defer src="./js/core/ui_compact_outputs.js"></script>
-
-  <!-- UI bindings + diagnostics + doctor + preview -->
+  <script defer src="./js/core/ui_runtime.js"></script>
   <script defer src="./js/core/ui_bindings.js"></script>
   <script defer src="./js/core/diagnostics.js"></script>
   <script defer src="./js/core/doctor_scan.js"></script>
   <script defer src="./js/core/preview_runner.js"></script>
 
-  <!-- Injector + engine pipeline -->
   <script defer src="./js/core/injector.js"></script>
   <script defer src="./js/engine/template_registry.js"></script>
   <script defer src="./js/engine/module_registry.js"></script>
   <script defer src="./js/engine/builder.js"></script>
   <script defer src="./js/engine/engine.js"></script>
 
-  <!-- Pages links + Admin GH + Admin AI -->
   <script defer src="./js/core/pages_links.js"></script>
   <script defer src="./js/admin.github.js"></script>
   <script defer src="./js/admin.admin_ai.js"></script>
 
-  <!-- UI core desacoplada -->
-  <script defer src="./js/core/ui_runtime.js"></script>
-  <script defer src="./js/core/ui_shell.js"></script>
-  <script defer src="./js/core/ui_state.js"></script>
-  <script defer src="./js/core/ui_router.js"></script>
-  <script defer src="./js/core/ui_events.js"></script>
-
-  <!-- UI visual -->
-  <script defer src="./js/ui/ui_bootstrap.js"></script>
-  <script defer src="./js/ui/ui_views.js"></script>
-
-  <!-- App main -->
   <script defer src="./app.js"></script>
 
-  <!-- Vault / ZIP -->
   <script defer src="./js/core/zip_vault.js"></script>
   <script defer src="./js/core/agent_zip_bridge.js"></script>
 </head>
-
 <body>
   <noscript>Ative o JavaScript para usar a RControl Factory.</noscript>
 
   <div id="app">
-    <div class="rcf_splash" aria-label="RCF carregando">
-      <div class="rcf_splash_card">
-        <div class="rcf_splash_head">
-          <div class="rcf_splash_brand">
-            <div class="rcf_mark" aria-hidden="true">
-              <img src="./assets/factory-icon-master.png" alt="" />
-            </div>
-
-            <div class="rcf_brand">
-              <h1 class="rcf_splash_title">FACTORY</h1>
-              <p class="rcf_splash_subtitle">by RCONTROL</p>
-            </div>
-          </div>
-
-          <div class="rcf_splash_action" aria-hidden="true">⚙</div>
+    <div class="rcf-index-splash" aria-label="Inicializando RControl Factory">
+      <div class="rcf-index-card">
+        <div class="rcf-index-brand">
+          <img
+            src="./assets/icons/app/app-icon.png"
+            alt="RCF"
+            class="rcf-index-brand-mark"
+          />
+          <img
+            src="./assets/branding/header-logo.jpeg"
+            alt="Factory by RCONTROL"
+            class="rcf-index-brand-logo"
+          />
         </div>
 
-        <div class="rcf_splash_tabs" aria-hidden="true">
-          <div class="rcf_splash_tab is-active">Dashboard</div>
-          <div class="rcf_splash_tab">New App</div>
-          <div class="rcf_splash_tab">Editor</div>
-          <div class="rcf_splash_tab">Generator</div>
+        <h1 class="rcf-index-title">Inicializando a Factory</h1>
+        <p class="rcf-index-text">
+          Carregando a interface oficial da RControl Factory com o visual aprovado,
+          módulos internos e boot seguro para Safari, iPhone e PWA.
+        </p>
+
+        <div class="rcf-index-chips" aria-hidden="true">
+          <div class="rcf-index-chip">
+            <strong>Boot / Login</strong>
+            <span>Artwork oficial escura</span>
+          </div>
+          <div class="rcf-index-chip">
+            <strong>Factory UI</strong>
+            <span>Background interno oficial</span>
+          </div>
+          <div class="rcf-index-chip">
+            <strong>Módulos</strong>
+            <span>Assets aprovados da Factory</span>
+          </div>
         </div>
       </div>
     </div>
