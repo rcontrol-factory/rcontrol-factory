@@ -1,15 +1,13 @@
 <!--
-  RControl Factory — INDEX (NORMAL BOOT) vCLEAN-3b
+  RControl Factory — INDEX (NORMAL BOOT) vCLEAN-3c
   ✅ Mantém boot estável
   ✅ Mantém admin.admin_ai.js
   ✅ Mantém doctor_scan.js
-  ✅ Mantém ordem estável dos scripts
   ✅ Mantém #app como root único
-  ✅ Ajusta branding/logo com assets oficiais
+  ✅ Ajusta ordem para nova UI desacoplada
+  ✅ Carrega ui_runtime/ui_shell/ui_state/ui_router/ui_events antes do app.js
+  ✅ Carrega ui_bootstrap/ui_views antes do app.js
   ✅ Patch mínimo seguro para PWA / anti tela branca
-  ✅ Sem SAFE BOOT embutido
-  ✅ Sem loader manual
-  ✅ Sem lógica extra no index
 -->
 
 <!doctype html>
@@ -25,7 +23,7 @@
   <meta name="color-scheme" content="light dark" />
 
   <!-- RCF marker -->
-  <meta name="rcf-index" content="NORMAL_BOOT_2026_03_RCF_CLEAN_3B_BRANDING_SAFE" />
+  <meta name="rcf-index" content="NORMAL_BOOT_2026_03_RCF_CLEAN_3C_UI_DECOUPLED_SAFE" />
 
   <!-- PWA -->
   <base href="./" />
@@ -322,7 +320,7 @@
 
   <!--
     BOOT PADRÃO (scripts estáticos com defer)
-    IMPORTANTE: não mudar ordem sem necessidade.
+    IMPORTANTE: manter módulos de UI desacoplada antes do app.js
   -->
 
   <!-- Core / boot safety -->
@@ -362,6 +360,17 @@
   <script defer src="./js/core/pages_links.js"></script>
   <script defer src="./js/admin.github.js"></script>
   <script defer src="./js/admin.admin_ai.js"></script>
+
+  <!-- UI core desacoplada -->
+  <script defer src="./js/core/ui_runtime.js"></script>
+  <script defer src="./js/core/ui_shell.js"></script>
+  <script defer src="./js/core/ui_state.js"></script>
+  <script defer src="./js/core/ui_router.js"></script>
+  <script defer src="./js/core/ui_events.js"></script>
+
+  <!-- UI visual -->
+  <script defer src="./js/ui/ui_bootstrap.js"></script>
+  <script defer src="./js/ui/ui_views.js"></script>
 
   <!-- App main -->
   <script defer src="./app.js"></script>
