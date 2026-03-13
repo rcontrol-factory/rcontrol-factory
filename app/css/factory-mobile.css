@@ -1,3 +1,179 @@
+/* =========================================================
+   RCONTROL FACTORY
+   FILE: /app/css/factory-mobile.css
+   Mobile / iPhone / PWA adjustments
+   ========================================================= */
+
 :root{
-  --rcf-theme-ready: "0";
+  --rcf-mobile-ready:"1";
+}
+
+/* ---------------------------------------------------------
+   SAFE AREAS (iPhone)
+--------------------------------------------------------- */
+
+body{
+  padding-top:env(safe-area-inset-top);
+  padding-bottom:env(safe-area-inset-bottom);
+}
+
+/* ---------------------------------------------------------
+   GLOBAL MOBILE LAYOUT
+--------------------------------------------------------- */
+
+@media (max-width: 900px){
+
+  #rcfRoot .container{
+    padding-left:12px !important;
+    padding-right:12px !important;
+  }
+
+  #rcfRoot .row{
+    flex-direction:column !important;
+  }
+
+}
+
+/* ---------------------------------------------------------
+   TOPBAR MOBILE
+--------------------------------------------------------- */
+
+@media (max-width: 720px){
+
+  #rcfRoot .topbar{
+    flex-wrap:wrap !important;
+    gap:8px !important;
+  }
+
+  #rcfRoot .brand{
+    width:100%;
+  }
+
+  #rcfRoot .factory-logo-header{
+    height:52px !important;
+  }
+
+}
+
+/* ---------------------------------------------------------
+   CARDS
+--------------------------------------------------------- */
+
+@media (max-width: 720px){
+
+  #rcfRoot .card{
+    padding:12px !important;
+  }
+
+  #rcfRoot .card h1{
+    font-size:22px !important;
+  }
+
+  #rcfRoot .card h2{
+    font-size:17px !important;
+  }
+
+}
+
+/* ---------------------------------------------------------
+   BUTTONS
+--------------------------------------------------------- */
+
+@media (max-width: 720px){
+
+  #rcfRoot .btn{
+    width:100%;
+    justify-content:center;
+  }
+
+}
+
+/* ---------------------------------------------------------
+   INPUTS
+--------------------------------------------------------- */
+
+@media (max-width: 720px){
+
+  #rcfRoot input,
+  #rcfRoot select,
+  #rcfRoot textarea{
+    width:100%;
+  }
+
+}
+
+/* ---------------------------------------------------------
+   LOG BOXES
+--------------------------------------------------------- */
+
+@media (max-width: 720px){
+
+  #rcfRoot #logsBox,
+  #rcfRoot #logsOut,
+  #rcfRoot #logsViewBox{
+    max-height:28vh !important;
+  }
+
+}
+
+/* ---------------------------------------------------------
+   APPS LIST
+--------------------------------------------------------- */
+
+@media (max-width: 720px){
+
+  #appsList .app-item{
+    flex-direction:column;
+    align-items:flex-start;
+  }
+
+  #appsList .app-actions{
+    width:100%;
+  }
+
+}
+
+/* ---------------------------------------------------------
+   FLOAT BUTTON (FAB)
+--------------------------------------------------------- */
+
+@media (max-width: 720px){
+
+  #rcfFab{
+    right:12px !important;
+    bottom:12px !important;
+  }
+
+  #rcfFabPanel{
+    right:12px !important;
+    width:210px !important;
+  }
+
+}
+
+/* ---------------------------------------------------------
+   PREVENT HORIZONTAL SCROLL
+--------------------------------------------------------- */
+
+html,
+body{
+  overflow-x:hidden;
+}
+
+/* ---------------------------------------------------------
+   TOUCH IMPROVEMENTS
+--------------------------------------------------------- */
+
+button,
+.btn{
+  touch-action:manipulation;
+}
+
+/* ---------------------------------------------------------
+   SCROLLING
+--------------------------------------------------------- */
+
+pre,
+textarea{
+  -webkit-overflow-scrolling:touch;
 }
