@@ -8,6 +8,10 @@
 (() => {
   "use strict";
 
+  function qs(sel, root = document) {
+    try { return root.querySelector(sel); } catch { return null; }
+  }
+
   const API = {
     __deps: null,
 
@@ -114,17 +118,23 @@
       const d = this.d;
 
       try {
-        const el = d.$ ? d.$(targetSelector) : null;
+        const el = d.$ ? d.$(targetSelector) : qs(targetSelector);
         if (!el) return false;
 
-        el.innerHTML = this.buildView();
+        const alreadyMounted =
+          el.getAttribute("data-rcf-factory-mounted") === "1" &&
+          qs(".rcfUiFactoryView", el);
+
+        if (!alreadyMounted) {
+          el.innerHTML = this.buildView();
+          el.setAttribute("data-rcf-factory-mounted", "1");
+        }
 
         this.renderDashboard();
         this.renderAppsWidgets();
         this.renderProjects();
         this.refreshChildren();
 
-        el.setAttribute("data-rcf-factory-mounted", "1");
         return true;
       } catch {
         return false;
