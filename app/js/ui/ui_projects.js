@@ -8,6 +8,10 @@
 
   "use strict";
 
+  function qs(sel, root = document){
+    try { return root.querySelector(sel); } catch { return null; }
+  }
+
   const API = {
 
     __deps: null,
@@ -19,6 +23,13 @@
 
     get d(){
       return this.__deps || {};
+    },
+
+    escHtml(v){
+      try{
+        if(this.d.escapeHtml) return this.d.escapeHtml(v);
+      }catch{}
+      return String(v ?? "");
     },
 
     getProjects(){
@@ -75,13 +86,12 @@
 
     buildProjectsList(){
 
-      const d = this.d;
       const cards = window.RCF_UI_CARDS;
       const projects = this.getProjects();
 
       return projects.map(p => {
 
-        if(cards && cards.buildListItem){
+        if(cards && typeof cards.buildListItem === "function"){
 
           return cards.buildListItem({
             title: p.name,
@@ -100,11 +110,11 @@
             <div class="rcfUiListItemBody">
 
               <div class="rcfUiListItemTitle">
-                ${d.escapeHtml ? d.escapeHtml(p.name) : p.name}
+                ${this.escHtml(p.name)}
               </div>
 
               <div class="rcfUiListItemDesc">
-                ${d.escapeHtml ? d.escapeHtml(p.description) : p.description}
+                ${this.escHtml(p.description)}
               </div>
 
             </div>
@@ -211,11 +221,9 @@
 
     render(target){
 
-      const d = this.d;
-
       try{
 
-        const el = d.$ ? d.$(target) : null;
+        const el = this.d.$ ? this.d.$(target) : qs(target);
 
         if(!el) return false;
 
