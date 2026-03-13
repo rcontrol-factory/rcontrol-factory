@@ -9,6 +9,10 @@
 
   "use strict";
 
+  function qs(sel, root = document){
+    try { return root.querySelector(sel); } catch { return null; }
+  }
+
   const API = {
 
     __deps: null,
@@ -20,6 +24,31 @@
 
     get d(){
       return this.__deps || {};
+    },
+
+    escHtml(v){
+      try{
+        if(this.d.escapeHtml) return this.d.escapeHtml(v);
+      }catch{}
+      return String(v ?? "");
+    },
+
+    navTo(view){
+      try{
+        if(window.RCF && typeof window.RCF.setView === "function"){
+          window.RCF.setView(view);
+          return true;
+        }
+      }catch{}
+
+      try{
+        document.dispatchEvent(new CustomEvent("rcf:view", {
+          detail: { view }
+        }));
+        return true;
+      }catch{}
+
+      return false;
     },
 
     getAppsCount(){
@@ -45,14 +74,15 @@
       try{
         const Logger = this.d.Logger;
         const logs = Logger?.getAll ? Logger.getAll() : [];
-        return logs.slice(-Math.max(1, limit)).reverse();
+        return Array.isArray(logs)
+          ? logs.slice(-Math.max(1, limit)).reverse()
+          : [];
       }catch{
         return [];
       }
     },
 
     buildHero(){
-      const d = this.d;
       const activeText = this.getActiveAppLabel();
 
       return `
@@ -65,7 +95,7 @@
             </div>
 
             <div class="status-box">
-              <div class="badge" id="activeAppText">${d.escapeHtml ? d.escapeHtml(activeText) : activeText}</div>
+              <div class="badge" id="activeAppText">${this.escHtml(activeText)}</div>
               <button class="btn small" type="button" data-rcf-dash-action="newapp">Criar App</button>
               <button class="btn small" type="button" data-rcf-dash-action="editor">Abrir Editor</button>
               <button class="btn small ghost" type="button" data-rcf-dash-action="agent">Agent</button>
@@ -105,14 +135,13 @@
     },
 
     buildActivity(){
-      const d = this.d;
       const recent = this.getRecentLogs(
         window.RCF_UI_CONFIG?.get?.("dashboard.activityLimit", 4) ?? 4
       );
 
       const body = !recent.length
         ? `<div class="hint">Aguardando atividade...</div>`
-        : recent.map(line => `<div class="rcfActivityItem">${d.escapeHtml ? d.escapeHtml(String(line)) : String(line)}</div>`).join("");
+        : recent.map(line => `<div class="rcfActivityItem">${this.escHtml(String(line))}</div>`).join("");
 
       return `
         <div class="rcfDashPanel" data-rcf-ui-dashboard-activity="1">
@@ -175,9 +204,9 @@
 
           btn.addEventListener("click", () => {
             const act = btn.getAttribute("data-rcf-dash-action");
-            if(act === "newapp") window.RCF?.setView?.("newapp");
-            else if(act === "editor") window.RCF?.setView?.("editor");
-            else if(act === "agent") window.RCF?.setView?.("agent");
+            if(act === "newapp") this.navTo("newapp");
+            else if(act === "editor") this.navTo("editor");
+            else if(act === "agent") this.navTo("agent");
           }, { passive: true });
         });
       }catch{}
@@ -209,10 +238,8 @@
     },
 
     render(target){
-      const d = this.d;
-
       try{
-        const el = d.$ ? d.$(target) : null;
+        const el = this.d.$ ? this.d.$(target) : qs(target);
         if(!el) return false;
 
         el.innerHTML = this.buildView();
@@ -236,7 +263,6 @@
       try{
         this.refreshNumbers(document);
 
-        const Logger = this.d.Logger;
         const box = document.querySelector("#dashActivityList");
         if(box){
           const recent = this.getRecentLogs(
@@ -245,7 +271,7 @@
 
           box.innerHTML = !recent.length
             ? `<div class="hint">Aguardando atividade...</div>`
-            : recent.map(line => `<div class="rcfActivityItem">${this.d.escapeHtml ? this.d.escapeHtml(String(line)) : String(line)}</div>`).join("");
+            : recent.map(line => `<div class="rcfActivityItem">${this.escHtml(String(line))}</div>`).join("");
         }
 
         try{
