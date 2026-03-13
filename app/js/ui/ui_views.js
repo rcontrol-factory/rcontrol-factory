@@ -35,7 +35,7 @@
   }
 
   function hasNewFactoryMounted() {
-    return !!qs("#rcfFactoryUiRoot [data-rcf-ui='factory-view'], #rcfFactoryUiRoot .rcfUiFactoryView");
+    return !!qs("#rcfFactoryUiRoot, #rcfRoot .rcfMobileModules, #rcfRoot .rcfBottomNav");
   }
 
   function makeMenuCard(iconClass, title, subtitle, view) {
@@ -68,13 +68,49 @@
     `;
   }
 
+  function navTo(view) {
+    try {
+      if (window.RCF && typeof window.RCF.setView === "function") {
+        window.RCF.setView(view);
+        return true;
+      }
+    } catch {}
+
+    try {
+      document.dispatchEvent(new CustomEvent("rcf:view", { detail: { view } }));
+      return true;
+    } catch {}
+
+    return false;
+  }
+
   function bindNavCards(host) {
     qsa("[data-rcf-nav-view]", host).forEach(btn => {
       if (btn.__rcf_nav_bound__) return;
       btn.__rcf_nav_bound__ = true;
 
       btn.addEventListener("click", () => {
-        try { window.RCF?.setView?.(btn.getAttribute("data-rcf-nav-view")); } catch {}
+        navTo(btn.getAttribute("data-rcf-nav-view"));
+      }, { passive: true });
+    });
+  }
+
+  function bindShellMobileCards(root = document) {
+    qsa(".rcfMobileModuleCard[data-view]", root).forEach(btn => {
+      if (btn.__rcf_mobile_nav_bound__) return;
+      btn.__rcf_mobile_nav_bound__ = true;
+
+      btn.addEventListener("click", () => {
+        navTo(btn.getAttribute("data-view"));
+      }, { passive: true });
+    });
+
+    qsa(".rcfBottomNav .tab[data-view]", root).forEach(btn => {
+      if (btn.__rcf_bottom_nav_bound__) return;
+      btn.__rcf_bottom_nav_bound__ = true;
+
+      btn.addEventListener("click", () => {
+        navTo(btn.getAttribute("data-view"));
       }, { passive: true });
     });
   }
@@ -83,9 +119,9 @@
     const host = qs("#appsList");
     if (!host) return false;
 
-    // se a Factory nova já montou, não força o fallback antigo
     if (hasNewFactoryMounted()) {
       host.setAttribute("data-rcf-ui-enhanced", "factory-view");
+      bindShellMobileCards(document);
       return true;
     }
 
@@ -94,7 +130,6 @@
       return true;
     }
 
-    // se runtime novo souber renderizar lista real, não sobrescreve
     try {
       const rt = window.RCF_UI_RUNTIME;
       if (rt && typeof rt.renderAppsList === "function") {
@@ -121,9 +156,7 @@
     const view = qs("#view-agent");
     if (!view) return false;
 
-    // se a nova Factory view estiver ativa no dashboard, não precisamos poluir outras views
     if (hasNewFactoryMounted()) return true;
-
     if (qs('[data-rcf-ui-agent-block="1"]', view)) return true;
 
     const ref = qs("#agentOut", view);
@@ -155,9 +188,7 @@
     const view = qs("#view-editor");
     if (!view) return false;
 
-    // se a nova Factory view está montada, evita duplicar painel visual antigo
     if (hasNewFactoryMounted()) return true;
-
     if (qs('[data-rcf-ui-projects-block="1"]', view)) return true;
 
     const ref = qs("#editorOut", view);
@@ -252,14 +283,13 @@ startFactoryDeploy();</pre>
 
     mount() {
       try {
-        // nova arquitetura primeiro
         if (hasNewFactoryMounted()) {
+          bindShellMobileCards(document);
           syncProjectsWithCodePanel();
           this.__mounted = true;
           return true;
         }
 
-        // fallbacks antigos
         ensureDashboardCardsFallback();
         ensureAgentCardsFallback();
         ensureProjectsPanelFallback();
