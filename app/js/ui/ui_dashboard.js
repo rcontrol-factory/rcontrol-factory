@@ -6,6 +6,8 @@
    - Não restaura card aberto antigo
    - Coloca todos os módulos em cards verticais
    - Mantém Generator separado de Opportunity Scan
+   - Separa Factory AI de RCF Factory
+   - RCF Factory vira card especial de Tools / Doctor / Core
    - Compatível com Safari / iPhone / PWA
 */
 (() => {
@@ -108,6 +110,76 @@
           return true;
         }
       } catch {}
+      return false;
+    },
+
+    _openTools() {
+      try {
+        if (this._ctx && typeof this._ctx.openTools === "function") {
+          this._ctx.openTools(true);
+          return true;
+        }
+      } catch {}
+      try {
+        if (window.RCF_UI_RUNTIME && typeof window.RCF_UI_RUNTIME.openTools === "function") {
+          window.RCF_UI_RUNTIME.openTools(true);
+          return true;
+        }
+      } catch {}
+      try {
+        if (window.RCF_UI_ROUTER && typeof window.RCF_UI_ROUTER.openTools === "function") {
+          window.RCF_UI_ROUTER.openTools(true, { root: document });
+          return true;
+        }
+      } catch {}
+      try {
+        const drawer = document.querySelector("#toolsDrawer");
+        if (drawer) {
+          drawer.classList.add("open");
+          drawer.hidden = false;
+          drawer.style.display = "";
+          return true;
+        }
+      } catch {}
+      return false;
+    },
+
+    _runDoctor() {
+      try {
+        if (window.RCF_DOCTOR && typeof window.RCF_DOCTOR.run === "function") {
+          window.RCF_DOCTOR.run();
+          return true;
+        }
+      } catch {}
+      try {
+        document.dispatchEvent(new CustomEvent("RCF:DOCTOR", { detail: { source: "ui_dashboard" } }));
+        return true;
+      } catch {}
+      return false;
+    },
+
+    _openFactoryCore() {
+      try {
+        document.dispatchEvent(new CustomEvent("rcf:factory-core", {
+          detail: { source: "ui_dashboard", target: "factory-core" }
+        }));
+      } catch {}
+      try {
+        document.dispatchEvent(new CustomEvent("RCF:FACTORY_CORE", {
+          detail: { source: "ui_dashboard", target: "factory-core" }
+        }));
+      } catch {}
+      return this._setView("admin");
+    },
+
+    _handleAction(action) {
+      const act = String(action || "").trim().toLowerCase();
+      if (!act) return false;
+
+      if (act === "open-tools") return this._openTools();
+      if (act === "open-doctor") return this._runDoctor();
+      if (act === "open-factory-core") return this._openFactoryCore();
+
       return false;
     },
 
@@ -593,8 +665,8 @@
           <div class="rcfDashBrand">
             <img
               class="rcfDashBrandLogo"
-              src="./assets/icons/app/app-icon.png"
-              alt="RCF"
+              src="./assets/factory-header-logo.png"
+              alt="RCF Factory"
               onerror="this.style.display='none'; this.nextElementSibling.style.display='inline-flex';"
             />
             <span class="rcfDashBrandFallback" style="display:none;">RCF</span>
@@ -666,8 +738,7 @@
           body: "Camada operacional do agente principal para fluxo assistido e ações dentro da Factory.",
           chips: ["Agent", "Execução", "CLI"],
           actions: [
-            { label: "Abrir Agent", view: "agent", kind: "primary" },
-            { label: "Abrir Agent IA", view: "agent-ia", kind: "ghost" }
+            { label: "Abrir Agent", view: "agent", kind: "primary" }
           ]
         },
         {
@@ -706,8 +777,7 @@
           body: "Camada reservada para a IA da própria Factory, separada de Admin e de Agent.",
           chips: ["Core", "IA", "Supervisão"],
           actions: [
-            { label: "Abrir Factory AI", view: "factory-ai", kind: "primary" },
-            { label: "Abrir Admin", view: "admin", kind: "ghost" }
+            { label: "Abrir Factory AI", view: "factory-ai", kind: "primary" }
           ]
         },
         {
@@ -808,11 +878,12 @@
           iconFallback: "🏗️",
           kicker: "Factory",
           title: "RCF Factory",
-          sub: "Card central especial da Factory",
-          body: "Área especial reservada ao núcleo central da RControl Factory e sua organização estrutural.",
-          chips: ["Factory", "Especial", "Central"],
+          sub: "Core, tools e manutenção especial",
+          body: "Card especial do núcleo da Factory. Aqui ficam os acessos de ferramentas, doctor e manutenção central, sem misturar com Factory AI.",
+          chips: ["Factory", "Core", "Doctor"],
           actions: [
-            { label: "Abrir Factory AI", view: "factory-ai", kind: "primary" },
+            { label: "Abrir Tools", action: "open-tools", kind: "primary" },
+            { label: "Abrir Doctor", action: "open-doctor", kind: "ghost" },
             { label: "Abrir Admin", view: "admin", kind: "ghost" }
           ]
         }
@@ -843,7 +914,7 @@
 
     render() {
       const view = document.querySelector(this._viewSel);
-      const grid = view && view.querySelector(this._gridSel);
+      const grid = view && view.querySelector("#rcfDashboardCards");
       if (!view || !grid) return false;
 
       const cards = this._cards();
@@ -889,8 +960,9 @@
                   <button
                     class="rcfDashActionBtn ${this._escAttr(action.kind || "ghost")}"
                     type="button"
-                    data-rcf-open-view="${this._escAttr(action.view || "")}"
+                    ${action.view ? `data-rcf-open-view="${this._escAttr(action.view)}"` : ""}
                     ${action.action ? `data-rcf-action="${this._escAttr(action.action)}"` : ""}
+                    ${action.appSlug ? `data-rcf-app-slug="${this._escAttr(action.appSlug)}"` : ""}
                   >${this._esc(action.label || "Abrir")}</button>
                 `).join("")}
               </div>
@@ -912,6 +984,14 @@
           ev.preventDefault();
           const id = String(toggle.getAttribute("data-rcf-toggle-card") || "").trim();
           this.toggleCard(id);
+          return;
+        }
+
+        const actionBtn = ev.target && ev.target.closest ? ev.target.closest("[data-rcf-action]") : null;
+        if (actionBtn) {
+          ev.preventDefault();
+          const action = String(actionBtn.getAttribute("data-rcf-action") || "").trim();
+          this._handleAction(action);
           return;
         }
 
@@ -944,7 +1024,7 @@
 
       this._expanded = (this._expanded === next) ? null : next;
 
-      const grid = document.querySelector(this._gridSel);
+      const grid = document.querySelector("#rcfDashboardCards");
       if (!grid) return false;
 
       grid.querySelectorAll(".rcfDashCard").forEach(card => {
