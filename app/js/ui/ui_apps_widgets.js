@@ -2,11 +2,10 @@
    RControl Factory — Apps & Widgets Module
    PATCH MÍNIMO:
    - mantém somente Apps & Widgets
+   - remove Factory AI deste módulo
    - remove APIs & Gateways deste módulo
-   - separa Factory AI de Agent
-   - adiciona navegação via data-view quando aplicável
    - preserva estrutura estável
-   - FIX: Factory AI usa fallback seguro para admin se view factory não existir
+   - mantém navegação via data-view
 */
 
 (() => {
@@ -42,56 +41,6 @@
       return String(v ?? "");
     },
 
-    hasView(view) {
-      const v = String(view || "").trim();
-      if (!v) return false;
-
-      const tries = [
-        `#view-${v}`,
-        `[data-rcf-view="${v}"]`,
-        `[data-view="${v}"]`
-      ];
-
-      for (const sel of tries) {
-        if (qs(sel)) return true;
-      }
-
-      return false;
-    },
-
-    resolveView(item) {
-      const raw = String(item?.view || "").trim();
-      if (!raw) return "";
-
-      if (raw === "factory") {
-        if (this.hasView("factory")) return "factory";
-        return "admin";
-      }
-
-      return raw;
-    },
-
-    goToView(view) {
-      const target = String(view || "").trim();
-      if (!target) return false;
-
-      try {
-        if (window.RCF && typeof window.RCF.setView === "function") {
-          window.RCF.setView(target);
-          return true;
-        }
-      } catch {}
-
-      try {
-        document.dispatchEvent(new CustomEvent("rcf:view", {
-          detail: { view: target }
-        }));
-        return true;
-      } catch {}
-
-      return false;
-    },
-
     getItems() {
       return [
         {
@@ -100,13 +49,6 @@
           description: "Biblioteca interna de apps",
           icon: "◈",
           view: "newapp"
-        },
-        {
-          key: "factory_ai",
-          title: "Factory AI",
-          description: "IA da Factory e automação do núcleo",
-          icon: "✦",
-          view: "factory"
         },
         {
           key: "site_builder",
@@ -122,16 +64,14 @@
       const cards = window.RCF_UI_CARDS;
 
       return items.map(item => {
-        const resolvedView = this.resolveView(item);
-
         if (cards && typeof cards.buildListItem === "function") {
           return cards.buildListItem({
             title: item.title,
             description: item.description,
             icon: item.icon,
             className: item.key ? `rcfItem-${item.key}` : "",
-            actionAttr: resolvedView ? `data-view="${this.escAttr(resolvedView)}"` : "",
-            actionLabel: resolvedView ? "Abrir" : ""
+            actionAttr: item.view ? `data-view="${this.escAttr(item.view)}"` : "",
+            actionLabel: item.view ? "Abrir" : ""
           });
         }
 
@@ -146,8 +86,8 @@
 
             <div class="rcfUiListItemActions">
               ${
-                resolvedView
-                  ? `<button class="btn small ghost" type="button" data-view="${this.escAttr(resolvedView)}">Abrir</button>`
+                item.view
+                  ? `<button class="btn small ghost" type="button" data-view="${this.escAttr(item.view)}">Abrir</button>`
                   : `<span class="rcfUiCardArrow" aria-hidden="true">›</span>`
               }
             </div>
@@ -184,6 +124,7 @@
         const cards = window.RCF_UI_CARDS;
         if (cards && typeof cards.bindNav === "function") {
           cards.bindNav(host);
+          return true;
         }
       } catch {}
 
@@ -196,7 +137,7 @@
           node.addEventListener("click", () => {
             const view = node.getAttribute("data-view");
             if (!view) return;
-            this.goToView(view);
+            try { window.RCF?.setView?.(view); } catch {}
           }, { passive: true });
         });
 
@@ -228,7 +169,6 @@
       try {
         const section = document.querySelector('[data-rcf-ui="apps-widgets"]');
         if (!section) return false;
-
         this.bindNav(section);
         return true;
       } catch {
