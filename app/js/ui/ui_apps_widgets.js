@@ -3,8 +3,9 @@
    PATCH MÍNIMO:
    - mantém somente Apps & Widgets
    - remove APIs & Gateways deste módulo
-   - troca "Chat IA" por "Factory AI"
+   - separa Factory AI de Agent
    - adiciona navegação via data-view quando aplicável
+   - preserva estrutura estável
 */
 
 (() => {
@@ -52,9 +53,9 @@
         {
           key: "factory_ai",
           title: "Factory AI",
-          description: "IA da Factory e automação",
+          description: "IA da Factory e automação do núcleo",
           icon: "✦",
-          view: "agent"
+          view: "factory"
         },
         {
           key: "site_builder",
