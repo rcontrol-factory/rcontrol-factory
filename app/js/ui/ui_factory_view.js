@@ -1,8 +1,10 @@
 /* FILE: /app/js/ui/ui_factory_view.js
    RControl Factory — Factory View Module
-   - Composição principal da Factory UI
-   - Agora monta dashboard, apps/widgets e projects reais
-   - Mantém fallback seguro
+   PATCH MÍNIMO:
+   - remove Dashboard da composição da Factory
+   - mantém Factory focada em módulos/sistema/integrações/projetos
+   - preserva fallback seguro
+   - evita duplicação visual da Home dentro da Factory
 */
 
 (() => {
@@ -24,26 +26,14 @@
       return this.__deps || {};
     },
 
-    buildDashboardSlot() {
-      const cfg = window.RCF_UI_CONFIG;
-      const title = cfg?.get?.("sections.dashboard.title", "Dashboard") ?? "Dashboard";
-      const subtitle = cfg?.get?.("sections.dashboard.subtitle", "Visão principal da Factory") ?? "Visão principal da Factory";
-
-      return `
-        <section class="rcfUiFactoryBlock" data-rcf-factory-block="dashboard">
-          <div class="rcfUiFactoryBlockHead">
-            <h2>${title}</h2>
-            <p class="hint">${subtitle}</p>
-          </div>
-          <div id="rcfFactoryDashboardSlot"></div>
-        </section>
-      `;
-    },
-
     buildAppsWidgetsSlot() {
       const cfg = window.RCF_UI_CONFIG;
-      const title = cfg?.get?.("sections.appsWidgets.title", "Apps & Widgets") ?? "Apps & Widgets";
-      const subtitle = cfg?.get?.("sections.appsWidgets.subtitle", "Módulos e integrações da Factory") ?? "Módulos e integrações da Factory";
+      const title =
+        cfg?.get?.("sections.appsWidgets.title", "Apps & Widgets") ??
+        "Apps & Widgets";
+      const subtitle =
+        cfg?.get?.("sections.appsWidgets.subtitle", "Módulos e integrações da Factory") ??
+        "Módulos e integrações da Factory";
 
       return `
         <section class="rcfUiFactoryBlock" data-rcf-factory-block="apps-widgets">
@@ -56,10 +46,34 @@
       `;
     },
 
+    buildGatewaysSlot() {
+      const cfg = window.RCF_UI_CONFIG;
+      const title =
+        cfg?.get?.("sections.gateways.title", "APIs & Gateways") ??
+        "APIs & Gateways";
+      const subtitle =
+        cfg?.get?.("sections.gateways.subtitle", "Conexões, mensagens e integrações") ??
+        "Conexões, mensagens e integrações";
+
+      return `
+        <section class="rcfUiFactoryBlock" data-rcf-factory-block="gateways">
+          <div class="rcfUiFactoryBlockHead">
+            <h2>${title}</h2>
+            <p class="hint">${subtitle}</p>
+          </div>
+          <div id="rcfFactoryGatewaysSlot"></div>
+        </section>
+      `;
+    },
+
     buildProjectsSlot() {
       const cfg = window.RCF_UI_CONFIG;
-      const title = cfg?.get?.("sections.projects.title", "Projects") ?? "Projects";
-      const subtitle = cfg?.get?.("sections.projects.subtitle", "Projetos, código e deploy") ?? "Projetos, código e deploy";
+      const title =
+        cfg?.get?.("sections.projects.title", "Projects") ??
+        "Projects";
+      const subtitle =
+        cfg?.get?.("sections.projects.subtitle", "Projetos, código e deploy") ??
+        "Projetos, código e deploy";
 
       return `
         <section class="rcfUiFactoryBlock" data-rcf-factory-block="projects">
@@ -72,23 +86,40 @@
       `;
     },
 
-    buildView() {
+    buildFallbackGateways() {
       return `
-        <div class="rcfUiFactoryView" data-rcf-ui="factory-view">
-          ${this.buildDashboardSlot()}
-          ${this.buildAppsWidgetsSlot()}
-          ${this.buildProjectsSlot()}
+        <div class="rcfDashPanel rcfDashPanelWide" data-rcf-ui-factory-fallback="gateways">
+          <h3>APIs & Gateways</h3>
+          <p class="hint">Conexões, mensagens e integrações</p>
+
+          <div class="rcfActivityList">
+            <div class="rcfActivityItem">
+              <strong>Mensagens</strong><br>
+              Mensageria e eventos
+            </div>
+
+            <div class="rcfActivityItem">
+              <strong>Webhooks</strong><br>
+              Integrações e disparos
+            </div>
+
+            <div class="rcfActivityItem">
+              <strong>Gateway</strong><br>
+              Conector modular da Factory
+            </div>
+          </div>
         </div>
       `;
     },
 
-    renderDashboard() {
-      try {
-        if (window.RCF_UI_DASHBOARD?.render) {
-          return !!window.RCF_UI_DASHBOARD.render("#rcfFactoryDashboardSlot");
-        }
-      } catch {}
-      return false;
+    buildView() {
+      return `
+        <div class="rcfUiFactoryView" data-rcf-ui="factory-view">
+          ${this.buildAppsWidgetsSlot()}
+          ${this.buildGatewaysSlot()}
+          ${this.buildProjectsSlot()}
+        </div>
+      `;
     },
 
     renderAppsWidgets() {
@@ -98,6 +129,22 @@
         }
       } catch {}
       return false;
+    },
+
+    renderGateways() {
+      try {
+        const slot = qs("#rcfFactoryGatewaysSlot");
+        if (!slot) return false;
+
+        if (window.RCF_UI_GATEWAYS?.render) {
+          return !!window.RCF_UI_GATEWAYS.render("#rcfFactoryGatewaysSlot");
+        }
+
+        slot.innerHTML = this.buildFallbackGateways();
+        return true;
+      } catch {
+        return false;
+      }
     },
 
     renderProjects() {
@@ -110,7 +157,8 @@
     },
 
     refreshChildren() {
-      try { window.RCF_UI_DASHBOARD?.refresh?.(); } catch {}
+      try { window.RCF_UI_APPS_WIDGETS?.refresh?.(); } catch {}
+      try { window.RCF_UI_PROJECTS?.refresh?.(); } catch {}
       return true;
     },
 
@@ -130,11 +178,23 @@
           el.setAttribute("data-rcf-factory-mounted", "1");
         }
 
-        this.renderDashboard();
         this.renderAppsWidgets();
+        this.renderGateways();
         this.renderProjects();
         this.refreshChildren();
 
+        return true;
+      } catch {
+        return false;
+      }
+    },
+
+    refresh() {
+      try {
+        this.renderAppsWidgets();
+        this.renderGateways();
+        this.renderProjects();
+        this.refreshChildren();
         return true;
       } catch {
         return false;
@@ -145,4 +205,5 @@
   try {
     window.RCF_UI_FACTORY_VIEW = API;
   } catch {}
+
 })();
