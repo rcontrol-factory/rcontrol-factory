@@ -6,6 +6,7 @@
    - Não quebra fluxo antigo
    - PATCH: corrige mapeamento dos cards principais
    - PATCH: separa Admin de Factory AI
+   - PATCH: evita sobrescrever #appsList do dashboard novo
 */
 (() => {
   "use strict";
@@ -37,7 +38,13 @@
   }
 
   function hasNewFactoryMounted() {
-    return !!qs("#rcfFactoryUiRoot, #rcfRoot .rcfMobileModules, #rcfRoot .rcfBottomNav");
+    return !!qs(
+      "#rcfFactoryUiRoot, #rcfRoot .rcfMobileModules, #rcfRoot .rcfBottomNav, [data-rcf-ui-dashboard-root='1'], [data-rcf-ui-factory-root='1']"
+    );
+  }
+
+  function hasDashboardSafeMounted() {
+    return !!qs('[data-rcf-ui-dashboard-root="1"], #view-dashboard [data-rcf-ui="dashboard-section"]');
   }
 
   function makeMenuCard(iconClass, title, subtitle, view, extraAttrs = "") {
@@ -96,14 +103,14 @@
 
       try {
         if (window.RCF && typeof window.RCF.setView === "function") {
-          window.RCF.setView("agent");
+          window.RCF.setView("admin");
           return true;
         }
       } catch {}
 
       try {
         document.dispatchEvent(new CustomEvent("rcf:view", {
-          detail: { view: "agent", source: "factoryai-fallback" }
+          detail: { view: "admin", source: "factoryai-fallback" }
         }));
         return true;
       } catch {}
@@ -170,26 +177,38 @@
   }
 
   function ensureDashboardCardsFallback() {
-    const host = qs("#appsList");
-    if (!host) return false;
-
-    if (hasNewFactoryMounted()) {
-      host.setAttribute("data-rcf-ui-enhanced", "factory-view");
+    if (hasNewFactoryMounted() || hasDashboardSafeMounted()) {
       bindShellMobileCards(document);
       return true;
+    }
+
+    const view = qs("#view-dashboard");
+    if (!view) return false;
+
+    let host = qs('[data-rcf-ui-dashboard-fallback-menu="1"]', view);
+
+    if (!host) {
+      const appsList = qs("#appsList", view);
+
+      if (appsList && appsList.closest('[data-rcf-ui="dashboard-section"]')) {
+        return true;
+      }
+
+      host = document.createElement("div");
+      host.setAttribute("data-rcf-ui-dashboard-fallback-menu", "1");
+      host.className = "rcfUiDashboardFallbackMenu";
+
+      if (appsList && appsList.parentNode) {
+        appsList.parentNode.insertBefore(host, appsList);
+      } else {
+        view.appendChild(host);
+      }
     }
 
     if (host.getAttribute("data-rcf-ui-enhanced") === "1") {
       bindNavCards(host);
       return true;
     }
-
-    try {
-      const rt = window.RCF_UI_RUNTIME;
-      if (rt && typeof rt.renderAppsList === "function") {
-        rt.renderAppsList();
-      }
-    } catch {}
 
     host.innerHTML = buildDashboardCards();
     host.setAttribute("data-rcf-ui-enhanced", "1");
