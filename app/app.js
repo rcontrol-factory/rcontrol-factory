@@ -1,24 +1,19 @@
 /* FILE: app/app.js
-   RControl Factory - /app/app.js - V8.0.5 PADRAO (Lean shell/router/events prep)
-   - Arquivo completo (1 peca) pra copiar/colar
-   - FIX: Apps list layout
-   - ADD: Dashboard -> botao APAGAR app
-   - FIX: Preview preso -> teardownPreviewHard()
-   - FIX: Evitar duplo bind do Generator
-   - ADD: bridge loader para ui_state / ui_router / ui_events
-   - ADD: aliases/contexto para Factory IA supervisionada
-   - Mantem: boot lock, stability, UI_READY bus
+   RControl Factory - /app/app.js - FINAL ORCHESTRATOR PATCH
+   - Patch mínimo e cirúrgico em cima da base V8.x
+   - app.js como ORQUESTRADOR LEVE REAL
+   - preserva boot/state/logger/agent/injector/diagnostics/SW/VFS
+   - fortalece fallback shell mínimo seguro
+   - reforça setView anti-empilhamento
+   - prioriza módulos oficiais aprovados
 */
 (() => {
   "use strict";
 
-  // BUILD SIGNATURE (cache-bust verification)
-  try { console.info("[RCF] /app/app.js BUILD=V8.0.5_LEAN_SHELL_ROUTER_EVENTS"); } catch {}
+  try { console.info("[RCF] /app/app.js BUILD=FINAL_ORCHESTRATOR_PATCH"); } catch {}
 
   // =========================================================
-  // GLOBAL LOG ALIAS (compat) — evita: "Can't find variable: log"
-  // - Alguns módulos antigos chamam log(...) direto.
-  // - Aqui garantimos `log` no escopo e `window.log` sem depender do Logger ainda.
+  // GLOBAL LOG ALIAS (compat)
   // =========================================================
   const log = (...args) => {
     try {
@@ -34,31 +29,25 @@
   };
   try { if (!window.log) window.log = log; } catch {}
 
-
   // =========================================================
-  // BOOT LOCK (evita double init) — SAFE (permite retry se falhar)
+  // BOOT LOCK (safe retry)
   // =========================================================
   const __BOOT_KEY = "__RCF_BOOT_STATE__";
   try {
     const st = window[__BOOT_KEY] || {};
     const now = Date.now();
 
-    // já bootou com sucesso
     if (st.booted === true) return;
-
-    // já está bootando (segura duplo load em sequência)
     if (st.booting === true && (now - (st.ts || 0)) < 8000) return;
 
-    window[__BOOT_KEY] = { booting: true, booted: false, ts: now, ver: "v8" };
+    window[__BOOT_KEY] = { booting: true, booted: false, ts: now, ver: "final-orchestrator" };
   } catch {
-    // fallback compat (não trava)
     if (window.__RCF_BOOTED__) return;
     window.__RCF_BOOTED__ = true;
   }
 
   // =========================================================
-  // BOOT WATCHDOG (anti "carregando pra sempre")
-  // - Se a UI não montar em poucos segundos, abre tela controlada com instruções
+  // BOOT WATCHDOG
   // =========================================================
   try {
     setTimeout(() => {
@@ -66,14 +55,15 @@
         if (document.getElementById("rcfRoot")) return;
         const msg = [
           "UI não montou (rcfRoot ausente).",
-          "Provável causa: index.html sem <div id=\"app\">, ou SW/cache preso, ou erro antes do render.",
+          "Provável causa: shell oficial não montou e fallback não entrou, ou erro antes do render.",
           "",
           "Ação rápida:",
           "1) Tools -> Unregister SW",
           "2) Tools -> Clear SW Cache",
           "3) Recarregar"
         ].join("\n");
-        try { Logger.write("boot watchdog:", msg); } catch {}      } catch {}
+        try { Logger.write("boot watchdog:", msg); } catch {}
+      } catch {}
     }, 6500);
   } catch {}
 
@@ -102,7 +92,7 @@
   const textContentSafe = (el, txt) => { try { el.textContent = txt; } catch {} };
 
   // =========================================================
-  // RCF_UI REGISTRY (slots + actions; não quebra se faltar algo)
+  // RCF_UI REGISTRY
   // =========================================================
   function installRCFUIRegistry() {
     try {
@@ -111,27 +101,22 @@
         version: "v1",
         _lastRefreshAt: 0,
         slots: {
-          // Admin (já existia)
           "admin.top": "#rcfAdminSlotTop",
           "admin.integrations": "#rcfAdminSlotIntegrations",
           "admin.logs": "#rcfAdminSlotLogs",
           "admin.injector": "#admin-injector",
-
-          // Tools / views
           "tools.drawer": "#toolsDrawer",
           "logs.view": "#view-logs",
           "admin.view": "#view-admin",
-
-          // NEW: Agent / Generator / Settings (para módulos plugar botões sem caçar)
           "agent.actions": "#rcfAgentSlotActions",
           "agent.tools": "#rcfAgentSlotTools",
           "generator.actions": "#rcfGenSlotActions",
           "generator.tools": "#rcfGenSlotTools",
           "settings.security.actions": "#rcfSettingsSecurityActions",
-
-          // Status
-          "status.text": "#statusText",       // source of truth (drawer)
-          "status.text.top": "#statusTextTop" // opcional (topbar)
+          "status.text": "#statusText",
+          "status.text.top": "#statusTextTop",
+          "apps.list": "#appsList",
+          "files.list": "#filesList"
         },
         refresh() {
           try { this._lastRefreshAt = Date.now(); } catch {}
@@ -142,7 +127,6 @@
             const key = String(name || "").trim();
             if (!key) return null;
 
-            // Fonte de verdade: data-rcf-slot
             const esc = (window.CSS && window.CSS.escape) ? window.CSS.escape(key) : key;
             const bySlot = document.querySelector(`[data-rcf-slot="${esc}"]`);
             if (bySlot) return bySlot;
@@ -201,23 +185,20 @@
   }
 
   // =========================================================
-  // UI READY BUS (permite módulos que carregaram antes reinjetarem)
+  // UI READY BUS
   // =========================================================
   function notifyUIReady() {
-    // ✅ 1x only
     try {
       if (window.__RCF_UI_READY__ === true) return;
       window.__RCF_UI_READY__ = true;
     } catch {}
 
-    // evento padrão
     try {
       window.dispatchEvent(new CustomEvent("RCF:UI_READY", {
         detail: { ts: Date.now() }
       }));
     } catch {}
 
-    // hooks de compat (não quebra se não existir)
     const tries = [
       ["RCF_ZIP_VAULT", "mountUI"],
       ["RCF_ZIP_VAULT", "mount"],
@@ -245,7 +226,7 @@
   }
 
   // =========================================================
-  // STATUS MANAGER (auto-clear, anti "grudar")
+  // STATUS MANAGER
   // =========================================================
   const Status = (() => {
     let tmr = null;
@@ -258,11 +239,9 @@
 
     function _syncBoth(txt) {
       try {
-        // source-of-truth (drawer)
         const el = document.querySelector("#statusText");
         _setText(el, txt);
 
-        // mirror (topbar)
         const elTop = document.querySelector("#statusTextTop");
         _setText(elTop, txt);
       } catch {}
@@ -300,7 +279,7 @@
   function sleep(ms) { return new Promise(res => setTimeout(res, ms)); }
 
   // =========================================================
-  // CORE: Storage
+  // STORAGE
   // =========================================================
   const Storage = {
     prefix: "rcf:",
@@ -331,7 +310,7 @@
   };
 
   // =========================================================
-  // CORE: Logger
+  // LOGGER
   // =========================================================
   const Logger = {
     bufKey: "logs",
@@ -345,7 +324,6 @@
       if (boxLogsOut) boxLogsOut.textContent = txt;
       const boxView = $("#logsViewBox");
       if (boxView) boxView.textContent = txt;
-
       const injLog = $("#injLog");
       if (injLog) injLog.textContent = txt.slice(-8000);
     },
@@ -369,7 +347,6 @@
     getAll() { return Storage.get(this.bufKey, []); }
   };
 
-  // Globais compatíveis
   window.RCF_LOGGER = window.RCF_LOGGER || {
     push(level, msg) { Logger.write(String(level || "log") + ":", msg); },
     clear() { Logger.clear(); },
@@ -377,11 +354,6 @@
     dump() { return Logger.getAll().join("\n"); }
   };
 
-
-  // =========================================================
-  // COMPAT: global `log()` helper (alguns módulos antigos chamam log(...))
-  // - evita: "Can't find variable: log"
-  // =========================================================
   try {
     if (typeof window.log !== "function") {
       window.log = (...a) => {
@@ -392,7 +364,7 @@
   } catch {}
 
   // =========================================================
-  // CORE: Stability (anti tela branca)
+  // STABILITY
   // =========================================================
   const Stability = (() => {
     let installed = false;
@@ -425,7 +397,7 @@
               </div>
               <pre style="white-space:pre-wrap;word-break:break-word;padding:12px;border-radius:10px;background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.12);max-height:45vh;overflow:auto">${escapeHtml(String(details || ""))}</pre>
               <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
-                <button id="rcfReloadBtn" style="padding:10px 14px;border-radius:10px;border:0;background:#2dd4bf;color:#022; font-weight:800">Recarregar</button>
+                <button id="rcfReloadBtn" style="padding:10px 14px;border-radius:10px;border:0;background:#2dd4bf;color:#022;font-weight:800">Recarregar</button>
                 <button id="rcfClearLogsBtn" style="padding:10px 14px;border-radius:10px;border:0;background:#ef4444;color:#fff;font-weight:800">Limpar logs</button>
               </div>
             </div>
@@ -483,7 +455,7 @@
   })();
 
   // =========================================================
-  // CORE: iOS tap binder (anti duplo clique)
+  // TAP BINDER
   // =========================================================
   function bindTap(el, fn) {
     if (!el) return;
@@ -536,17 +508,14 @@
     try { syncUiCoreBridge(reason); } catch {}
   }
 
-  // Globals compat
   window.RCF = window.RCF || {};
   window.RCF.state = State;
   window.RCF.log = (...a) => Logger.write(...a);
   window.RCF.getFactoryIAContext = () => buildFactoryIAContext();
-
-  // compat global: alguns módulos chamam log() direto
   try { if (!window.log) window.log = (...a) => Logger.write(...a); } catch {}
 
   // =========================================================
-  // UI: Compact CSS
+  // UI FLAGS
   // =========================================================
   const UI = {
     brandTitle: "RCF",
@@ -554,11 +523,12 @@
     compactEnabled: true
   };
 
-
   // =========================================================
-  // UI RUNTIME LOADER (mantém modularização + fallback local)
+  // LOADERS
   // =========================================================
   let __uiRuntimePromise = null;
+  let __uiCoreBridgePromise = null;
+  let __uiVisualModulesPromise = null;
 
   function getUiRuntime() {
     try {
@@ -568,6 +538,43 @@
     } catch {
       return null;
     }
+  }
+
+  function getUiStateApi() {
+    try { return (window && window.RCF_UI_STATE && typeof window.RCF_UI_STATE === "object") ? window.RCF_UI_STATE : null; } catch { return null; }
+  }
+
+  function getUiRouterApi() {
+    try { return (window && window.RCF_UI_ROUTER && typeof window.RCF_UI_ROUTER === "object") ? window.RCF_UI_ROUTER : null; } catch { return null; }
+  }
+
+  function getUiEventsApi() {
+    try { return (window && window.RCF_UI_EVENTS && typeof window.RCF_UI_EVENTS === "object") ? window.RCF_UI_EVENTS : null; } catch { return null; }
+  }
+
+  function loadScriptOnce(src, marker) {
+    return new Promise((resolve) => {
+      try {
+        const hit = document.querySelector(`script[${marker}="1"]`);
+        if (hit) {
+          hit.addEventListener("load", () => resolve(true), { once: true });
+          hit.addEventListener("error", () => resolve(false), { once: true });
+          setTimeout(() => resolve(true), 900);
+          return;
+        }
+        const sc = document.createElement("script");
+        sc.src = src;
+        sc.defer = true;
+        sc.async = false;
+        sc.setAttribute(marker, "1");
+        sc.onload = () => resolve(true);
+        sc.onerror = () => resolve(false);
+        (document.head || document.documentElement).appendChild(sc);
+        setTimeout(() => resolve(false), 1200);
+      } catch {
+        resolve(false);
+      }
+    });
   }
 
   function loadUiRuntimeOnce() {
@@ -612,60 +619,13 @@
       const rt = await loadUiRuntimeOnce();
       if (!rt) return null;
       if (typeof rt.init === "function") {
-        try {
-          rt.init(ctx);
-        } catch (e) {
-          try { Logger.write("ui_runtime init err:", e?.message || e); } catch {}
-        }
+        try { rt.init(ctx); }
+        catch (e) { try { Logger.write("ui_runtime init err:", e?.message || e); } catch {} }
       }
       return rt;
     } catch {
       return null;
     }
-  }
-
-  // =========================================================
-  // UI CORE BRIDGE LOADER (ui_state / ui_router / ui_events)
-  // - Prepara a base para Factory IA operar em módulos
-  // - Não trava boot se algum script não existir
-  // =========================================================
-  let __uiCoreBridgePromise = null;
-
-  function getUiStateApi() {
-    try { return (window && window.RCF_UI_STATE && typeof window.RCF_UI_STATE === "object") ? window.RCF_UI_STATE : null; } catch { return null; }
-  }
-
-  function getUiRouterApi() {
-    try { return (window && window.RCF_UI_ROUTER && typeof window.RCF_UI_ROUTER === "object") ? window.RCF_UI_ROUTER : null; } catch { return null; }
-  }
-
-  function getUiEventsApi() {
-    try { return (window && window.RCF_UI_EVENTS && typeof window.RCF_UI_EVENTS === "object") ? window.RCF_UI_EVENTS : null; } catch { return null; }
-  }
-
-  function loadScriptOnce(src, marker) {
-    return new Promise((resolve) => {
-      try {
-        const hit = document.querySelector(`script[${marker}="1"]`);
-        if (hit) {
-          hit.addEventListener("load", () => resolve(true), { once: true });
-          hit.addEventListener("error", () => resolve(false), { once: true });
-          setTimeout(() => resolve(true), 900);
-          return;
-        }
-        const sc = document.createElement("script");
-        sc.src = src;
-        sc.defer = true;
-        sc.async = false;
-        sc.setAttribute(marker, "1");
-        sc.onload = () => resolve(true);
-        sc.onerror = () => resolve(false);
-        (document.head || document.documentElement).appendChild(sc);
-        setTimeout(() => resolve(false), 1200);
-      } catch {
-        resolve(false);
-      }
-    });
   }
 
   async function loadUiCoreBridgeOnce() {
@@ -686,6 +646,101 @@
     }
   }
 
+  async function loadUiVisualModulesOnce() {
+    try {
+      if (__uiVisualModulesPromise) return __uiVisualModulesPromise;
+      __uiVisualModulesPromise = (async () => {
+        await loadScriptOnce("./js/ui/ui_bootstrap.js", "data-rcf-ui-bootstrap");
+        await loadScriptOnce("./js/ui/ui_views.js", "data-rcf-ui-views");
+        await loadScriptOnce("./js/ui/ui_header.js", "data-rcf-ui-header");
+        await loadScriptOnce("./js/ui/ui_dashboard.js", "data-rcf-ui-dashboard");
+        await loadScriptOnce("./js/ui/ui_cards.js", "data-rcf-ui-cards");
+        await loadScriptOnce("./js/ui/ui_apps_widgets.js", "data-rcf-ui-apps-widgets");
+        await loadScriptOnce("./js/ui/ui_projects.js", "data-rcf-ui-projects");
+        await loadScriptOnce("./js/ui/ui_factory_view.js", "data-rcf-ui-factory-view");
+        return {
+          bootstrap: window.RCF_UI_BOOTSTRAP || null,
+          views: window.RCF_UI_VIEWS || null,
+          header: window.RCF_UI_HEADER || null,
+          dashboard: window.RCF_UI_DASHBOARD || null,
+          cards: window.RCF_UI_CARDS || null,
+          appsWidgets: window.RCF_UI_APPS_WIDGETS || null,
+          projects: window.RCF_UI_PROJECTS || null,
+          factoryView: window.RCF_UI_FACTORY_VIEW || null
+        };
+      })();
+      return await __uiVisualModulesPromise;
+    } catch {
+      return {
+        bootstrap: window.RCF_UI_BOOTSTRAP || null,
+        views: window.RCF_UI_VIEWS || null,
+        header: window.RCF_UI_HEADER || null,
+        dashboard: window.RCF_UI_DASHBOARD || null,
+        cards: window.RCF_UI_CARDS || null,
+        appsWidgets: window.RCF_UI_APPS_WIDGETS || null,
+        projects: window.RCF_UI_PROJECTS || null,
+        factoryView: window.RCF_UI_FACTORY_VIEW || null
+      };
+    }
+  }
+
+  function callModuleMethod(mod, methods, arg) {
+    try {
+      if (!mod || typeof mod !== "object") return false;
+      for (const name of methods) {
+        const fn = mod && mod[name];
+        if (typeof fn === "function") {
+          try { fn.call(mod, arg); return true; } catch (e) { Logger.write(`module ${name} err:`, e?.message || e); }
+        }
+      }
+    } catch {}
+    return false;
+  }
+
+  function mountApprovedVisualModules(stage = "mount", extra = {}) {
+    const ctx = {
+      stage,
+      root: $("#rcfRoot") || $("#app"),
+      viewsRoot: $("#views"),
+      State,
+      Storage,
+      Logger,
+      setView,
+      saveAll,
+      ui: window.RCF_UI || null,
+      status: { set: safeSetStatus },
+      helpers: { $, $$, bindTap, uiMsg, textContentSafe },
+      ...extra
+    };
+
+    const mods = [
+      window.RCF_UI_BOOTSTRAP,
+      window.RCF_UI_VIEWS,
+      window.RCF_UI_HEADER,
+      window.RCF_UI_DASHBOARD,
+      window.RCF_UI_CARDS,
+      window.RCF_UI_APPS_WIDGETS,
+      window.RCF_UI_PROJECTS,
+      window.RCF_UI_FACTORY_VIEW
+    ];
+
+    let called = 0;
+    for (const mod of mods) {
+      if (!mod || typeof mod !== "object") continue;
+      if (callModuleMethod(mod, stage === "post-hydrate"
+        ? ["remountSoft", "refresh", "mount", "init"]
+        : ["mount", "remountSoft", "refresh", "init"], ctx)) {
+        called++;
+      }
+    }
+
+    try { Logger.write("visual modules:", stage, `called=${called}`); } catch {}
+    return called;
+  }
+
+  // =========================================================
+  // FACTORY IA CTX / BRIDGE
+  // =========================================================
   function buildFactoryIAContext() {
     return {
       get state() { return State; },
@@ -736,164 +791,28 @@
     return false;
   }
 
+  // =========================================================
+  // CSS PATCH MÍNIMO
+  // =========================================================
   function injectCompactCSSOnce() {
     try {
       if (!UI.compactEnabled) return;
       if (document.getElementById("rcfCompactCss")) return;
 
       const css = `
-:root { --rcf-compact: 1; }
-
-#rcfRoot .topbar{ padding: 8px 10px !important; }
-#rcfRoot .brand{ gap: 10px !important; }
-#rcfRoot .brand .title{ font-size: 18px !important; line-height: 1.15 !important; letter-spacing:.2px; }
-#rcfRoot .brand .subtitle{ font-size: 12px !important; opacity:.82 !important; }
-
-/* PATCH: remover pill do topo (sem remover a função safeSetStatus) */
-#rcfRoot .status-pill{ display:none !important; }
-
-#rcfRoot .tabs{
-  display:flex !important;
-  gap: 8px !important;
-  overflow-x: auto !important;
-  overflow-y: hidden !important;
-  -webkit-overflow-scrolling: touch !important;
-  padding: 6px 0 2px !important;
-  margin-top: 8px !important;
-  scrollbar-width: none !important;
-}
-#rcfRoot .tabs::-webkit-scrollbar{ display:none !important; }
-#rcfRoot .tabs .tab{
-  flex: 0 0 auto !important;
-  min-width: 96px !important;
-  padding: 10px 12px !important;
-  font-size: 13px !important;
-  border-radius: 999px !important;
-}
-
-#rcfRoot .container{ padding-top: 10px !important; }
-#rcfRoot .card{ padding: 12px !important; border-radius: 14px !important; }
-#rcfRoot .card h1{ font-size: 24px !important; margin: 0 0 10px !important; }
-#rcfRoot .card h2{ font-size: 18px !important; margin: 10px 0 8px !important; }
-
-#rcfRoot .row{ gap: 10px !important; }
-#rcfRoot .btn{ padding: 10px 12px !important; font-size: 13px !important; border-radius: 999px !important; }
-#rcfRoot .btn.small{ padding: 8px 10px !important; font-size: 12px !important; }
-#rcfRoot input, #rcfRoot select, #rcfRoot textarea{ font-size: 14px !important; }
-
-#rcfRoot pre.mono{ max-height: 24vh !important; overflow:auto !important; -webkit-overflow-scrolling: touch !important; }
-#rcfRoot pre.mono.small{ max-height: 20vh !important; }
-
-/* logs gerais */
-#rcfRoot #logsBox, #rcfRoot #logsOut, #rcfRoot #logsViewBox{
-  max-height: 22vh !important; overflow:auto !important; -webkit-overflow-scrolling: touch !important;
-}
-
-/* PATCH: Admin injector log compacto/colapsável */
-#rcfRoot #injLog{
-  max-height: 18vh !important;
-  overflow:auto !important;
-  -webkit-overflow-scrolling: touch !important;
-}
-#rcfRoot .rcf-collapsed{
-  max-height: 0 !important;
-  padding-top: 0 !important;
-  padding-bottom: 0 !important;
-  border: 0 !important;
-  overflow: hidden !important;
-}
-#rcfRoot #injPayload{ max-height: 22vh !important; }
-#rcfRoot #diffOut{ max-height: 20vh !important; }
-#rcfRoot .tools .tools-body pre{ max-height: 28vh !important; }
-
-/* PATCH: Apps list layout (nome grande não empurra botões) */
-#appsList .app-item{
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  gap:10px;
-}
-#appsList .app-meta{
-  flex:1 1 auto;
-  min-width:0;
-}
-#appsList .app-name,
-#appsList .app-slug{
-  white-space:nowrap;
-  overflow:hidden;
-  text-overflow:ellipsis;
-}
-#appsList .app-actions{
-  flex:0 0 auto;
-  display:flex;
-  gap:8px;
-  align-items:center;
-}
-
-/* PATCH: FAB (bolinha) + painel */
-#rcfFab{
-  position:fixed !important;
-  right: 14px !important;
-  bottom: 14px !important;
-  width: 54px !important;
-  height: 54px !important;
-  border-radius: 999px !important;
-  border: 1px solid rgba(255,255,255,.16) !important;
-  background: rgba(20,28,44,.92) !important;
-  color: #fff !important;
-  font-size: 20px !important;
-  font-weight: 900 !important;
-  box-shadow: 0 10px 30px rgba(0,0,0,.35) !important;
-  z-index: 9999 !important;
-}
-
-#rcfFabPanel{
-  position:fixed !important;
-  right: 14px !important;
-  bottom: 78px !important;
-  width: 220px !important;
-  border-radius: 14px !important;
-  border: 1px solid rgba(255,255,255,.12) !important;
-  background: rgba(12,16,26,.96) !important;
-  color:#fff !important;
-  padding: 10px !important;
-  z-index: 9999 !important;
-  display:none !important;
-}
-#rcfFabPanel.open{ display:block !important; }
-
-#rcfFabPanel .fab-title{
-  font-weight:900 !important;
-  margin-bottom:8px !important;
-  display:flex !important;
-  align-items:center !important;
-  justify-content:space-between !important;
-  gap:10px !important;
-}
-#rcfFabPanel .fab-status{
-  font-size:12px !important;
-  opacity:.85 !important;
-  white-space:nowrap !important;
-  max-width: 120px !important;
-  overflow:hidden !important;
-  text-overflow:ellipsis !important;
-}
-#rcfFabPanel .fab-row{
-  display:flex !important;
-  gap:8px !important;
-  flex-wrap:wrap !important;
-}
-#rcfFabPanel .fab-row .btn{
-  flex: 1 1 auto !important;
-}
-
-@media (max-width: 520px){
-  #rcfRoot .brand .title{ font-size: 17px !important; }
-  #rcfRoot .brand .subtitle{ font-size: 11px !important; }
-  #rcfRoot .tabs .tab{ min-width: 90px !important; padding: 9px 11px !important; }
-  #rcfRoot .card{ padding: 10px !important; }
-  #rcfRoot pre.mono{ max-height: 20vh !important; }
-}
+#rcfRoot [hidden]{display:none !important;}
+#rcfRoot .view:not(.active){display:none;}
+#rcfRoot .view.active{display:block;}
+#toolsDrawer{display:none;}
+#toolsDrawer.open{display:block;}
+#rcfFabPanel{display:none;}
+#rcfFabPanel.open{display:block;}
+#injLog.rcf-collapsed{display:none !important;}
+#appsList .app-item{display:flex;align-items:center;justify-content:space-between;gap:10px;}
+#appsList .app-meta{flex:1 1 auto;min-width:0;}
+#appsList .app-name,#appsList .app-slug{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+#appsList .app-actions{flex:0 0 auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+#fileContent{min-height:220px;}
       `.trim();
 
       const st = document.createElement("style");
@@ -906,7 +825,7 @@
   }
 
   // =========================================================
-  // VFS Overrides (localStorage)
+  // VFS OVERRIDES
   // =========================================================
   const OverridesVFS = (() => {
     const KEY = "RCF_OVERRIDES_MAP";
@@ -954,9 +873,9 @@
   window.RCF_OVERRIDES_VFS = OverridesVFS;
 
   // =========================================================
-  // UI Shell + Views
+  // SHELL
   // =========================================================
-  function renderShell() {
+  function ensureFallbackRoot() {
     let root = $("#app");
     if (!root) {
       try {
@@ -965,10 +884,202 @@
         (document.body || document.documentElement).appendChild(root);
         try { Logger.write("boot:", "created #app root fallback ✅"); } catch {}
       } catch {
-        return;
+        return null;
       }
     }
-    if ($("#rcfRoot")) return;
+    return root;
+  }
+
+  function buildFallbackShellHtml() {
+    return `
+      <div id="rcfRoot" data-rcf-app="rcf.factory">
+        <header>
+          <div>${escapeHtml(UI.brandTitle)}</div>
+          <div id="statusTextTop">OK ✅</div>
+        </header>
+        <main id="views">
+          <section class="view active" id="view-dashboard" data-rcf-view="dashboard">
+            <div id="activeAppText">Sem app ativo ✅</div>
+            <div>
+              <button id="btnCreateNewApp" type="button">Novo app</button>
+              <button id="btnOpenEditor" type="button">Editor</button>
+            </div>
+            <div id="appsList" data-rcf-slot="apps.list"></div>
+          </section>
+          <section class="view" id="view-newapp" data-rcf-view="newapp" hidden>
+            <input id="newAppName" placeholder="Nome do app" />
+            <input id="newAppSlug" placeholder="slug-opcional" />
+            <button id="btnNewAppCreate" type="button">Criar</button>
+            <pre id="newAppOut">Pronto.</pre>
+          </section>
+          <section class="view" id="view-editor" data-rcf-view="editor" hidden>
+            <div id="editorHead">Arquivo atual: -</div>
+            <div id="filesList" data-rcf-slot="files.list"></div>
+            <textarea id="fileContent" spellcheck="false"></textarea>
+            <div><button id="btnSaveFile" type="button">Salvar arquivo</button></div>
+            <pre id="editorOut">Pronto.</pre>
+          </section>
+          <section class="view" id="view-agent" data-rcf-view="agent" hidden>
+            <input id="agentCmd" />
+            <button id="btnAgentRun" type="button">Executar</button>
+            <button id="btnAgentHelp" type="button">Ajuda</button>
+            <div id="rcfAgentSlotActions" data-rcf-slot="agent.actions"></div>
+            <div id="rcfAgentSlotTools" data-rcf-slot="agent.tools"></div>
+            <pre id="agentOut">Pronto.</pre>
+          </section>
+          <section class="view" id="view-generator" data-rcf-view="generator" hidden>
+            <div id="rcfGenSlotActions" data-rcf-slot="generator.actions"></div>
+            <div id="rcfGenSlotTools" data-rcf-slot="generator.tools"></div>
+            <pre id="genOut">Pronto.</pre>
+          </section>
+          <section class="view" id="view-settings" data-rcf-view="settings" hidden>
+            <input id="pinInput" inputmode="numeric" />
+            <button id="btnPinSave" type="button">Salvar PIN</button>
+            <button id="btnPinRemove" type="button">Remover PIN</button>
+            <div id="rcfSettingsSecurityActions" data-rcf-slot="settings.security.actions"></div>
+            <pre id="pinOut">Pronto.</pre>
+            <pre id="logsOut">Pronto.</pre>
+          </section>
+          <section class="view" id="view-logs" data-rcf-view="logs" hidden>
+            <pre id="logsViewBox">Pronto.</pre>
+          </section>
+          <section class="view" id="view-admin" data-rcf-view="admin" hidden>
+            <div id="rcfAdminSlotTop" data-rcf-slot="admin.top"><pre id="adminOut">Pronto.</pre></div>
+            <div id="rcfAdminSlotIntegrations" data-rcf-slot="admin.integrations"></div>
+            <div id="admin-injector" data-rcf-slot="admin.injector">
+              <button id="btnToggleInjectorLog" type="button">Mostrar log</button>
+              <pre id="scanOut">Pronto.</pre>
+              <select id="injMode"><option value="INSERT">INSERT</option><option value="REPLACE">REPLACE</option><option value="DELETE">DELETE</option></select>
+              <select id="injTarget"></select>
+              <textarea id="injPayload" rows="8" spellcheck="false"></textarea>
+              <pre id="diffOut">Pronto.</pre>
+              <div id="rcfAdminSlotLogs" data-rcf-slot="admin.logs"><pre id="injLog" class="rcf-collapsed">Pronto.</pre></div>
+            </div>
+            <pre id="maintOut">Pronto.</pre>
+          </section>
+          <section class="view" id="view-diagnostics" data-rcf-view="diagnostics" hidden>
+            <pre id="diagOut">Pronto.</pre>
+          </section>
+        </main>
+        <aside id="toolsDrawer" data-rcf-panel="tools.drawer">
+          <div id="statusText" data-rcf="status.text">OK ✅</div>
+          <pre id="logsBox">Pronto.</pre>
+          <button id="btnCloseTools" type="button">Fechar</button>
+        </aside>
+        <button id="btnOpenTools" type="button">Tools</button>
+        <button id="rcfFab" type="button">⚡</button>
+        <div id="rcfFabPanel">
+          <div id="fabStatus">OK ✅</div>
+          <button id="btnFabClose" type="button">Fechar</button>
+          <button id="btnFabTools" type="button">Tools</button>
+          <button id="btnFabAdmin" type="button">Admin</button>
+          <button id="btnFabDoctor" type="button">Doctor</button>
+          <button id="btnFabLogs" type="button">Logs</button>
+        </div>
+      </div>
+    `;
+  }
+
+  function strengthenShellStructure() {
+    const root = $("#rcfRoot");
+    if (!root) return false;
+
+    const ensure = (id, tag = "div", parentSel = "#rcfRoot", html = "") => {
+      let el = document.getElementById(id);
+      if (el) return el;
+      const parent = document.querySelector(parentSel) || root;
+      el = document.createElement(tag);
+      el.id = id;
+      if (html) el.innerHTML = html;
+      parent.appendChild(el);
+      return el;
+    };
+
+    const views = ensure("views", "main", "#rcfRoot");
+    const viewIds = [
+      "view-dashboard",
+      "view-newapp",
+      "view-editor",
+      "view-agent",
+      "view-generator",
+      "view-settings",
+      "view-logs",
+      "view-admin",
+      "view-diagnostics"
+    ];
+    for (const id of viewIds) {
+      const el = ensure(id, "section", "#views");
+      el.classList.add("view");
+      if (!el.hasAttribute("data-rcf-view")) {
+        el.setAttribute("data-rcf-view", id.replace(/^view-/, ""));
+      }
+      if (id !== "view-dashboard" && !el.classList.contains("active")) {
+        el.hidden = true;
+        try { el.style.display = "none"; } catch {}
+      }
+    }
+
+    ensure("appsList", "div", "#view-dashboard").setAttribute("data-rcf-slot", "apps.list");
+    ensure("filesList", "div", "#view-editor").setAttribute("data-rcf-slot", "files.list");
+    ensure("fileContent", "textarea", "#view-editor");
+    ensure("editorHead", "div", "#view-editor");
+    ensure("editorOut", "pre", "#view-editor");
+    ensure("agentCmd", "input", "#view-agent");
+    ensure("btnAgentRun", "button", "#view-agent");
+    ensure("btnAgentHelp", "button", "#view-agent");
+    ensure("agentOut", "pre", "#view-agent");
+    ensure("rcfAgentSlotActions", "div", "#view-agent").setAttribute("data-rcf-slot", "agent.actions");
+    ensure("rcfAgentSlotTools", "div", "#view-agent").setAttribute("data-rcf-slot", "agent.tools");
+    ensure("rcfGenSlotActions", "div", "#view-generator").setAttribute("data-rcf-slot", "generator.actions");
+    ensure("rcfGenSlotTools", "div", "#view-generator").setAttribute("data-rcf-slot", "generator.tools");
+    ensure("pinInput", "input", "#view-settings");
+    ensure("pinOut", "pre", "#view-settings");
+    ensure("logsOut", "pre", "#view-settings");
+    ensure("logsViewBox", "pre", "#view-logs");
+    ensure("toolsDrawer", "aside", "#rcfRoot");
+    ensure("statusText", "div", "#toolsDrawer");
+    ensure("statusTextTop", "div", "#rcfRoot");
+    ensure("logsBox", "pre", "#toolsDrawer");
+    ensure("rcfAdminSlotTop", "div", "#view-admin").setAttribute("data-rcf-slot", "admin.top");
+    ensure("rcfAdminSlotIntegrations", "div", "#view-admin").setAttribute("data-rcf-slot", "admin.integrations");
+    ensure("admin-injector", "div", "#view-admin").setAttribute("data-rcf-slot", "admin.injector");
+    ensure("scanOut", "pre", "#admin-injector");
+    ensure("injMode", "select", "#admin-injector");
+    ensure("injTarget", "select", "#admin-injector");
+    ensure("injPayload", "textarea", "#admin-injector");
+    ensure("diffOut", "pre", "#admin-injector");
+    ensure("injLog", "pre", "#admin-injector");
+    ensure("maintOut", "pre", "#view-admin");
+    ensure("diagOut", "pre", "#view-diagnostics");
+    ensure("btnOpenTools", "button", "#rcfRoot");
+    ensure("btnCloseTools", "button", "#toolsDrawer");
+    ensure("rcfFab", "button", "#rcfRoot");
+    ensure("rcfFabPanel", "div", "#rcfRoot");
+    ensure("fabStatus", "div", "#rcfFabPanel");
+    ensure("btnFabClose", "button", "#rcfFabPanel");
+    ensure("btnFabTools", "button", "#rcfFabPanel");
+    ensure("btnFabAdmin", "button", "#rcfFabPanel");
+    ensure("btnFabDoctor", "button", "#rcfFabPanel");
+    ensure("btnFabLogs", "button", "#rcfFabPanel");
+    ensure("btnCreateNewApp", "button", "#view-dashboard");
+    ensure("btnOpenEditor", "button", "#view-dashboard");
+    ensure("btnSaveFile", "button", "#view-editor");
+    ensure("btnPinSave", "button", "#view-settings");
+    ensure("btnPinRemove", "button", "#view-settings");
+    ensure("btnToggleInjectorLog", "button", "#admin-injector");
+    ensure("activeAppText", "div", "#view-dashboard");
+
+    const injMode = $("#injMode");
+    if (injMode && !injMode.options.length) {
+      injMode.innerHTML = '<option value="INSERT">INSERT</option><option value="REPLACE">REPLACE</option><option value="DELETE">DELETE</option>';
+    }
+
+    return true;
+  }
+
+  function renderShell() {
+    const root = ensureFallbackRoot();
+    if (!root) return;
 
     try {
       const shell = window.RCF_UI_SHELL;
@@ -978,8 +1089,9 @@
           brandTitle: UI.brandTitle,
           brandSubtitle: UI.brandSubtitle
         });
-        if (ok && $("#rcfRoot")) {
-          try { Logger.write("shell:", "external ui_shell mount ✅"); } catch {}
+        if (ok !== false && $("#rcfRoot")) {
+          strengthenShellStructure();
+          try { Logger.write("shell:", "official ui_shell mount ✅"); } catch {}
           return;
         }
       }
@@ -987,104 +1099,26 @@
       try { Logger.write("shell mount err:", e?.message || e); } catch {}
     }
 
-    root.innerHTML = `
-      <div id="rcfRoot" data-rcf-app="rcf.factory">
-        <header class="topbar">
-          <div class="brand">
-            <div class="brand-text">
-              <div class="title">${escapeHtml(UI.brandTitle)}</div>
-              <div class="subtitle">${escapeHtml(UI.brandSubtitle)}</div>
-            </div>
-          </div>
-        </header>
-        <main class="container views" id="views">
-          <section class="view card active" id="view-dashboard" data-rcf-view="dashboard">
-            <h1>Factory</h1>
-            <p>Shell fallback mínimo carregado.</p>
-            <div id="appsList" class="apps" data-rcf-slot="apps.list"></div>
-          </section>
-          <section class="view card" id="view-editor" data-rcf-view="editor">
-            <div class="badge" id="editorHead">Arquivo atual: -</div>
-            <div id="filesList" class="files" data-rcf-slot="files.list"></div>
-            <textarea id="fileContent" spellcheck="false"></textarea>
-            <pre class="mono" id="editorOut">Pronto.</pre>
-          </section>
-          <section class="view card" id="view-agent" data-rcf-view="agent">
-            <input id="agentCmd" />
-            <button class="btn ok" id="btnAgentRun" type="button">Executar</button>
-            <button class="btn ghost" id="btnAgentHelp" type="button">Ajuda</button>
-            <div id="rcfAgentSlotActions" data-rcf-slot="agent.actions"></div>
-            <div id="rcfAgentSlotTools" data-rcf-slot="agent.tools"></div>
-            <pre class="mono" id="agentOut">Pronto.</pre>
-          </section>
-          <section class="view card" id="view-generator" data-rcf-view="generator">
-            <div id="rcfGenSlotActions" data-rcf-slot="generator.actions"></div>
-            <div id="rcfGenSlotTools" data-rcf-slot="generator.tools"></div>
-            <pre class="mono" id="genOut">Pronto.</pre>
-          </section>
-          <section class="view card" id="view-settings" data-rcf-view="settings">
-            <input id="pinInput" inputmode="numeric" />
-            <button class="btn ok" id="btnPinSave" type="button">Salvar PIN</button>
-            <button class="btn danger" id="btnPinRemove" type="button">Remover PIN</button>
-            <pre class="mono" id="pinOut">Pronto.</pre>
-            <pre class="mono small" id="logsOut">Pronto.</pre>
-          </section>
-          <section class="view card" id="view-logs" data-rcf-view="logs">
-            <pre class="mono small" id="logsViewBox">Pronto.</pre>
-          </section>
-          <section class="view card" id="view-admin" data-rcf-view="admin">
-            <div id="rcfAdminSlotTop" data-rcf-slot="admin.top"><pre class="mono" id="adminOut">Pronto.</pre></div>
-            <div id="rcfAdminSlotIntegrations" data-rcf-slot="admin.integrations"></div>
-            <div id="admin-injector" data-rcf-slot="admin.injector">
-              <pre class="mono small" id="scanOut">Pronto.</pre>
-              <select id="injMode"><option value="INSERT">INSERT</option><option value="REPLACE">REPLACE</option><option value="DELETE">DELETE</option></select>
-              <select id="injTarget"></select>
-              <textarea id="injPayload" class="textarea" rows="8" spellcheck="false"></textarea>
-              <pre class="mono small" id="diffOut">Pronto.</pre>
-              <div id="rcfAdminSlotLogs" data-rcf-slot="admin.logs"><pre class="mono small rcf-collapsed" id="injLog">Pronto.</pre></div>
-            </div>
-            <pre class="mono" id="maintOut">Pronto.</pre>
-          </section>
-          <section class="view card" id="view-diagnostics" data-rcf-view="diagnostics">
-            <pre class="mono" id="diagOut">Pronto.</pre>
-          </section>
-        </main>
-        <div class="tools" id="toolsDrawer" data-rcf-panel="tools.drawer">
-          <div id="statusText" data-rcf="status.text">OK ✅</div>
-          <pre class="mono small" id="logsBox">Pronto.</pre>
-          <button class="btn small" id="btnCloseTools" type="button">Fechar</button>
-        </div>
-        <button id="btnOpenTools" class="btn small" type="button">Tools</button>
-        <button id="rcfFab" type="button">⚡</button>
-        <div id="rcfFabPanel"><div class="fab-status" id="fabStatus">OK ✅</div><button id="btnFabClose" type="button">Fechar</button><button id="btnFabTools" type="button">Tools</button><button id="btnFabAdmin" type="button">Admin</button><button id="btnFabDoctor" type="button">Doctor</button><button id="btnFabLogs" type="button">Logs</button></div>
-      </div>
-    `;
-    try { Logger.write("shell:", "fallback minimal shell ✅"); } catch {}
+    if (!$("#rcfRoot")) {
+      root.innerHTML = buildFallbackShellHtml();
+      try { Logger.write("shell:", "fallback minimal shell ✅"); } catch {}
+    }
+    strengthenShellStructure();
   }
 
   function refreshLogsViews() { Logger._mirrorUI(Logger.getAll()); }
 
   // =========================================================
-  // PREVIEW TEARDOWN (anti overlay preso / timesheet na frente)
+  // PREVIEW TEARDOWN
   // =========================================================
   function teardownPreviewHard() {
-    // PATCH: chamar teardowns conhecidos (tolerante)
     try { window.RCF_PREVIEW?.teardown?.(); } catch {}
     try {
       const PR = window.RCF_PREVIEW_RUNNER || window.PREVIEW_RUNNER || null;
-      const fns = [
-        PR?.teardown,
-        PR?.destroy,
-        PR?.stop,
-        PR?.unmount
-      ].filter(fn => typeof fn === "function");
-
-      for (const fn of fns) {
-        try { fn.call(PR); } catch {}
-      }
+      const fns = [PR?.teardown, PR?.destroy, PR?.stop, PR?.unmount].filter(fn => typeof fn === "function");
+      for (const fn of fns) { try { fn.call(PR); } catch {} }
     } catch {}
 
-    // PATCH: remover overlays comuns se existirem (id/class contendo "preview")
     try {
       const nodes = Array.from(document.querySelectorAll("[id*='preview'], [class*='preview'], [id*='Preview'], [class*='Preview']"));
       let removed = 0;
@@ -1099,7 +1133,6 @@
       }
     } catch {}
 
-    // PATCH: remove iframes suspeitos do preview SOMENTE se claramente overlay (fixed + z-index alto)
     try {
       const vw = Math.max(document.documentElement.clientWidth, window.innerWidth || 0);
       const vh = Math.max(document.documentElement.clientHeight, window.innerHeight || 0);
@@ -1111,12 +1144,7 @@
           const id = (el.id || "").toLowerCase();
           const cls = (el.className || "").toString().toLowerCase();
           const src = (el.src || "").toLowerCase();
-
-          const looksPreview =
-            id.includes("preview") || cls.includes("preview") ||
-            src.includes("preview") || src.includes("sandbox") ||
-            src.includes("timesheet");
-
+          const looksPreview = id.includes("preview") || cls.includes("preview") || src.includes("preview") || src.includes("sandbox") || src.includes("timesheet");
           if (!looksPreview) continue;
 
           const cs = getComputedStyle(el);
@@ -1124,12 +1152,7 @@
           const zi = parseInt(cs?.zIndex || "0", 10);
           const r = el.getBoundingClientRect();
           const area = Math.max(0, r.width) * Math.max(0, r.height);
-
-          const isOverlay =
-            (pos === "fixed") &&
-            Number.isFinite(zi) && zi >= 80 &&
-            area >= (vw * vh * 0.20);
-
+          const isOverlay = (pos === "fixed") && Number.isFinite(zi) && zi >= 80 && area >= (vw * vh * 0.20);
           if (!isOverlay) continue;
 
           try { el.src = "about:blank"; } catch {}
@@ -1140,67 +1163,123 @@
       }
     } catch {}
 
-    // remove overlays suspeitos cobrindo tela
     try {
       const vw = Math.max(document.documentElement.clientWidth, window.innerWidth || 0);
       const vh = Math.max(document.documentElement.clientHeight, window.innerHeight || 0);
-
       const all = Array.from(document.querySelectorAll("body *"));
       let removed = 0;
 
       for (const el of all) {
         if (!el || el === document.body) continue;
-
         const cs = getComputedStyle(el);
         if (!cs) continue;
-
         const pos = cs.position;
         if (pos !== "fixed" && pos !== "absolute") continue;
-
         const zi = parseInt(cs.zIndex || "0", 10);
         if (!Number.isFinite(zi) || zi < 80) continue;
-
         const r = el.getBoundingClientRect();
         const area = Math.max(0, r.width) * Math.max(0, r.height);
         if (area < (vw * vh * 0.25)) continue;
-
-        // não mexe nos painéis da própria UI
         if (el.id === "toolsDrawer" || el.id === "rcfFabPanel" || el.id === "rcfFab") continue;
-
         try { el.remove(); removed++; } catch {}
         if (removed >= 6) break;
       }
-
       if (removed) Logger.write("preview teardown:", "removed overlays=", removed);
     } catch {}
 
-    // normaliza scroll/pointer
     try {
       document.documentElement.style.overflow = "";
       document.body.style.overflow = "";
       document.body.style.pointerEvents = "";
     } catch {}
 
-    // PATCH: log final
     try { Logger.write("preview:", "teardown hard (ok)"); } catch {}
+  }
+
+  // =========================================================
+  // VIEW ROUTER / FALLBACK LOCAL RIGOROSO
+  // =========================================================
+  function applyViewStateLocally(name) {
+    const cleanName = String(name || "").replace(/[^a-z0-9_-]/gi, "");
+    const targetId = "view-" + cleanName;
+    const views = $$(".view, [data-rcf-view]", $("#views") || document).filter((el, idx, arr) => arr.indexOf(el) === idx);
+    const tabs = $$(`[data-view], [data-rcf-view-btn]`, document);
+
+    views.forEach(v => {
+      try {
+        v.classList.remove("active");
+        v.hidden = true;
+        v.setAttribute("aria-hidden", "true");
+        v.style.display = "none";
+      } catch {}
+    });
+
+    tabs.forEach(b => {
+      try {
+        b.classList.remove("active");
+        b.setAttribute("aria-pressed", "false");
+      } catch {}
+    });
+
+    const view = document.getElementById(targetId) || document.querySelector(`[data-rcf-view="${cleanName}"]`);
+    if (view) {
+      try {
+        view.hidden = false;
+        view.removeAttribute("aria-hidden");
+        view.style.display = "";
+        view.classList.add("active");
+      } catch {}
+    }
+
+    tabs.forEach(b => {
+      try {
+        const hit = (b.getAttribute("data-view") || b.getAttribute("data-rcf-view-btn") || "") === cleanName;
+        if (!hit) return;
+        b.classList.add("active");
+        b.setAttribute("aria-pressed", "true");
+      } catch {}
+    });
+
+    return !!view;
   }
 
   function setView(name) {
     if (!name) return;
+    const cleanName = String(name || "").trim().toLowerCase();
+    const now = Date.now();
+
+    try {
+      if (setView.__busy__) {
+        const dt = now - (setView.__busy_ts__ || 0);
+        if (dt < 450) return;
+      }
+      setView.__busy__ = true;
+      setView.__busy_ts__ = now;
+      setTimeout(() => { try { setView.__busy__ = false; } catch {} }, 700);
+    } catch {}
+
+    try {
+      const prev = State.active.view;
+      if (prev === "generator" && cleanName !== "generator") teardownPreviewHard();
+    } catch {}
 
     try {
       const router = window.RCF_UI_ROUTER;
       if (router && typeof router.setView === "function") {
-        const ok = router.setView(name, {
+        const ok = router.setView(cleanName, {
           State,
           saveAll,
           refreshLogsViews,
           teardownPreviewHard,
-          logger: Logger
+          logger: Logger,
+          localApply: applyViewStateLocally
         });
         if (ok !== false) {
-          State.active.view = name;
-          saveAll();
+          applyViewStateLocally(cleanName);
+          State.active.view = cleanName;
+          saveAll("view.router");
+          if (["logs", "settings", "admin", "diagnostics"].includes(cleanName)) refreshLogsViews();
+          Logger.write("view:", cleanName);
           return;
         }
       }
@@ -1208,37 +1287,12 @@
       try { Logger.write("router setView err:", e?.message || e); } catch {}
     }
 
-    try {
-      const now = Date.now();
-      if (typeof State === "object" && State && State.active && State.active.view === name) return;
-      if (setView.__busy__) {
-        const dt = now - (setView.__busy_ts__ || 0);
-        if (dt < 650) return;
-      }
-      setView.__busy__ = true;
-      setView.__busy_ts__ = now;
-      setTimeout(() => { try { setView.__busy__ = false; } catch {} }, 0);
-      setTimeout(() => { try { setView.__busy__ = false; } catch {} }, 800);
-    } catch {}
+    applyViewStateLocally(cleanName);
+    State.active.view = cleanName;
+    saveAll("view.local");
 
-    try {
-      const prev = State.active.view;
-      if (prev === "generator" && name !== "generator") teardownPreviewHard();
-    } catch {}
-
-    State.active.view = name;
-    saveAll();
-
-    $$(".view").forEach(v => v.classList.remove("active"));
-    $$("[data-view]").forEach(b => b.classList.remove("active"));
-
-    const id = "view-" + String(name).replace(/[^a-z0-9_-]/gi, "");
-    const view = document.getElementById(id);
-    if (view) view.classList.add("active");
-    $$(`[data-view="${name}"]`).forEach(b => b.classList.add("active"));
-
-    if (name === "logs" || name === "settings" || name === "admin") refreshLogsViews();
-    Logger.write("view:", name);
+    if (["logs", "settings", "admin", "diagnostics"].includes(cleanName)) refreshLogsViews();
+    Logger.write("view:", cleanName);
   }
 
   try {
@@ -1253,9 +1307,7 @@
     } catch {}
     try {
       const rt = getUiRuntime();
-      if (rt && typeof rt.openTools === "function" && rt.openTools !== openTools) {
-        return rt.openTools(open);
-      }
+      if (rt && typeof rt.openTools === "function" && rt.openTools !== openTools) return rt.openTools(open);
     } catch {}
     const d = $("#toolsDrawer");
     if (!d) return;
@@ -1263,7 +1315,6 @@
     else d.classList.remove("open");
   }
 
-  // PATCH: FAB open/close
   function openFabPanel(open) {
     try {
       const router = getUiRouterApi();
@@ -1271,9 +1322,7 @@
     } catch {}
     try {
       const rt = getUiRuntime();
-      if (rt && typeof rt.openFabPanel === "function" && rt.openFabPanel !== openFabPanel) {
-        return rt.openFabPanel(open);
-      }
+      if (rt && typeof rt.openFabPanel === "function" && rt.openFabPanel !== openFabPanel) return rt.openFabPanel(open);
     } catch {}
     const p = $("#rcfFabPanel");
     if (!p) return;
@@ -1288,9 +1337,7 @@
     } catch {}
     try {
       const rt = getUiRuntime();
-      if (rt && typeof rt.toggleFabPanel === "function" && rt.toggleFabPanel !== toggleFabPanel) {
-        return rt.toggleFabPanel();
-      }
+      if (rt && typeof rt.toggleFabPanel === "function" && rt.toggleFabPanel !== toggleFabPanel) return rt.toggleFabPanel();
     } catch {}
     const p = $("#rcfFabPanel");
     if (!p) return;
@@ -1304,9 +1351,7 @@
     } catch {}
     try {
       const rt = getUiRuntime();
-      if (rt && typeof rt.syncFabStatusText === "function" && rt.syncFabStatusText !== syncFabStatusText) {
-        return rt.syncFabStatusText();
-      }
+      if (rt && typeof rt.syncFabStatusText === "function" && rt.syncFabStatusText !== syncFabStatusText) return rt.syncFabStatusText();
     } catch {}
     try {
       const st = $("#statusText")?.textContent || "";
@@ -1315,7 +1360,6 @@
     } catch {}
   }
 
-  // PATCH: Admin log toggle
   function setInjectorLogCollapsed(collapsed) {
     try {
       const events = getUiEventsApi();
@@ -1323,19 +1367,15 @@
     } catch {}
     try {
       const rt = getUiRuntime();
-      if (rt && typeof rt.setInjectorLogCollapsed === "function" && rt.setInjectorLogCollapsed !== setInjectorLogCollapsed) {
-        return rt.setInjectorLogCollapsed(collapsed);
-      }
+      if (rt && typeof rt.setInjectorLogCollapsed === "function" && rt.setInjectorLogCollapsed !== setInjectorLogCollapsed) return rt.setInjectorLogCollapsed(collapsed);
     } catch {}
     try {
       const pre = $("#injLog");
       const btn = $("#btnToggleInjectorLog");
       if (!pre || !btn) return;
-
       const wantCollapsed = !!collapsed;
       if (wantCollapsed) pre.classList.add("rcf-collapsed");
       else pre.classList.remove("rcf-collapsed");
-
       btn.textContent = wantCollapsed ? "Mostrar log" : "Esconder log";
     } catch {}
   }
@@ -1347,9 +1387,7 @@
     } catch {}
     try {
       const rt = getUiRuntime();
-      if (rt && typeof rt.toggleInjectorLogCollapsed === "function" && rt.toggleInjectorLogCollapsed !== toggleInjectorLogCollapsed) {
-        return rt.toggleInjectorLogCollapsed();
-      }
+      if (rt && typeof rt.toggleInjectorLogCollapsed === "function" && rt.toggleInjectorLogCollapsed !== toggleInjectorLogCollapsed) return rt.toggleInjectorLogCollapsed();
     } catch {}
     try {
       const pre = $("#injLog");
@@ -1360,7 +1398,7 @@
   }
 
   // =========================================================
-  // Apps / Editor
+  // APPS / EDITOR
   // =========================================================
   function getActiveApp() {
     if (!State.active.appSlug) return null;
@@ -1375,15 +1413,12 @@
   function deleteApp(slug) {
     const s = slugify(slug);
     if (!s) return false;
-
     const app = State.apps.find(a => a.slug === s);
     if (!app) return false;
-
     const ok = confirm(`Apagar o app "${app.name}" (${app.slug})?\n\nIsso não tem volta.`);
     if (!ok) return false;
 
     State.apps = State.apps.filter(a => a.slug !== s);
-
     if (State.active.appSlug === s) {
       State.active.appSlug = null;
       State.active.file = null;
@@ -1397,11 +1432,8 @@
 
     uiMsg("#editorOut", "✅ App apagado.");
     Logger.write("app deleted:", s);
-
-    // PATCH: status requerido
     safeSetStatus("Apagado ✅");
     try { syncFabStatusText(); } catch {}
-
     return true;
   }
 
@@ -1418,8 +1450,6 @@
     State.apps.forEach(app => {
       const row = document.createElement("div");
       row.className = "app-item";
-
-      // PATCH: layout meta + actions (ellipsis no CSS)
       row.innerHTML = `
         <div class="app-meta">
           <div class="app-name" style="font-weight:800">${escapeHtml(app.name)}</div>
@@ -1448,7 +1478,6 @@
   function renderFilesList() {
     const box = $("#filesList");
     if (!box) return;
-
     const app = getActiveApp();
     if (!app) {
       box.innerHTML = `<div class="hint">Selecione um app para ver arquivos.</div>`;
@@ -1475,7 +1504,6 @@
   function openFile(fname) {
     const app = getActiveApp();
     if (!app) return false;
-
     ensureAppFiles(app);
     if (!(fname in app.files)) return false;
 
@@ -1497,7 +1525,6 @@
     if (!app) return false;
 
     ensureAppFiles(app);
-
     State.active.appSlug = slug;
     State.active.file = State.active.file || Object.keys(app.files || {})[0] || null;
     saveAll("app.select");
@@ -1517,7 +1544,7 @@
     const nameClean = String(name || "").trim();
     if (!nameClean) return { ok: false, msg: "Nome inválido" };
 
-    let slug = slugify(slugMaybe || nameClean);
+    const slug = slugify(slugMaybe || nameClean);
     if (!slug) return { ok: false, msg: "Slug inválido" };
     if (State.apps.some(a => a.slug === slug)) return { ok: false, msg: "Slug já existe" };
 
@@ -1543,7 +1570,6 @@
   function saveFile() {
     const app = getActiveApp();
     if (!app) return uiMsg("#editorOut", "⚠️ Sem app ativo.");
-
     const fname = State.active.file;
     if (!fname) return uiMsg("#editorOut", "⚠️ Sem arquivo ativo.");
 
@@ -1567,7 +1593,7 @@
   };
 
   // =========================================================
-  // SW helpers (safe)
+  // SW HELPERS
   // =========================================================
   async function swRegister() {
     try {
@@ -1612,7 +1638,6 @@
 
   async function swCheckAutoFix() {
     const out = { ok: false, status: "missing", detail: "", attempts: 0, err: "" };
-
     if (!("serviceWorker" in navigator)) {
       out.status = "unsupported";
       out.detail = "serviceWorker não suportado neste browser";
@@ -1648,7 +1673,6 @@
     }
 
     await sleep(350);
-
     reg = await tryGet();
     if (reg) {
       out.ok = true;
@@ -1658,43 +1682,34 @@
     }
 
     out.status = "missing";
-    out.detail =
-      (location.protocol !== "https:" && location.hostname !== "localhost")
-        ? "SW exige HTTPS (ou localhost)."
-        : "sw.js não registrou (pode ser path/scope/privacidade).";
-
+    out.detail = (location.protocol !== "https:" && location.hostname !== "localhost")
+      ? "SW exige HTTPS (ou localhost)."
+      : "sw.js não registrou (pode ser path/scope/privacidade).";
     return out;
   }
 
   // =========================================================
-  // Diagnostics: overlay + microtests + css token
+  // DIAGNOSTICS
   // =========================================================
   function scanOverlays() {
     const suspects = [];
     const vw = Math.max(document.documentElement.clientWidth, window.innerWidth || 0);
     const vh = Math.max(document.documentElement.clientHeight, window.innerHeight || 0);
-
     const all = $$("body *");
     for (const el of all) {
       try {
         const cs = getComputedStyle(el);
         if (!cs) continue;
         if (cs.pointerEvents === "none") continue;
-
         const pos = cs.position;
         if (pos !== "fixed" && pos !== "absolute") continue;
-
         const zi = parseInt(cs.zIndex || "0", 10);
-        if (!Number.isFinite(zi)) continue;
-        if (zi < 50) continue;
-
+        if (!Number.isFinite(zi) || zi < 50) continue;
         const r = el.getBoundingClientRect();
         const area = Math.max(0, r.width) * Math.max(0, r.height);
         if (area < (vw * vh * 0.10)) continue;
-
         const touches = (r.right > 0 && r.bottom > 0 && r.left < vw && r.top < vh);
         if (!touches) continue;
-
         suspects.push({
           tag: el.tagName.toLowerCase(),
           id: el.id || "",
@@ -1735,10 +1750,7 @@
 
   function cssLoadedCheck() {
     try {
-      const token = getComputedStyle(document.documentElement)
-        .getPropertyValue("--rcf-css-token")
-        .trim()
-        .replace(/^["']|["']$/g, "");
+      const token = getComputedStyle(document.documentElement).getPropertyValue("--rcf-css-token").trim().replace(/^["']|["']$/g, "");
       const ok = !!token && token.toLowerCase() !== "(vazio)";
       return { ok, token: token || "(vazio)" };
     } catch (e) {
@@ -1750,7 +1762,6 @@
     const lines = [];
     const failList = [];
     let pass = 0, fail = 0;
-
     const add = (ok, label, detail) => {
       if (ok) { pass++; lines.push(`PASS: ${label}${detail ? " — " + detail : ""}`); }
       else { fail++; const t = `FAIL: ${label}${detail ? " — " + detail : ""}`; lines.push(t); failList.push(label + (detail ? `: ${detail}` : "")); }
@@ -1796,7 +1807,7 @@
   }
 
   // =========================================================
-  // FASE A — Scan / Targets / Injector SAFE
+  // SCAN / TARGETS / INJECTOR SAFE
   // =========================================================
   function simpleHash(str) {
     let h = 2166136261;
@@ -1887,13 +1898,11 @@
     const cfg = Storage.get("ghcfg", null);
     const path = cfg && cfg.path ? String(cfg.path) : "";
     if (!path) return null;
-
     const url = new URL(path, document.baseURI).toString();
     try {
       const res = await fetch(url, { cache: "no-store" });
       if (!res.ok) return null;
-      const txt = await res.text();
-      return txt || null;
+      return await res.text();
     } catch {
       return null;
     }
@@ -1910,43 +1919,27 @@
   async function scanFactoryFiles() {
     const index = { meta: { scannedAt: nowISO(), source: "", count: 0 }, files: [] };
 
-    // 0) overrides sempre entram
     try {
       const olist = await OverridesVFS.listFiles();
       for (const p0 of (olist || []).slice(0, 800)) {
         const p = normalizePath(p0);
         const txt = String((await OverridesVFS.readFile(p)) ?? "");
         const type = guessType(p);
-        index.files.push({
-          path: p, type,
-          size: txt.length,
-          hash: simpleHash(txt),
-          markers: detectMarkers(txt),
-          anchors: getAnchorsForContent(type, txt)
-        });
+        index.files.push({ path: p, type, size: txt.length, hash: simpleHash(txt), markers: detectMarkers(txt), anchors: getAnchorsForContent(type, txt) });
       }
     } catch {}
 
-    // A) runtime vfs
     const vfs = (window.RCF_VFS || window.RCF_FS || window.RCF_FILES || window.RCF_STORE) || null;
     if (vfs) {
       const baseLen = index.files.length;
       const list = await vfsListAll(vfs);
       const paths = (list || []).map(p => normalizePath(p)).filter(Boolean).slice(0, 1200);
-
       for (const p of paths) {
         const content = await vfsRead(vfs, p);
         const txt = (content == null) ? "" : String(content);
         const type = guessType(p);
-        index.files.push({
-          path: p, type,
-          size: txt.length,
-          hash: simpleHash(txt),
-          markers: detectMarkers(txt),
-          anchors: getAnchorsForContent(type, txt)
-        });
+        index.files.push({ path: p, type, size: txt.length, hash: simpleHash(txt), markers: detectMarkers(txt), anchors: getAnchorsForContent(type, txt) });
       }
-
       const added = index.files.length - baseLen;
       if (added > 0) {
         index.meta.source = "A:runtime_vfs";
@@ -1955,52 +1948,34 @@
         Logger.write("scan:", index.meta.source, "files=" + index.meta.count);
         return index;
       }
-
       Logger.write("scan:", "A:runtime_vfs files=0 => FALHA", "scan fallback -> mother_bundle");
     }
 
-    // B) mother_bundle local
     let bundleText = getLocalMotherBundleText();
     if (!bundleText) bundleText = await tryFetchLocalBundleFromCfg();
-
     if (bundleText) {
       index.meta.source = "B:mother_bundle_local";
       let parsed = null;
       try { parsed = JSON.parse(bundleText); } catch { parsed = null; }
-
       let entries = [];
       if (parsed && Array.isArray(parsed.files)) {
         entries = parsed.files
           .map(it => {
             const rawPath = it && (it.path || it.file || it.name);
-            const rawVal  = it && ("content" in it ? it.content : (it.text ?? it.data ?? ""));
+            const rawVal = it && ("content" in it ? it.content : (it.text ?? it.data ?? ""));
             return [rawPath, rawVal];
           })
           .filter(([p]) => !!p);
       } else {
-        const filesObj =
-          (parsed && parsed.files && typeof parsed.files === "object")
-            ? parsed.files
-            : (parsed && typeof parsed === "object" ? parsed : {});
+        const filesObj = (parsed && parsed.files && typeof parsed.files === "object") ? parsed.files : (parsed && typeof parsed === "object" ? parsed : {});
         entries = Object.entries(filesObj || {});
       }
-
       for (const [rawPath, rawVal] of entries) {
         const p = normalizePath(rawPath);
-        const txt =
-          (rawVal && typeof rawVal === "object" && "content" in rawVal)
-            ? String(rawVal.content ?? "")
-            : String(rawVal ?? "");
+        const txt = (rawVal && typeof rawVal === "object" && "content" in rawVal) ? String(rawVal.content ?? "") : String(rawVal ?? "");
         const type = guessType(p);
-        index.files.push({
-          path: p, type,
-          size: txt.length,
-          hash: simpleHash(txt),
-          markers: detectMarkers(txt),
-          anchors: getAnchorsForContent(type, txt)
-        });
+        index.files.push({ path: p, type, size: txt.length, hash: simpleHash(txt), markers: detectMarkers(txt), anchors: getAnchorsForContent(type, txt) });
       }
-
       index.meta.count = index.files.length;
       Storage.set("RCF_FILE_INDEX", index);
       Storage.setRaw("mother_bundle", bundleText);
@@ -2008,19 +1983,10 @@
       return index;
     }
 
-    // C) DOM anchors only
     Logger.write("scan fallback -> DOM anchors");
-    index.meta.source = "C:dom_anchors_only";
     const html = document.documentElement ? document.documentElement.outerHTML : "";
-    index.files.push({
-      path: "/runtime/document.html",
-      type: "html",
-      size: html.length,
-      hash: simpleHash(html),
-      markers: detectMarkers(html),
-      anchors: getAnchorsForContent("html", html)
-    });
-
+    index.meta.source = "C:dom_anchors_only";
+    index.files.push({ path: "/runtime/document.html", type: "html", size: html.length, hash: simpleHash(html), markers: detectMarkers(html), anchors: getAnchorsForContent("html", html) });
     index.meta.count = index.files.length;
     Storage.set("RCF_FILE_INDEX", index);
     Logger.write("scan:", index.meta.source, "files=" + index.meta.count);
@@ -2035,20 +2001,10 @@
     for (const f of idx.files) {
       const path = String(f.path || "");
       const markers = Array.isArray(f.markers) ? f.markers : [];
-
       for (const m of markers) {
         const id = m.id ? m.id : `MARKER_${path}_${m.index}`;
-        targets.push({
-          targetId: id,
-          path,
-          kind: "MARKER",
-          offset: m.index,
-          supportedModes: ["INSERT", "REPLACE", "DELETE"],
-          defaultRisk: "low",
-          note: "@RCF:INJECT"
-        });
+        targets.push({ targetId: id, path, kind: "MARKER", offset: m.index, supportedModes: ["INSERT", "REPLACE", "DELETE"], defaultRisk: "low", note: "@RCF:INJECT" });
       }
-
       if (!markers.length) {
         const anchors = Array.isArray(f.anchors) ? f.anchors : [];
         for (const a of anchors) {
@@ -2069,8 +2025,7 @@
     const seen = new Set();
     const uniq = [];
     for (const t of targets) {
-      if (!t || !t.targetId) continue;
-      if (seen.has(t.targetId)) continue;
+      if (!t || !t.targetId || seen.has(t.targetId)) continue;
       seen.add(t.targetId);
       uniq.push(t);
       if (uniq.length >= 800) break;
@@ -2088,7 +2043,6 @@
     const out = { meta: { createdAt: nowISO(), count: uniq.length, source: (idx.meta && idx.meta.source) || "" }, targets: uniq };
     Storage.set("RCF_TARGET_MAP", out);
     Logger.write("targets:", "count=" + out.meta.count, "source=" + out.meta.source);
-
     try { populateTargetsDropdown(true); } catch {}
     return { ok: true, map: out };
   }
@@ -2096,12 +2050,9 @@
   function populateTargetsDropdown(autoSelect = false) {
     const sel = $("#injTarget");
     if (!sel) return;
-
     const map = Storage.get("RCF_TARGET_MAP", null);
     const t = map && Array.isArray(map.targets) ? map.targets : [];
-
     sel.innerHTML = "";
-
     if (!t.length) {
       const opt = document.createElement("option");
       opt.value = "";
@@ -2109,14 +2060,12 @@
       sel.appendChild(opt);
       return;
     }
-
     for (const item of t.slice(0, 500)) {
       const opt = document.createElement("option");
       opt.value = item.targetId;
       opt.textContent = `${item.targetId}  —  ${item.path}  (${item.kind})`;
       sel.appendChild(opt);
     }
-
     if (autoSelect) {
       const first = Array.from(sel.options).find(o => (o.value || "").trim());
       if (first) sel.value = first.value;
@@ -2140,7 +2089,6 @@
 
   async function readTextFromInventoryPath(path) {
     const p = normalizePath(path);
-
     const ov = await OverridesVFS.readFile(p);
     if (ov != null) return String(ov);
 
@@ -2154,7 +2102,6 @@
     if (bundleText) {
       try {
         const parsed = JSON.parse(bundleText);
-
         if (parsed && Array.isArray(parsed.files)) {
           const hit = parsed.files.find(it => normalizePath(it?.path || it?.file || it?.name) === p);
           if (hit) {
@@ -2164,7 +2111,6 @@
             return "";
           }
         }
-
         const filesObj = (parsed && parsed.files && typeof parsed.files === "object") ? parsed.files : parsed;
         const v = filesObj && filesObj[p];
         if (v && typeof v === "object" && "content" in v) return String(v.content ?? "");
@@ -2174,7 +2120,7 @@
 
     if (p === "/runtime/document.html") return document.documentElement ? document.documentElement.outerHTML : "";
 
-    if (p === "/app/index.html" || p === "/app/styles.css" || p === "/app/app.js" || p === "/index.html" || p === "/styles.css" || p === "/app.js") {
+    if (["/app/index.html", "/app/styles.css", "/app/app.js", "/index.html", "/styles.css", "/app.js"].includes(p)) {
       try {
         const res = await fetch(p, { cache: "no-store" });
         if (res.ok) return await res.text();
@@ -2186,7 +2132,6 @@
 
   async function writeTextToInventoryPath(path, newText) {
     const p = normalizePath(path);
-
     const vfs = (window.RCF_VFS || window.RCF_FS || window.RCF_FILES || window.RCF_STORE) || null;
     if (vfs) {
       try {
@@ -2251,13 +2196,10 @@
     const targetId = ($("#injTarget")?.value || "").trim();
     const mode = ($("#injMode")?.value || "INSERT").trim();
     const payload = ($("#injPayload")?.value || "");
-
     const t = targets.find(x => x.targetId === targetId);
     if (!t) return { ok: false, err: "Target inválido (gere o map e selecione)." };
-
     const oldText = await readTextFromInventoryPath(t.path);
     const newText = applyAtTarget(oldText, t, mode, payload);
-
     uiMsg("#diffOut", tinyDiff(oldText, newText));
     return { ok: true, oldText, newText, t, mode };
   }
@@ -2274,13 +2216,7 @@
       return { ok: false };
     }
 
-    InjectState.lastSnapshot = {
-      path: pre.t.path,
-      oldText: pre.oldText,
-      newText: pre.newText,
-      targetId: pre.t.targetId,
-      ts: nowISO()
-    };
+    InjectState.lastSnapshot = { path: pre.t.path, oldText: pre.oldText, newText: pre.newText, targetId: pre.t.targetId, ts: nowISO() };
 
     const before = runMicroTests();
     if (!before.ok) {
@@ -2320,7 +2256,7 @@
   }
 
   // =========================================================
-  // Agent V8 (inclui build corretamente)
+  // AGENT
   // =========================================================
   const Agent = {
     _mem: { inj: { mode: "INSERT", targetId: "", payload: "" } },
@@ -2332,25 +2268,25 @@
 
     help() {
       return [
-        "AGENT HELP (V8)",
+        "AGENT HELP (FINAL)",
         "",
         "Base:",
         "- help",
         "- list",
         "- show",
-        "- create NOME [SLUG]        (ex: create \"Meu App\" meu-app)",
+        "- create NOME [SLUG]",
         "- select SLUG",
         "- open dashboard|newapp|editor|generator|agent|settings|admin|logs|diagnostics",
         "",
         "FASE A (Admin):",
-        "- scan                 -> CP1 Scan & Index",
-        "- targets              -> CP2 Generate Target Map",
-        "- dropdown             -> CP3 Refresh dropdown",
-        "- paths                -> lista paths do index",
+        "- scan",
+        "- targets",
+        "- dropdown",
+        "- paths",
         "",
         "Buscar / checar:",
-        "- find TEXTO           -> procura TEXTO nos arquivos indexados (limitado p/ iPhone)",
-        "- peek /caminho        -> mostra início do arquivo",
+        "- find TEXTO",
+        "- peek /caminho",
         "",
         "Injector (CLI SAFE):",
         "- inj mode INSERT|REPLACE|DELETE",
@@ -2360,8 +2296,8 @@
         "- inj apply",
         "- inj rollback",
         "",
-        "ENGINE (Reflect-style):",
-        "- build \"Nome do App\" [mods...]   (ex: build \"Agenda\" agenda calculator)"
+        "ENGINE:",
+        "- build \"Nome do App\" [mods...]"
       ].join("\n");
     },
 
@@ -2376,7 +2312,6 @@
       const map = Storage.get("RCF_TARGET_MAP", null);
       const cIdx = idx?.meta?.count ?? 0;
       const cTg = map?.meta?.count ?? 0;
-
       return [
         `mode: ${State.cfg.mode}`,
         `apps: ${State.apps.length}`,
@@ -2435,14 +2370,12 @@
       const idx = Storage.get("RCF_FILE_INDEX", null);
       const files = idx && Array.isArray(idx.files) ? idx.files : [];
       if (!files.length) return "⚠️ Sem index. Rode: scan";
-
       const needle = String(q || "").trim();
       if (!needle) return "⚠️ Use: find TEXTO";
 
       const needleLow = needle.toLowerCase();
       const hits = [];
       const LIMIT_FILES = 45;
-
       for (const f of files.slice(0, LIMIT_FILES)) {
         const p = f.path;
         const txt = await readTextFromInventoryPath(p);
@@ -2596,25 +2529,16 @@
       if (lower.startsWith("build ")) {
         const rest = cmd.replace(/^build\s+/i, "").trim();
         const qm = rest.match(/^"([^"]+)"\s*(.*)$/);
-
         const name = qm ? qm[1].trim() : rest;
         const modsPart = qm ? (qm[2] || "").trim() : "";
-
-        const mods = modsPart
-          .replace(/^with\s+/i, "")
-          .split(/[,\s]+/g)
-          .map(s => s.trim())
-          .filter(Boolean);
-
+        const mods = modsPart.replace(/^with\s+/i, "").split(/[,\s]+/g).map(s => s.trim()).filter(Boolean);
         const ENG = window.RCF_ENGINE;
-
         if (!ENG || typeof ENG.createSpec !== "function" || typeof ENG.createAppFromSpec !== "function") {
           return this._out("❌ ENGINE não carregou. Verifique se os scripts /js/engine/*.js estão no index.html.");
         }
 
         const r1 = ENG.createSpec({ name, modules: mods });
         if (!r1 || !r1.ok) return this._out("❌ " + (r1?.err || "spec falhou"));
-
         const r2 = ENG.createAppFromSpec(r1.spec);
         if (r2?.ok) {
           try { renderAppsList(); } catch {}
@@ -2629,71 +2553,53 @@
   };
 
   // =========================================================
-  // Bind UI
-  // =========================================================
-
-  // =========================================================
-  // Doctor (atalho p/ Diagnostics + ScanMap quando disponível)
+  // DOCTOR
   // =========================================================
   function runDoctor() {
-    // v8.0.5_DOCTOR_LOCK_PARSER_SAFE
     if (runDoctor.__running__) return;
     runDoctor.__running__ = true;
     try { Logger.write("doctor: start"); } catch {}
     try {
-// 1) Permite que módulos externos (doctor/scan) respondam
-    try { window.dispatchEvent(new CustomEvent("RCF:DOCTOR", { detail: { ts: Date.now() } })); } catch {}
+      try { window.dispatchEvent(new CustomEvent("RCF:DOCTOR", { detail: { ts: Date.now() } })); } catch {}
+      try {
+        const candidates = [
+          window.RCF_DOCTOR_SCAN,
+          window.RCF_DOCTOR,
+          window.__RCF_DOCTOR__,
+          window.RCF_DIAGNOSTICS && window.RCF_DIAGNOSTICS.doctor
+        ].filter(Boolean);
+        for (const obj of candidates) {
+          if (typeof obj.open === "function") { obj.open(); try { Logger.write("doctor: open()"); } catch {} return; }
+          if (typeof obj.show === "function") { obj.show(); try { Logger.write("doctor: show()"); } catch {} return; }
+        }
+      } catch {}
 
-    // 2) Se existir UI de Doctor carregada por algum módulo, abre ela
-    try {
-      const candidates = [
-        window.RCF_DOCTOR_SCAN,
-        window.RCF_DOCTOR,
-        window.__RCF_DOCTOR__,
-        window.RCF_DIAGNOSTICS && window.RCF_DIAGNOSTICS.doctor
-      ].filter(Boolean);
-      for (const obj of candidates) {
-        if (typeof obj.open === "function") { obj.open(); try { Logger.write("doctor: open()"); } catch {} return; }
-        if (typeof obj.show === "function") { obj.show(); try { Logger.write("doctor: show()"); } catch {} return; }
-      }
-    } catch {}
+      try {
+        const D = window.RCF_DIAGNOSTICS;
+        if (D && typeof D.run === "function") D.run({ silent: false });
+      } catch (e) { try { Logger.write("doctor: diagnostics fail " + (e && e.message ? e.message : e)); } catch {} }
 
-    // 3) Fallback: roda diagnostics + scanmap e joga você para Logs (pra você VER que rodou)
-    try {
-      const D = window.RCF_DIAGNOSTICS;
-      if (D && typeof D.run === "function") D.run({ silent: false });
-    } catch (e) { try { Logger.write("doctor: diagnostics fail " + (e && e.message ? e.message : e)); } catch {} }
+      try {
+        const SM = window.RCF_SCANMAP;
+        if (SM && typeof SM.scanNow === "function") SM.scanNow();
+      } catch (e) { try { Logger.write("doctor: scanmap fail " + (e && e.message ? e.message : e)); } catch {} }
 
-    try {
-      const SM = window.RCF_SCANMAP;
-      if (SM && typeof SM.scanNow === "function") SM.scanNow();
-    } catch (e) { try { Logger.write("doctor: scanmap fail " + (e && e.message ? e.message : e)); } catch {} }
-
-    try { setView("logs"); } catch {}
-    try { Logger.write("doctor: done (fallback)"); } catch {}
+      try { setView("logs"); } catch {}
+      try { Logger.write("doctor: done (fallback)"); } catch {}
     } finally {
       try { Logger.write("doctor: end"); } catch {}
       runDoctor.__running__ = false;
     }
-}
+  }
 
-  // =========================================================
-  // Doctor export (garante clique via onclick, caso bindTap falhe no iOS)
-  // =========================================================
   try {
     window.RCF_DOCTOR = window.RCF_DOCTOR || {};
     window.RCF_DOCTOR.run = runDoctor;
     window.RCF_DOCTOR.open = () => runDoctor();
   } catch {}
 
-
-  
   // =========================================================
-  // DOCTOR: Delegation (iOS touch-safe)
-  // - Alguns botões/itens podem ser montados por módulos externos (ui_bindings etc.)
-  // - Em iOS, certos overlays podem "engolir" click; então capturamos pointer/touch.
-  // - Alvos: botões/itens cujo texto seja "Doctor" ou "Doctor Scan" (case-insensitive),
-  //         ou que tenham data-rcf-action contendo "doctor".
+  // BIND UI
   // =========================================================
   function bindUI() {
     try {
@@ -2718,14 +2624,13 @@
         });
         if (ok !== false) {
           try { Logger.write("events:", "external ui_events bind ✅"); } catch {}
-          return;
         }
       }
     } catch (e) {
       try { Logger.write("events bind err:", e?.message || e); } catch {}
     }
 
-    $$("[data-view]").forEach(btn => bindTap(btn, () => setView(btn.getAttribute("data-view"))));
+    $$('[data-view]').forEach(btn => bindTap(btn, () => setView(btn.getAttribute('data-view'))));
     bindTap($("#btnOpenTools"), () => { openTools(true); openFabPanel(false); });
     bindTap($("#btnCloseTools"), () => openTools(false));
     bindTap($("#rcfFab"), () => { toggleFabPanel(); syncFabStatusText(); });
@@ -2740,10 +2645,27 @@
     bindTap($("#btnAgentHelp"), () => uiMsg("#agentOut", Agent.help()));
     bindTap($("#btnSaveFile"), () => saveFile());
     bindTap($("#btnToggleInjectorLog"), () => toggleInjectorLogCollapsed());
+    bindTap($("#btnPinSave"), () => {
+      const pin = String($("#pinInput")?.value || "").trim();
+      if (!pin) return uiMsg("#pinOut", "⚠️ PIN vazio.");
+      Pin.set(pin);
+      uiMsg("#pinOut", "PIN salvo ✅");
+    });
+    bindTap($("#btnPinRemove"), () => {
+      Pin.clear();
+      uiMsg("#pinOut", "PIN removido ✅");
+    });
+    bindTap($("#btnNewAppCreate"), () => {
+      const name = String($("#newAppName")?.value || "").trim();
+      const slug = String($("#newAppSlug")?.value || "").trim();
+      const r = createApp(name, slug);
+      uiMsg("#newAppOut", r.msg || "Pronto.");
+      if (r.ok) setView("dashboard");
+    });
   }
 
   // =========================================================
-  // Boot hydrate
+  // HYDRATE
   // =========================================================
   function hydrateUIFromState() {
     refreshLogsViews();
@@ -2764,14 +2686,8 @@
     if (pin) uiMsg("#pinOut", "PIN definido ✅");
 
     populateTargetsDropdown(true);
-
-    // PATCH: init default UI state
     setInjectorLogCollapsed(true);
-
-    // PATCH
     syncFabStatusText();
-
-    // registry refresh
     try { window.RCF_UI?.refresh?.(); } catch {}
   }
 
@@ -2782,52 +2698,40 @@
     try {
       Stability.install();
       injectCompactCSSOnce();
-
-      renderShell();
-
-      // PATCH: módulos UI/core externos (não travam boot)
       await loadUiCoreBridgeOnce();
-
-      // PATCH: runtime externo (sem depender dele para bootar)
-      await initUiRuntime({
-        $, $$, State, Storage, Logger,
-        uiMsg, textContentSafe, bindTap, saveAll,
-        safeSetStatus
-      });
-
-      // PATCH: Registry (depois do shell existir)
+      await initUiRuntime({ $, $$, State, Storage, Logger, uiMsg, textContentSafe, bindTap, saveAll, safeSetStatus });
+      await loadUiVisualModulesOnce();
+      renderShell();
       installRCFUIRegistry();
       installFactoryIAAliases();
       syncUiCoreBridge("safeInit.registry");
-
-      // ✅ NEW: UI READY BUS — 1x após registry (slots já existem no shell)
+      mountApprovedVisualModules("mount", { phase: "pre-hydrate" });
       try { notifyUIReady(); } catch {}
-
       bindUI();
       hydrateUIFromState();
+      mountApprovedVisualModules("post-hydrate", { phase: "post-hydrate" });
       syncUiCoreBridge("safeInit.hydrate");
 
-      // Engine hook (não quebra se não existir)
-      try { window.RCF_ENGINE?.init?.({ State, Storage, Logger }); Logger.write("engine:", "init ok ✅"); }
-      catch (e) { Logger.write("engine init err:", e?.message || e); }
-
-      // não força SW duplicado (mas tenta auto-fix)
-// PATCH: iOS/Safari às vezes "pendura" em register/getRegistration -> não pode travar o boot.
-// Rodamos em background + timeout curto.
-try {
-  const swr = await Promise.race([
-    swCheckAutoFix(),
-    new Promise((res) => setTimeout(() => res({ ok:false, status:"timeout", detail:"TIMEOUT 3000ms (swCheckAutoFix)" }), 3000))
-  ]);
-  if (!swr.ok) Logger.write("sw warn:", swr.status, swr.detail, swr.err ? ("err=" + swr.err) : "");
-} catch (e) {
-  Logger.write("sw warn:", "exception", e?.message || e);
-}
-
-      Logger.write("RCF V8 init ok — mode:", State.cfg.mode);
-      // ✅ marca boot concluído (permite detectar init real)
       try {
-        window.__RCF_BOOTED__ = true; // compat
+        window.RCF_ENGINE?.init?.({ State, Storage, Logger });
+        Logger.write("engine:", "init ok ✅");
+      } catch (e) {
+        Logger.write("engine init err:", e?.message || e);
+      }
+
+      try {
+        const swr = await Promise.race([
+          swCheckAutoFix(),
+          new Promise((res) => setTimeout(() => res({ ok:false, status:"timeout", detail:"TIMEOUT 3000ms (swCheckAutoFix)" }), 3000))
+        ]);
+        if (!swr.ok) Logger.write("sw warn:", swr.status, swr.detail, swr.err ? ("err=" + swr.err) : "");
+      } catch (e) {
+        Logger.write("sw warn:", "exception", e?.message || e);
+      }
+
+      Logger.write("RCF final init ok — mode:", State.cfg.mode);
+      try {
+        window.__RCF_BOOTED__ = true;
         const st = window[__BOOT_KEY] || {};
         st.booting = false;
         st.booted = true;
@@ -2839,7 +2743,6 @@ try {
     } catch (e) {
       const msg = (e?.message || e);
       Logger.write("FATAL init:", msg);
-      // ✅ libera retry se falhou (não deixa boot lock travar)
       try {
         const st = window[__BOOT_KEY] || {};
         st.booting = false;
@@ -2852,7 +2755,6 @@ try {
     }
   }
 
-  // SAFE INIT só 1x
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", () => { safeInit(); }, { passive: true });
   } else {
