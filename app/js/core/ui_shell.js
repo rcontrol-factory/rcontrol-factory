@@ -7,6 +7,8 @@
    - Idempotente / seguro para remount
    - PATCH: remove FAB visual flutuante da tela
    - PATCH: mantém compatibilidade oculta com app.js atual
+   - PATCH: corrige barra inferior -> último atalho agora é Factory AI
+   - PATCH: Admin continua como view própria, fora da barra inferior
 */
 (() => {
   "use strict";
@@ -135,7 +137,7 @@
                 <button class="rcfMobileModuleCard" data-view="admin" type="button">
                   <span class="rcfMobileModuleIcon mod-factory" aria-hidden="true"></span>
                   <span class="rcfMobileModuleText">
-                    <span class="rcfMobileModuleTitle">Factory</span>
+                    <span class="rcfMobileModuleTitle">Admin</span>
                     <span class="rcfMobileModuleSub">Sistema &amp; Tools</span>
                   </span>
                   <span class="rcfMobileModuleArrow" aria-hidden="true">›</span>
@@ -331,7 +333,7 @@
           <button class="tab" data-view="newapp" type="button">Apps</button>
           <button class="tab" data-view="editor" type="button">Editor</button>
           <button class="tab" data-view="agent" type="button">Agent</button>
-          <button class="tab" data-view="admin" type="button">Factory</button>
+          <button class="tab" data-view="factoryai" type="button">Factory AI</button>
         </nav>
 
         <div class="tools" id="toolsDrawer" data-rcf-panel="tools.drawer">
