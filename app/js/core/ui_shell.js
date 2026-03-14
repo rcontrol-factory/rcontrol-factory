@@ -1,10 +1,12 @@
 /* FILE: /app/js/core/ui_shell.js
-   RControl Factory — UI Shell mount (safe extraction)
+   RControl Factory — UI Shell mount (lean safe extraction)
    - Responsável apenas pelo HTML base da shell
-   - Sem boot crítico
-   - Sem lógica de agent/injector
+   - Sem hero antigo no dashboard
+   - Sem cards antigos no topo
+   - Sem imagens quebradas obrigatórias
    - Mantém IDs/classes compatíveis com app atual
    - Idempotente / seguro para remount
+   - PATCH: shell realmente lean para não competir com ui_dashboard/ui_factory_view
 */
 (() => {
   "use strict";
@@ -37,16 +39,12 @@
   }
 
   function brandHeaderHTML(ctx = {}) {
-    const brandTitle = esc(ctx.brandTitle || "RControl Factory");
-    const brandSubtitle = esc(ctx.brandSubtitle || "FACTORY INTERNA • PWA • OFFLINE-FIRST");
+    const brandTitle = esc(ctx.brandTitle || "RCF");
+    const brandSubtitle = esc(ctx.brandSubtitle || "Factory interna • PWA • Offline-first");
 
     return `
-      <div class="brand-mark" aria-hidden="true">
-        <img src="./assets/icons/app/app-icon.png" class="factory-mark-img" alt="">
-      </div>
       <div class="brand-text">
-        <img src="./assets/branding/header-logo.jpeg" class="factory-logo-header" alt="Factory by RCONTROL">
-        <div class="title rcf-visually-hidden">${brandTitle}</div>
+        <div class="title">${brandTitle}</div>
         <div class="subtitle">${brandSubtitle}</div>
       </div>
     `;
@@ -71,79 +69,14 @@
             <button class="tab" data-view="editor" type="button">Editor</button>
             <button class="tab" data-view="generator" type="button">Generator</button>
             <button class="tab" data-view="agent" type="button">Agent</button>
-            <button class="tab" data-view="admin" type="button">Factory</button>
+            <button class="tab" data-view="admin" type="button">Admin</button>
             <button class="tab" data-view="settings" type="button">System</button>
             <button class="tab" data-view="logs" type="button">Logs</button>
           </nav>
         </header>
 
         <main class="container views" id="views" data-rcf-panel="views">
-          <section class="view card hero active" id="view-dashboard" data-rcf-view="dashboard">
-            <div class="rcfDashHero">
-              <div class="rcfDashHeroHead">
-                <div>
-                  <h1>Dashboard</h1>
-                  <p>Central do projeto. Selecione um app e comece a editar.</p>
-                </div>
-                <div class="status-box">
-                  <div class="badge" id="activeAppText">Sem app ativo ✅</div>
-                  <button class="btn small" id="btnCreateNewApp" type="button">Criar App</button>
-                  <button class="btn small" id="btnOpenEditor" type="button">Abrir Editor</button>
-                  <button class="btn small ghost" id="btnExportBackup" type="button">Backup (JSON)</button>
-                </div>
-              </div>
-
-              <div class="rcfMobileModules" aria-label="Módulos principais">
-                <button class="rcfMobileModuleCard" data-view="dashboard" type="button">
-                  <span class="rcfMobileModuleIcon mod-dashboard" aria-hidden="true"></span>
-                  <span class="rcfMobileModuleText">
-                    <span class="rcfMobileModuleTitle">Dashboard</span>
-                    <span class="rcfMobileModuleSub">Status &amp; Controle</span>
-                  </span>
-                  <span class="rcfMobileModuleArrow" aria-hidden="true">›</span>
-                </button>
-                <button class="rcfMobileModuleCard" data-view="newapp" type="button">
-                  <span class="rcfMobileModuleIcon mod-apps" aria-hidden="true"></span>
-                  <span class="rcfMobileModuleText">
-                    <span class="rcfMobileModuleTitle">Apps</span>
-                    <span class="rcfMobileModuleSub">Criar &amp; Gerenciar</span>
-                  </span>
-                  <span class="rcfMobileModuleArrow" aria-hidden="true">›</span>
-                </button>
-                <button class="rcfMobileModuleCard" data-view="editor" type="button">
-                  <span class="rcfMobileModuleIcon mod-editor" aria-hidden="true"></span>
-                  <span class="rcfMobileModuleText">
-                    <span class="rcfMobileModuleTitle">Editor</span>
-                    <span class="rcfMobileModuleSub">Projetos &amp; Código</span>
-                  </span>
-                  <span class="rcfMobileModuleArrow" aria-hidden="true">›</span>
-                </button>
-                <button class="rcfMobileModuleCard" data-view="agent" type="button">
-                  <span class="rcfMobileModuleIcon mod-agent" aria-hidden="true"></span>
-                  <span class="rcfMobileModuleText">
-                    <span class="rcfMobileModuleTitle">Agent</span>
-                    <span class="rcfMobileModuleSub">IA + Automação</span>
-                  </span>
-                  <span class="rcfMobileModuleArrow" aria-hidden="true">›</span>
-                </button>
-                <button class="rcfMobileModuleCard" data-view="admin" type="button">
-                  <span class="rcfMobileModuleIcon mod-factory" aria-hidden="true"></span>
-                  <span class="rcfMobileModuleText">
-                    <span class="rcfMobileModuleTitle">Factory</span>
-                    <span class="rcfMobileModuleSub">Sistema &amp; Tools</span>
-                  </span>
-                  <span class="rcfMobileModuleArrow" aria-hidden="true">›</span>
-                </button>
-              </div>
-
-              <div class="rcfDashPanels">
-                <div class="rcfDashPanel rcfDashPanelWide">
-                  <h2>Apps</h2>
-                  <div id="appsList" class="apps" data-rcf-slot="apps.list"></div>
-                </div>
-              </div>
-            </div>
-          </section>
+          <section class="view card active" id="view-dashboard" data-rcf-view="dashboard"></section>
 
           <section class="view card" id="view-newapp" data-rcf-view="newapp">
             <h1>Novo App</h1>
@@ -195,7 +128,7 @@
           </section>
 
           <section class="view card" id="view-agent" data-rcf-view="agent">
-            <h1>Agente</h1>
+            <h1>Agent</h1>
             <div class="row cmd">
               <input id="agentCmd" placeholder='Ex: create "Meu App" meu-app' />
               <button class="btn ok" id="btnAgentRun" type="button">Executar</button>
@@ -248,6 +181,7 @@
               </div>
               <pre class="mono" id="adminOut">Pronto.</pre>
             </div>
+
             <div class="card" id="admin-maint">
               <h2>Maintenance</h2>
               <div class="row">
@@ -260,10 +194,12 @@
               </div>
               <pre class="mono" id="maintOut">Pronto.</pre>
             </div>
+
             <div class="card" id="rcfAdminSlotIntegrations" data-rcf-slot="admin.integrations">
               <h2>Integrations</h2>
               <div class="hint">Pronto.</div>
             </div>
+
             <div class="card" id="admin-injector" data-rcf-slot="admin.injector">
               <h2>Injector SAFE</h2>
               <div class="row" style="flex-wrap:wrap;">
@@ -272,6 +208,7 @@
                 <button class="btn ghost" id="btnRefreshTargets" type="button">Refresh Dropdown</button>
               </div>
               <pre class="mono small" id="scanOut">Pronto.</pre>
+
               <div class="row form" style="margin-top:10px">
                 <select id="injMode">
                   <option value="INSERT">INSERT</option>
@@ -283,10 +220,13 @@
                 <button class="btn ok" id="btnApplyInject" type="button">Apply</button>
                 <button class="btn danger" id="btnRollbackInject" type="button">Rollback</button>
               </div>
+
               <div class="hint" style="margin-top:10px">Payload:</div>
               <textarea id="injPayload" class="textarea" rows="8" spellcheck="false"></textarea>
+
               <div class="hint" style="margin-top:10px">Preview / Diff:</div>
               <pre class="mono small" id="diffOut">Pronto.</pre>
+
               <div id="rcfAdminSlotLogs" data-rcf-slot="admin.logs">
                 <div class="row" style="margin-top:10px;align-items:center">
                   <div class="hint" style="margin:0">Log (Injector):</div>
@@ -315,7 +255,7 @@
           <button class="tab" data-view="newapp" type="button">Apps</button>
           <button class="tab" data-view="editor" type="button">Editor</button>
           <button class="tab" data-view="agent" type="button">Agent</button>
-          <button class="tab" data-view="admin" type="button">Factory</button>
+          <button class="tab" data-view="admin" type="button">Admin</button>
         </nav>
 
         <div class="tools" id="toolsDrawer" data-rcf-panel="tools.drawer">
@@ -366,11 +306,9 @@
       if (!root) return false;
 
       const dashboard = qs("#view-dashboard", root);
-      if (dashboard && !qs("#rcfFactoryUiRoot", dashboard)) {
+      if (dashboard && !qs('[data-rcf-ui-dashboard-root="1"]', dashboard)) {
         const slot = document.createElement("div");
-        slot.id = "rcfFactoryUiRoot";
-        slot.setAttribute("data-rcf-ui-slot", "factory-view");
-        slot.style.marginTop = "14px";
+        slot.setAttribute("data-rcf-ui-dashboard-root", "1");
         dashboard.appendChild(slot);
       }
 
