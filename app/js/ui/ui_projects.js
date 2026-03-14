@@ -1,7 +1,10 @@
 /* FILE: /app/js/ui/ui_projects.js
    RControl Factory — Projects Module
-   Estrutura inicial da tela de projetos
-   - Agora com slot oficial para code panel
+   PATCH MÍNIMO:
+   - troca "Chat IA" por "Factory AI"
+   - adiciona card próprio de Admin
+   - corrige tabs Projects/Código
+   - liga ações "Abrir" à navegação via data-view
 */
 
 (() => {
@@ -32,6 +35,13 @@
       return String(v ?? "");
     },
 
+    escAttr(v){
+      try{
+        if(this.d.escapeAttr) return this.d.escapeAttr(v);
+      }catch{}
+      return String(v ?? "");
+    },
+
     getProjects(){
 
       return [
@@ -39,19 +49,29 @@
         {
           name: "Painel Central",
           slug: "painel-central",
-          description: "Sistema principal da Factory"
+          description: "Sistema principal da Factory",
+          view: "dashboard"
         },
 
         {
-          name: "Chat IA",
-          slug: "chat-ia",
-          description: "Assistente e automação"
+          name: "Factory AI",
+          slug: "factory-ai",
+          description: "IA da Factory e automação",
+          view: "agent"
+        },
+
+        {
+          name: "Admin",
+          slug: "admin",
+          description: "Controles e gestão interna",
+          view: "admin"
         },
 
         {
           name: "App Booking",
           slug: "app-booking",
-          description: "Sistema de reservas"
+          description: "Sistema de reservas",
+          view: "editor"
         }
 
       ];
@@ -97,13 +117,15 @@
             title: p.name,
             description: p.description,
             icon: "◆",
-            actionLabel: "Abrir"
+            actionLabel: "Abrir",
+            actionAttr: p.view ? `data-view="${this.escAttr(p.view)}"` : "",
+            className: p.slug ? `rcfProject-${p.slug}` : ""
           });
 
         }
 
         return `
-          <div class="rcfUiListItem">
+          <div class="rcfUiListItem ${p.slug ? this.escAttr(`rcfProject-${p.slug}`) : ""}">
 
             <div class="rcfUiListItemIcon">◆</div>
 
@@ -120,7 +142,11 @@
             </div>
 
             <div class="rcfUiListItemActions">
-              <button class="btn small ghost" type="button">Abrir</button>
+              ${
+                p.view
+                  ? `<button class="btn small ghost" type="button" data-view="${this.escAttr(p.view)}">Abrir</button>`
+                  : `<button class="btn small ghost" type="button">Abrir</button>`
+              }
             </div>
 
           </div>
@@ -136,6 +162,7 @@
         <div
           class="rcfUiProjectsCodeWrap"
           data-rcf-projects-code-wrap="1"
+          style="display:none"
         >
           <div
             class="rcfUiProjectsCodeSlot"
@@ -152,6 +179,7 @@
         <div
           class="rcfUiProjectsBody"
           data-projects-body
+          style="display:block"
         >
           ${this.buildProjectsList()}
         </div>
@@ -175,6 +203,45 @@
 
     },
 
+    bindNav(root){
+
+      try{
+        const cards = window.RCF_UI_CARDS;
+
+        if(cards && typeof cards.bindNav === "function"){
+          cards.bindNav(root);
+          return true;
+        }
+      }catch{}
+
+      try{
+        const nodes = Array.from(root.querySelectorAll("[data-view]"));
+
+        nodes.forEach(node => {
+
+          if(node.__rcf_nav_bound__) return;
+          node.__rcf_nav_bound__ = true;
+
+          node.addEventListener("click", () => {
+
+            const view = node.getAttribute("data-view");
+            if(!view) return;
+
+            try{
+              window.RCF?.setView?.(view);
+            }catch{}
+
+          }, { passive:true });
+
+        });
+
+        return true;
+      }catch{
+        return false;
+      }
+
+    },
+
     bindTabs(root){
 
       try{
@@ -185,29 +252,31 @@
 
         if(!tabs.length || !codeWrap || !projectsBody) return false;
 
+        const applyTab = (tab) => {
+          tabs.forEach(x => x.classList.toggle("active", x.getAttribute("data-tab") === tab));
+
+          if(tab === "code"){
+            codeWrap.style.display = "";
+            projectsBody.style.display = "none";
+          }else{
+            codeWrap.style.display = "none";
+            projectsBody.style.display = "";
+          }
+        };
+
         tabs.forEach(btn => {
 
           if(btn.__rcf_tab_bound__) return;
           btn.__rcf_tab_bound__ = true;
 
           btn.addEventListener("click", () => {
-
-            const tab = btn.getAttribute("data-tab");
-
-            tabs.forEach(x => x.classList.remove("active"));
-            btn.classList.add("active");
-
-            if(tab === "code"){
-              codeWrap.style.display = "";
-              projectsBody.style.display = "none";
-            }else{
-              codeWrap.style.display = "";
-              projectsBody.style.display = "";
-            }
-
+            const tab = btn.getAttribute("data-tab") || "projects";
+            applyTab(tab);
           }, { passive: true });
 
         });
+
+        applyTab("projects");
 
         return true;
 
@@ -230,6 +299,7 @@
         el.innerHTML = this.buildView();
 
         this.bindTabs(el);
+        this.bindNav(el);
 
         try{
           if(window.RCF_UI_CODE_PANEL?.render){
@@ -243,6 +313,22 @@
 
         return false;
 
+      }
+
+    },
+
+    refresh(){
+
+      try{
+        const root = document.querySelector(".rcfUiProjectsSection");
+        if(!root) return false;
+
+        this.bindTabs(root);
+        this.bindNav(root);
+
+        return true;
+      }catch{
+        return false;
       }
 
     }
