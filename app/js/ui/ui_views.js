@@ -4,7 +4,8 @@
    - Mantém fallback leve
    - Evita reinjeções duplicadas
    - Não quebra fluxo antigo
-   - Corrige separação entre Factory AI / Admin / Agent
+   - PATCH: corrige mapeamento dos cards principais
+   - PATCH: separa Admin de Factory AI
 */
 (() => {
   "use strict";
@@ -39,9 +40,9 @@
     return !!qs("#rcfFactoryUiRoot, #rcfRoot .rcfMobileModules, #rcfRoot .rcfBottomNav");
   }
 
-  function makeMenuCard(iconClass, title, subtitle, view) {
+  function makeMenuCard(iconClass, title, subtitle, view, extraAttrs = "") {
     return `
-      <button class="rcfUiCard rcfUiCard--menu" type="button" data-rcf-nav-view="${escapeHtml(view)}">
+      <button class="rcfUiCard rcfUiCard--menu" type="button" data-rcf-nav-view="${escapeHtml(view)}" ${extraAttrs}>
         <span class="rcfUiCard__iconWrap">
           <span class="rcfUiIcon ${escapeHtml(iconClass)}"></span>
         </span>
@@ -69,16 +70,56 @@
     `;
   }
 
-  function navTo(view) {
+  function openFactoryAI() {
     try {
-      if (window.RCF && typeof window.RCF.setView === "function") {
-        window.RCF.setView(view);
+      if (window.RCF_FACTORY_IA && typeof window.RCF_FACTORY_IA.open === "function") {
+        window.RCF_FACTORY_IA.open();
         return true;
       }
     } catch {}
 
     try {
-      document.dispatchEvent(new CustomEvent("rcf:view", { detail: { view } }));
+      document.dispatchEvent(new CustomEvent("rcf:factory-ai", {
+        detail: { source: "ui_views", target: "factoryai" }
+      }));
+      return true;
+    } catch {}
+
+    return false;
+  }
+
+  function navTo(view) {
+    const v = String(view || "").trim().toLowerCase();
+
+    if (v === "factoryai") {
+      if (openFactoryAI()) return true;
+
+      try {
+        if (window.RCF && typeof window.RCF.setView === "function") {
+          window.RCF.setView("agent");
+          return true;
+        }
+      } catch {}
+
+      try {
+        document.dispatchEvent(new CustomEvent("rcf:view", {
+          detail: { view: "agent", source: "factoryai-fallback" }
+        }));
+        return true;
+      } catch {}
+
+      return false;
+    }
+
+    try {
+      if (window.RCF && typeof window.RCF.setView === "function") {
+        window.RCF.setView(v);
+        return true;
+      }
+    } catch {}
+
+    try {
+      document.dispatchEvent(new CustomEvent("rcf:view", { detail: { view: v } }));
       return true;
     } catch {}
 
@@ -116,6 +157,18 @@
     });
   }
 
+  function buildDashboardCards() {
+    return [
+      makeMenuCard("rcfUiIcon--dashboard", "Dashboard", "Visão central da Factory", "dashboard"),
+      makeMenuCard("rcfUiIcon--apps", "Apps", "Criar e organizar aplicativos", "newapp"),
+      makeMenuCard("rcfUiIcon--editor", "Editor", "Arquivos, estrutura e ajustes", "editor"),
+      makeMenuCard("rcfUiIcon--agent", "Agent", "Automação e comandos operacionais", "agent"),
+      makeMenuCard("rcfUiIcon--generator", "Generator", "Testes, execução e validação", "generator"),
+      makeMenuCard("rcfUiIcon--factory", "Admin", "Sistema, injector e manutenção", "admin"),
+      makeMenuCard("rcfUiIcon--factoryai", "Factory AI", "IA interna do núcleo da Factory", "factoryai")
+    ].join("");
+  }
+
   function ensureDashboardCardsFallback() {
     const host = qs("#appsList");
     if (!host) return false;
@@ -135,20 +188,10 @@
       const rt = window.RCF_UI_RUNTIME;
       if (rt && typeof rt.renderAppsList === "function") {
         rt.renderAppsList();
-        host.setAttribute("data-rcf-ui-enhanced", "runtime");
-        return true;
       }
     } catch {}
 
-    host.innerHTML = [
-      makeMenuCard("rcfUiIcon--dashboard", "Dashboard", "Visão central da Factory", "dashboard"),
-      makeMenuCard("rcfUiIcon--apps", "Novo App", "Criar e organizar aplicativos", "newapp"),
-      makeMenuCard("rcfUiIcon--editor", "Editor", "Arquivos, estrutura e ajustes", "editor"),
-      makeMenuCard("rcfUiIcon--agent", "Agent", "Assistente operacional e comandos", "agent"),
-      makeMenuCard("rcfUiIcon--factory", "Factory AI", "IA interna do núcleo da Factory", "factory-ai"),
-      makeMenuCard("rcfUiIcon--admin", "Admin", "Administração, sync e ferramentas", "admin")
-    ].join("");
-
+    host.innerHTML = buildDashboardCards();
     host.setAttribute("data-rcf-ui-enhanced", "1");
     bindNavCards(host);
     return true;
@@ -170,7 +213,7 @@
       <div class="rcfUiSectionDivider">Apps & Widgets</div>
       <div class="rcfUiListGroup">
         ${makeListCard("rcfUiIcon--apps", "App Store", "Base de apps e módulos visuais")}
-        ${makeListCard("rcfUiIcon--agent", "Chat IA", "Comandos naturais e assistência")}
+        ${makeListCard("rcfUiIcon--factoryai", "Factory AI", "IA interna e automação do núcleo")}
         ${makeListCard("rcfUiIcon--editor", "Site Builder", "Estrutura visual e páginas")}
       </div>
 
@@ -231,8 +274,8 @@ startFactoryDeploy();</pre>
           <div class="rcfUiProjectItem__left">
             <span class="rcfUiProjectItem__dot"></span>
             <div class="rcfUiProjectItem__meta">
-              <div class="rcfUiProjectItem__title">Chat IA</div>
-              <div class="rcfUiProjectItem__subtitle">Assistente interno da Factory</div>
+              <div class="rcfUiProjectItem__title">Factory AI</div>
+              <div class="rcfUiProjectItem__subtitle">IA interna da Factory</div>
             </div>
           </div>
           <div class="rcfUiProjectItem__actions">
