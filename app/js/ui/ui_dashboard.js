@@ -1,10 +1,13 @@
 /* FILE: /app/js/ui/ui_dashboard.js
    RControl Factory — UI Dashboard
-   - Home mobile leve e direta
-   - Cards principais com navegação imediata
-   - Apenas RCF Factory permanece expansível
-   - Menos custo visual para Safari / iPhone / PWA
-   - Corrige sensação de travamento ao entrar nos módulos
+   V3.0 STABLE HOME
+   - Home mobile leve com cards verticais
+   - Sem bind global duplicado
+   - Sem restore de card antigo
+   - Dashboard card funcional com resumo do painel
+   - Esconde shell/cabeçalho legado na Home
+   - Evita re-render pesado desnecessário
+   - Compatível com Safari / iPhone / PWA
 */
 (() => {
   "use strict";
@@ -16,13 +19,13 @@
     _styleId: "rcfUiDashboardStyle",
     _rootSel: "#rcfRoot",
     _viewSel: "#view-dashboard",
+    _surfaceSel: "#rcfDashboardSurface",
     _gridSel: "#rcfDashboardCards",
 
     init(ctx = {}) {
-      this._ctx = ctx || {};
+      this._ctx = Object.assign({}, this._ctx || {}, ctx || {});
       this._expanded = null;
       this._ensureStyle();
-      this._bindGlobal();
       return true;
     },
 
@@ -30,10 +33,11 @@
       this._ctx = Object.assign({}, this._ctx || {}, ctx || {});
       this._expanded = null;
       this._ensureStyle();
-      this._ensureDashboardShell();
-      this.render();
+      if (!this._ensureDashboardShell()) return false;
+      this._renderCards(true);
       this._bindWithinDashboard();
       this._markDashboardMode();
+      this._syncDynamicBits();
       this._booted = true;
       return true;
     },
@@ -42,19 +46,31 @@
       this._ctx = Object.assign({}, this._ctx || {}, ctx || {});
       this._expanded = null;
       this._ensureStyle();
-      this._ensureDashboardShell();
-      this.render();
+      if (!this._ensureDashboardShell()) return false;
+      this._renderCards(true);
       this._bindWithinDashboard();
       this._markDashboardMode();
+      this._syncDynamicBits();
       return true;
     },
 
     refresh(ctx = {}) {
       this._ctx = Object.assign({}, this._ctx || {}, ctx || {});
       this._ensureStyle();
-      this._ensureDashboardShell();
-      this.render();
+
+      const ok = this._ensureDashboardShell();
+      if (!ok) return false;
+
       this._markDashboardMode();
+      this._syncDynamicBits();
+
+      const grid = this._grid();
+      if (!grid || !grid.children.length) {
+        this._renderCards(true);
+      } else {
+        this._renderCards(false);
+      }
+
       return true;
     },
 
@@ -66,54 +82,70 @@
       return true;
     },
 
+    _view() {
+      try { return document.querySelector(this._viewSel); } catch { return null; }
+    },
+
+    _surface() {
+      try { return document.querySelector(this._surfaceSel); } catch { return null; }
+    },
+
+    _grid() {
+      try { return document.querySelector(this._gridSel); } catch { return null; }
+    },
+
     _getState() {
       const ctxState = this._ctx && this._ctx.State;
       const rootState = window.RCF && window.RCF.state;
-      return ctxState || rootState || { apps: [], active: { view: "dashboard" } };
+      return ctxState || rootState || { apps: [], active: { view: "dashboard", appSlug: null } };
     },
 
-    _normalizeView(view) {
-      const raw = String(view || "").trim().toLowerCase();
-      const aliases = {
-        home: "dashboard",
-        dashboard: "dashboard",
-        apps: "newapp",
-        newapp: "newapp",
-        "new-app": "newapp",
-        editor: "editor",
-        agent: "agent",
-        "agent-ia": "agent-ia",
-        agentia: "agent-ia",
-        factoryai: "factory-ai",
-        "factory-ai": "factory-ai",
-        opportunity: "opportunity-scan",
-        "opportunity-scan": "opportunity-scan",
-        generator: "generator",
-        admin: "admin",
-        github: "github",
-        updates: "updates",
-        deploy: "deploy",
-        settings: "settings",
-        logs: "logs",
-        diagnostics: "diagnostics"
-      };
-      return aliases[raw] || raw;
+    _getApps() {
+      const state = this._getState();
+      return Array.isArray(state && state.apps) ? state.apps : [];
     },
 
-    _setView(view) {
-      const normalized = this._normalizeView(view);
-
+    _getActiveSlug() {
       try {
-        if (this._ctx && typeof this._ctx.setView === "function") return this._ctx.setView(normalized);
+        const state = this._getState();
+        return state && state.active && state.active.appSlug ? String(state.active.appSlug) : "";
+      } catch {
+        return "";
+      }
+    },
+
+    _getActiveApp() {
+      try {
+        if (this._ctx && typeof this._ctx.getActiveApp === "function") {
+          return this._ctx.getActiveApp() || null;
+        }
       } catch {}
 
       try {
-        if (window.RCF && typeof window.RCF.setView === "function") return window.RCF.setView(normalized);
+        const slug = this._getActiveSlug();
+        if (!slug) return null;
+        return this._getApps().find(a => a && a.slug === slug) || null;
+      } catch {}
+
+      return null;
+    },
+
+    _setView(view) {
+      try {
+        if (this._ctx && typeof this._ctx.setView === "function") {
+          return this._ctx.setView(view);
+        }
+      } catch {}
+
+      try {
+        if (window.RCF && typeof window.RCF.setView === "function") {
+          return window.RCF.setView(view);
+        }
       } catch {}
 
       try {
         if (window.RCF_UI_ROUTER && typeof window.RCF_UI_ROUTER.setView === "function") {
-          return window.RCF_UI_ROUTER.setView(normalized);
+          return window.RCF_UI_ROUTER.setView(view);
         }
       } catch {}
 
@@ -122,7 +154,9 @@
 
     _setActiveApp(slug) {
       try {
-        if (this._ctx && typeof this._ctx.setActiveApp === "function") return this._ctx.setActiveApp(slug);
+        if (this._ctx && typeof this._ctx.setActiveApp === "function") {
+          return this._ctx.setActiveApp(slug);
+        }
       } catch {}
 
       try {
@@ -132,14 +166,14 @@
       } catch {}
 
       try {
-        if (window.RCF && window.RCF.state && Array.isArray(window.RCF.state.apps)) {
-          const app = window.RCF.state.apps.find(a => a && a.slug === slug);
-          if (!app) return false;
-          window.RCF.state.active = window.RCF.state.active || {};
-          window.RCF.state.active.appSlug = slug;
-          window.RCF.state.active.file = window.RCF.state.active.file || null;
-          return true;
-        }
+        const state = this._getState();
+        const apps = this._getApps();
+        const app = apps.find(a => a && a.slug === slug);
+        if (!app) return false;
+        state.active = state.active || {};
+        state.active.appSlug = slug;
+        state.active.file = state.active.file || null;
+        return true;
       } catch {}
 
       return false;
@@ -154,11 +188,18 @@
       } catch {}
 
       try {
-        const drawer = document.querySelector("#toolsDrawer");
-        if (drawer) {
-          drawer.classList.add("open");
-          drawer.hidden = false;
-          drawer.style.display = "";
+        if (window.RCF_UI_RUNTIME && typeof window.RCF_UI_RUNTIME.openTools === "function") {
+          window.RCF_UI_RUNTIME.openTools(true);
+          return true;
+        }
+      } catch {}
+
+      try {
+        const d = document.getElementById("toolsDrawer");
+        if (d) {
+          d.classList.add("open");
+          d.hidden = false;
+          d.style.display = "";
           return true;
         }
       } catch {}
@@ -182,25 +223,14 @@
       return false;
     },
 
-    _fastNavigate(view) {
-      const v = this._normalizeView(view);
-      if (!v) return false;
-
+    _saveAll(reason = "dashboard") {
       try {
-        document.body.style.pointerEvents = "none";
-      } catch {}
-
-      requestAnimationFrame(() => {
-        try {
-          this._setView(v);
-        } finally {
-          setTimeout(() => {
-            try { document.body.style.pointerEvents = ""; } catch {}
-          }, 60);
+        if (this._ctx && typeof this._ctx.saveAll === "function") {
+          this._ctx.saveAll(reason);
+          return true;
         }
-      });
-
-      return true;
+      } catch {}
+      return false;
     },
 
     _ensureStyle() {
@@ -209,8 +239,18 @@
       const st = document.createElement("style");
       st.id = this._styleId;
       st.textContent = `
+#rcfRoot[data-rcf-dashboard-mode="cards"] > :not(#views):not(.rcfBottomNav):not(#rcfFab):not(#rcfFabPanel):not(#toolsDrawer){
+  display:none !important;
+}
+
+#rcfRoot[data-rcf-dashboard-mode="cards"] #toolsDrawer:not(.open){
+  display:none !important;
+}
+
 #rcfRoot[data-rcf-dashboard-mode="cards"] .tabs,
 #rcfRoot[data-rcf-dashboard-mode="cards"] .topbar,
+#rcfRoot[data-rcf-dashboard-mode="cards"] .header,
+#rcfRoot[data-rcf-dashboard-mode="cards"] .brand,
 #rcfRoot[data-rcf-dashboard-mode="cards"] .rcfDashLegacy,
 #rcfRoot[data-rcf-dashboard-mode="cards"] .rcfDashLegacyNav,
 #rcfRoot[data-rcf-dashboard-mode="cards"] .rcfDashTopNav,
@@ -226,24 +266,37 @@
   display:block;
   width:100%;
   min-height:100%;
-  padding:12px 0 26px;
+  padding:12px 0 28px;
 }
 
 #view-dashboard .rcfDashSurface{
   display:grid;
-  gap:12px;
+  gap:14px;
 }
 
 #view-dashboard .rcfDashHero{
   position:relative;
   overflow:hidden;
-  border-radius:24px;
-  border:1px solid rgba(112,128,162,.14);
-  background:linear-gradient(180deg, rgba(255,255,255,.92), rgba(246,248,252,.82));
-  box-shadow:0 12px 26px rgba(29,42,72,.06), inset 0 1px 0 rgba(255,255,255,.92);
-  padding:15px;
-  content-visibility:auto;
-  contain:layout paint style;
+  border-radius:26px;
+  border:1px solid rgba(112,128,162,.12);
+  background:linear-gradient(180deg,rgba(255,255,255,.90),rgba(245,248,253,.76));
+  box-shadow:0 14px 30px rgba(29,42,72,.08), inset 0 1px 0 rgba(255,255,255,.94);
+  padding:16px;
+}
+
+#view-dashboard .rcfDashHero::before{
+  content:"";
+  position:absolute;
+  inset:0;
+  pointer-events:none;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.18), rgba(255,255,255,0)),
+    radial-gradient(circle at 15% 15%, rgba(255,255,255,.56), rgba(255,255,255,0) 22%);
+}
+
+#view-dashboard .rcfDashHero > *{
+  position:relative;
+  z-index:1;
 }
 
 #view-dashboard .rcfDashBrand{
@@ -253,31 +306,28 @@
   min-width:0;
 }
 
-#view-dashboard .rcfDashBrandLogo{
+#view-dashboard .rcfDashBrandLogo,
+#view-dashboard .rcfDashBrandFallback{
   width:62px;
   height:62px;
   min-width:62px;
   border-radius:18px;
-  object-fit:cover;
-  background:#fff;
+  background:rgba(255,255,255,.84);
   border:1px solid rgba(100,116,145,.10);
-  box-shadow:0 8px 18px rgba(26,39,68,.06);
+  box-shadow:0 8px 18px rgba(26,39,68,.07);
+}
+
+#view-dashboard .rcfDashBrandLogo{
+  object-fit:cover;
 }
 
 #view-dashboard .rcfDashBrandFallback{
-  display:inline-flex;
+  display:none;
   align-items:center;
   justify-content:center;
-  width:62px;
-  height:62px;
-  min-width:62px;
-  border-radius:18px;
   font-size:22px;
   font-weight:900;
   color:#1d2b4d;
-  background:#fff;
-  border:1px solid rgba(100,116,145,.10);
-  box-shadow:0 8px 18px rgba(26,39,68,.06);
 }
 
 #view-dashboard .rcfDashBrandText{
@@ -323,11 +373,10 @@
   padding:6px 11px;
   border-radius:999px;
   border:1px solid rgba(92,110,145,.10);
-  background:rgba(255,255,255,.82);
+  background:rgba(255,255,255,.60);
   color:rgba(36,49,80,.88);
   font-size:12px;
   font-weight:800;
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.72);
 }
 
 #view-dashboard .rcfDashCards{
@@ -341,11 +390,24 @@
   position:relative;
   overflow:hidden;
   border-radius:24px;
-  border:1px solid rgba(108,125,160,.12);
-  background:linear-gradient(180deg, rgba(255,255,255,.92), rgba(246,248,252,.84));
-  box-shadow:0 12px 24px rgba(28,40,69,.06), inset 0 1px 0 rgba(255,255,255,.92);
-  content-visibility:auto;
-  contain:layout paint style;
+  border:1px solid rgba(108,125,160,.10);
+  background:linear-gradient(180deg,rgba(255,255,255,.90),rgba(245,248,253,.74));
+  box-shadow:0 12px 26px rgba(28,40,69,.07), inset 0 1px 0 rgba(255,255,255,.90);
+}
+
+#view-dashboard .rcfDashCard::before{
+  content:"";
+  position:absolute;
+  inset:0;
+  pointer-events:none;
+  background:
+    linear-gradient(135deg, rgba(255,255,255,.20), rgba(255,255,255,0) 38%),
+    radial-gradient(circle at 100% 0%, rgba(118,172,255,.06), rgba(118,172,255,0) 28%);
+}
+
+#view-dashboard .rcfDashCard > *{
+  position:relative;
+  z-index:1;
 }
 
 #view-dashboard .rcfDashCardHead{
@@ -362,7 +424,9 @@
   -webkit-tap-highlight-color:transparent;
 }
 
-#view-dashboard .rcfDashCardHead:focus{
+#view-dashboard .rcfDashCardHead:focus,
+#view-dashboard .rcfDashActionBtn:focus,
+#view-dashboard .rcfDashAppGo:focus{
   outline:none;
 }
 
@@ -375,8 +439,8 @@
   min-width:68px;
   border-radius:20px;
   border:1px solid rgba(106,124,159,.10);
-  background:linear-gradient(180deg, rgba(255,255,255,.98), rgba(239,243,249,.92));
-  box-shadow:0 8px 18px rgba(28,40,68,.06), inset 0 1px 0 rgba(255,255,255,.94);
+  background:linear-gradient(180deg, rgba(255,255,255,.96), rgba(234,240,250,.88));
+  box-shadow:0 8px 20px rgba(28,40,68,.07), inset 0 1px 0 rgba(255,255,255,.94);
 }
 
 #view-dashboard .rcfDashCardIcon{
@@ -387,7 +451,7 @@
 }
 
 #view-dashboard .rcfDashCardIconFallback{
-  display:inline-flex;
+  display:none;
   align-items:center;
   justify-content:center;
   width:46px;
@@ -414,7 +478,6 @@
 
 #view-dashboard .rcfDashCardTitle{
   display:block;
-  margin:0;
   font-size:18px;
   line-height:1.06;
   font-weight:900;
@@ -473,7 +536,7 @@
   padding:6px 10px;
   border-radius:999px;
   border:1px solid rgba(92,110,145,.10);
-  background:rgba(255,255,255,.78);
+  background:rgba(255,255,255,.60);
   font-size:12px;
   font-weight:800;
   color:rgba(37,50,78,.84);
@@ -493,7 +556,7 @@
   padding:10px 14px;
   border-radius:14px;
   border:1px solid rgba(88,106,141,.10);
-  background:rgba(255,255,255,.82);
+  background:rgba(255,255,255,.74);
   color:#243150;
   font-size:13px;
   font-weight:900;
@@ -508,18 +571,43 @@
 }
 
 #view-dashboard .rcfDashActionBtn.ghost{
-  background:rgba(255,255,255,.74);
+  background:rgba(255,255,255,.60);
 }
 
-#view-dashboard .rcfDashActionBtn:focus{
-  outline:none;
+#view-dashboard .rcfDashStats{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:8px;
+}
+
+#view-dashboard .rcfDashStat{
+  padding:10px 12px;
+  border-radius:14px;
+  border:1px solid rgba(88,106,141,.09);
+  background:rgba(255,255,255,.58);
+}
+
+#view-dashboard .rcfDashStatLabel{
+  font-size:11px;
+  font-weight:800;
+  letter-spacing:.10em;
+  text-transform:uppercase;
+  opacity:.62;
+  margin-bottom:4px;
+}
+
+#view-dashboard .rcfDashStatValue{
+  font-size:18px;
+  line-height:1.05;
+  font-weight:900;
+  color:#243150;
 }
 
 #view-dashboard .rcfDashEmpty{
   padding:16px;
   border-radius:18px;
   border:1px dashed rgba(84,105,145,.18);
-  background:rgba(255,255,255,.52);
+  background:rgba(255,255,255,.42);
   text-align:center;
   font-size:13px;
   color:rgba(37,50,78,.78);
@@ -538,7 +626,7 @@
   padding:10px 12px;
   border-radius:14px;
   border:1px solid rgba(84,105,145,.08);
-  background:rgba(255,255,255,.66);
+  background:rgba(255,255,255,.56);
 }
 
 #view-dashboard .rcfDashAppMeta{
@@ -575,9 +663,10 @@
   padding:8px 10px;
   border-radius:12px;
   border:1px solid rgba(84,105,145,.08);
-  background:rgba(255,255,255,.82);
+  background:rgba(255,255,255,.74);
   color:#243150;
   font-weight:900;
+  cursor:pointer;
 }
 
 @media (max-width: 720px){
@@ -611,6 +700,7 @@
   }
 }
       `.trim();
+
       document.head.appendChild(st);
     },
 
@@ -618,8 +708,12 @@
       return `./assets/icons/modules/${name}.jpeg`;
     },
 
+    _brandAsset() {
+      return "./assets/icons/app/app-icon.png";
+    },
+
     _ensureDashboardShell() {
-      const view = document.querySelector(this._viewSel);
+      const view = this._view();
       if (!view) return false;
 
       let host = view.querySelector(".rcfDashMobileHome");
@@ -630,14 +724,14 @@
         view.appendChild(host);
       }
 
-      if (!host.querySelector(".rcfDashSurface")) {
-        const surface = document.createElement("div");
+      let surface = view.querySelector(this._surfaceSel);
+      if (!surface) {
+        surface = document.createElement("div");
+        surface.id = this._surfaceSel.replace("#", "");
         surface.className = "rcfDashSurface";
+        host.innerHTML = "";
         host.appendChild(surface);
       }
-
-      const surface = host.querySelector(".rcfDashSurface");
-      if (!surface) return false;
 
       if (!surface.querySelector(".rcfDashHero")) {
         const hero = document.createElement("section");
@@ -646,11 +740,11 @@
           <div class="rcfDashBrand">
             <img
               class="rcfDashBrandLogo"
-              src="./assets/icons/app/app-icon.png"
+              src="${this._escAttr(this._brandAsset())}"
               alt="RCF"
               onerror="this.style.display='none'; this.nextElementSibling.style.display='inline-flex';"
             />
-            <span class="rcfDashBrandFallback" style="display:none;">RCF</span>
+            <span class="rcfDashBrandFallback">RCF</span>
             <div class="rcfDashBrandText">
               <div class="rcfDashEyebrow">RControl Factory</div>
               <h1 class="rcfDashTitle">Home</h1>
@@ -666,8 +760,9 @@
         surface.appendChild(hero);
       }
 
-      if (!surface.querySelector(this._gridSel)) {
-        const grid = document.createElement("div");
+      let grid = view.querySelector(this._gridSel);
+      if (!grid) {
+        grid = document.createElement("div");
         grid.id = this._gridSel.replace("#", "");
         grid.className = "rcfDashCards";
         surface.appendChild(grid);
@@ -677,23 +772,30 @@
     },
 
     _cards() {
-      const state = this._getState();
-      const appsCount = Array.isArray(state.apps) ? state.apps.length : 0;
-      const activeSlug = state && state.active && state.active.appSlug ? state.active.appSlug : null;
+      const appsCount = this._getApps().length;
+      const activeApp = this._getActiveApp();
+      const activeSlug = activeApp && activeApp.slug ? activeApp.slug : "";
 
       return [
         {
-          id: "dashboard",
+          id: "dashboard-panel",
           iconAsset: "dashboard",
-          iconFallback: "🏠",
+          iconFallback: "📊",
           kicker: "Painel",
           title: "Dashboard",
           sub: "Visão central da Factory",
-          body: "Entrada principal da Factory com visão geral e atalhos do fluxo.",
-          chips: ["Dashboard", "Home", "Central"],
-          actions: [{ label: "Abrir Dashboard", view: "dashboard", kind: "primary" }],
-          expandable: false,
-          headView: "dashboard"
+          body: "Painel principal com leitura rápida do estado da Factory, apps ativos e operação geral.",
+          chips: ["Painel", "Resumo", "Métricas"],
+          stats: [
+            { label: "Apps", value: String(appsCount) },
+            { label: "Ativo", value: activeSlug || "—" },
+            { label: "Modo", value: "SAFE" },
+            { label: "UI", value: "ON" }
+          ],
+          actions: [
+            { label: "Atualizar painel", action: "refresh-dashboard", kind: "primary" },
+            { label: "Abrir Logs", view: "logs", kind: "ghost" }
+          ]
         },
         {
           id: "apps",
@@ -704,12 +806,11 @@
           sub: appsCount ? `${appsCount} app(s) salvo(s)` : "Criar & gerenciar",
           body: "Área para criação e organização de apps dentro da Factory.",
           chips: ["Apps", "Criação", appsCount ? `${appsCount} salvos` : "Sem apps"],
+          extra: "apps",
           actions: [
             { label: "Abrir Apps", view: "newapp", kind: "primary" },
             { label: "Abrir Editor", view: "editor", kind: "ghost" }
-          ],
-          expandable: false,
-          headView: "newapp"
+          ]
         },
         {
           id: "editor",
@@ -717,12 +818,12 @@
           iconFallback: "✏️",
           kicker: "Código",
           title: "Editor",
-          sub: activeSlug ? `App ativo: ${activeSlug}` : "Projetos & código",
+          sub: "Projetos & código",
           body: "Área de edição de arquivos e conteúdo dos apps ativos.",
-          chips: ["Arquivos", "Código", activeSlug ? activeSlug : "Sem ativo"],
-          actions: [{ label: "Abrir Editor", view: "editor", kind: "primary" }],
-          expandable: false,
-          headView: "editor"
+          chips: ["Arquivos", "Código", activeSlug || "Sem ativo"],
+          actions: [
+            { label: "Abrir Editor", view: "editor", kind: "primary" }
+          ]
         },
         {
           id: "agent",
@@ -736,9 +837,7 @@
           actions: [
             { label: "Abrir Agent", view: "agent", kind: "primary" },
             { label: "Abrir Agent IA", view: "agent-ia", kind: "ghost" }
-          ],
-          expandable: false,
-          headView: "agent"
+          ]
         },
         {
           id: "opportunity-scan",
@@ -749,9 +848,9 @@
           sub: "Procurar oportunidades rentáveis",
           body: "Scanner de oportunidades de apps com foco em viabilidade e lucro. Esta área é separada do Generator.",
           chips: ["Scanner", "Pesquisa", "Rentável"],
-          actions: [{ label: "Abrir Opportunity Scan", view: "opportunity-scan", kind: "primary" }],
-          expandable: false,
-          headView: "opportunity-scan"
+          actions: [
+            { label: "Abrir Opportunity Scan", view: "opportunity-scan", kind: "primary" }
+          ]
         },
         {
           id: "generator",
@@ -762,9 +861,9 @@
           sub: "Gerar, testar e validar apps",
           body: "Área de build, preview, geração e validação técnica. Não compartilha função com Opportunity Scan.",
           chips: ["Build", "Teste", "Preview"],
-          actions: [{ label: "Abrir Generator", view: "generator", kind: "primary" }],
-          expandable: false,
-          headView: "generator"
+          actions: [
+            { label: "Abrir Generator", view: "generator", kind: "primary" }
+          ]
         },
         {
           id: "factory-ai",
@@ -773,11 +872,11 @@
           kicker: "Núcleo IA",
           title: "Factory AI",
           sub: "Supervisão e evolução da Factory",
-          body: "Camada reservada para a IA da própria Factory, separada de Admin e de Agent.",
+          body: "Camada reservada para a IA da própria Factory, separada de Admin e Agent.",
           chips: ["Core", "IA", "Supervisão"],
-          actions: [{ label: "Abrir Factory AI", view: "factory-ai", kind: "primary" }],
-          expandable: false,
-          headView: "factory-ai"
+          actions: [
+            { label: "Abrir Factory AI", view: "factory-ai", kind: "primary" }
+          ]
         },
         {
           id: "admin",
@@ -786,14 +885,11 @@
           kicker: "Sistema",
           title: "Admin",
           sub: "Ferramentas internas e manutenção",
-          body: "Área administrativa, ferramentas internas, manutenção e controle técnico do ambiente.",
+          body: "Área administrativa, manutenção e controle técnico do ambiente.",
           chips: ["Admin", "Sistema", "Tools"],
           actions: [
-            { label: "Abrir Admin", view: "admin", kind: "primary" },
-            { label: "Abrir Logs", view: "logs", kind: "ghost" }
-          ],
-          expandable: false,
-          headView: "admin"
+            { label: "Abrir Admin", view: "admin", kind: "primary" }
+          ]
         },
         {
           id: "github",
@@ -804,9 +900,9 @@
           sub: "Sync e versionamento",
           body: "Integração com sincronização, versionamento e operação de atualização vinda do núcleo.",
           chips: ["Github", "Sync", "Versionamento"],
-          actions: [{ label: "Abrir Github", view: "github", kind: "primary" }],
-          expandable: false,
-          headView: "github"
+          actions: [
+            { label: "Abrir Github", view: "github", kind: "primary" }
+          ]
         },
         {
           id: "updates",
@@ -817,9 +913,9 @@
           sub: "Fluxo de atualização e hotfix",
           body: "Área voltada a atualizações, hotfix e revisão do estado atual da Factory.",
           chips: ["Updates", "Hotfix", "Sync"],
-          actions: [{ label: "Abrir Updates", view: "updates", kind: "primary" }],
-          expandable: false,
-          headView: "updates"
+          actions: [
+            { label: "Abrir Updates", view: "updates", kind: "primary" }
+          ]
         },
         {
           id: "deploy",
@@ -830,9 +926,9 @@
           sub: "Preparar publicação e entrega",
           body: "Fluxo de deploy, entrega e revisão final antes de publicação dos apps.",
           chips: ["Deploy", "Entrega", "Build"],
-          actions: [{ label: "Abrir Deploy", view: "deploy", kind: "primary" }],
-          expandable: false,
-          headView: "deploy"
+          actions: [
+            { label: "Abrir Deploy", view: "deploy", kind: "primary" }
+          ]
         },
         {
           id: "settings",
@@ -843,9 +939,9 @@
           sub: "Parâmetros e preferências",
           body: "Configurações gerais da Factory, preferências e ajustes do ambiente interno.",
           chips: ["Settings", "Config", "Sistema"],
-          actions: [{ label: "Abrir Settings", view: "settings", kind: "primary" }],
-          expandable: false,
-          headView: "settings"
+          actions: [
+            { label: "Abrir Settings", view: "settings", kind: "primary" }
+          ]
         },
         {
           id: "logs",
@@ -856,9 +952,9 @@
           sub: "Histórico e acompanhamento",
           body: "Visualização de logs, rastros e registro de atividade do sistema.",
           chips: ["Logs", "Histórico", "Monitoramento"],
-          actions: [{ label: "Abrir Logs", view: "logs", kind: "primary" }],
-          expandable: false,
-          headView: "logs"
+          actions: [
+            { label: "Abrir Logs", view: "logs", kind: "primary" }
+          ]
         },
         {
           id: "diagnostics",
@@ -869,9 +965,9 @@
           sub: "Verificação e estabilidade",
           body: "Área de diagnóstico e estabilidade para validar integridade e comportamento da Factory.",
           chips: ["Diag", "Check", "Stability"],
-          actions: [{ label: "Abrir Diagnostics", view: "diagnostics", kind: "primary" }],
-          expandable: false,
-          headView: "diagnostics"
+          actions: [
+            { label: "Abrir Diagnostics", view: "diagnostics", kind: "primary" }
+          ]
         },
         {
           id: "rcf-factory-special",
@@ -886,16 +982,16 @@
             { label: "Abrir Tools", action: "open-tools", kind: "primary" },
             { label: "Abrir Doctor", action: "open-doctor", kind: "ghost" },
             { label: "Abrir Admin", view: "admin", kind: "ghost" }
-          ],
-          expandable: true
+          ]
         }
       ];
     },
 
     _renderAppsSnapshot() {
-      const state = this._getState();
-      const apps = Array.isArray(state.apps) ? state.apps.slice(0, 4) : [];
-      if (!apps.length) return `<div class="rcfDashEmpty">Nenhum app salvo ainda.</div>`;
+      const apps = this._getApps().slice(0, 4);
+      if (!apps.length) {
+        return `<div class="rcfDashEmpty">Nenhum app salvo ainda.</div>`;
+      }
 
       return `
         <div class="rcfDashAppsList">
@@ -912,40 +1008,55 @@
       `;
     },
 
-    render() {
-      const view = document.querySelector(this._viewSel);
-      const grid = view && view.querySelector(this._gridSel);
-      if (!view || !grid) return false;
+    _renderStats(stats) {
+      const arr = Array.isArray(stats) ? stats : [];
+      if (!arr.length) return "";
+      return `
+        <div class="rcfDashStats">
+          ${arr.map(item => `
+            <div class="rcfDashStat">
+              <div class="rcfDashStatLabel">${this._esc(item.label || "")}</div>
+              <div class="rcfDashStatValue">${this._esc(item.value || "—")}</div>
+            </div>
+          `).join("")}
+        </div>
+      `;
+    },
+
+    _renderCards(force) {
+      const grid = this._grid();
+      if (!grid) return false;
 
       const cards = this._cards();
-      this._expanded = null;
+      const currentIds = Array.from(grid.querySelectorAll(".rcfDashCard[data-rcf-card]"))
+        .map(el => String(el.getAttribute("data-rcf-card") || "")).join("|");
+      const wantedIds = cards.map(c => c.id).join("|");
+
+      if (!force && currentIds === wantedIds) {
+        this._syncDynamicBits();
+        return true;
+      }
 
       grid.innerHTML = cards.map(card => {
-        const open = !!(card.expandable && this._expanded === card.id);
-        const extraApps = card.id === "apps" ? this._renderAppsSnapshot() : "";
         const iconSrc = this._moduleAsset(card.iconAsset);
-        const hasBody = !!card.expandable;
-
+        const extraApps = card.extra === "apps" ? this._renderAppsSnapshot() : "";
+        const statsHtml = this._renderStats(card.stats);
         return `
-          <article class="rcfDashCard${open ? " is-open" : ""}" data-rcf-card="${this._escAttr(card.id)}">
+          <article class="rcfDashCard" data-rcf-card="${this._escAttr(card.id)}">
             <button
               class="rcfDashCardHead"
               type="button"
-              aria-expanded="${open ? "true" : "false"}"
+              aria-expanded="false"
               data-rcf-toggle-card="${this._escAttr(card.id)}"
-              data-rcf-expandable="${card.expandable ? "1" : "0"}"
-              ${card.headView ? `data-rcf-head-view="${this._escAttr(card.headView)}"` : ""}
             >
               <span class="rcfDashCardIconWrap" aria-hidden="true">
                 <img
                   class="rcfDashCardIcon"
                   src="${this._escAttr(iconSrc)}"
                   alt="${this._escAttr(card.title)}"
-                  loading="lazy"
-                  decoding="async"
                   onerror="this.style.display='none'; this.nextElementSibling.style.display='inline-flex';"
                 />
-                <span class="rcfDashCardIconFallback" style="display:none;">${this._esc(card.iconFallback || "•")}</span>
+                <span class="rcfDashCardIconFallback">${this._esc(card.iconFallback || "•")}</span>
               </span>
               <span class="rcfDashCardText">
                 <span class="rcfDashCardKicker">${this._esc(card.kicker)}</span>
@@ -954,75 +1065,113 @@
               </span>
               <span class="rcfDashCardArrow" aria-hidden="true">›</span>
             </button>
-            ${hasBody ? `
-              <div class="rcfDashCardBody">
-                <p>${this._esc(card.body)}</p>
-                <div class="rcfDashMeta">
-                  ${(card.chips || []).map(ch => `<span class="rcfDashMetaChip">${this._esc(ch)}</span>`).join("")}
-                </div>
-                ${extraApps}
-                <div class="rcfDashActions">
-                  ${(card.actions || []).map(action => `
-                    <button
-                      class="rcfDashActionBtn ${this._escAttr(action.kind || "ghost")}"
-                      type="button"
-                      ${action.view ? `data-rcf-open-view="${this._escAttr(action.view)}"` : ""}
-                      ${action.action ? `data-rcf-action="${this._escAttr(action.action)}"` : ""}
-                    >${this._esc(action.label || "Abrir")}</button>
-                  `).join("")}
-                </div>
+            <div class="rcfDashCardBody">
+              <p>${this._esc(card.body)}</p>
+              ${statsHtml}
+              <div class="rcfDashMeta">
+                ${(card.chips || []).map(ch => `<span class="rcfDashMetaChip">${this._esc(ch)}</span>`).join("")}
               </div>
-            ` : ""}
+              ${extraApps}
+              <div class="rcfDashActions">
+                ${(card.actions || []).map(action => `
+                  <button
+                    class="rcfDashActionBtn ${this._escAttr(action.kind || "ghost")}"
+                    type="button"
+                    ${action.view ? `data-rcf-open-view="${this._escAttr(action.view)}"` : ""}
+                    ${action.action ? `data-rcf-action="${this._escAttr(action.action)}"` : ""}
+                  >${this._esc(action.label || "Abrir")}</button>
+                `).join("")}
+              </div>
+            </div>
           </article>
         `;
       }).join("");
 
+      this._expanded = null;
+      this._syncDynamicBits();
       return true;
     },
 
-    _bindGlobal() {
-      if (this._globalBound) return;
-      this._globalBound = true;
+    _syncDynamicBits() {
+      try {
+        const appsCount = this._getApps().length;
+        const activeApp = this._getActiveApp();
+        const activeSlug = activeApp && activeApp.slug ? activeApp.slug : "—";
 
-      document.addEventListener("click", (ev) => {
+        const stats = {
+          apps: String(appsCount),
+          active: activeSlug,
+          mode: "SAFE",
+          ui: "ON"
+        };
+
+        const panel = document.querySelector('[data-rcf-card="dashboard-panel"]');
+        if (panel) {
+          const statVals = panel.querySelectorAll(".rcfDashStatValue");
+          if (statVals[0]) statVals[0].textContent = stats.apps;
+          if (statVals[1]) statVals[1].textContent = stats.active;
+          if (statVals[2]) statVals[2].textContent = stats.mode;
+          if (statVals[3]) statVals[3].textContent = stats.ui;
+        }
+
+        const appsCard = document.querySelector('[data-rcf-card="apps"] .rcfDashCardSub');
+        if (appsCard) {
+          appsCard.textContent = appsCount ? `${appsCount} app(s) salvo(s)` : "Criar & gerenciar";
+        }
+
+        const editorCard = document.querySelector('[data-rcf-card="editor"] .rcfDashCardSub');
+        if (editorCard) {
+          editorCard.textContent = "Projetos & código";
+        }
+
+        const appsExtra = document.querySelector('[data-rcf-card="apps"] .rcfDashAppsList, [data-rcf-card="apps"] .rcfDashEmpty');
+        if (appsExtra) {
+          const body = document.querySelector('[data-rcf-card="apps"] .rcfDashCardBody');
+          if (body) {
+            const existing = body.querySelector(".rcfDashAppsList, .rcfDashEmpty");
+            if (existing) existing.outerHTML = this._renderAppsSnapshot();
+          }
+        }
+      } catch {}
+    },
+
+    _bindWithinDashboard() {
+      const view = this._view();
+      if (!view || view.__rcf_dashboard_bound__) return;
+      view.__rcf_dashboard_bound__ = true;
+
+      view.addEventListener("click", (ev) => {
         const toggle = ev.target && ev.target.closest ? ev.target.closest("[data-rcf-toggle-card]") : null;
         if (toggle) {
           ev.preventDefault();
-
-          const expandable = String(toggle.getAttribute("data-rcf-expandable") || "0") === "1";
-          const headView = String(toggle.getAttribute("data-rcf-head-view") || "").trim();
           const id = String(toggle.getAttribute("data-rcf-toggle-card") || "").trim();
-
-          if (!expandable && headView) {
-            this._fastNavigate(headView);
-            return;
-          }
-
-          if (expandable) {
-            this.toggleCard(id);
-            return;
-          }
+          this.toggleCard(id);
+          return;
         }
 
-        const openBtn = ev.target && ev.target.closest ? ev.target.closest("[data-rcf-open-view], [data-rcf-action]") : null;
+        const openBtn = ev.target && ev.target.closest ? ev.target.closest("[data-rcf-open-view]") : null;
         if (openBtn) {
           ev.preventDefault();
 
           const slug = String(openBtn.getAttribute("data-rcf-app-slug") || "").trim();
           if (slug) this._setActiveApp(slug);
 
-          const action = String(openBtn.getAttribute("data-rcf-action") || "").trim();
-          if (action === "open-tools") {
-            this._openTools();
-            return;
-          }
-          if (action === "open-doctor") {
-            this._runDoctor();
-            return;
-          }
+          const next = String(openBtn.getAttribute("data-rcf-open-view") || "").trim();
+          if (next) this._setView(next);
+          return;
+        }
 
-          const view = String(openBtn.getAttribute("data-rcf-open-view") || "").trim();
-          if (view) this._fastNavigate(view);
+        const actionBtn = ev.target && ev.target.closest ? ev.target.closest("[data-rcf-action]") : null;
+        if (actionBtn) {
+          ev.preventDefault();
+          const act = String(actionBtn.getAttribute("data-rcf-action") || "").trim();
+
+          if (act === "open-tools") this._openTools();
+          else if (act === "open-doctor") this._runDoctor();
+          else if (act === "refresh-dashboard") {
+            this._syncDynamicBits();
+            this._saveAll("dashboard.refresh");
+          }
         }
       }, { passive: false });
 
@@ -1031,31 +1180,22 @@
       });
     },
 
-    _bindWithinDashboard() {
-      const view = document.querySelector(this._viewSel);
-      if (!view || view.__rcf_dashboard_bound__) return;
-      view.__rcf_dashboard_bound__ = true;
-    },
-
     toggleCard(id) {
       const next = String(id || "").trim();
       if (!next) return false;
 
-      const cards = this._cards();
-      const meta = cards.find(c => c.id === next);
-      if (!meta || !meta.expandable) return false;
-
-      this._expanded = (this._expanded === next) ? null : next;
-
-      const grid = document.querySelector(this._gridSel);
+      const grid = this._grid();
       if (!grid) return false;
 
+      const willOpen = this._expanded !== next;
+      this._expanded = willOpen ? next : null;
+
       grid.querySelectorAll(".rcfDashCard").forEach(card => {
-        const cardId = card.getAttribute("data-rcf-card");
-        const willOpen = (cardId === next && this._expanded === next);
-        card.classList.toggle("is-open", willOpen);
+        const isTarget = card.getAttribute("data-rcf-card") === next;
+        const open = !!(isTarget && willOpen);
+        card.classList.toggle("is-open", open);
         const btn = card.querySelector("[data-rcf-toggle-card]");
-        if (btn) btn.setAttribute("aria-expanded", willOpen ? "true" : "false");
+        if (btn) btn.setAttribute("aria-expanded", open ? "true" : "false");
       });
 
       this._markDashboardMode();
