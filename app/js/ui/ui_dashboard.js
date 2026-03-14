@@ -1,13 +1,10 @@
 /* FILE: /app/js/ui/ui_dashboard.js
    RControl Factory — UI Dashboard
-   - Home mobile com cards verticais expansíveis
+   - Home mobile com cards verticais
    - Esconde cabeçalho/abas antigas quando estiver na Home
-   - Cards nascem fechados por padrão
-   - Não restaura card aberto antigo
-   - Coloca todos os módulos em cards verticais
-   - Mantém Generator separado de Opportunity Scan
-   - Separa Factory AI de RCF Factory
-   - RCF Factory vira card especial de Tools / Doctor / Core
+   - Cards principais podem expandir só quando fizer sentido
+   - Github / Updates / Deploy não expandem inline
+   - RCF Factory fica separado de Factory AI
    - Compatível com Safari / iPhone / PWA
 */
 (() => {
@@ -121,18 +118,6 @@
         }
       } catch {}
       try {
-        if (window.RCF_UI_RUNTIME && typeof window.RCF_UI_RUNTIME.openTools === "function") {
-          window.RCF_UI_RUNTIME.openTools(true);
-          return true;
-        }
-      } catch {}
-      try {
-        if (window.RCF_UI_ROUTER && typeof window.RCF_UI_ROUTER.openTools === "function") {
-          window.RCF_UI_ROUTER.openTools(true, { root: document });
-          return true;
-        }
-      } catch {}
-      try {
         const drawer = document.querySelector("#toolsDrawer");
         if (drawer) {
           drawer.classList.add("open");
@@ -155,31 +140,6 @@
         document.dispatchEvent(new CustomEvent("RCF:DOCTOR", { detail: { source: "ui_dashboard" } }));
         return true;
       } catch {}
-      return false;
-    },
-
-    _openFactoryCore() {
-      try {
-        document.dispatchEvent(new CustomEvent("rcf:factory-core", {
-          detail: { source: "ui_dashboard", target: "factory-core" }
-        }));
-      } catch {}
-      try {
-        document.dispatchEvent(new CustomEvent("RCF:FACTORY_CORE", {
-          detail: { source: "ui_dashboard", target: "factory-core" }
-        }));
-      } catch {}
-      return this._setView("admin");
-    },
-
-    _handleAction(action) {
-      const act = String(action || "").trim().toLowerCase();
-      if (!act) return false;
-
-      if (act === "open-tools") return this._openTools();
-      if (act === "open-doctor") return this._runDoctor();
-      if (act === "open-factory-core") return this._openFactoryCore();
-
       return false;
     },
 
@@ -665,15 +625,15 @@
           <div class="rcfDashBrand">
             <img
               class="rcfDashBrandLogo"
-              src="./assets/factory-header-logo.png"
-              alt="RCF Factory"
+              src="./assets/icons/app/app-icon.png"
+              alt="RCF"
               onerror="this.style.display='none'; this.nextElementSibling.style.display='inline-flex';"
             />
             <span class="rcfDashBrandFallback" style="display:none;">RCF</span>
             <div class="rcfDashBrandText">
               <div class="rcfDashEyebrow">RControl Factory</div>
               <h1 class="rcfDashTitle">Home</h1>
-              <p class="rcfDashText">Fluxo mobile limpo com cards verticais expansíveis.</p>
+              <p class="rcfDashText">Fluxo mobile limpo com cards verticais organizados.</p>
             </div>
           </div>
           <div class="rcfDashMetaRow">
@@ -713,7 +673,9 @@
           actions: [
             { label: "Abrir Apps", view: "newapp", kind: "primary" },
             { label: "Abrir Editor", view: "editor", kind: "ghost" }
-          ]
+          ],
+          expandable: false,
+          headView: "newapp"
         },
         {
           id: "editor",
@@ -726,7 +688,9 @@
           chips: ["Arquivos", "Código", activeSlug ? activeSlug : "Sem ativo"],
           actions: [
             { label: "Abrir Editor", view: "editor", kind: "primary" }
-          ]
+          ],
+          expandable: false,
+          headView: "editor"
         },
         {
           id: "agent",
@@ -738,8 +702,11 @@
           body: "Camada operacional do agente principal para fluxo assistido e ações dentro da Factory.",
           chips: ["Agent", "Execução", "CLI"],
           actions: [
-            { label: "Abrir Agent", view: "agent", kind: "primary" }
-          ]
+            { label: "Abrir Agent", view: "agent", kind: "primary" },
+            { label: "Abrir Agent IA", view: "agent-ia", kind: "ghost" }
+          ],
+          expandable: false,
+          headView: "agent"
         },
         {
           id: "opportunity-scan",
@@ -752,7 +719,9 @@
           chips: ["Scanner", "Pesquisa", "Rentável"],
           actions: [
             { label: "Abrir Opportunity Scan", view: "opportunity-scan", kind: "primary" }
-          ]
+          ],
+          expandable: false,
+          headView: "opportunity-scan"
         },
         {
           id: "generator",
@@ -765,7 +734,9 @@
           chips: ["Build", "Teste", "Preview"],
           actions: [
             { label: "Abrir Generator", view: "generator", kind: "primary" }
-          ]
+          ],
+          expandable: false,
+          headView: "generator"
         },
         {
           id: "factory-ai",
@@ -778,7 +749,9 @@
           chips: ["Core", "IA", "Supervisão"],
           actions: [
             { label: "Abrir Factory AI", view: "factory-ai", kind: "primary" }
-          ]
+          ],
+          expandable: false,
+          headView: "factory-ai"
         },
         {
           id: "admin",
@@ -792,7 +765,9 @@
           actions: [
             { label: "Abrir Admin", view: "admin", kind: "primary" },
             { label: "Abrir Logs", view: "logs", kind: "ghost" }
-          ]
+          ],
+          expandable: false,
+          headView: "admin"
         },
         {
           id: "github",
@@ -805,7 +780,9 @@
           chips: ["Github", "Sync", "Versionamento"],
           actions: [
             { label: "Abrir Admin", view: "admin", kind: "primary" }
-          ]
+          ],
+          expandable: false,
+          headView: "admin"
         },
         {
           id: "updates",
@@ -818,7 +795,9 @@
           chips: ["Updates", "Hotfix", "Sync"],
           actions: [
             { label: "Abrir Admin", view: "admin", kind: "primary" }
-          ]
+          ],
+          expandable: false,
+          headView: "admin"
         },
         {
           id: "deploy",
@@ -831,7 +810,9 @@
           chips: ["Deploy", "Entrega", "Build"],
           actions: [
             { label: "Abrir Admin", view: "admin", kind: "primary" }
-          ]
+          ],
+          expandable: false,
+          headView: "admin"
         },
         {
           id: "settings",
@@ -844,7 +825,9 @@
           chips: ["Settings", "Config", "Sistema"],
           actions: [
             { label: "Abrir Settings", view: "settings", kind: "primary" }
-          ]
+          ],
+          expandable: false,
+          headView: "settings"
         },
         {
           id: "logs",
@@ -857,7 +840,9 @@
           chips: ["Logs", "Histórico", "Monitoramento"],
           actions: [
             { label: "Abrir Logs", view: "logs", kind: "primary" }
-          ]
+          ],
+          expandable: false,
+          headView: "logs"
         },
         {
           id: "diagnostics",
@@ -870,7 +855,9 @@
           chips: ["Diag", "Check", "Stability"],
           actions: [
             { label: "Abrir Diagnostics", view: "diagnostics", kind: "primary" }
-          ]
+          ],
+          expandable: false,
+          headView: "diagnostics"
         },
         {
           id: "rcf-factory-special",
@@ -885,7 +872,8 @@
             { label: "Abrir Tools", action: "open-tools", kind: "primary" },
             { label: "Abrir Doctor", action: "open-doctor", kind: "ghost" },
             { label: "Abrir Admin", view: "admin", kind: "ghost" }
-          ]
+          ],
+          expandable: true
         }
       ];
     },
@@ -914,16 +902,17 @@
 
     render() {
       const view = document.querySelector(this._viewSel);
-      const grid = view && view.querySelector("#rcfDashboardCards");
+      const grid = view && view.querySelector(this._gridSel);
       if (!view || !grid) return false;
 
       const cards = this._cards();
       this._expanded = null;
 
       grid.innerHTML = cards.map(card => {
-        const open = this._expanded === card.id;
+        const open = !!(card.expandable && this._expanded === card.id);
         const extraApps = card.id === "apps" ? this._renderAppsSnapshot() : "";
         const iconSrc = this._moduleAsset(card.iconAsset);
+        const hasBody = !!card.expandable;
 
         return `
           <article class="rcfDashCard${open ? " is-open" : ""}" data-rcf-card="${this._escAttr(card.id)}">
@@ -932,6 +921,8 @@
               type="button"
               aria-expanded="${open ? "true" : "false"}"
               data-rcf-toggle-card="${this._escAttr(card.id)}"
+              data-rcf-expandable="${card.expandable ? "1" : "0"}"
+              ${card.headView ? `data-rcf-head-view="${this._escAttr(card.headView)}"` : ""}
             >
               <span class="rcfDashCardIconWrap" aria-hidden="true">
                 <img
@@ -947,26 +938,27 @@
                 <span class="rcfDashCardTitle">${this._esc(card.title)}</span>
                 <span class="rcfDashCardSub">${this._esc(card.sub)}</span>
               </span>
-              <span class="rcfDashCardArrow" aria-hidden="true">›</span>
+              <span class="rcfDashCardArrow" aria-hidden="true">${card.expandable ? "›" : "›"}</span>
             </button>
-            <div class="rcfDashCardBody">
-              <p>${this._esc(card.body)}</p>
-              <div class="rcfDashMeta">
-                ${(card.chips || []).map(ch => `<span class="rcfDashMetaChip">${this._esc(ch)}</span>`).join("")}
+            ${hasBody ? `
+              <div class="rcfDashCardBody">
+                <p>${this._esc(card.body)}</p>
+                <div class="rcfDashMeta">
+                  ${(card.chips || []).map(ch => `<span class="rcfDashMetaChip">${this._esc(ch)}</span>`).join("")}
+                </div>
+                ${extraApps}
+                <div class="rcfDashActions">
+                  ${(card.actions || []).map(action => `
+                    <button
+                      class="rcfDashActionBtn ${this._escAttr(action.kind || "ghost")}"
+                      type="button"
+                      ${action.view ? `data-rcf-open-view="${this._escAttr(action.view)}"` : ""}
+                      ${action.action ? `data-rcf-action="${this._escAttr(action.action)}"` : ""}
+                    >${this._esc(action.label || "Abrir")}</button>
+                  `).join("")}
+                </div>
               </div>
-              ${extraApps}
-              <div class="rcfDashActions">
-                ${(card.actions || []).map(action => `
-                  <button
-                    class="rcfDashActionBtn ${this._escAttr(action.kind || "ghost")}"
-                    type="button"
-                    ${action.view ? `data-rcf-open-view="${this._escAttr(action.view)}"` : ""}
-                    ${action.action ? `data-rcf-action="${this._escAttr(action.action)}"` : ""}
-                    ${action.appSlug ? `data-rcf-app-slug="${this._escAttr(action.appSlug)}"` : ""}
-                  >${this._esc(action.label || "Abrir")}</button>
-                `).join("")}
-              </div>
-            </div>
+            ` : ""}
           </article>
         `;
       }).join("");
@@ -982,25 +974,38 @@
         const toggle = ev.target && ev.target.closest ? ev.target.closest("[data-rcf-toggle-card]") : null;
         if (toggle) {
           ev.preventDefault();
+
+          const expandable = String(toggle.getAttribute("data-rcf-expandable") || "0") === "1";
+          const headView = String(toggle.getAttribute("data-rcf-head-view") || "").trim();
           const id = String(toggle.getAttribute("data-rcf-toggle-card") || "").trim();
-          this.toggleCard(id);
-          return;
+
+          if (!expandable && headView) {
+            this._setView(headView);
+            return;
+          }
+
+          if (expandable) {
+            this.toggleCard(id);
+            return;
+          }
         }
 
-        const actionBtn = ev.target && ev.target.closest ? ev.target.closest("[data-rcf-action]") : null;
-        if (actionBtn) {
-          ev.preventDefault();
-          const action = String(actionBtn.getAttribute("data-rcf-action") || "").trim();
-          this._handleAction(action);
-          return;
-        }
-
-        const openBtn = ev.target && ev.target.closest ? ev.target.closest("[data-rcf-open-view]") : null;
+        const openBtn = ev.target && ev.target.closest ? ev.target.closest("[data-rcf-open-view], [data-rcf-action]") : null;
         if (openBtn) {
           ev.preventDefault();
 
           const slug = String(openBtn.getAttribute("data-rcf-app-slug") || "").trim();
           if (slug) this._setActiveApp(slug);
+
+          const action = String(openBtn.getAttribute("data-rcf-action") || "").trim();
+          if (action === "open-tools") {
+            this._openTools();
+            return;
+          }
+          if (action === "open-doctor") {
+            this._runDoctor();
+            return;
+          }
 
           const view = String(openBtn.getAttribute("data-rcf-open-view") || "").trim();
           if (view) this._setView(view);
@@ -1022,14 +1027,18 @@
       const next = String(id || "").trim();
       if (!next) return false;
 
+      const cards = this._cards();
+      const meta = cards.find(c => c.id === next);
+      if (!meta || !meta.expandable) return false;
+
       this._expanded = (this._expanded === next) ? null : next;
 
-      const grid = document.querySelector("#rcfDashboardCards");
+      const grid = document.querySelector(this._gridSel);
       if (!grid) return false;
 
       grid.querySelectorAll(".rcfDashCard").forEach(card => {
-        const isTarget = card.getAttribute("data-rcf-card") === next;
-        const willOpen = isTarget && this._expanded === next;
+        const cardId = card.getAttribute("data-rcf-card");
+        const willOpen = (cardId === next && this._expanded === next);
         card.classList.toggle("is-open", willOpen);
         const btn = card.querySelector("[data-rcf-toggle-card]");
         if (btn) btn.setAttribute("aria-expanded", willOpen ? "true" : "false");
