@@ -1,549 +1,544 @@
 /* FILE: /app/js/ui/ui_views.js
-   RControl Factory — UI Views enhancer
-   V2.2 SAFE NAV MAP
-   - Compatível com a arquitetura modular atual
-   - Mantém fallback leve
-   - Evita reinjeções duplicadas
-   - Corrige mapeamento dos cards/top nav/bottom nav
-   - Separa Admin de Factory AI
-   - Normaliza views legadas: factory/system -> admin
-   - Mantém Factory AI como ação própria
+   RControl Factory — UI Views
+   V3.0 SAFE NAV FIX
+   - Corrige bottom nav de forma estrutural
+   - Remove Generator da barra inferior
+   - Coloca Opportunity Scan no lugar correto
+   - Mantém Factory AI separado de Admin
+   - Não empilha views
+   - Compatível com arquitetura modular atual
+   - Mantém fallback leve e seguro
 */
 (() => {
   "use strict";
 
-  function qs(sel, root = document) {
-    try { return root.querySelector(sel); } catch { return null; }
-  }
+  const VIEW_MAP = {
+    home: "dashboard",
+    dash: "dashboard",
+    dashboard: "dashboard",
 
-  function qsa(sel, root = document) {
-    try { return Array.from(root.querySelectorAll(sel)); } catch { return []; }
-  }
+    apps: "newapp",
+    newapp: "newapp",
+    "new-app": "newapp",
+    "new app": "newapp",
 
-  function escapeHtml(s) {
-    return String(s ?? "").replace(/[&<>"]/g, c => ({
-      "&": "&amp;",
-      "<": "&lt;",
-      ">": "&gt;",
-      "\"": "&quot;"
-    }[c]));
-  }
+    editor: "editor",
 
-  function callSafe(obj, fn, ...args) {
-    try {
-      if (!obj || typeof obj[fn] !== "function") return null;
-      return obj[fn](...args);
-    } catch {
-      return null;
-    }
-  }
+    agent: "agent",
+    "agent-ia": "agent-ia",
+    "agent-ai": "agent-ia",
+    agentia: "agent-ia",
+    agent_ai: "agent-ia",
 
-  function normalizeViewName(raw) {
-    const v = String(raw || "").trim().toLowerCase();
+    opportunity: "opportunity-scan",
+    opportunityscan: "opportunity-scan",
+    "opportunity-scan": "opportunity-scan",
+    scan: "opportunity-scan",
 
-    if (!v) return "";
+    settings: "settings",
 
-    if (v === "home") return "dashboard";
-    if (v === "dashboard") return "dashboard";
+    factory: "admin",
+    system: "admin",
+    admin: "admin",
 
-    if (v === "apps") return "newapp";
-    if (v === "newapp") return "newapp";
-    if (v === "new-app") return "newapp";
-    if (v === "new app") return "newapp";
+    factoryai: "factory-ai",
+    "factory-ai": "factory-ai",
+    "factory ai": "factory-ai",
+    factory_ai: "factory-ai",
 
-    if (v === "editor") return "editor";
-    if (v === "agent") return "agent";
-    if (v === "generator") return "generator";
+    generator: "generator",
+    logs: "logs",
+    diagnostics: "diagnostics",
+    diag: "diagnostics",
+    doctor: "diagnostics"
+  };
 
-    if (v === "factory") return "admin";
-    if (v === "system") return "admin";
-    if (v === "admin") return "admin";
+  const INTERNAL_VIEWS = [
+    "dashboard",
+    "newapp",
+    "editor",
+    "agent",
+    "agent-ia",
+    "opportunity-scan",
+    "settings",
+    "factory-ai",
+    "generator",
+    "admin",
+    "logs",
+    "diagnostics"
+  ];
 
-    if (v === "factoryai") return "factoryai";
-    if (v === "factory-ai") return "factoryai";
-    if (v === "factory ai") return "factoryai";
+  // BOTTOM NAV OFICIAL MOBILE
+  // Generator NÃO entra aqui.
+  const BOTTOM_NAV_ITEMS = [
+    { view: "dashboard", label: "Home" },
+    { view: "agent", label: "Agent" },
+    { view: "opportunity-scan", label: "Opportunity" },
+    { view: "settings", label: "Settings" },
+    { view: "factory-ai", label: "Factory AI" }
+  ];
 
-    if (v === "logs") return "logs";
-    if (v === "settings") return "settings";
-    if (v === "diagnostics") return "diagnostics";
-    if (v === "diag") return "diagnostics";
-    if (v === "doctor") return "diagnostics";
+  const TOP_LABELS = {
+    dashboard: "Dashboard",
+    newapp: "New App",
+    editor: "Editor",
+    agent: "Agent",
+    "agent-ia": "Agent IA",
+    "opportunity-scan": "Opportunity",
+    settings: "Settings",
+    "factory-ai": "Factory AI",
+    generator: "Generator",
+    admin: "Admin",
+    logs: "Logs",
+    diagnostics: "Diagnostics"
+  };
 
-    return v;
-  }
+  const MOD = {
+    _ctx: null,
+    _mounted: false,
+    _styleId: "rcfUiViewsStyleV30",
+    _navSel: ".rcfBottomNav",
 
-  function hasNewFactoryMounted() {
-    return !!qs("#rcfFactoryUiRoot, #rcfRoot .rcfMobileModules, #rcfRoot .rcfBottomNav");
-  }
-
-  function makeMenuCard(iconClass, title, subtitle, view, extraAttrs = "") {
-    return `
-      <button class="rcfUiCard rcfUiCard--menu" type="button" data-rcf-nav-view="${escapeHtml(view)}" ${extraAttrs}>
-        <span class="rcfUiCard__iconWrap">
-          <span class="rcfUiIcon ${escapeHtml(iconClass)}"></span>
-        </span>
-        <span class="rcfUiCard__body">
-          <span class="rcfUiCard__title">${escapeHtml(title)}</span>
-          <span class="rcfUiCard__subtitle">${escapeHtml(subtitle)}</span>
-        </span>
-        <span class="rcfUiCard__arrow">›</span>
-      </button>
-    `;
-  }
-
-  function makeListCard(iconClass, title, subtitle) {
-    return `
-      <div class="rcfUiCard rcfUiCard--list">
-        <span class="rcfUiCard__iconWrap">
-          <span class="rcfUiIcon ${escapeHtml(iconClass)}"></span>
-        </span>
-        <span class="rcfUiCard__body">
-          <span class="rcfUiCard__title">${escapeHtml(title)}</span>
-          <span class="rcfUiCard__subtitle">${escapeHtml(subtitle)}</span>
-        </span>
-        <span class="rcfUiCard__arrow">›</span>
-      </div>
-    `;
-  }
-
-  function openFactoryAI() {
-    try {
-      if (window.RCF_FACTORY_IA && typeof window.RCF_FACTORY_IA.open === "function") {
-        window.RCF_FACTORY_IA.open();
-        return true;
-      }
-    } catch {}
-
-    try {
-      document.dispatchEvent(new CustomEvent("rcf:factory-ai", {
-        detail: { source: "ui_views", target: "factoryai" }
-      }));
+    init(ctx = {}) {
+      this._ctx = Object.assign({}, this._ctx || {}, ctx || {});
+      this._ensureStyle();
+      this._ensureViewsExist();
+      this._ensureBottomNav(true);
+      this._bindGlobal();
       return true;
-    } catch {}
+    },
 
-    try {
-      document.dispatchEvent(new CustomEvent("RCF:FACTORY_AI", {
-        detail: { source: "ui_views", target: "factoryai" }
-      }));
+    mount(ctx = {}) {
+      this._ctx = Object.assign({}, this._ctx || {}, ctx || {});
+      this._ensureStyle();
+      this._ensureViewsExist();
+      this._ensureBottomNav(true);
+      this._normalizeLegacyNodes();
+      this._syncInitialState();
+      this._mounted = true;
       return true;
-    } catch {}
+    },
 
-    return false;
-  }
-
-  function navTo(view) {
-    const v = normalizeViewName(view);
-
-    if (!v) return false;
-
-    if (v === "factoryai") {
-      if (openFactoryAI()) return true;
-
-      try {
-        if (window.RCF && typeof window.RCF.setView === "function") {
-          window.RCF.setView("agent");
-          return true;
-        }
-      } catch {}
-
-      try {
-        document.dispatchEvent(new CustomEvent("rcf:view", {
-          detail: { view: "agent", source: "factoryai-fallback" }
-        }));
-        return true;
-      } catch {}
-
-      return false;
-    }
-
-    try {
-      if (window.RCF && typeof window.RCF.setView === "function") {
-        window.RCF.setView(v);
-        return true;
-      }
-    } catch {}
-
-    try {
-      document.dispatchEvent(new CustomEvent("rcf:view", { detail: { view: v } }));
+    remountSoft(ctx = {}) {
+      this._ctx = Object.assign({}, this._ctx || {}, ctx || {});
+      this._ensureStyle();
+      this._ensureViewsExist();
+      this._ensureBottomNav(true);
+      this._normalizeLegacyNodes();
+      this._syncInitialState();
       return true;
-    } catch {}
+    },
 
-    return false;
-  }
+    refresh(ctx = {}) {
+      this._ctx = Object.assign({}, this._ctx || {}, ctx || {});
+      this._ensureViewsExist();
+      this._ensureBottomNav(true);
+      this._normalizeLegacyNodes();
+      this._syncInitialState();
+      return true;
+    },
 
-  function normalizeNodeView(node) {
-    if (!node || typeof node.getAttribute !== "function") return "";
-    const raw = node.getAttribute("data-view") || node.getAttribute("data-rcf-nav-view") || "";
-    const norm = normalizeViewName(raw);
+    normalizeViewName(name) {
+      const raw = String(name || "").trim().toLowerCase();
+      return VIEW_MAP[raw] || raw || "dashboard";
+    },
 
-    try {
-      if (norm && raw !== norm && node.hasAttribute("data-view")) node.setAttribute("data-view", norm);
-    } catch {}
+    setView(name, opts = {}) {
+      const normalized = this.normalizeViewName(name);
+      if (!normalized) return false;
 
-    try {
-      if (norm && raw !== norm && node.hasAttribute("data-rcf-nav-view")) node.setAttribute("data-rcf-nav-view", norm);
-    } catch {}
+      const state = this._getState();
+      const prev = state?.active?.view ? this.normalizeViewName(state.active.view) : "dashboard";
 
-    return norm;
-  }
-
-  function relabelBottomNav(root = document) {
-    const map = {
-      dashboard: "Home",
-      newapp: "Apps",
-      editor: "Editor",
-      agent: "Agent",
-      generator: "Generator",
-      admin: "Admin",
-      logs: "Logs"
-    };
-
-    qsa(".rcfBottomNav .tab[data-view]", root).forEach(tab => {
-      const norm = normalizeNodeView(tab);
-      if (!norm) return;
-
-      const label = map[norm];
-      if (!label) return;
-
-      try { tab.textContent = label; } catch {}
-    });
-  }
-
-  function relabelTopNav(root = document) {
-    const map = {
-      dashboard: "Dashboard",
-      newapp: "New App",
-      editor: "Editor",
-      agent: "Agent",
-      generator: "Generator",
-      admin: "Admin",
-      logs: "Logs",
-      settings: "Settings",
-      diagnostics: "Diagnostics"
-    };
-
-    qsa("#rcfRoot [data-view]", root).forEach(btn => {
-      if (btn.closest(".rcfBottomNav")) return;
-      if (btn.classList.contains("rcfMobileModuleCard")) return;
-
-      const norm = normalizeNodeView(btn);
-      if (!norm) return;
-
-      const label = map[norm];
-      if (!label) return;
-
-      const txt = (btn.textContent || "").trim().toLowerCase();
-      const isSimplePill =
-        txt === "factory" ||
-        txt === "system" ||
-        txt === "dashboard" ||
-        txt === "editor" ||
-        txt === "agent" ||
-        txt === "logs" ||
-        txt === "new app" ||
-        txt === "apps" ||
-        txt === "generator" ||
-        txt === "admin";
-
-      if (!isSimplePill) return;
-
-      try { btn.textContent = label; } catch {}
-    });
-  }
-
-  function relabelLegacyHeroButtons(root = document) {
-    const buttons = qsa("#rcfRoot button", root);
-
-    buttons.forEach(btn => {
-      const txt = String(btn.textContent || "").trim().toLowerCase();
-
-      if (txt === "factory") {
-        const norm = normalizeNodeView(btn);
-        if (norm === "admin") {
-          try { btn.textContent = "Admin"; } catch {}
-        }
-      }
-
-      if (txt === "system") {
+      if ((prev === "generator" || prev === "opportunity-scan") && normalized !== prev) {
         try {
-          btn.setAttribute("data-view", "admin");
-          btn.textContent = "Admin";
+          const td = opts?.teardownPreviewHard || this._ctx?.teardownPreviewHard;
+          if (typeof td === "function") td();
         } catch {}
       }
-    });
-  }
 
-  function bindNavCards(host) {
-    qsa("[data-rcf-nav-view]", host).forEach(btn => {
-      if (btn.__rcf_nav_bound__) return;
-      btn.__rcf_nav_bound__ = true;
+      this._hideAllViews();
 
-      normalizeNodeView(btn);
-
-      btn.addEventListener("click", () => {
-        navTo(btn.getAttribute("data-rcf-nav-view"));
-      }, { passive: true });
-    });
-  }
-
-  function bindShellMobileCards(root = document) {
-    qsa(".rcfMobileModuleCard[data-view]", root).forEach(btn => {
-      if (btn.__rcf_mobile_nav_bound__) return;
-      btn.__rcf_mobile_nav_bound__ = true;
-
-      normalizeNodeView(btn);
-
-      btn.addEventListener("click", () => {
-        navTo(btn.getAttribute("data-view"));
-      }, { passive: true });
-    });
-
-    qsa(".rcfBottomNav .tab[data-view]", root).forEach(btn => {
-      if (btn.__rcf_bottom_nav_bound__) return;
-      btn.__rcf_bottom_nav_bound__ = true;
-
-      normalizeNodeView(btn);
-
-      btn.addEventListener("click", () => {
-        navTo(btn.getAttribute("data-view"));
-      }, { passive: true });
-    });
-
-    relabelBottomNav(root);
-    relabelTopNav(root);
-    relabelLegacyHeroButtons(root);
-  }
-
-  function buildDashboardCards() {
-    return [
-      makeMenuCard("rcfUiIcon--dashboard", "Dashboard", "Visão central da Factory", "dashboard"),
-      makeMenuCard("rcfUiIcon--apps", "Apps", "Criar e organizar aplicativos", "newapp"),
-      makeMenuCard("rcfUiIcon--editor", "Editor", "Arquivos, estrutura e ajustes", "editor"),
-      makeMenuCard("rcfUiIcon--agent", "Agent", "Automação e comandos operacionais", "agent"),
-      makeMenuCard("rcfUiIcon--generator", "Generator", "Testes, execução e validação", "generator"),
-      makeMenuCard("rcfUiIcon--factory", "Admin", "Sistema, injector e manutenção", "admin"),
-      makeMenuCard("rcfUiIcon--factoryai", "Factory AI", "IA interna do núcleo da Factory", "factoryai")
-    ].join("");
-  }
-
-  function ensureDashboardCardsFallback() {
-    const host = qs("#appsList");
-    if (!host) return false;
-
-    if (hasNewFactoryMounted()) {
-      host.setAttribute("data-rcf-ui-enhanced", "factory-view");
-      bindShellMobileCards(document);
-      return true;
-    }
-
-    if (host.getAttribute("data-rcf-ui-enhanced") === "1") {
-      bindNavCards(host);
-      return true;
-    }
-
-    try {
-      const rt = window.RCF_UI_RUNTIME;
-      if (rt && typeof rt.renderAppsList === "function") {
-        rt.renderAppsList();
+      const target = this._getViewEl(normalized);
+      if (target) {
+        target.hidden = false;
+        target.style.display = "";
+        target.classList.add("active");
+        target.setAttribute("data-rcf-visible", "1");
+        target.setAttribute("aria-hidden", "false");
       }
-    } catch {}
 
-    host.innerHTML = buildDashboardCards();
-    host.setAttribute("data-rcf-ui-enhanced", "1");
-    bindNavCards(host);
-    return true;
-  }
+      this._markActiveButtons(normalized);
+      this._markBottomNav(normalized);
+      this._markDashboardMode(normalized);
 
-  function ensureAgentCardsFallback() {
-    const view = qs("#view-agent");
-    if (!view) return false;
-
-    if (hasNewFactoryMounted()) return true;
-    if (qs('[data-rcf-ui-agent-block="1"]', view)) return true;
-
-    const ref = qs("#agentOut", view);
-    if (!ref || !ref.parentNode) return false;
-
-    const block = document.createElement("section");
-    block.setAttribute("data-rcf-ui-agent-block", "1");
-    block.innerHTML = `
-      <div class="rcfUiSectionDivider">Apps & Widgets</div>
-      <div class="rcfUiListGroup">
-        ${makeListCard("rcfUiIcon--apps", "App Store", "Base de apps e módulos visuais")}
-        ${makeListCard("rcfUiIcon--factoryai", "Factory AI", "IA interna e automação do núcleo")}
-        ${makeListCard("rcfUiIcon--editor", "Site Builder", "Estrutura visual e páginas")}
-      </div>
-
-      <div class="rcfUiSectionDivider">APIs & Gateways</div>
-      <div class="rcfUiListGroup">
-        ${makeListCard("rcfUiIcon--dashboard", "Messages", "Eventos, filas e saídas")}
-        ${makeListCard("rcfUiIcon--factory", "Webhooks", "Integrações externas e gatilhos")}
-        ${makeListCard("rcfUiIcon--apps", "Endpoints", "Conexões modulares da Factory")}
-      </div>
-    `;
-
-    ref.parentNode.insertBefore(block, ref);
-    return true;
-  }
-
-  function ensureProjectsPanelFallback() {
-    const view = qs("#view-editor");
-    if (!view) return false;
-
-    if (hasNewFactoryMounted()) return true;
-    if (qs('[data-rcf-ui-projects-block="1"]', view)) return true;
-
-    const ref = qs("#editorOut", view);
-    if (!ref || !ref.parentNode) return false;
-
-    const block = document.createElement("section");
-    block.setAttribute("data-rcf-ui-projects-block", "1");
-    block.innerHTML = `
-      <div class="rcfUiProjectsHead">
-        <div class="rcfUiTabs">
-          <button class="rcfUiTab is-active" type="button">Projects</button>
-          <button class="rcfUiTab" type="button">Código</button>
-        </div>
-      </div>
-
-      <div class="rcfUiCodePanel">
-        <pre>var AUTO_TRIGGER = true;
-var WAIT_TIME = "1h";
-
-startFactoryDeploy();</pre>
-      </div>
-
-      <div class="rcfUiProjectsList">
-        <div class="rcfUiProjectItem">
-          <div class="rcfUiProjectItem__left">
-            <span class="rcfUiProjectItem__dot"></span>
-            <div class="rcfUiProjectItem__meta">
-              <div class="rcfUiProjectItem__title">Painel Central</div>
-              <div class="rcfUiProjectItem__subtitle">Controle principal da operação</div>
-            </div>
-          </div>
-          <div class="rcfUiProjectItem__actions">
-            <button class="btn small" type="button">Abrir</button>
-          </div>
-        </div>
-
-        <div class="rcfUiProjectItem">
-          <div class="rcfUiProjectItem__left">
-            <span class="rcfUiProjectItem__dot"></span>
-            <div class="rcfUiProjectItem__meta">
-              <div class="rcfUiProjectItem__title">Factory AI</div>
-              <div class="rcfUiProjectItem__subtitle">IA interna da Factory</div>
-            </div>
-          </div>
-          <div class="rcfUiProjectItem__actions">
-            <button class="btn small" type="button">Abrir</button>
-          </div>
-        </div>
-
-        <div class="rcfUiProjectItem">
-          <div class="rcfUiProjectItem__left">
-            <span class="rcfUiProjectItem__dot"></span>
-            <div class="rcfUiProjectItem__meta">
-              <div class="rcfUiProjectItem__title">App Booking</div>
-              <div class="rcfUiProjectItem__subtitle">Fluxo de app com agenda e deploy</div>
-            </div>
-          </div>
-          <div class="rcfUiProjectItem__actions">
-            <button class="btn small" type="button">Abrir</button>
-          </div>
-        </div>
-      </div>
-    `;
-
-    ref.parentNode.insertBefore(block, ref);
-    return true;
-  }
-
-  function syncProjectsWithCodePanel() {
-    try {
-      const panelMod = window.RCF_UI_CODE_PANEL;
-      const projectsMod = window.RCF_UI_PROJECTS;
-
-      if (!panelMod || !projectsMod) return false;
-      if (!hasNewFactoryMounted()) return false;
-
-      const host = qs("#rcfFactoryProjectsSlot");
-      if (!host) return false;
-
-      const codeHost = qs("[data-rcf-projects-code-slot]", host);
-      if (!codeHost) return false;
-
-      callSafe(panelMod, "render", "[data-rcf-projects-code-slot]");
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  function normalizeLegacyButtons(root = document) {
-    qsa("#rcfRoot [data-view], #rcfRoot [data-rcf-nav-view]", root).forEach(node => {
-      normalizeNodeView(node);
-    });
-  }
-
-  const API = {
-    __mounted: false,
-
-    init() {
-      return this;
-    },
-
-    mount() {
       try {
-        normalizeLegacyButtons(document);
-
-        if (hasNewFactoryMounted()) {
-          bindShellMobileCards(document);
-          syncProjectsWithCodePanel();
-          this.__mounted = true;
-          return true;
+        if (state) {
+          state.active = state.active || {};
+          state.active.view = normalized;
         }
+      } catch {}
 
-        ensureDashboardCardsFallback();
-        ensureAgentCardsFallback();
-        ensureProjectsPanelFallback();
-        relabelBottomNav(document);
-        relabelTopNav(document);
-        relabelLegacyHeroButtons(document);
+      try {
+        const saveAll = opts?.saveAll || this._ctx?.saveAll;
+        if (typeof saveAll === "function") saveAll("ui_views.setView");
+      } catch {}
 
-        this.__mounted = true;
-        return true;
-      } catch {
-        return false;
+      try {
+        if (normalized === "dashboard" && window.RCF_UI_DASHBOARD && typeof window.RCF_UI_DASHBOARD.refresh === "function") {
+          window.RCF_UI_DASHBOARD.refresh(this._ctx || {});
+        }
+      } catch {}
+
+      try {
+        if (window.RCF_UI_RUNTIME && typeof window.RCF_UI_RUNTIME.syncFabStatusText === "function") {
+          window.RCF_UI_RUNTIME.syncFabStatusText();
+        }
+      } catch {}
+
+      return true;
+    },
+
+    show(name, opts = {}) {
+      return this.setView(name, opts);
+    },
+
+    _syncInitialState() {
+      const state = this._getState();
+      const wanted = this.normalizeViewName(state?.active?.view || "dashboard");
+      this.setView(wanted);
+    },
+
+    _getState() {
+      return (this._ctx && this._ctx.State) || (window.RCF && window.RCF.state) || null;
+    },
+
+    _getRoot() {
+      return document.querySelector("#rcfRoot") || document.querySelector("#app") || document.body;
+    },
+
+    _getViewsRoot() {
+      return document.querySelector("#views") || this._getRoot();
+    },
+
+    _getViewEl(view) {
+      return document.getElementById(`view-${view}`);
+    },
+
+    _hideAllViews() {
+      INTERNAL_VIEWS.forEach((view) => {
+        const el = this._getViewEl(view);
+        if (!el) return;
+        el.classList.remove("active");
+        el.hidden = true;
+        el.style.display = "none";
+        el.removeAttribute("data-rcf-visible");
+        el.setAttribute("aria-hidden", "true");
+      });
+    },
+
+    _ensureViewsExist() {
+      const root = this._getViewsRoot();
+      if (!root) return false;
+
+      INTERNAL_VIEWS.forEach((view) => {
+        if (this._getViewEl(view)) return;
+
+        const section = document.createElement("section");
+        section.id = `view-${view}`;
+        section.className = "view card";
+        section.hidden = true;
+        section.style.display = "none";
+        section.setAttribute("data-rcf-view", view);
+        section.setAttribute("aria-hidden", "true");
+
+        section.innerHTML = `
+          <div class="rcfViewPlaceholder">
+            <h1>${this._esc(this._titleFor(view))}</h1>
+            <p>${this._esc(this._subtitleFor(view))}</p>
+            ${this._slotsFor(view)}
+          </div>
+        `.trim();
+
+        root.appendChild(section);
+      });
+
+      return true;
+    },
+
+    _ensureBottomNav(forceRebuild = false) {
+      const root = this._getRoot();
+      if (!root) return false;
+
+      let nav = root.querySelector(this._navSel);
+      if (!nav) {
+        nav = document.createElement("nav");
+        nav.className = "rcfBottomNav";
+        nav.setAttribute("aria-label", "Navegação mobile");
+        root.appendChild(nav);
+      }
+
+      const expected = BOTTOM_NAV_ITEMS.map(item => item.view).join("|");
+      const current = Array.from(nav.querySelectorAll("[data-view]"))
+        .map(btn => this.normalizeViewName(btn.getAttribute("data-view") || ""))
+        .join("|");
+
+      if (forceRebuild || current !== expected) {
+        nav.innerHTML = BOTTOM_NAV_ITEMS.map(item => `
+          <button class="tab" data-view="${this._escAttr(item.view)}" type="button">${this._esc(item.label)}</button>
+        `).join("");
+      }
+
+      nav.querySelectorAll("[data-view]").forEach(btn => {
+        if (btn.__rcf_bottom_bound__) return;
+        btn.__rcf_bottom_bound__ = true;
+        btn.addEventListener("click", (ev) => {
+          try { if (ev.cancelable) ev.preventDefault(); } catch {}
+          const next = this.normalizeViewName(btn.getAttribute("data-view") || "");
+          if (!next) return;
+          this.setView(next);
+        }, { passive: false });
+      });
+
+      this._markBottomNav(this.normalizeViewName(this._getState()?.active?.view || "dashboard"));
+      return true;
+    },
+
+    _markActiveButtons(view) {
+      const normalized = this.normalizeViewName(view);
+
+      document.querySelectorAll("[data-view]").forEach((el) => {
+        const target = this.normalizeViewName(el.getAttribute("data-view") || "");
+        if (target === normalized) el.classList.add("active");
+        else el.classList.remove("active");
+      });
+
+      document.querySelectorAll("[data-rcf-nav-view]").forEach((el) => {
+        const target = this.normalizeViewName(el.getAttribute("data-rcf-nav-view") || "");
+        if (target === normalized) el.classList.add("active");
+        else el.classList.remove("active");
+      });
+    },
+
+    _markBottomNav(view) {
+      const normalized = this.normalizeViewName(view);
+      const nav = document.querySelector(this._navSel);
+      if (!nav) return;
+
+      nav.querySelectorAll("[data-view]").forEach((btn) => {
+        const target = this.normalizeViewName(btn.getAttribute("data-view") || "");
+        if (target === normalized) btn.classList.add("active");
+        else btn.classList.remove("active");
+      });
+    },
+
+    _markDashboardMode(view) {
+      const root = this._getRoot();
+      if (!root) return;
+
+      if (this.normalizeViewName(view) === "dashboard") {
+        root.setAttribute("data-rcf-dashboard-mode", "cards");
+      } else {
+        root.removeAttribute("data-rcf-dashboard-mode");
       }
     },
 
-    refresh() {
-      try {
-        normalizeLegacyButtons(document);
-        bindShellMobileCards(document);
-        relabelBottomNav(document);
-        relabelTopNav(document);
-        relabelLegacyHeroButtons(document);
-        return true;
-      } catch {
-        return false;
+    _normalizeLegacyNodes(root = document) {
+      // Corrige qualquer botão antigo que ainda vier com mappings errados.
+      root.querySelectorAll("[data-view], [data-rcf-nav-view]").forEach((node) => {
+        const attr = node.hasAttribute("data-rcf-nav-view") ? "data-rcf-nav-view" : "data-view";
+        const raw = node.getAttribute(attr) || "";
+        const norm = this.normalizeViewName(raw);
+        if (norm && raw !== norm) node.setAttribute(attr, norm);
+      });
+
+      // Corrige labels simples legadas fora do bottom nav.
+      root.querySelectorAll("#rcfRoot [data-view]").forEach((btn) => {
+        if (btn.closest(".rcfBottomNav")) return;
+
+        const norm = this.normalizeViewName(btn.getAttribute("data-view") || "");
+        const txt = String(btn.textContent || "").trim().toLowerCase();
+
+        const isSimple =
+          txt === "factory" ||
+          txt === "system" ||
+          txt === "dashboard" ||
+          txt === "editor" ||
+          txt === "agent" ||
+          txt === "apps" ||
+          txt === "new app" ||
+          txt === "logs" ||
+          txt === "generator" ||
+          txt === "settings" ||
+          txt === "factory ai";
+
+        if (!isSimple) return;
+        if (!TOP_LABELS[norm]) return;
+
+        try { btn.textContent = TOP_LABELS[norm]; } catch {}
+      });
+
+      // Cards mobile shell antigos.
+      root.querySelectorAll(".rcfMobileModuleCard[data-view]").forEach((btn) => {
+        const norm = this.normalizeViewName(btn.getAttribute("data-view") || "");
+        btn.setAttribute("data-view", norm);
+
+        if (btn.__rcf_mobile_card_bound__) return;
+        btn.__rcf_mobile_card_bound__ = true;
+        btn.addEventListener("click", (ev) => {
+          try { if (ev.cancelable) ev.preventDefault(); } catch {}
+          this.setView(norm);
+        }, { passive: false });
+      });
+    },
+
+    _bindGlobal() {
+      if (this._globalBound) return;
+      this._globalBound = true;
+
+      document.addEventListener("click", (ev) => {
+        const btn = ev.target && ev.target.closest ? ev.target.closest("[data-view], [data-rcf-nav-view]") : null;
+        if (!btn) return;
+
+        // Bottom nav já tem bind próprio e não precisa duplicar.
+        if (btn.closest(".rcfBottomNav")) return;
+
+        const next = this.normalizeViewName(
+          btn.getAttribute("data-rcf-nav-view") ||
+          btn.getAttribute("data-view") ||
+          ""
+        );
+        if (!next) return;
+
+        try { if (ev.cancelable) ev.preventDefault(); } catch {}
+        this.setView(next);
+      }, { passive: false });
+
+      window.addEventListener("RCF:UI_READY", () => {
+        try {
+          this._ensureViewsExist();
+          this._ensureBottomNav(true);
+          this._normalizeLegacyNodes();
+          this._syncInitialState();
+        } catch {}
+      });
+    },
+
+    _titleFor(view) {
+      const map = {
+        dashboard: "Home",
+        newapp: "Novo App",
+        editor: "Editor",
+        agent: "Agent",
+        "agent-ia": "Agent IA",
+        "opportunity-scan": "Opportunity Scan",
+        settings: "Settings",
+        "factory-ai": "Factory AI",
+        generator: "Generator",
+        admin: "Admin",
+        logs: "Logs",
+        diagnostics: "Diagnostics"
+      };
+      return map[view] || view;
+    },
+
+    _subtitleFor(view) {
+      const map = {
+        dashboard: "Entrada principal da Factory.",
+        newapp: "Criação de novos apps.",
+        editor: "Área de edição de arquivos e conteúdo.",
+        agent: "Operação do agente principal.",
+        "agent-ia": "Camada de IA do agente.",
+        "opportunity-scan": "Scanner de oportunidades rentáveis.",
+        settings: "Configurações da Factory.",
+        "factory-ai": "Núcleo de IA supervisionada da Factory.",
+        generator: "Build, teste e validação de apps.",
+        admin: "Ferramentas administrativas e manutenção.",
+        logs: "Visualização de logs.",
+        diagnostics: "Diagnóstico e estabilidade."
+      };
+      return map[view] || "Área interna da Factory.";
+    },
+
+    _slotsFor(view) {
+      if (view === "agent-ia") {
+        return `
+          <div id="rcfAgentIASlotActions" data-rcf-slot="agentia.actions"></div>
+          <div id="rcfAgentIASlotTools" data-rcf-slot="agentia.tools"></div>
+        `;
       }
+
+      if (view === "opportunity-scan") {
+        return `
+          <div id="rcfOpportunitySlotActions" data-rcf-slot="opportunity.actions"></div>
+          <div id="rcfOpportunitySlotTools" data-rcf-slot="opportunity.tools"></div>
+        `;
+      }
+
+      if (view === "factory-ai") {
+        return `
+          <div id="rcfFactoryAISlotActions" data-rcf-slot="factoryai.actions"></div>
+          <div id="rcfFactoryAISlotTools" data-rcf-slot="factoryai.tools"></div>
+        `;
+      }
+
+      return "";
+    },
+
+    _ensureStyle() {
+      if (document.getElementById(this._styleId)) return;
+
+      const st = document.createElement("style");
+      st.id = this._styleId;
+      st.textContent = `
+#views > .view[hidden]{
+  display:none !important;
+}
+
+#views > .view.active{
+  display:block !important;
+}
+
+#views .rcfViewPlaceholder{
+  display:grid;
+  gap:10px;
+}
+
+#views .rcfViewPlaceholder h1{
+  margin:0;
+}
+
+#views .rcfViewPlaceholder p{
+  margin:0;
+  opacity:.78;
+  line-height:1.42;
+}
+
+/* Remove qualquer herança visual errada de tabs horizontais antigas na Home */
+#rcfRoot[data-rcf-dashboard-mode="cards"] .tabs,
+#rcfRoot[data-rcf-dashboard-mode="cards"] .top-tabs,
+#rcfRoot[data-rcf-dashboard-mode="cards"] .horizontal-tabs,
+#rcfRoot[data-rcf-dashboard-mode="cards"] .rcfDashTopNav,
+#rcfRoot[data-rcf-dashboard-mode="cards"] .rcfDashHorizontalNav{
+  display:none !important;
+}
+      `.trim();
+
+      document.head.appendChild(st);
+    },
+
+    _esc(v) {
+      return String(v == null ? "" : v)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    },
+
+    _escAttr(v) {
+      return this._esc(v).replace(/'/g, "&#39;");
     }
   };
 
-  try { window.RCF_UI_VIEWS = API; } catch {}
-
-  try {
-    document.addEventListener("DOMContentLoaded", () => {
-      try { API.mount(); } catch {}
-    }, { passive: true });
-  } catch {}
-
-  try {
-    window.addEventListener("RCF:UI_READY", () => {
-      try { API.mount(); } catch {}
-    });
-  } catch {}
-
+  window.RCF_UI_VIEWS = Object.assign(window.RCF_UI_VIEWS || {}, MOD);
 })();
