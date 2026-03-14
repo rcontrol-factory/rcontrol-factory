@@ -1,11 +1,12 @@
 /* FILE: /app/js/ui/ui_dashboard.js
    RControl Factory — UI Dashboard
    - Home mobile com cards verticais expansíveis
-   - Remove dashboard tradicional aberto da Home
-   - Cards começam fechados
-   - Generator separado de Opportunity Scan
+   - Esconde cabeçalho/abas antigas quando estiver na Home
+   - Cards nascem fechados por padrão
+   - Não restaura card aberto antigo
+   - Coloca todos os módulos em cards verticais
+   - Mantém Generator separado de Opportunity Scan
    - Compatível com Safari / iPhone / PWA
-   - Seguro para init + mount + refresh
 */
 (() => {
   "use strict";
@@ -18,12 +19,10 @@
     _rootSel: "#rcfRoot",
     _viewSel: "#view-dashboard",
     _gridSel: "#rcfDashboardCards",
-    _stateKey: "rcf:dashboard:expandedCard",
-    _boundGlobal: false,
 
     init(ctx = {}) {
-      this._ctx = Object.assign({}, this._ctx || {}, ctx || {});
-      this._expanded = this._readExpanded();
+      this._ctx = ctx || {};
+      this._expanded = null;
       this._ensureStyle();
       this._bindGlobal();
       return true;
@@ -31,10 +30,11 @@
 
     mount(ctx = {}) {
       this._ctx = Object.assign({}, this._ctx || {}, ctx || {});
-      this._expanded = this._readExpanded();
+      this._expanded = null;
       this._ensureStyle();
       this._ensureDashboardShell();
       this.render();
+      this._bindWithinDashboard();
       this._markDashboardMode();
       this._booted = true;
       return true;
@@ -42,9 +42,11 @@
 
     remountSoft(ctx = {}) {
       this._ctx = Object.assign({}, this._ctx || {}, ctx || {});
+      this._expanded = null;
       this._ensureStyle();
       this._ensureDashboardShell();
       this.render();
+      this._bindWithinDashboard();
       this._markDashboardMode();
       return true;
     },
@@ -66,66 +68,193 @@
       return true;
     },
 
+    _getState() {
+      const ctxState = this._ctx && this._ctx.State;
+      const rootState = window.RCF && window.RCF.state;
+      return ctxState || rootState || { apps: [], active: { view: "dashboard" } };
+    },
+
+    _setView(view) {
+      try {
+        if (this._ctx && typeof this._ctx.setView === "function") return this._ctx.setView(view);
+      } catch {}
+      try {
+        if (window.RCF && typeof window.RCF.setView === "function") return window.RCF.setView(view);
+      } catch {}
+      try {
+        if (window.RCF_UI_ROUTER && typeof window.RCF_UI_ROUTER.setView === "function") {
+          return window.RCF_UI_ROUTER.setView(view);
+        }
+      } catch {}
+      return false;
+    },
+
+    _setActiveApp(slug) {
+      try {
+        if (this._ctx && typeof this._ctx.setActiveApp === "function") return this._ctx.setActiveApp(slug);
+      } catch {}
+      try {
+        if (window.RCF_UI_RUNTIME && typeof window.RCF_UI_RUNTIME.setActiveApp === "function") {
+          return window.RCF_UI_RUNTIME.setActiveApp(slug);
+        }
+      } catch {}
+      try {
+        if (window.RCF && window.RCF.state && Array.isArray(window.RCF.state.apps)) {
+          const app = window.RCF.state.apps.find(a => a && a.slug === slug);
+          if (!app) return false;
+          window.RCF.state.active = window.RCF.state.active || {};
+          window.RCF.state.active.appSlug = slug;
+          window.RCF.state.active.file = window.RCF.state.active.file || null;
+          return true;
+        }
+      } catch {}
+      return false;
+    },
+
     _ensureStyle() {
       if (document.getElementById(this._styleId)) return;
 
       const st = document.createElement("style");
       st.id = this._styleId;
       st.textContent = `
-#rcfRoot[data-rcf-dashboard-mode="cards"] .tabs{
-  display:none !important;
-}
-
-#view-dashboard .rcfDashLegacy,
-#view-dashboard .rcfDashLegacyNav,
-#view-dashboard .rcfDashTopNav,
-#view-dashboard .rcfDashHorizontalNav,
-#view-dashboard .rcfDashHero,
-#view-dashboard .rcfDashMetrics,
-#view-dashboard .rcfDashPanels,
-#view-dashboard .rcfUiSection,
-#view-dashboard .rcfUiDashboardSection{
+#rcfRoot[data-rcf-dashboard-mode="cards"] .tabs,
+#rcfRoot[data-rcf-dashboard-mode="cards"] .topbar,
+#rcfRoot[data-rcf-dashboard-mode="cards"] .rcfDashLegacy,
+#rcfRoot[data-rcf-dashboard-mode="cards"] .rcfDashLegacyNav,
+#rcfRoot[data-rcf-dashboard-mode="cards"] .rcfDashTopNav,
+#rcfRoot[data-rcf-dashboard-mode="cards"] .rcfDashHorizontalNav{
   display:none !important;
 }
 
 #view-dashboard{
-  padding:0 !important;
-  background:transparent !important;
-  border:0 !important;
-  box-shadow:none !important;
+  position:relative;
 }
 
 #view-dashboard .rcfDashMobileHome{
   display:block;
   width:100%;
+  min-height:100%;
+  padding:14px 0 28px;
 }
 
-#view-dashboard .rcfDashIntro{
+#view-dashboard .rcfDashSurface{
   display:grid;
-  gap:8px;
-  margin:0 0 14px 0;
-  padding:0 2px;
+  gap:14px;
+}
+
+#view-dashboard .rcfDashHero{
+  position:relative;
+  overflow:hidden;
+  border-radius:26px;
+  border:1px solid rgba(112,128,162,.14);
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.82), rgba(244,247,252,.66)),
+    url("./assets/backgrounds/internal-background.jpeg");
+  background-size:cover;
+  background-position:center;
+  box-shadow:
+    0 16px 34px rgba(29,42,72,.08),
+    inset 0 1px 0 rgba(255,255,255,.92);
+  padding:16px;
+}
+
+#view-dashboard .rcfDashHero::before{
+  content:"";
+  position:absolute;
+  inset:0;
+  pointer-events:none;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.28), rgba(255,255,255,.06)),
+    radial-gradient(circle at 15% 15%, rgba(255,255,255,.55), rgba(255,255,255,0) 24%);
+}
+
+#view-dashboard .rcfDashHero > *{
+  position:relative;
+  z-index:1;
+}
+
+#view-dashboard .rcfDashBrand{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  min-width:0;
+}
+
+#view-dashboard .rcfDashBrandLogo{
+  width:62px;
+  height:62px;
+  min-width:62px;
+  border-radius:18px;
+  object-fit:cover;
+  background:rgba(255,255,255,.78);
+  border:1px solid rgba(100,116,145,.12);
+  box-shadow:0 10px 22px rgba(26,39,68,.08);
+}
+
+#view-dashboard .rcfDashBrandFallback{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  width:62px;
+  height:62px;
+  min-width:62px;
+  border-radius:18px;
+  font-size:22px;
+  font-weight:900;
+  color:#1d2b4d;
+  background:rgba(255,255,255,.78);
+  border:1px solid rgba(100,116,145,.12);
+  box-shadow:0 10px 22px rgba(26,39,68,.08);
+}
+
+#view-dashboard .rcfDashBrandText{
+  min-width:0;
+  flex:1 1 auto;
 }
 
 #view-dashboard .rcfDashEyebrow{
+  margin:0 0 4px;
   font-size:11px;
-  font-weight:800;
-  letter-spacing:.12em;
+  font-weight:900;
+  letter-spacing:.14em;
   text-transform:uppercase;
-  opacity:.72;
+  opacity:.68;
 }
 
 #view-dashboard .rcfDashTitle{
   margin:0;
-  font-size:clamp(22px,3vw,30px);
+  font-size:clamp(24px, 4.4vw, 34px);
   line-height:1.02;
   font-weight:900;
+  color:#243150;
 }
 
 #view-dashboard .rcfDashText{
-  margin:0;
-  opacity:.78;
-  line-height:1.4;
+  margin:6px 0 0;
+  font-size:14px;
+  line-height:1.42;
+  color:rgba(38,52,82,.78);
+}
+
+#view-dashboard .rcfDashMetaRow{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  margin-top:14px;
+}
+
+#view-dashboard .rcfDashChip{
+  display:inline-flex;
+  align-items:center;
+  min-height:32px;
+  padding:6px 11px;
+  border-radius:999px;
+  border:1px solid rgba(92,110,145,.10);
+  background:rgba(255,255,255,.56);
+  color:rgba(36,49,80,.88);
+  font-size:12px;
+  font-weight:800;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.72);
 }
 
 #view-dashboard .rcfDashCards{
@@ -138,12 +267,16 @@
 #view-dashboard .rcfDashCard{
   position:relative;
   overflow:hidden;
-  border-radius:22px;
-  border:1px solid rgba(78,104,154,.10);
-  background:linear-gradient(180deg,rgba(255,255,255,.88),rgba(245,248,253,.74));
-  box-shadow:0 14px 32px rgba(24,40,73,.08), inset 0 1px 0 rgba(255,255,255,.88);
-  backdrop-filter:blur(10px);
-  -webkit-backdrop-filter:blur(10px);
+  border-radius:24px;
+  border:1px solid rgba(108,125,160,.12);
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.88), rgba(244,247,252,.70)),
+    url("./assets/backgrounds/internal-background.jpeg");
+  background-size:cover;
+  background-position:center;
+  box-shadow:
+    0 14px 30px rgba(28,40,69,.08),
+    inset 0 1px 0 rgba(255,255,255,.88);
 }
 
 #view-dashboard .rcfDashCard::before{
@@ -152,8 +285,9 @@
   inset:0;
   pointer-events:none;
   background:
-    radial-gradient(circle at 10% 10%, rgba(255,255,255,.65), rgba(255,255,255,0) 20%),
-    linear-gradient(135deg, rgba(95,145,255,.05), rgba(95,145,255,0) 32%, rgba(255,181,110,.04) 100%, rgba(255,181,110,0));
+    linear-gradient(135deg, rgba(255,255,255,.20), rgba(255,255,255,0) 38%),
+    radial-gradient(circle at 100% 0%, rgba(118,172,255,.07), rgba(118,172,255,0) 28%),
+    radial-gradient(circle at 0% 100%, rgba(255,193,132,.08), rgba(255,193,132,0) 26%);
 }
 
 #view-dashboard .rcfDashCard > *{
@@ -166,7 +300,7 @@
   align-items:center;
   gap:14px;
   width:100%;
-  padding:16px 16px 15px;
+  padding:16px;
   text-align:left;
   background:transparent;
   border:0;
@@ -179,19 +313,35 @@
   outline:none;
 }
 
-#view-dashboard .rcfDashCardIcon{
+#view-dashboard .rcfDashCardIconWrap{
   display:inline-flex;
   align-items:center;
   justify-content:center;
-  width:54px;
-  height:54px;
-  min-width:54px;
-  border-radius:18px;
+  width:68px;
+  height:68px;
+  min-width:68px;
+  border-radius:20px;
+  border:1px solid rgba(106,124,159,.10);
+  background:linear-gradient(180deg, rgba(255,255,255,.94), rgba(234,240,250,.86));
+  box-shadow:0 10px 24px rgba(28,40,68,.08), inset 0 1px 0 rgba(255,255,255,.92);
+}
+
+#view-dashboard .rcfDashCardIcon{
+  width:46px;
+  height:46px;
+  object-fit:cover;
+  border-radius:14px;
+}
+
+#view-dashboard .rcfDashCardIconFallback{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  width:46px;
+  height:46px;
+  border-radius:14px;
   font-size:24px;
   font-weight:900;
-  background:linear-gradient(180deg,rgba(255,255,255,.96),rgba(232,238,248,.92));
-  border:1px solid rgba(86,112,155,.10);
-  box-shadow:0 10px 20px rgba(25,38,66,.08), inset 0 1px 0 rgba(255,255,255,.9);
 }
 
 #view-dashboard .rcfDashCardText{
@@ -201,35 +351,36 @@
 
 #view-dashboard .rcfDashCardKicker{
   display:block;
+  margin:0 0 4px;
   font-size:11px;
-  font-weight:800;
-  letter-spacing:.12em;
+  font-weight:900;
+  letter-spacing:.14em;
   text-transform:uppercase;
   opacity:.66;
-  margin:0 0 4px;
 }
 
 #view-dashboard .rcfDashCardTitle{
   display:block;
   margin:0;
   font-size:18px;
-  line-height:1.05;
+  line-height:1.06;
   font-weight:900;
+  color:#243150;
 }
 
 #view-dashboard .rcfDashCardSub{
   display:block;
   margin:5px 0 0;
-  font-size:12px;
-  line-height:1.35;
-  opacity:.78;
+  font-size:13px;
+  line-height:1.4;
+  color:rgba(40,53,81,.78);
 }
 
 #view-dashboard .rcfDashCardArrow{
   flex:0 0 auto;
-  font-size:22px;
+  font-size:24px;
   line-height:1;
-  opacity:.42;
+  opacity:.36;
   transform:translateY(-1px) rotate(0deg);
   transition:transform .18s ease, opacity .18s ease;
 }
@@ -251,8 +402,9 @@
 
 #view-dashboard .rcfDashCardBody p{
   margin:0;
-  line-height:1.42;
-  opacity:.84;
+  font-size:13px;
+  line-height:1.46;
+  color:rgba(37,50,78,.84);
 }
 
 #view-dashboard .rcfDashMeta{
@@ -267,11 +419,11 @@
   min-height:30px;
   padding:6px 10px;
   border-radius:999px;
-  border:1px solid rgba(74,98,138,.10);
-  background:rgba(255,255,255,.56);
+  border:1px solid rgba(92,110,145,.10);
+  background:rgba(255,255,255,.58);
   font-size:12px;
-  font-weight:700;
-  opacity:.84;
+  font-weight:800;
+  color:rgba(37,50,78,.84);
 }
 
 #view-dashboard .rcfDashActions{
@@ -284,22 +436,22 @@
   display:inline-flex;
   align-items:center;
   justify-content:center;
-  min-height:42px;
+  min-height:44px;
   padding:10px 14px;
   border-radius:14px;
-  border:1px solid rgba(74,98,138,.10);
+  border:1px solid rgba(88,106,141,.10);
   background:rgba(255,255,255,.72);
-  color:inherit;
+  color:#243150;
   font-size:13px;
-  font-weight:800;
+  font-weight:900;
   text-decoration:none;
   cursor:pointer;
   -webkit-tap-highlight-color:transparent;
 }
 
 #view-dashboard .rcfDashActionBtn.primary{
-  background:linear-gradient(180deg,rgba(95,145,255,.16),rgba(95,145,255,.08));
-  border-color:rgba(95,145,255,.16);
+  background:linear-gradient(180deg, rgba(112,152,255,.18), rgba(112,152,255,.08));
+  border-color:rgba(112,152,255,.18);
 }
 
 #view-dashboard .rcfDashActionBtn.ghost{
@@ -317,7 +469,7 @@
   background:rgba(255,255,255,.42);
   text-align:center;
   font-size:13px;
-  opacity:.8;
+  color:rgba(37,50,78,.78);
 }
 
 #view-dashboard .rcfDashAppsList{
@@ -332,7 +484,7 @@
   gap:10px;
   padding:10px 12px;
   border-radius:14px;
-  border:1px solid rgba(74,98,138,.08);
+  border:1px solid rgba(84,105,145,.08);
   background:rgba(255,255,255,.54);
 }
 
@@ -350,12 +502,13 @@
 
 #view-dashboard .rcfDashAppName{
   font-size:13px;
-  font-weight:800;
+  font-weight:900;
+  color:#243150;
 }
 
 #view-dashboard .rcfDashAppSlug{
   font-size:11px;
-  opacity:.66;
+  color:rgba(37,50,78,.64);
   margin-top:2px;
 }
 
@@ -364,42 +517,36 @@
   display:inline-flex;
   align-items:center;
   justify-content:center;
-  min-width:38px;
-  min-height:38px;
+  min-width:40px;
+  min-height:40px;
   padding:8px 10px;
   border-radius:12px;
-  border:1px solid rgba(74,98,138,.08);
+  border:1px solid rgba(84,105,145,.08);
   background:rgba(255,255,255,.72);
-  font-weight:800;
-  cursor:pointer;
-}
-
-@media (min-width: 721px){
-  #view-dashboard .rcfDashCards{
-    gap:14px;
-  }
+  color:#243150;
+  font-weight:900;
 }
 
 @media (max-width: 720px){
-  #view-dashboard .rcfDashIntro{
-    margin-bottom:12px;
+  #view-dashboard .rcfDashMobileHome{
+    padding-top:10px;
   }
-
+  #view-dashboard .rcfDashHero{
+    border-radius:24px;
+    padding:15px;
+  }
   #view-dashboard .rcfDashCard{
     border-radius:24px;
   }
-
   #view-dashboard .rcfDashCardHead{
-    padding:17px 16px 16px;
+    padding:16px;
   }
-
-  #view-dashboard .rcfDashCardIcon{
-    width:58px;
-    height:58px;
-    min-width:58px;
-    border-radius:19px;
+  #view-dashboard .rcfDashCardIconWrap{
+    width:66px;
+    height:66px;
+    min-width:66px;
+    border-radius:20px;
   }
-
   #view-dashboard .rcfDashCardTitle{
     font-size:19px;
   }
@@ -411,54 +558,11 @@
   }
 }
       `.trim();
-
       document.head.appendChild(st);
     },
 
-    _readExpanded() {
-      try {
-        const raw = localStorage.getItem(this._stateKey);
-        return raw ? String(raw) : null;
-      } catch {
-        return null;
-      }
-    },
-
-    _writeExpanded(id) {
-      try {
-        if (!id) localStorage.removeItem(this._stateKey);
-        else localStorage.setItem(this._stateKey, String(id));
-      } catch {}
-    },
-
-    _getState() {
-      const ctxState = this._ctx && this._ctx.State;
-      const rootState = window.RCF && window.RCF.state;
-      return ctxState || rootState || { apps: [], active: { view: "dashboard" } };
-    },
-
-    _setView(view) {
-      try {
-        if (this._ctx && typeof this._ctx.setView === "function") return this._ctx.setView(view);
-      } catch {}
-
-      try {
-        if (window.RCF && typeof window.RCF.setView === "function") return window.RCF.setView(view);
-      } catch {}
-
-      try {
-        if (window.RCF_UI_VIEWS && typeof window.RCF_UI_VIEWS.setView === "function") {
-          return window.RCF_UI_VIEWS.setView(view);
-        }
-      } catch {}
-
-      try {
-        if (window.RCF_UI_ROUTER && typeof window.RCF_UI_ROUTER.setView === "function") {
-          return window.RCF_UI_ROUTER.setView(view);
-        }
-      } catch {}
-
-      return false;
+    _moduleAsset(name) {
+      return `./assets/icons/modules/${name}.jpeg`;
     },
 
     _ensureDashboardShell() {
@@ -473,22 +577,47 @@
         view.appendChild(host);
       }
 
-      if (!host.querySelector(".rcfDashIntro")) {
-        const intro = document.createElement("div");
-        intro.className = "rcfDashIntro";
-        intro.innerHTML = `
-          <div class="rcfDashEyebrow">RControl Factory</div>
-          <h1 class="rcfDashTitle">Home</h1>
-          <p class="rcfDashText">Fluxo mobile limpo com cards verticais expansíveis.</p>
-        `;
-        host.appendChild(intro);
+      if (!host.querySelector(".rcfDashSurface")) {
+        const surface = document.createElement("div");
+        surface.className = "rcfDashSurface";
+        host.appendChild(surface);
       }
 
-      if (!host.querySelector(this._gridSel)) {
+      const surface = host.querySelector(".rcfDashSurface");
+      if (!surface) return false;
+
+      if (!surface.querySelector(".rcfDashHero")) {
+        const hero = document.createElement("section");
+        hero.className = "rcfDashHero";
+        hero.innerHTML = `
+          <div class="rcfDashBrand">
+            <img
+              class="rcfDashBrandLogo"
+              src="./assets/icons/app/app-icon.png"
+              alt="RCF"
+              onerror="this.style.display='none'; this.nextElementSibling.style.display='inline-flex';"
+            />
+            <span class="rcfDashBrandFallback" style="display:none;">RCF</span>
+            <div class="rcfDashBrandText">
+              <div class="rcfDashEyebrow">RControl Factory</div>
+              <h1 class="rcfDashTitle">Home</h1>
+              <p class="rcfDashText">Fluxo mobile limpo com cards verticais expansíveis.</p>
+            </div>
+          </div>
+          <div class="rcfDashMetaRow">
+            <span class="rcfDashChip">Home</span>
+            <span class="rcfDashChip">Cards verticais</span>
+            <span class="rcfDashChip">Sem sobreposição</span>
+          </div>
+        `;
+        surface.appendChild(hero);
+      }
+
+      if (!surface.querySelector(this._gridSel)) {
         const grid = document.createElement("div");
         grid.id = this._gridSel.replace("#", "");
         grid.className = "rcfDashCards";
-        host.appendChild(grid);
+        surface.appendChild(grid);
       }
 
       return true;
@@ -502,48 +631,53 @@
       return [
         {
           id: "apps",
-          icon: "📦",
+          iconAsset: "apps",
+          iconFallback: "📦",
           kicker: "Criação",
-          title: "Novo App",
-          sub: appsCount ? `${appsCount} app(s) salvo(s)` : "Criar e organizar novos apps",
-          body: "Crie um novo app dentro da Factory sem poluir a Home. A seção só abre quando você tocar no card.",
+          title: "Apps",
+          sub: appsCount ? `${appsCount} app(s) salvo(s)` : "Criar & gerenciar",
+          body: "Área para criação e organização de apps dentro da Factory.",
           chips: ["Apps", "Criação", appsCount ? `${appsCount} salvos` : "Sem apps"],
           actions: [
-            { label: "Abrir Apps", view: "newapp", kind: "primary" }
+            { label: "Abrir Apps", view: "newapp", kind: "primary" },
+            { label: "Abrir Editor", view: "editor", kind: "ghost" }
           ]
         },
         {
           id: "editor",
-          icon: "✏️",
+          iconAsset: "editor",
+          iconFallback: "✏️",
           kicker: "Código",
           title: "Editor",
-          sub: activeSlug ? `App ativo: ${activeSlug}` : "Abrir arquivos e editar conteúdo",
-          body: "Use o Editor apenas quando quiser entrar no arquivo. Na Home ele aparece como resumo, não aberto por padrão.",
-          chips: ["Arquivos", "Estado", activeSlug ? activeSlug : "Sem ativo"],
+          sub: activeSlug ? `App ativo: ${activeSlug}` : "Projetos & código",
+          body: "Área de edição de arquivos e conteúdo dos apps ativos.",
+          chips: ["Arquivos", "Código", activeSlug ? activeSlug : "Sem ativo"],
           actions: [
             { label: "Abrir Editor", view: "editor", kind: "primary" }
           ]
         },
         {
           id: "agent",
-          icon: "🤖",
+          iconAsset: "agent-ai",
+          iconFallback: "🤖",
           kicker: "Operação",
-          title: "Agente",
+          title: "Agent",
           sub: "Comandos naturais e execução guiada",
-          body: "Área do agente principal para operação e comandos. Mantida separada da camada Agent IA para evitar mistura.",
-          chips: ["CLI", "Ações", "Factory"],
+          body: "Camada operacional do agente principal para fluxo assistido e ações dentro da Factory.",
+          chips: ["Agent", "Execução", "CLI"],
           actions: [
-            { label: "Abrir Agente", view: "agent", kind: "primary" },
+            { label: "Abrir Agent", view: "agent", kind: "primary" },
             { label: "Abrir Agent IA", view: "agent-ia", kind: "ghost" }
           ]
         },
         {
           id: "opportunity-scan",
-          icon: "📡",
+          iconAsset: "opportunity-scanner",
+          iconFallback: "📡",
           kicker: "Pesquisa",
           title: "Opportunity Scan",
-          sub: "Encontrar oportunidades rentáveis de apps",
-          body: "Esta área é exclusivamente para scanner de oportunidades. Não compartilha bloco visual nem semântica com Generator.",
+          sub: "Procurar oportunidades rentáveis",
+          body: "Scanner de oportunidades de apps com foco em viabilidade e lucro. Esta área é separada do Generator.",
           chips: ["Scanner", "Pesquisa", "Rentável"],
           actions: [
             { label: "Abrir Opportunity Scan", view: "opportunity-scan", kind: "primary" }
@@ -551,11 +685,12 @@
         },
         {
           id: "generator",
-          icon: "🧪",
+          iconAsset: "generator",
+          iconFallback: "🧪",
           kicker: "Validação",
           title: "Generator",
           sub: "Gerar, testar e validar apps",
-          body: "Generator permanece separado do Opportunity Scan. Ele existe para build, testes e validação técnica.",
+          body: "Área de build, preview, geração e validação técnica. Não compartilha função com Opportunity Scan.",
           chips: ["Build", "Teste", "Preview"],
           actions: [
             { label: "Abrir Generator", view: "generator", kind: "primary" }
@@ -563,12 +698,119 @@
         },
         {
           id: "factory-ai",
-          icon: "🏭",
+          iconAsset: "factory-ai",
+          iconFallback: "🏭",
           kicker: "Núcleo IA",
           title: "Factory AI",
           sub: "Supervisão e evolução da Factory",
-          body: "Camada reservada para a IA da própria Factory. Separada de Admin para não misturar sistema interno com visão evolutiva.",
+          body: "Camada reservada para a IA da própria Factory, separada de Admin e de Agent.",
           chips: ["Core", "IA", "Supervisão"],
+          actions: [
+            { label: "Abrir Factory AI", view: "factory-ai", kind: "primary" },
+            { label: "Abrir Admin", view: "admin", kind: "ghost" }
+          ]
+        },
+        {
+          id: "admin",
+          iconAsset: "admin",
+          iconFallback: "⚙️",
+          kicker: "Sistema",
+          title: "Admin",
+          sub: "Ferramentas internas e manutenção",
+          body: "Área administrativa, ferramentas internas, manutenção e controle técnico do ambiente.",
+          chips: ["Admin", "Sistema", "Tools"],
+          actions: [
+            { label: "Abrir Admin", view: "admin", kind: "primary" },
+            { label: "Abrir Logs", view: "logs", kind: "ghost" }
+          ]
+        },
+        {
+          id: "github",
+          iconAsset: "github",
+          iconFallback: "🐙",
+          kicker: "Integração",
+          title: "Github",
+          sub: "Sync e versionamento",
+          body: "Integração com sincronização, versionamento e operação de atualização vinda do núcleo.",
+          chips: ["Github", "Sync", "Versionamento"],
+          actions: [
+            { label: "Abrir Admin", view: "admin", kind: "primary" }
+          ]
+        },
+        {
+          id: "updates",
+          iconAsset: "updates",
+          iconFallback: "🔄",
+          kicker: "Atualização",
+          title: "Updates",
+          sub: "Fluxo de atualização e hotfix",
+          body: "Área voltada a atualizações, hotfix e revisão do estado atual da Factory.",
+          chips: ["Updates", "Hotfix", "Sync"],
+          actions: [
+            { label: "Abrir Admin", view: "admin", kind: "primary" }
+          ]
+        },
+        {
+          id: "deploy",
+          iconAsset: "deploy",
+          iconFallback: "🚀",
+          kicker: "Entrega",
+          title: "Deploy",
+          sub: "Preparar publicação e entrega",
+          body: "Fluxo de deploy, entrega e revisão final antes de publicação dos apps.",
+          chips: ["Deploy", "Entrega", "Build"],
+          actions: [
+            { label: "Abrir Admin", view: "admin", kind: "primary" }
+          ]
+        },
+        {
+          id: "settings",
+          iconAsset: "settings",
+          iconFallback: "🛠️",
+          kicker: "Configuração",
+          title: "Settings",
+          sub: "Parâmetros e preferências",
+          body: "Configurações gerais da Factory, preferências e ajustes do ambiente interno.",
+          chips: ["Settings", "Config", "Sistema"],
+          actions: [
+            { label: "Abrir Settings", view: "settings", kind: "primary" }
+          ]
+        },
+        {
+          id: "logs",
+          iconAsset: "logs",
+          iconFallback: "📜",
+          kicker: "Monitoramento",
+          title: "Logs",
+          sub: "Histórico e acompanhamento",
+          body: "Visualização de logs, rastros e registro de atividade do sistema.",
+          chips: ["Logs", "Histórico", "Monitoramento"],
+          actions: [
+            { label: "Abrir Logs", view: "logs", kind: "primary" }
+          ]
+        },
+        {
+          id: "diagnostics",
+          iconAsset: "diagnostics",
+          iconFallback: "🩺",
+          kicker: "Diagnóstico",
+          title: "Diagnostics",
+          sub: "Verificação e estabilidade",
+          body: "Área de diagnóstico e estabilidade para validar integridade e comportamento da Factory.",
+          chips: ["Diag", "Check", "Stability"],
+          actions: [
+            { label: "Abrir Diagnostics", view: "diagnostics", kind: "primary" }
+          ]
+        },
+        {
+          id: "rcf-factory-special",
+          iconAsset: "rcf-factory-special",
+          iconFallback: "🏗️",
+          kicker: "Factory",
+          title: "RCF Factory",
+          sub: "Card central especial da Factory",
+          body: "Área especial reservada ao núcleo central da RControl Factory e sua organização estrutural.",
+          chips: ["Factory", "Especial", "Central"],
           actions: [
             { label: "Abrir Factory AI", view: "factory-ai", kind: "primary" },
             { label: "Abrir Admin", view: "admin", kind: "ghost" }
@@ -592,12 +834,7 @@
                 <div class="rcfDashAppName">${this._esc(app.name || app.slug || "App")}</div>
                 <div class="rcfDashAppSlug">${this._esc(app.slug || "-")}</div>
               </div>
-              <button
-                class="rcfDashAppGo"
-                type="button"
-                data-rcf-open-view="editor"
-                data-rcf-app-slug="${this._escAttr(app.slug || "")}"
-              >Abrir</button>
+              <button class="rcfDashAppGo" type="button" data-rcf-open-view="editor" data-rcf-app-slug="${this._escAttr(app.slug || "")}">Abrir</button>
             </div>
           `).join("")}
         </div>
@@ -610,15 +847,12 @@
       if (!view || !grid) return false;
 
       const cards = this._cards();
-
-      if (!this._expanded || !cards.some(c => c.id === this._expanded)) {
-        this._expanded = null;
-        this._writeExpanded(null);
-      }
+      this._expanded = null;
 
       grid.innerHTML = cards.map(card => {
         const open = this._expanded === card.id;
         const extraApps = card.id === "apps" ? this._renderAppsSnapshot() : "";
+        const iconSrc = this._moduleAsset(card.iconAsset);
 
         return `
           <article class="rcfDashCard${open ? " is-open" : ""}" data-rcf-card="${this._escAttr(card.id)}">
@@ -628,7 +862,15 @@
               aria-expanded="${open ? "true" : "false"}"
               data-rcf-toggle-card="${this._escAttr(card.id)}"
             >
-              <span class="rcfDashCardIcon" aria-hidden="true">${this._esc(card.icon)}</span>
+              <span class="rcfDashCardIconWrap" aria-hidden="true">
+                <img
+                  class="rcfDashCardIcon"
+                  src="${this._escAttr(iconSrc)}"
+                  alt="${this._escAttr(card.title)}"
+                  onerror="this.style.display='none'; this.nextElementSibling.style.display='inline-flex';"
+                />
+                <span class="rcfDashCardIconFallback" style="display:none;">${this._esc(card.iconFallback || "•")}</span>
+              </span>
               <span class="rcfDashCardText">
                 <span class="rcfDashCardKicker">${this._esc(card.kicker)}</span>
                 <span class="rcfDashCardTitle">${this._esc(card.title)}</span>
@@ -636,7 +878,6 @@
               </span>
               <span class="rcfDashCardArrow" aria-hidden="true">›</span>
             </button>
-
             <div class="rcfDashCardBody">
               <p>${this._esc(card.body)}</p>
               <div class="rcfDashMeta">
@@ -649,6 +890,7 @@
                     class="rcfDashActionBtn ${this._escAttr(action.kind || "ghost")}"
                     type="button"
                     data-rcf-open-view="${this._escAttr(action.view || "")}"
+                    ${action.action ? `data-rcf-action="${this._escAttr(action.action)}"` : ""}
                   >${this._esc(action.label || "Abrir")}</button>
                 `).join("")}
               </div>
@@ -661,8 +903,8 @@
     },
 
     _bindGlobal() {
-      if (this._boundGlobal) return;
-      this._boundGlobal = true;
+      if (this._globalBound) return;
+      this._globalBound = true;
 
       document.addEventListener("click", (ev) => {
         const toggle = ev.target && ev.target.closest ? ev.target.closest("[data-rcf-toggle-card]") : null;
@@ -678,30 +920,22 @@
           ev.preventDefault();
 
           const slug = String(openBtn.getAttribute("data-rcf-app-slug") || "").trim();
-          if (slug) {
-            try {
-              if (window.RCF_UI_RUNTIME && typeof window.RCF_UI_RUNTIME.setActiveApp === "function") {
-                window.RCF_UI_RUNTIME.setActiveApp(slug);
-              } else if (window.RCF && window.RCF.state && Array.isArray(window.RCF.state.apps)) {
-                window.RCF.state.active = window.RCF.state.active || {};
-                window.RCF.state.active.appSlug = slug;
-              }
-            } catch {}
-          }
+          if (slug) this._setActiveApp(slug);
 
           const view = String(openBtn.getAttribute("data-rcf-open-view") || "").trim();
           if (view) this._setView(view);
-          return;
         }
       }, { passive: false });
 
       window.addEventListener("RCF:UI_READY", () => {
         try { this.refresh(this._ctx || {}); } catch {}
       });
+    },
 
-      window.addEventListener("resize", () => {
-        try { this._markDashboardMode(); } catch {}
-      }, { passive: true });
+    _bindWithinDashboard() {
+      const view = document.querySelector(this._viewSel);
+      if (!view || view.__rcf_dashboard_bound__) return;
+      view.__rcf_dashboard_bound__ = true;
     },
 
     toggleCard(id) {
@@ -709,8 +943,18 @@
       if (!next) return false;
 
       this._expanded = (this._expanded === next) ? null : next;
-      this._writeExpanded(this._expanded);
-      this.render();
+
+      const grid = document.querySelector(this._gridSel);
+      if (!grid) return false;
+
+      grid.querySelectorAll(".rcfDashCard").forEach(card => {
+        const isTarget = card.getAttribute("data-rcf-card") === next;
+        const willOpen = isTarget && this._expanded === next;
+        card.classList.toggle("is-open", willOpen);
+        const btn = card.querySelector("[data-rcf-toggle-card]");
+        if (btn) btn.setAttribute("aria-expanded", willOpen ? "true" : "false");
+      });
+
       this._markDashboardMode();
       return true;
     },
