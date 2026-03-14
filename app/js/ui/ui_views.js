@@ -4,6 +4,7 @@
    - Mantém fallback leve
    - Evita reinjeções duplicadas
    - Não quebra fluxo antigo
+   - Corrige separação entre Factory AI / Admin / Agent
 */
 (() => {
   "use strict";
@@ -141,10 +142,11 @@
 
     host.innerHTML = [
       makeMenuCard("rcfUiIcon--dashboard", "Dashboard", "Visão central da Factory", "dashboard"),
-      makeMenuCard("rcfUiIcon--apps", "Apps", "Criar e organizar aplicativos", "newapp"),
+      makeMenuCard("rcfUiIcon--apps", "Novo App", "Criar e organizar aplicativos", "newapp"),
       makeMenuCard("rcfUiIcon--editor", "Editor", "Arquivos, estrutura e ajustes", "editor"),
-      makeMenuCard("rcfUiIcon--agent", "Agent", "Automação e IA operacional", "agent"),
-      makeMenuCard("rcfUiIcon--factory", "Factory", "Sistema, sync e ferramentas", "admin")
+      makeMenuCard("rcfUiIcon--agent", "Agent", "Assistente operacional e comandos", "agent"),
+      makeMenuCard("rcfUiIcon--factory", "Factory AI", "IA interna do núcleo da Factory", "factory-ai"),
+      makeMenuCard("rcfUiIcon--admin", "Admin", "Administração, sync e ferramentas", "admin")
     ].join("");
 
     host.setAttribute("data-rcf-ui-enhanced", "1");
