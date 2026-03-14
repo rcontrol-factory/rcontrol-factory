@@ -259,10 +259,10 @@
       return `
         <div class="rcfDashPanel" data-rcf-ui-dashboard-ai="1">
           <h2>Factory AI</h2>
-          <p class="hint">Acesse o agente da Factory para automação, comandos naturais e assistência no fluxo.</p>
+          <p class="hint">IA interna da Factory responsável por diagnóstico e evolução do núcleo.</p>
           <div class="rcfAiPanel">
             <div class="badge" id="dashAiBadge">Sistema pronto ✅</div>
-            <button class="btn ok" type="button" data-rcf-dash-action="agent">Iniciar IA</button>
+            <button class="btn ok" type="button" data-rcf-dash-action="factory-ai">Abrir Factory AI</button>
           </div>
         </div>
       `;
@@ -296,10 +296,21 @@
           btn.__rcf_dash_action_bound__ = true;
 
           this.bind(btn, () => {
+
             const act = btn.getAttribute("data-rcf-dash-action");
+
             if (act === "newapp") this.navTo("newapp");
+
             else if (act === "editor") this.navTo("editor");
+
             else if (act === "agent") this.navTo("agent");
+
+            else if (act === "factory") this.navTo("factory");
+
+            else if (act === "factory-ai") this.navTo("factory-ai");
+
+            else if (act === "admin") this.navTo("admin");
+
           });
         });
       } catch {}
