@@ -5,11 +5,12 @@
    - Sem lógica de agent/injector
    - Mantém IDs/classes compatíveis com app atual
    - Idempotente / seguro para remount
-   - PATCH: remove FAB visual flutuante da tela
-   - PATCH: mantém compatibilidade oculta com app.js atual
-   - PATCH: corrige barra inferior
-   - PATCH: Home / Agent / Opportunity Scan / Settings / Factory AI
-   - PATCH: Admin continua como view própria, fora da barra inferior
+   - PATCH: cabeçalho sem dependência visual de imagem quebrada
+   - PATCH: barra superior com rótulos corrigidos
+   - PATCH: barra inferior corrigida
+   - PATCH: Opportunity Scan no centro
+   - PATCH: compatibilidade preservada (view real continua sendo "generator")
+   - PATCH: Factory AI visual separado do Admin
 */
 (() => {
   "use strict";
@@ -42,16 +43,27 @@
   }
 
   function brandHeaderHTML(ctx = {}) {
-    const brandTitle = esc(ctx.brandTitle || "RControl Factory");
-    const brandSubtitle = esc(ctx.brandSubtitle || "FACTORY INTERNA • PWA • OFFLINE-FIRST");
+    const brandTitle = esc(ctx.brandTitle || "RCF");
+    const brandSubtitle = esc(ctx.brandSubtitle || "Factory interna • PWA • Offline-first");
 
     return `
       <div class="brand-mark" aria-hidden="true">
-        <img src="./assets/icons/app/app-icon.png" class="factory-mark-img" alt="">
+        <img
+          src="./assets/icons/app/app-icon.png"
+          class="factory-mark-img"
+          alt=""
+          onerror="this.style.display='none';this.setAttribute('aria-hidden','true');"
+        >
       </div>
+
       <div class="brand-text">
-        <img src="./assets/branding/header-logo.jpeg" class="factory-logo-header" alt="Factory by RCONTROL">
-        <div class="title rcf-visually-hidden">${brandTitle}</div>
+        <img
+          src="./assets/branding/header-logo.jpeg"
+          class="factory-logo-header"
+          alt="Factory by RCONTROL"
+          onerror="this.style.display='none';this.setAttribute('aria-hidden','true');"
+        >
+        <div class="title">${brandTitle}</div>
         <div class="subtitle">${brandSubtitle}</div>
       </div>
     `;
@@ -71,13 +83,13 @@
           </div>
 
           <nav class="tabs" aria-label="Navegação" data-rcf-panel="tabs">
-            <button class="tab active" data-view="dashboard" type="button">Dashboard</button>
-            <button class="tab" data-view="newapp" type="button">New App</button>
+            <button class="tab active" data-view="dashboard" type="button">Home</button>
+            <button class="tab" data-view="newapp" type="button">Apps</button>
             <button class="tab" data-view="editor" type="button">Editor</button>
-            <button class="tab" data-view="generator" type="button">Generator</button>
             <button class="tab" data-view="agent" type="button">Agent</button>
-            <button class="tab" data-view="admin" type="button">Admin</button>
+            <button class="tab" data-view="generator" type="button">Opportunity</button>
             <button class="tab" data-view="settings" type="button">Settings</button>
+            <button class="tab" data-view="admin" type="button">Admin</button>
             <button class="tab" data-view="logs" type="button">Logs</button>
           </nav>
         </header>
@@ -191,8 +203,8 @@
           </section>
 
           <section class="view card" id="view-generator" data-rcf-view="generator">
-            <h1>Generator</h1>
-            <p class="hint">Gera ZIP do app selecionado.</p>
+            <h1>Opportunity Scan</h1>
+            <p class="hint">Centro de oportunidades e análise de ideias rentáveis.</p>
             <div id="rcfGenSlotActions" data-rcf-slot="generator.actions">
               <div class="row">
                 <button class="btn ok" id="btnGenZip" type="button">Build ZIP</button>
@@ -319,11 +331,11 @@
         </main>
 
         <nav class="rcfBottomNav" aria-label="Navegação mobile">
-          <button class="tab active" data-view="dashboard" type="button">Home</button>
-          <button class="tab" data-view="agent" type="button">Agent</button>
-          <button class="tab" data-view="generator" type="button">Opportunity Scan</button>
-          <button class="tab" data-view="settings" type="button">Settings</button>
-          <button class="tab" data-view="factoryai" type="button">Factory AI</button>
+          <button class="tab active" data-view="dashboard" data-label="home" type="button">Home</button>
+          <button class="tab" data-view="agent" data-label="agent" type="button">Agent</button>
+          <button class="tab" data-view="generator" data-label="opportunity" type="button">Opportunity Scan</button>
+          <button class="tab" data-view="settings" data-label="settings" type="button">Settings</button>
+          <button class="tab" data-view="factoryai" data-label="factoryai" type="button">Factory AI</button>
         </nav>
 
         <div class="tools" id="toolsDrawer" data-rcf-panel="tools.drawer">
@@ -408,6 +420,27 @@
         compat.style.display = "none";
         compat.style.visibility = "hidden";
         compat.style.pointerEvents = "none";
+      }
+
+      const bottom = qs(".rcfBottomNav", root);
+      if (bottom) {
+        const opp = qs('[data-label="opportunity"]', bottom);
+        if (opp) opp.textContent = "Opportunity Scan";
+
+        const agent = qs('[data-label="agent"]', bottom);
+        if (agent) agent.textContent = "Agent";
+
+        const settings = qs('[data-label="settings"]', bottom);
+        if (settings) settings.textContent = "Settings";
+
+        const fai = qs('[data-label="factoryai"]', bottom);
+        if (fai) fai.textContent = "Factory AI";
+      }
+
+      const tabs = qs(".tabs", root);
+      if (tabs) {
+        const gen = tabs.querySelector('[data-view="generator"]');
+        if (gen) gen.textContent = "Opportunity";
       }
 
       return true;
