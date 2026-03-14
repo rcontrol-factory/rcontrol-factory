@@ -8,7 +8,7 @@
    - PATCH: remove FAB visual flutuante da tela
    - PATCH: mantém compatibilidade oculta com app.js atual
    - PATCH: corrige barra inferior
-   - PATCH: Home / Agent / Opportunity / Settings / Factory AI
+   - PATCH: Home / Agent / Opportunity Scan / Settings / Factory AI
    - PATCH: Admin continua como view própria, fora da barra inferior
 */
 (() => {
@@ -321,7 +321,7 @@
         <nav class="rcfBottomNav" aria-label="Navegação mobile">
           <button class="tab active" data-view="dashboard" type="button">Home</button>
           <button class="tab" data-view="agent" type="button">Agent</button>
-          <button class="tab" data-view="generator" type="button">Opportunity</button>
+          <button class="tab" data-view="generator" type="button">Opportunity Scan</button>
           <button class="tab" data-view="settings" type="button">Settings</button>
           <button class="tab" data-view="factoryai" type="button">Factory AI</button>
         </nav>
