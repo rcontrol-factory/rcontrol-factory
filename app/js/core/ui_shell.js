@@ -7,7 +7,8 @@
    - Idempotente / seguro para remount
    - PATCH: remove FAB visual flutuante da tela
    - PATCH: mantém compatibilidade oculta com app.js atual
-   - PATCH: corrige barra inferior -> último atalho agora é Factory AI
+   - PATCH: corrige barra inferior
+   - PATCH: Home / Agent / Opportunity / Settings / Factory AI
    - PATCH: Admin continua como view própria, fora da barra inferior
 */
 (() => {
@@ -315,24 +316,13 @@
               </div>
             </div>
           </section>
-
-          <section class="view card" id="view-diagnostics" data-rcf-view="diagnostics">
-            <h1>Diagnostics</h1>
-            <div class="row">
-              <button class="btn ok" id="btnDiagRun" type="button">Rodar V8 Stability Check</button>
-              <button class="btn ghost" id="btnDiagScan" type="button">Scan overlays</button>
-              <button class="btn ghost" id="btnDiagTests" type="button">Run micro-tests</button>
-              <button class="btn danger" id="btnDiagClear" type="button">Limpar</button>
-            </div>
-            <pre class="mono" id="diagOut">Pronto.</pre>
-          </section>
         </main>
 
         <nav class="rcfBottomNav" aria-label="Navegação mobile">
           <button class="tab active" data-view="dashboard" type="button">Home</button>
-          <button class="tab" data-view="newapp" type="button">Apps</button>
-          <button class="tab" data-view="editor" type="button">Editor</button>
           <button class="tab" data-view="agent" type="button">Agent</button>
+          <button class="tab" data-view="generator" type="button">Opportunity</button>
+          <button class="tab" data-view="settings" type="button">Settings</button>
           <button class="tab" data-view="factoryai" type="button">Factory AI</button>
         </nav>
 
@@ -357,7 +347,6 @@
           </div>
         </div>
 
-        <!-- Compatibilidade oculta com app.js atual: FAB removido visualmente -->
         <div
           id="rcfFabCompat"
           hidden
