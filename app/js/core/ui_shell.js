@@ -1,16 +1,12 @@
 /* FILE: /app/js/core/ui_shell.js
-   RControl Factory — UI Shell mount (safe extraction)
-   - Responsável apenas pelo HTML base da shell
-   - Sem boot crítico
-   - Sem lógica de agent/injector
-   - Mantém IDs/classes compatíveis com app atual
-   - Idempotente / seguro para remount
-   - PATCH: cabeçalho sem dependência visual de imagem quebrada
-   - PATCH: barra superior com rótulos corrigidos
-   - PATCH: barra inferior corrigida
-   - PATCH: Opportunity Scan no centro
-   - PATCH: compatibilidade preservada (view real continua sendo "generator")
-   - PATCH: Factory AI visual separado do Admin
+   RControl Factory — UI Shell mount (SAFE CLEAN V3.0)
+   - Shell base limpa
+   - Remove navegação superior antiga
+   - Remove dashboard antigo embutido na shell
+   - Corrige bottom nav oficial
+   - Opportunity Scan separado de Generator
+   - Factory AI separado de Admin
+   - Rebuild seguro quando detectar shell velha em runtime
 */
 (() => {
   "use strict";
@@ -28,6 +24,10 @@
     try { return root.querySelector(sel); } catch { return null; }
   }
 
+  function qsa(sel, root = document) {
+    try { return Array.from(root.querySelectorAll(sel)); } catch { return []; }
+  }
+
   function ensureRoot() {
     let root = document.getElementById("app");
     if (root) return root;
@@ -42,6 +42,18 @@
     }
   }
 
+  function sectionHeader(title, subtitle, back = true) {
+    return `
+      <div class="row" style="align-items:center;margin-bottom:10px;gap:10px;">
+        ${back ? `<button class="btn small ghost" data-view="dashboard" type="button">← Home</button>` : ``}
+        <div>
+          <h1 style="margin:0">${esc(title)}</h1>
+          ${subtitle ? `<p class="hint" style="margin:4px 0 0">${esc(subtitle)}</p>` : ``}
+        </div>
+      </div>
+    `;
+  }
+
   function brandHeaderHTML(ctx = {}) {
     const brandTitle = esc(ctx.brandTitle || "RCF");
     const brandSubtitle = esc(ctx.brandSubtitle || "Factory interna • PWA • Offline-first");
@@ -49,7 +61,7 @@
     return `
       <div class="brand-mark" aria-hidden="true">
         <img
-          src="./assets/icons/app/app-icon.png"
+          src="./assets/icon-192.png"
           class="factory-mark-img"
           alt=""
           onerror="this.style.display='none';this.setAttribute('aria-hidden','true');"
@@ -58,7 +70,7 @@
 
       <div class="brand-text">
         <img
-          src="./assets/branding/header-logo.jpeg"
+          src="./assets/logo_factory_header 2.png"
           class="factory-logo-header"
           alt="Factory by RCONTROL"
           onerror="this.style.display='none';this.setAttribute('aria-hidden','true');"
@@ -71,104 +83,28 @@
 
   function buildShellHTML(ctx = {}) {
     return `
-      <div id="rcfRoot" data-rcf-app="rcf.factory">
+      <div id="rcfRoot" data-rcf-app="rcf.factory" data-rcf-shell-version="3.0">
         <header class="topbar" data-rcf-panel="topbar">
           <div class="brand" data-rcf-panel="brand">
             ${brandHeaderHTML(ctx)}
             <div class="spacer"></div>
+            <div class="badge" id="activeAppText">Sem app ativo ✅</div>
             <button class="btn small ghost" id="btnOpenTools" type="button" aria-label="Ferramentas">Tools</button>
             <div class="status-pill" id="statusPill" data-rcf="status.pill.top">
               <span class="ok" id="statusTextTop" data-rcf="status.text.top">OK ✅</span>
             </div>
           </div>
 
-          <nav class="tabs" aria-label="Navegação" data-rcf-panel="tabs">
-            <button class="tab active" data-view="dashboard" type="button">Home</button>
-            <button class="tab" data-view="newapp" type="button">Apps</button>
-            <button class="tab" data-view="editor" type="button">Editor</button>
-            <button class="tab" data-view="agent" type="button">Agent</button>
-            <button class="tab" data-view="generator" type="button">Opportunity</button>
-            <button class="tab" data-view="settings" type="button">Settings</button>
-            <button class="tab" data-view="admin" type="button">Admin</button>
-            <button class="tab" data-view="logs" type="button">Logs</button>
-          </nav>
+          <div id="rcfHeader" data-rcf-ui-slot="header"></div>
         </header>
 
         <main class="container views" id="views" data-rcf-panel="views">
           <section class="view card hero active" id="view-dashboard" data-rcf-view="dashboard">
-            <div class="rcfDashHero">
-              <div class="rcfDashHeroHead">
-                <div>
-                  <h1>Dashboard</h1>
-                  <p>Central do projeto. Selecione um app e comece a editar.</p>
-                </div>
-                <div class="status-box">
-                  <div class="badge" id="activeAppText">Sem app ativo ✅</div>
-                  <button class="btn small" id="btnCreateNewApp" type="button">Criar App</button>
-                  <button class="btn small" id="btnOpenEditor" type="button">Abrir Editor</button>
-                  <button class="btn small ghost" id="btnExportBackup" type="button">Backup (JSON)</button>
-                </div>
-              </div>
-
-              <div class="rcfMobileModules" aria-label="Módulos principais">
-                <button class="rcfMobileModuleCard" data-view="dashboard" type="button">
-                  <span class="rcfMobileModuleIcon mod-dashboard" aria-hidden="true"></span>
-                  <span class="rcfMobileModuleText">
-                    <span class="rcfMobileModuleTitle">Dashboard</span>
-                    <span class="rcfMobileModuleSub">Status &amp; Controle</span>
-                  </span>
-                  <span class="rcfMobileModuleArrow" aria-hidden="true">›</span>
-                </button>
-
-                <button class="rcfMobileModuleCard" data-view="newapp" type="button">
-                  <span class="rcfMobileModuleIcon mod-apps" aria-hidden="true"></span>
-                  <span class="rcfMobileModuleText">
-                    <span class="rcfMobileModuleTitle">Apps</span>
-                    <span class="rcfMobileModuleSub">Criar &amp; Gerenciar</span>
-                  </span>
-                  <span class="rcfMobileModuleArrow" aria-hidden="true">›</span>
-                </button>
-
-                <button class="rcfMobileModuleCard" data-view="editor" type="button">
-                  <span class="rcfMobileModuleIcon mod-editor" aria-hidden="true"></span>
-                  <span class="rcfMobileModuleText">
-                    <span class="rcfMobileModuleTitle">Editor</span>
-                    <span class="rcfMobileModuleSub">Projetos &amp; Código</span>
-                  </span>
-                  <span class="rcfMobileModuleArrow" aria-hidden="true">›</span>
-                </button>
-
-                <button class="rcfMobileModuleCard" data-view="agent" type="button">
-                  <span class="rcfMobileModuleIcon mod-agent" aria-hidden="true"></span>
-                  <span class="rcfMobileModuleText">
-                    <span class="rcfMobileModuleTitle">Agent</span>
-                    <span class="rcfMobileModuleSub">IA + Automação</span>
-                  </span>
-                  <span class="rcfMobileModuleArrow" aria-hidden="true">›</span>
-                </button>
-
-                <button class="rcfMobileModuleCard" data-view="admin" type="button">
-                  <span class="rcfMobileModuleIcon mod-factory" aria-hidden="true"></span>
-                  <span class="rcfMobileModuleText">
-                    <span class="rcfMobileModuleTitle">Admin</span>
-                    <span class="rcfMobileModuleSub">Sistema &amp; Tools</span>
-                  </span>
-                  <span class="rcfMobileModuleArrow" aria-hidden="true">›</span>
-                </button>
-              </div>
-
-              <div class="rcfDashPanels">
-                <div class="rcfDashPanel rcfDashPanelWide">
-                  <h2>Apps</h2>
-                  <div id="appsList" class="apps" data-rcf-slot="apps.list"></div>
-                </div>
-              </div>
-            </div>
+            <div data-rcf-dashboard-host="1"></div>
           </section>
 
-          <section class="view card" id="view-newapp" data-rcf-view="newapp">
-            <h1>Novo App</h1>
-            <p class="hint">Cria um mini-app dentro da Factory.</p>
+          <section class="view card" id="view-newapp" data-rcf-view="newapp" hidden>
+            ${sectionHeader("Novo App", "Criação de novos apps.", true)}
             <div class="row form">
               <input id="newAppName" placeholder="Nome do app" />
               <input id="newAppSlug" placeholder="slug (opcional)" />
@@ -178,9 +114,8 @@
             <pre class="mono" id="newAppOut">Pronto.</pre>
           </section>
 
-          <section class="view card" id="view-editor" data-rcf-view="editor">
-            <h1>Editor</h1>
-            <p class="hint">Escolha um arquivo e edite.</p>
+          <section class="view card" id="view-editor" data-rcf-view="editor" hidden>
+            ${sectionHeader("Editor", "Projetos & código.", true)}
             <div class="row">
               <div class="badge" id="editorHead">Arquivo atual: -</div>
               <div class="spacer"></div>
@@ -202,21 +137,8 @@
             <pre class="mono" id="editorOut">Pronto.</pre>
           </section>
 
-          <section class="view card" id="view-generator" data-rcf-view="generator">
-            <h1>Opportunity Scan</h1>
-            <p class="hint">Centro de oportunidades e análise de ideias rentáveis.</p>
-            <div id="rcfGenSlotActions" data-rcf-slot="generator.actions">
-              <div class="row">
-                <button class="btn ok" id="btnGenZip" type="button">Build ZIP</button>
-                <button class="btn ghost" id="btnGenPreview" type="button">Preview</button>
-              </div>
-            </div>
-            <div id="rcfGenSlotTools" data-rcf-slot="generator.tools"></div>
-            <pre class="mono" id="genOut">Pronto.</pre>
-          </section>
-
-          <section class="view card" id="view-agent" data-rcf-view="agent">
-            <h1>Agente</h1>
+          <section class="view card" id="view-agent" data-rcf-view="agent" hidden>
+            ${sectionHeader("Agent", "Comandos naturais e execução guiada.", true)}
             <div class="row cmd">
               <input id="agentCmd" placeholder='Ex: create "Meu App" meu-app' />
               <button class="btn ok" id="btnAgentRun" type="button">Executar</button>
@@ -227,14 +149,45 @@
             <pre class="mono" id="agentOut">Pronto.</pre>
           </section>
 
-          <section class="view card" id="view-settings" data-rcf-view="settings">
-            <h1>Settings</h1>
+          <section class="view card" id="view-agent-ia" data-rcf-view="agent-ia" hidden>
+            ${sectionHeader("Agent IA", "Camada de IA do agente.", true)}
+            <div id="rcfAgentIASlotActions" data-rcf-slot="agentia.actions"></div>
+            <div id="rcfAgentIASlotTools" data-rcf-slot="agentia.tools"></div>
+            <pre class="mono" id="agentIaOut">Pronto.</pre>
+          </section>
 
+          <section class="view card" id="view-opportunity-scan" data-rcf-view="opportunity-scan" hidden>
+            ${sectionHeader("Opportunity Scan", "Scanner de oportunidades rentáveis.", true)}
+            <div id="rcfOpportunitySlotActions" data-rcf-slot="opportunity.actions"></div>
+            <div id="rcfOpportunitySlotTools" data-rcf-slot="opportunity.tools"></div>
+            <pre class="mono" id="opportunityOut">Pronto.</pre>
+          </section>
+
+          <section class="view card" id="view-generator" data-rcf-view="generator" hidden>
+            ${sectionHeader("Generator", "Build, preview, geração e validação.", true)}
+            <div id="rcfGenSlotActions" data-rcf-slot="generator.actions">
+              <div class="row">
+                <button class="btn ok" id="btnGenZip" type="button">Build ZIP</button>
+                <button class="btn ghost" id="btnGenPreview" type="button">Preview</button>
+              </div>
+            </div>
+            <div id="rcfGenSlotTools" data-rcf-slot="generator.tools"></div>
+            <pre class="mono" id="genOut">Pronto.</pre>
+          </section>
+
+          <section class="view card" id="view-factory-ai" data-rcf-view="factory-ai" hidden>
+            ${sectionHeader("Factory AI", "Supervisão e evolução da Factory.", true)}
+            <div id="rcfFactoryAISlotActions" data-rcf-slot="factoryai.actions"></div>
+            <div id="rcfFactoryAISlotTools" data-rcf-slot="factoryai.tools"></div>
+            <pre class="mono" id="factoryAiOut">Pronto.</pre>
+          </section>
+
+          <section class="view card" id="view-settings" data-rcf-view="settings" hidden>
+            ${sectionHeader("Settings", "Parâmetros e preferências.", true)}
             <div class="card" id="settings-security">
               <h2>Segurança</h2>
-              <div id="rcfSettingsSecurityActions" data-rcf-slot="settings.security.actions"></div>
-              <div class="row">
-                <input id="pinInput" placeholder="Definir PIN (4-8 dígitos)" inputmode="numeric" />
+              <div class="row form">
+                <input id="pinInput" placeholder="PIN admin" />
                 <button class="btn ok" id="btnPinSave" type="button">Salvar PIN</button>
                 <button class="btn danger" id="btnPinRemove" type="button">Remover PIN</button>
               </div>
@@ -252,8 +205,8 @@
             </div>
           </section>
 
-          <section class="view card" id="view-logs" data-rcf-view="logs">
-            <h1>Logs</h1>
+          <section class="view card" id="view-logs" data-rcf-view="logs" hidden>
+            ${sectionHeader("Logs", "Histórico e acompanhamento.", true)}
             <div class="row">
               <button class="btn ghost" id="btnLogsRefresh2" type="button">Atualizar</button>
               <button class="btn ok" id="btnCopyLogs" type="button">Copiar</button>
@@ -262,8 +215,18 @@
             <pre class="mono small" id="logsViewBox">Pronto.</pre>
           </section>
 
-          <section class="view card" id="view-admin" data-rcf-view="admin">
-            <h1>Admin</h1>
+          <section class="view card" id="view-diagnostics" data-rcf-view="diagnostics" hidden>
+            ${sectionHeader("Diagnostics", "Verificação e estabilidade.", true)}
+            <div class="row">
+              <button class="btn ghost" id="btnRunV8Check" type="button">Run V8 Check</button>
+              <button class="btn ghost" id="btnScanOverlays" type="button">Scan Overlays</button>
+              <button class="btn ghost" id="btnMicroTests" type="button">Microtests</button>
+            </div>
+            <pre class="mono" id="diagOut">Pronto.</pre>
+          </section>
+
+          <section class="view card" id="view-admin" data-rcf-view="admin" hidden>
+            ${sectionHeader("Admin", "Ferramentas internas e manutenção.", true)}
 
             <div id="rcfAdminSlotTop" data-rcf-slot="admin.top">
               <div class="row">
@@ -333,9 +296,9 @@
         <nav class="rcfBottomNav" aria-label="Navegação mobile">
           <button class="tab active" data-view="dashboard" data-label="home" type="button">Home</button>
           <button class="tab" data-view="agent" data-label="agent" type="button">Agent</button>
-          <button class="tab" data-view="generator" data-label="opportunity" type="button">Opportunity Scan</button>
+          <button class="tab" data-view="opportunity-scan" data-label="opportunity" type="button">Opportunity</button>
           <button class="tab" data-view="settings" data-label="settings" type="button">Settings</button>
-          <button class="tab" data-view="factoryai" data-label="factoryai" type="button">Factory AI</button>
+          <button class="tab" data-view="factory-ai" data-label="factoryai" type="button">Factory AI</button>
         </nav>
 
         <div class="tools" id="toolsDrawer" data-rcf-panel="tools.drawer">
@@ -392,25 +355,71 @@
     `;
   }
 
+  function shouldRebuild(existing) {
+    try {
+      if (!existing) return true;
+
+      if (existing.getAttribute("data-rcf-shell-version") !== "3.0") return true;
+
+      if (qs(".tabs", existing)) return true;
+      if (qs(".rcfMobileModules", existing)) return true;
+      if (qs(".rcfDashHero", existing)) return true;
+
+      const bottomOpp = qs('.rcfBottomNav [data-label="opportunity"]', existing);
+      if (!bottomOpp) return true;
+      if ((bottomOpp.getAttribute("data-view") || "").trim() !== "opportunity-scan") return true;
+
+      if (!qs("#view-opportunity-scan", existing)) return true;
+      if (!qs("#view-factory-ai", existing)) return true;
+      if (!qs("#view-generator", existing)) return true;
+
+      return false;
+    } catch {
+      return true;
+    }
+  }
+
   function ensureStructuralSlots(root) {
     try {
       if (!root) return false;
 
-      const dashboard = qs("#view-dashboard", root);
-      if (dashboard && !qs("#rcfFactoryUiRoot", dashboard)) {
-        const slot = document.createElement("div");
-        slot.id = "rcfFactoryUiRoot";
-        slot.setAttribute("data-rcf-ui-slot", "factory-view");
-        slot.style.marginTop = "14px";
-        dashboard.appendChild(slot);
-      }
+      const views = qs("#views", root);
+      if (!views) return false;
 
-      const topbar = qs(".topbar", root);
-      if (topbar && !qs("#rcfHeader", topbar)) {
-        const hdr = document.createElement("div");
-        hdr.id = "rcfHeader";
-        hdr.setAttribute("data-rcf-ui-slot", "header");
-        topbar.insertAdjacentElement("afterbegin", hdr);
+      const mustViews = [
+        ["view-dashboard", "dashboard"],
+        ["view-newapp", "newapp"],
+        ["view-editor", "editor"],
+        ["view-agent", "agent"],
+        ["view-agent-ia", "agent-ia"],
+        ["view-opportunity-scan", "opportunity-scan"],
+        ["view-generator", "generator"],
+        ["view-factory-ai", "factory-ai"],
+        ["view-settings", "settings"],
+        ["view-logs", "logs"],
+        ["view-diagnostics", "diagnostics"],
+        ["view-admin", "admin"]
+      ];
+
+      mustViews.forEach(([id, name]) => {
+        if (qs(`#${id}`, root)) return;
+        const sec = document.createElement("section");
+        sec.id = id;
+        sec.className = "view card";
+        sec.hidden = true;
+        sec.setAttribute("data-rcf-view", name);
+        sec.innerHTML = sectionHeader(name, "Área interna da Factory.", true);
+        views.appendChild(sec);
+      });
+
+      if (!qs("#rcfHeader", root)) {
+        const topbar = qs(".topbar", root);
+        if (topbar) {
+          const hdr = document.createElement("div");
+          hdr.id = "rcfHeader";
+          hdr.setAttribute("data-rcf-ui-slot", "header");
+          topbar.appendChild(hdr);
+        }
       }
 
       const compat = qs("#rcfFabCompat", root);
@@ -424,23 +433,20 @@
 
       const bottom = qs(".rcfBottomNav", root);
       if (bottom) {
-        const opp = qs('[data-label="opportunity"]', bottom);
-        if (opp) opp.textContent = "Opportunity Scan";
+        const expected = [
+          ["home", "dashboard", "Home"],
+          ["agent", "agent", "Agent"],
+          ["opportunity", "opportunity-scan", "Opportunity"],
+          ["settings", "settings", "Settings"],
+          ["factoryai", "factory-ai", "Factory AI"]
+        ];
 
-        const agent = qs('[data-label="agent"]', bottom);
-        if (agent) agent.textContent = "Agent";
-
-        const settings = qs('[data-label="settings"]', bottom);
-        if (settings) settings.textContent = "Settings";
-
-        const fai = qs('[data-label="factoryai"]', bottom);
-        if (fai) fai.textContent = "Factory AI";
-      }
-
-      const tabs = qs(".tabs", root);
-      if (tabs) {
-        const gen = tabs.querySelector('[data-view="generator"]');
-        if (gen) gen.textContent = "Opportunity";
+        expected.forEach(([label, view, text]) => {
+          const btn = qs(`[data-label="${label}"]`, bottom);
+          if (!btn) return;
+          btn.setAttribute("data-view", view);
+          btn.textContent = text;
+        });
       }
 
       return true;
@@ -455,13 +461,14 @@
       if (!root) return false;
 
       const existing = document.getElementById("rcfRoot");
-      if (existing) {
+      if (existing && !shouldRebuild(existing)) {
         ensureStructuralSlots(existing);
         return true;
       }
 
       root.innerHTML = buildShellHTML(ctx);
-      ensureStructuralSlots(root);
+      const fresh = document.getElementById("rcfRoot");
+      ensureStructuralSlots(fresh);
       return true;
     }
   };
