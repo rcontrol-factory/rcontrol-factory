@@ -1,25 +1,20 @@
 /* FILE: app/app.js
-   RControl Factory - /app/app.js - FINAL ORCHESTRATOR PATCH
-   - Patch mínimo e cirúrgico em cima da base V8.x
-   - app.js como ORQUESTRADOR LEVE REAL
-   - preserva boot/state/logger/agent/injector/diagnostics/SW/VFS
-   - fortalece fallback shell mínimo seguro
-   - reforça setView anti-empilhamento
-   - prioriza módulos oficiais aprovados
+   RControl Factory - /app/app.js - V8.1.1 PADRAO (Lean Orchestrator Final)
+   - Arquivo completo (1 peça) pra copiar/colar
+   - Mantém boot/state/logger/agent/injector/diagnostics/SW/VFS
+   - Prioriza módulos oficiais
+   - Fallback shell mínimo, porém operacional
 */
 (() => {
   "use strict";
 
-  try { console.info("[RCF] /app/app.js BUILD=FINAL_ORCHESTRATOR_PATCH"); } catch {}
+  try { console.info("[RCF] /app/app.js BUILD=V8.1.1_LEAN_ORCHESTRATOR_FINAL"); } catch {}
 
-  // =========================================================
-  // GLOBAL LOG ALIAS (compat)
-  // =========================================================
   const log = (...args) => {
     try {
       if (window.RCF_LOGGER && typeof window.RCF_LOGGER.push === "function") {
         const msg = args.map(a => {
-          try { return (typeof a === "string" ? a : JSON.stringify(a)); } catch { return String(a); }
+          try { return typeof a === "string" ? a : JSON.stringify(a); } catch { return String(a); }
         }).join(" ");
         window.RCF_LOGGER.push("LOG", msg);
         return;
@@ -29,33 +24,27 @@
   };
   try { if (!window.log) window.log = log; } catch {}
 
-  // =========================================================
-  // BOOT LOCK (safe retry)
-  // =========================================================
   const __BOOT_KEY = "__RCF_BOOT_STATE__";
   try {
     const st = window[__BOOT_KEY] || {};
     const now = Date.now();
-
     if (st.booted === true) return;
     if (st.booting === true && (now - (st.ts || 0)) < 8000) return;
-
-    window[__BOOT_KEY] = { booting: true, booted: false, ts: now, ver: "final-orchestrator" };
+    window[__BOOT_KEY] = { booting: true, booted: false, ts: now, ver: "v8.1.1" };
   } catch {
     if (window.__RCF_BOOTED__) return;
     window.__RCF_BOOTED__ = true;
   }
 
-  // =========================================================
-  // BOOT WATCHDOG
-  // =========================================================
+  try { if (typeof window.__RCF_USING_FALLBACK__ !== "boolean") window.__RCF_USING_FALLBACK__ = false; } catch {}
+
   try {
     setTimeout(() => {
       try {
         if (document.getElementById("rcfRoot")) return;
         const msg = [
           "UI não montou (rcfRoot ausente).",
-          "Provável causa: shell oficial não montou e fallback não entrou, ou erro antes do render.",
+          "Provável causa: shell oficial falhou, SW/cache preso, ou erro antes do render.",
           "",
           "Ação rápida:",
           "1) Tools -> Unregister SW",
@@ -67,33 +56,24 @@
     }, 6500);
   } catch {}
 
-  // =========================================================
-  // CORE: Utils
-  // =========================================================
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
   const nowISO = () => new Date().toISOString();
-
   const safeJsonParse = (s, fallback) => { try { return JSON.parse(s); } catch { return fallback; } };
   const safeJsonStringify = (obj) => { try { return JSON.stringify(obj); } catch { return String(obj); } };
 
-  const slugify = (str) => {
-    return String(str || "")
-      .trim()
-      .toLowerCase()
-      .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "");
-  };
+  const slugify = (str) => String(str || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 
   const escapeHtml = (s) => String(s).replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
   const escapeAttr = (s) => escapeHtml(s).replace(/'/g, "&#39;");
   const uiMsg = (sel, text) => { const el = $(sel); if (el) el.textContent = String(text ?? ""); };
-  const textContentSafe = (el, txt) => { try { el.textContent = txt; } catch {} };
+  const textContentSafe = (el, txt) => { try { if (el) el.textContent = txt; } catch {} };
 
-  // =========================================================
-  // RCF_UI REGISTRY
-  // =========================================================
   function installRCFUIRegistry() {
     try {
       const R = window.RCF_UI || {};
@@ -114,9 +94,7 @@
           "generator.tools": "#rcfGenSlotTools",
           "settings.security.actions": "#rcfSettingsSecurityActions",
           "status.text": "#statusText",
-          "status.text.top": "#statusTextTop",
-          "apps.list": "#appsList",
-          "files.list": "#filesList"
+          "status.text.top": "#statusTextTop"
         },
         refresh() {
           try { this._lastRefreshAt = Date.now(); } catch {}
@@ -126,14 +104,11 @@
           try {
             const key = String(name || "").trim();
             if (!key) return null;
-
             const esc = (window.CSS && window.CSS.escape) ? window.CSS.escape(key) : key;
             const bySlot = document.querySelector(`[data-rcf-slot="${esc}"]`);
             if (bySlot) return bySlot;
-
             const sel = this.slots && this.slots[key];
-            if (!sel) return null;
-            return document.querySelector(sel);
+            return sel ? document.querySelector(sel) : null;
           } catch {
             return null;
           }
@@ -142,18 +117,14 @@
           try {
             const key = String(name || "").trim();
             if (!key) return null;
-
             const exist = this.getSlot(key);
             if (exist) return exist;
-
             const parentSel = opts.parentSelector || "#view-admin";
             const parent = document.querySelector(parentSel) || document.body;
-
             const div = document.createElement("div");
             const id = String(opts.id || "").trim();
             if (id) div.id = id;
             div.setAttribute("data-rcf-slot", key);
-
             if (opts.className) div.className = String(opts.className);
             parent.appendChild(div);
             return div;
@@ -169,13 +140,10 @@
               if (v == null) continue;
               el.setAttribute(`data-rcf-${k}`, String(v));
             }
-            return el;
-          } catch {
-            return el;
-          }
+          } catch {}
+          return el;
         }
       };
-
       window.RCF_UI = Object.assign({}, base, R);
       try { window.RCF_UI.refresh(); } catch {}
       return window.RCF_UI;
@@ -184,9 +152,6 @@
     }
   }
 
-  // =========================================================
-  // UI READY BUS
-  // =========================================================
   function notifyUIReady() {
     try {
       if (window.__RCF_UI_READY__ === true) return;
@@ -194,9 +159,7 @@
     } catch {}
 
     try {
-      window.dispatchEvent(new CustomEvent("RCF:UI_READY", {
-        detail: { ts: Date.now() }
-      }));
+      window.dispatchEvent(new CustomEvent("RCF:UI_READY", { detail: { ts: Date.now() } }));
     } catch {}
 
     const tries = [
@@ -225,40 +188,27 @@
     try { window.RCF_LOGGER?.push?.("INFO", `UI_READY fired ✅ reinject_called=${called}`); } catch {}
   }
 
-  // =========================================================
-  // STATUS MANAGER
-  // =========================================================
   const Status = (() => {
     let tmr = null;
     let current = "OK ✅";
     let lockUntil = 0;
 
-    function _setText(el, txt) {
-      try { if (el) el.textContent = String(txt ?? ""); } catch {}
-    }
-
+    function _setText(el, txt) { try { if (el) el.textContent = String(txt ?? ""); } catch {} }
     function _syncBoth(txt) {
       try {
-        const el = document.querySelector("#statusText");
-        _setText(el, txt);
-
-        const elTop = document.querySelector("#statusTextTop");
-        _setText(elTop, txt);
+        _setText(document.querySelector("#statusText"), txt);
+        _setText(document.querySelector("#statusTextTop"), txt);
       } catch {}
     }
 
     function set(text, opts = {}) {
       const now = Date.now();
       const { ttl = 900, sticky = false, minGap = 120 } = opts || {};
-
       if (now < lockUntil) return;
       lockUntil = now + minGap;
-
       current = String(text || "");
       _syncBoth(current);
-
       if (tmr) { try { clearTimeout(tmr); } catch {} tmr = null; }
-
       if (!sticky) {
         tmr = setTimeout(() => {
           current = "OK ✅";
@@ -268,7 +218,6 @@
     }
 
     function ok() { set("OK ✅", { ttl: 0, sticky: true }); }
-
     return { set, ok };
   })();
 
@@ -278,9 +227,6 @@
 
   function sleep(ms) { return new Promise(res => setTimeout(res, ms)); }
 
-  // =========================================================
-  // STORAGE
-  // =========================================================
   const Storage = {
     prefix: "rcf:",
     get(key, fallback) {
@@ -292,12 +238,8 @@
         return fallback;
       }
     },
-    set(key, value) {
-      try { localStorage.setItem(this.prefix + key, JSON.stringify(value)); } catch {}
-    },
-    setRaw(key, rawText) {
-      try { localStorage.setItem(this.prefix + key, String(rawText ?? "")); } catch {}
-    },
+    set(key, value) { try { localStorage.setItem(this.prefix + key, JSON.stringify(value)); } catch {} },
+    setRaw(key, rawText) { try { localStorage.setItem(this.prefix + key, String(rawText ?? "")); } catch {} },
     getRaw(key, fallback = "") {
       try {
         const v = localStorage.getItem(this.prefix + key);
@@ -309,25 +251,17 @@
     del(key) { try { localStorage.removeItem(this.prefix + key); } catch {} }
   };
 
-  // =========================================================
-  // LOGGER
-  // =========================================================
   const Logger = {
     bufKey: "logs",
     max: 900,
-
     _mirrorUI(logs) {
       const txt = (logs || []).join("\n");
-      const boxDrawer = $("#logsBox");
-      if (boxDrawer) boxDrawer.textContent = txt;
-      const boxLogsOut = $("#logsOut");
-      if (boxLogsOut) boxLogsOut.textContent = txt;
-      const boxView = $("#logsViewBox");
-      if (boxView) boxView.textContent = txt;
-      const injLog = $("#injLog");
-      if (injLog) injLog.textContent = txt.slice(-8000);
+      const ids = ["logsBox", "logsOut", "logsViewBox", "injLog"];
+      for (const id of ids) {
+        const el = document.getElementById(id);
+        if (el) el.textContent = id === "injLog" ? txt.slice(-8000) : txt;
+      }
     },
-
     write(...args) {
       const msg = args.map(a => (typeof a === "string" ? a : safeJsonStringify(a))).join(" ");
       const line = `[${new Date().toLocaleString()}] ${msg}`;
@@ -338,12 +272,10 @@
       this._mirrorUI(logs);
       try { console.log("[RCF]", ...args); } catch {}
     },
-
     clear() {
       Storage.set(this.bufKey, []);
       this._mirrorUI([]);
     },
-
     getAll() { return Storage.get(this.bufKey, []); }
   };
 
@@ -363,9 +295,6 @@
     }
   } catch {}
 
-  // =========================================================
-  // STABILITY
-  // =========================================================
   const Stability = (() => {
     let installed = false;
     let originalConsoleError = null;
@@ -384,7 +313,6 @@
       try {
         const root = $("#app");
         if (!root) return;
-
         root.innerHTML = `
           <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:18px;background:#070b12;color:#fff;font-family:system-ui">
             <div style="max-width:780px;width:100%;border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:16px;background:rgba(255,255,255,.04)">
@@ -403,10 +331,8 @@
             </div>
           </div>
         `;
-
         const r = $("#rcfReloadBtn");
         r && r.addEventListener("click", () => location.reload(), { passive: true });
-
         const c = $("#rcfClearLogsBtn");
         c && c.addEventListener("click", () => {
           try { Logger.clear(); } catch {}
@@ -454,9 +380,6 @@
     return { install, showErrorScreen };
   })();
 
-  // =========================================================
-  // TAP BINDER
-  // =========================================================
   function bindTap(el, fn) {
     if (!el) return;
     if (el.__rcf_bound__) return;
@@ -467,14 +390,11 @@
       const t = Date.now();
       if ((t - last) < 350) return;
       last = t;
-
       try {
         if (ev && ev.cancelable) ev.preventDefault();
         if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
       } catch {}
-
-      try { fn(ev); }
-      catch (e) { Logger.write("tap err:", e?.message || e); }
+      try { fn(ev); } catch (e) { Logger.write("tap err:", e?.message || e); }
     };
 
     try {
@@ -490,9 +410,6 @@
     }
   }
 
-  // =========================================================
-  // STATE
-  // =========================================================
   const State = {
     cfg: Storage.get("cfg", { mode: "safe", autoApplySafe: true, writeMode: "modal" }),
     apps: Storage.get("apps", []),
@@ -512,29 +429,20 @@
   window.RCF.state = State;
   window.RCF.log = (...a) => Logger.write(...a);
   window.RCF.getFactoryIAContext = () => buildFactoryIAContext();
-  try { if (!window.log) window.log = (...a) => Logger.write(...a); } catch {}
 
-  // =========================================================
-  // UI FLAGS
-  // =========================================================
   const UI = {
     brandTitle: "RCF",
     brandSubtitle: "Factory interna • PWA • Offline-first",
     compactEnabled: true
   };
 
-  // =========================================================
-  // LOADERS
-  // =========================================================
   let __uiRuntimePromise = null;
   let __uiCoreBridgePromise = null;
   let __uiVisualModulesPromise = null;
 
   function getUiRuntime() {
     try {
-      return (window && window.RCF_UI_RUNTIME && typeof window.RCF_UI_RUNTIME === "object")
-        ? window.RCF_UI_RUNTIME
-        : null;
+      return (window && window.RCF_UI_RUNTIME && typeof window.RCF_UI_RUNTIME === "object") ? window.RCF_UI_RUNTIME : null;
     } catch {
       return null;
     }
@@ -543,11 +451,9 @@
   function getUiStateApi() {
     try { return (window && window.RCF_UI_STATE && typeof window.RCF_UI_STATE === "object") ? window.RCF_UI_STATE : null; } catch { return null; }
   }
-
   function getUiRouterApi() {
     try { return (window && window.RCF_UI_ROUTER && typeof window.RCF_UI_ROUTER === "object") ? window.RCF_UI_ROUTER : null; } catch { return null; }
   }
-
   function getUiEventsApi() {
     try { return (window && window.RCF_UI_EVENTS && typeof window.RCF_UI_EVENTS === "object") ? window.RCF_UI_EVENTS : null; } catch { return null; }
   }
@@ -570,7 +476,7 @@
         sc.onload = () => resolve(true);
         sc.onerror = () => resolve(false);
         (document.head || document.documentElement).appendChild(sc);
-        setTimeout(() => resolve(false), 1200);
+        setTimeout(() => resolve(false), 1400);
       } catch {
         resolve(false);
       }
@@ -582,7 +488,6 @@
       const existing = getUiRuntime();
       if (existing) return Promise.resolve(existing);
       if (__uiRuntimePromise) return __uiRuntimePromise;
-
       __uiRuntimePromise = new Promise((resolve) => {
         try {
           const already = document.querySelector('script[data-rcf-ui-runtime="1"]');
@@ -593,7 +498,6 @@
             setTimeout(() => resolve(getUiRuntime()), 1200);
             return;
           }
-
           const sc = document.createElement("script");
           sc.src = "./js/core/ui_runtime.js";
           sc.defer = true;
@@ -607,7 +511,6 @@
           resolve(null);
         }
       });
-
       return __uiRuntimePromise;
     } catch {
       return Promise.resolve(null);
@@ -651,118 +554,25 @@
       if (__uiVisualModulesPromise) return __uiVisualModulesPromise;
       __uiVisualModulesPromise = (async () => {
         await loadScriptOnce("./js/core/ui_shell.js", "data-rcf-ui-shell");
-        await loadScriptOnce("./js/ui/ui_bootstrap.js", "data-rcf-ui-bootstrap");
-        await loadScriptOnce("./js/ui/ui_views.js", "data-rcf-ui-views");
-        await loadScriptOnce("./js/ui/ui_header.js", "data-rcf-ui-header");
-        await loadScriptOnce("./js/ui/ui_dashboard.js", "data-rcf-ui-dashboard");
-        await loadScriptOnce("./js/ui/ui_cards.js", "data-rcf-ui-cards");
-        await loadScriptOnce("./js/ui/ui_apps_widgets.js", "data-rcf-ui-apps-widgets");
-        await loadScriptOnce("./js/ui/ui_projects.js", "data-rcf-ui-projects");
-        await loadScriptOnce("./js/ui/ui_factory_view.js", "data-rcf-ui-factory-view");
-        return {
-          shell: window.RCF_UI_SHELL || null,
-          bootstrap: window.RCF_UI_BOOTSTRAP || null,
-          views: window.RCF_UI_VIEWS || null,
-          header: window.RCF_UI_HEADER || null,
-          dashboard: window.RCF_UI_DASHBOARD || null,
-          cards: window.RCF_UI_CARDS || null,
-          appsWidgets: window.RCF_UI_APPS_WIDGETS || null,
-          projects: window.RCF_UI_PROJECTS || null,
-          factoryView: window.RCF_UI_FACTORY_VIEW || null
-        };
+        const specs = [
+          ["./js/ui/ui_bootstrap.js", "data-rcf-ui-bootstrap"],
+          ["./js/ui/ui_views.js", "data-rcf-ui-views"],
+          ["./js/ui/ui_header.js", "data-rcf-ui-header"],
+          ["./js/ui/ui_dashboard.js", "data-rcf-ui-dashboard"],
+          ["./js/ui/ui_cards.js", "data-rcf-ui-cards"],
+          ["./js/ui/ui_apps_widgets.js", "data-rcf-ui-apps-widgets"],
+          ["./js/ui/ui_projects.js", "data-rcf-ui-projects"],
+          ["./js/ui/ui_factory_view.js", "data-rcf-ui-factory-view"]
+        ];
+        for (const [src, marker] of specs) await loadScriptOnce(src, marker);
+        return true;
       })();
       return await __uiVisualModulesPromise;
     } catch {
-      return {
-        shell: window.RCF_UI_SHELL || null,
-        bootstrap: window.RCF_UI_BOOTSTRAP || null,
-        views: window.RCF_UI_VIEWS || null,
-        header: window.RCF_UI_HEADER || null,
-        dashboard: window.RCF_UI_DASHBOARD || null,
-        cards: window.RCF_UI_CARDS || null,
-        appsWidgets: window.RCF_UI_APPS_WIDGETS || null,
-        projects: window.RCF_UI_PROJECTS || null,
-        factoryView: window.RCF_UI_FACTORY_VIEW || null
-      };
+      return false;
     }
   }
 
-  function callModuleMethod(mod, methods, arg) {
-    let called = 0;
-    try {
-      if (!mod || typeof mod !== "object") return 0;
-      for (const name of methods) {
-        const fn = mod && mod[name];
-        if (typeof fn !== "function") continue;
-        try {
-          fn.call(mod, arg);
-          called++;
-          try { Logger.write("module phase:", name); } catch {}
-        } catch (e) {
-          try { Logger.write(`module ${name} err:`, e?.message || e); } catch {}
-        }
-      }
-    } catch {}
-    return called;
-  }
-
-  function mountApprovedVisualModules(stage = "mount", extra = {}) {
-    const ctx = {
-      stage,
-      root: $("#rcfRoot") || $("#app"),
-      viewsRoot: $("#views"),
-      State,
-      Storage,
-      Logger,
-      setView,
-      saveAll,
-      ui: window.RCF_UI || null,
-      status: { set: safeSetStatus },
-      helpers: { $, $$, bindTap, uiMsg, textContentSafe },
-      ...extra
-    };
-
-    const mods = [
-      ["RCF_UI_BOOTSTRAP", window.RCF_UI_BOOTSTRAP],
-      ["RCF_UI_VIEWS", window.RCF_UI_VIEWS],
-      ["RCF_UI_HEADER", window.RCF_UI_HEADER],
-      ["RCF_UI_DASHBOARD", window.RCF_UI_DASHBOARD],
-      ["RCF_UI_CARDS", window.RCF_UI_CARDS],
-      ["RCF_UI_APPS_WIDGETS", window.RCF_UI_APPS_WIDGETS],
-      ["RCF_UI_PROJECTS", window.RCF_UI_PROJECTS],
-      ["RCF_UI_FACTORY_VIEW", window.RCF_UI_FACTORY_VIEW]
-    ];
-
-    const methods = (stage === "post-hydrate") ? ["refresh"] : ["init", "mount"];
-    let called = 0;
-
-    for (const [modName, mod] of mods) {
-      if (!mod || typeof mod !== "object") continue;
-      let phases = 0;
-      for (const method of methods) {
-        const fn = mod && mod[method];
-        if (typeof fn !== "function") continue;
-        try {
-          fn.call(mod, ctx);
-          phases++;
-          try { Logger.write("visual module phase:", modName, method, stage); } catch {}
-        } catch (e) {
-          try { Logger.write(`visual module ${method} err:`, modName, e?.message || e); } catch {}
-        }
-      }
-      if (phases > 0) {
-        called++;
-        try { Logger.write("visual module ok:", modName, stage, `phases=${phases}`); } catch {}
-      }
-    }
-
-    try { Logger.write("visual modules:", stage, `called=${called}`); } catch {}
-    return called;
-  }
-
-  // =========================================================
-  // FACTORY IA CTX / BRIDGE
-  // =========================================================
   function buildFactoryIAContext() {
     return {
       get state() { return State; },
@@ -798,13 +608,7 @@
         return true;
       }
       if (typeof api.setSnapshot === "function") {
-        api.setSnapshot({
-          cfg: State.cfg,
-          apps: State.apps,
-          active: State.active,
-          pending: State.pending,
-          reason
-        });
+        api.setSnapshot({ cfg: State.cfg, apps: State.apps, active: State.active, pending: State.pending, reason });
         return true;
       }
     } catch (e) {
@@ -813,42 +617,34 @@
     return false;
   }
 
-  // =========================================================
-  // CSS PATCH MÍNIMO
-  // =========================================================
   function injectCompactCSSOnce() {
     try {
       if (!UI.compactEnabled) return;
       if (document.getElementById("rcfCompactCss")) return;
-
       const css = `
-#rcfRoot [hidden]{display:none !important;}
-#rcfRoot .view:not(.active){display:none;}
-#rcfRoot .view.active{display:block;}
-#toolsDrawer{display:none;}
-#toolsDrawer.open{display:block;}
-#rcfFabPanel{display:none;}
-#rcfFabPanel.open{display:block;}
-#injLog.rcf-collapsed{display:none !important;}
-#appsList .app-item{display:flex;align-items:center;justify-content:space-between;gap:10px;}
-#appsList .app-meta{flex:1 1 auto;min-width:0;}
-#appsList .app-name,#appsList .app-slug{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-#appsList .app-actions{flex:0 0 auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
-#fileContent{min-height:220px;}
+:root { --rcf-compact: 1; }
+#rcfRoot .status-pill{ display:none !important; }
+#rcfRoot [hidden]{ display:none !important; }
+#rcfRoot .view{ display:none; }
+#rcfRoot .view.active{ display:block; }
+#rcfRoot #toolsDrawer:not(.open){ display:none; }
+#rcfRoot #rcfFabPanel:not(.open){ display:none; }
+#rcfRoot pre.mono{ max-height:24vh; overflow:auto; -webkit-overflow-scrolling:touch; }
+#rcfRoot #injLog{ max-height:18vh; overflow:auto; -webkit-overflow-scrolling:touch; }
+#rcfRoot .rcf-collapsed{ max-height:0 !important; padding:0 !important; border:0 !important; overflow:hidden !important; }
+#appsList .app-item{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
+#appsList .app-meta{ flex:1 1 auto; min-width:0; }
+#appsList .app-name,#appsList .app-slug{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+#appsList .app-actions{ flex:0 0 auto; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
       `.trim();
-
       const st = document.createElement("style");
       st.id = "rcfCompactCss";
       st.textContent = css;
       document.head.appendChild(st);
-
       try { window.RCF_LOGGER?.push?.("OK", "ui_compact: injected ✅"); } catch {}
     } catch {}
   }
 
-  // =========================================================
-  // VFS OVERRIDES
-  // =========================================================
   const OverridesVFS = (() => {
     const KEY = "RCF_OVERRIDES_MAP";
     const getMap = () => Storage.get(KEY, {});
@@ -894,10 +690,147 @@
 
   window.RCF_OVERRIDES_VFS = OverridesVFS;
 
-  // =========================================================
-  // SHELL
-  // =========================================================
-  function ensureFallbackRoot() {
+  function ensureEl(parent, tag, id, html = "") {
+    let el = id ? document.getElementById(id) : null;
+    if (el) return el;
+    if (!parent) return null;
+    el = document.createElement(tag || "div");
+    if (id) el.id = id;
+    if (html) el.innerHTML = html;
+    parent.appendChild(el);
+    return el;
+  }
+
+  function strengthenShellStructure() {
+    try {
+      if (window.__RCF_USING_FALLBACK__ !== true) return false;
+      const fallback = document.getElementById("rcfFallback");
+      const root = fallback ? fallback.querySelector("#rcfRoot") : document.getElementById("rcfRoot");
+      if (!root) return false;
+
+      const views = ensureEl(root, "main", "views");
+      if (views && !views.classList.contains("views")) views.classList.add("views");
+
+      const ensureView = (id) => {
+        const el = ensureEl(views, "section", id);
+        if (!el) return null;
+        if (!el.classList.contains("view")) el.classList.add("view");
+        if (!el.getAttribute("data-rcf-view")) el.setAttribute("data-rcf-view", id.replace(/^view-/, ""));
+        return el;
+      };
+
+      const vd = ensureView("view-dashboard");
+      const vn = ensureView("view-newapp");
+      const ve = ensureView("view-editor");
+      const va = ensureView("view-agent");
+      const vg = ensureView("view-generator");
+      const vs = ensureView("view-settings");
+      const vl = ensureView("view-logs");
+      const vm = ensureView("view-admin");
+      const vdx = ensureView("view-diagnostics");
+
+      if (vd) ensureEl(vd, "div", "appsList");
+      if (vn) {
+        ensureEl(vn, "input", "newAppName");
+        ensureEl(vn, "input", "newAppSlug");
+        ensureEl(vn, "button", "btnCreateNewApp");
+      }
+      if (ve) {
+        ensureEl(ve, "div", "editorHead");
+        ensureEl(ve, "div", "filesList");
+        ensureEl(ve, "textarea", "fileContent");
+        ensureEl(ve, "button", "btnSaveFile");
+        ensureEl(ve, "pre", "editorOut");
+      }
+      if (va) {
+        ensureEl(va, "input", "agentCmd");
+        ensureEl(va, "button", "btnAgentRun");
+        ensureEl(va, "button", "btnAgentHelp");
+        const aa = ensureEl(va, "div", "rcfAgentSlotActions");
+        aa && aa.setAttribute("data-rcf-slot", "agent.actions");
+        const at = ensureEl(va, "div", "rcfAgentSlotTools");
+        at && at.setAttribute("data-rcf-slot", "agent.tools");
+        ensureEl(va, "pre", "agentOut");
+      }
+      if (vg) {
+        const ga = ensureEl(vg, "div", "rcfGenSlotActions");
+        ga && ga.setAttribute("data-rcf-slot", "generator.actions");
+        const gt = ensureEl(vg, "div", "rcfGenSlotTools");
+        gt && gt.setAttribute("data-rcf-slot", "generator.tools");
+      }
+      if (vs) {
+        ensureEl(vs, "input", "pinInput");
+        ensureEl(vs, "pre", "pinOut");
+        ensureEl(vs, "pre", "logsOut");
+      }
+      if (vl) ensureEl(vl, "pre", "logsViewBox");
+      if (vm) {
+        const top = ensureEl(vm, "div", "rcfAdminSlotTop");
+        top && top.setAttribute("data-rcf-slot", "admin.top");
+        const integ = ensureEl(vm, "div", "rcfAdminSlotIntegrations");
+        integ && integ.setAttribute("data-rcf-slot", "admin.integrations");
+        const inj = ensureEl(vm, "div", "admin-injector");
+        inj && inj.setAttribute("data-rcf-slot", "admin.injector");
+        if (inj) {
+          ensureEl(inj, "pre", "scanOut");
+          ensureEl(inj, "select", "injMode");
+          ensureEl(inj, "select", "injTarget");
+          const payload = ensureEl(inj, "textarea", "injPayload");
+          if (payload) payload.setAttribute("rows", "8");
+          ensureEl(inj, "button", "btnPreview");
+          ensureEl(inj, "button", "btnApply");
+          ensureEl(inj, "button", "btnRollback");
+          ensureEl(inj, "pre", "diffOut");
+          const logs = ensureEl(inj, "pre", "injLog");
+          if (logs) logs.classList.add("mono", "small");
+        }
+        ensureEl(vm, "pre", "maintOut");
+      }
+      if (vdx) {
+        ensureEl(vdx, "button", "btnRunV8Check");
+        ensureEl(vdx, "button", "btnScanOverlays");
+        ensureEl(vdx, "button", "btnMicroTests");
+        ensureEl(vdx, "pre", "diagOut");
+      }
+
+      const tools = ensureEl(root, "div", "toolsDrawer");
+      if (tools) {
+        ensureEl(tools, "div", "statusText");
+        ensureEl(tools, "pre", "logsBox");
+        ensureEl(tools, "button", "btnClearCaches");
+        ensureEl(tools, "button", "btnUnregisterSW");
+        ensureEl(tools, "button", "btnCloseTools");
+      }
+
+      const topbar = root.querySelector(".topbar") || root;
+      ensureEl(topbar, "div", "statusTextTop");
+
+      ensureEl(root, "button", "btnOpenTools");
+      ensureEl(root, "button", "rcfFab");
+      const fabPanel = ensureEl(root, "div", "rcfFabPanel");
+      if (fabPanel) {
+        ensureEl(fabPanel, "div", "fabStatus");
+        ensureEl(fabPanel, "button", "btnFabClose");
+        ensureEl(fabPanel, "button", "btnFabTools");
+        ensureEl(fabPanel, "button", "btnFabAdmin");
+        ensureEl(fabPanel, "button", "btnFabDoctor");
+        ensureEl(fabPanel, "button", "btnFabLogs");
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function cleanupFallbackShell() {
+    try {
+      const fb = document.getElementById("rcfFallback");
+      if (fb) fb.remove();
+    } catch {}
+    try { window.__RCF_USING_FALLBACK__ = false; } catch {}
+  }
+
+  function renderShell() {
     let root = $("#app");
     if (!root) {
       try {
@@ -906,106 +839,147 @@
         (document.body || document.documentElement).appendChild(root);
         try { Logger.write("boot:", "created #app root fallback ✅"); } catch {}
       } catch {
-        return null;
+        return;
       }
     }
-    return root;
-  }
 
-  function buildFallbackShellHtml() {
-    return `
-      <div id="rcfRoot" data-rcf-app="rcf.factory">
-        <header>
-          <div>${escapeHtml(UI.brandTitle)}</div>
-          <div id="statusTextTop">OK ✅</div>
-        </header>
-        <main id="views">
-          <section class="view active" id="view-dashboard" data-rcf-view="dashboard">
-            <div id="activeAppText">Sem app ativo ✅</div>
-            <div>
-              <button id="btnCreateNewApp" type="button">Novo app</button>
-              <button id="btnOpenEditor" type="button">Editor</button>
+    try {
+      const shell = window.RCF_UI_SHELL;
+      if (shell && typeof shell.mount === "function") {
+        const ok = shell.mount({ root, brandTitle: UI.brandTitle, brandSubtitle: UI.brandSubtitle, State, Logger });
+        if (ok !== false && $("#rcfRoot")) {
+          cleanupFallbackShell();
+          try { Logger.write("shell:", "external ui_shell mount ✅"); } catch {}
+          return;
+        }
+      }
+    } catch (e) {
+      try { Logger.write("shell mount err:", e?.message || e); } catch {}
+    }
+
+    if ($("#rcfRoot") && window.__RCF_USING_FALLBACK__ !== true) {
+      try { Logger.write("shell:", "existing official root detected ✅"); } catch {}
+      return;
+    }
+
+    let fallback = document.getElementById("rcfFallback");
+    if (!fallback) {
+      fallback = document.createElement("div");
+      fallback.id = "rcfFallback";
+      root.innerHTML = "";
+      root.appendChild(fallback);
+    }
+
+    try { window.__RCF_USING_FALLBACK__ = true; } catch {}
+
+    fallback.innerHTML = `
+      <div id="rcfRoot" data-rcf-app="rcf.factory" data-rcf-fallback="1">
+        <header class="topbar">
+          <div class="brand">
+            <div class="brand-text">
+              <div class="title">${escapeHtml(UI.brandTitle)}</div>
+              <div class="subtitle">${escapeHtml(UI.brandSubtitle)}</div>
             </div>
-            <div id="appsList" data-rcf-slot="apps.list"></div>
+            <div id="statusTextTop">OK ✅</div>
+          </div>
+        </header>
+
+        <main class="container views" id="views">
+          <section class="view card active" id="view-dashboard" data-rcf-view="dashboard">
+            <h1>Factory</h1>
+            <div id="appsList" class="apps" data-rcf-slot="apps.list"></div>
           </section>
-          <section class="view" id="view-newapp" data-rcf-view="newapp" hidden>
+
+          <section class="view card" id="view-newapp" data-rcf-view="newapp" hidden>
             <input id="newAppName" placeholder="Nome do app" />
             <input id="newAppSlug" placeholder="slug-opcional" />
-            <button id="btnNewAppCreate" type="button">Criar</button>
-            <pre id="newAppOut">Pronto.</pre>
+            <button class="btn ok" id="btnCreateNewApp" type="button">Criar app</button>
           </section>
-          <section class="view" id="view-editor" data-rcf-view="editor" hidden>
-            <div id="editorHead">Arquivo atual: -</div>
-            <div id="filesList" data-rcf-slot="files.list"></div>
+
+          <section class="view card" id="view-editor" data-rcf-view="editor" hidden>
+            <div class="badge" id="editorHead">Arquivo atual: -</div>
+            <div id="filesList" class="files" data-rcf-slot="files.list"></div>
             <textarea id="fileContent" spellcheck="false"></textarea>
-            <div><button id="btnSaveFile" type="button">Salvar arquivo</button></div>
-            <pre id="editorOut">Pronto.</pre>
+            <button class="btn ok" id="btnSaveFile" type="button">Salvar arquivo</button>
+            <pre class="mono" id="editorOut">Pronto.</pre>
           </section>
-          <section class="view" id="view-agent" data-rcf-view="agent" hidden>
+
+          <section class="view card" id="view-agent" data-rcf-view="agent" hidden>
             <input id="agentCmd" />
-            <button id="btnAgentRun" type="button">Executar</button>
-            <button id="btnAgentHelp" type="button">Ajuda</button>
+            <button class="btn ok" id="btnAgentRun" type="button">Executar</button>
+            <button class="btn ghost" id="btnAgentHelp" type="button">Ajuda</button>
             <div id="rcfAgentSlotActions" data-rcf-slot="agent.actions"></div>
             <div id="rcfAgentSlotTools" data-rcf-slot="agent.tools"></div>
-            <pre id="agentOut">Pronto.</pre>
+            <pre class="mono" id="agentOut">Pronto.</pre>
           </section>
-          <section class="view" id="view-generator" data-rcf-view="generator" hidden>
+
+          <section class="view card" id="view-generator" data-rcf-view="generator" hidden>
             <div id="rcfGenSlotActions" data-rcf-slot="generator.actions"></div>
             <div id="rcfGenSlotTools" data-rcf-slot="generator.tools"></div>
-            <pre id="genOut">Pronto.</pre>
+            <pre class="mono" id="genOut">Pronto.</pre>
           </section>
-          <section class="view" id="view-settings" data-rcf-view="settings" hidden>
+
+          <section class="view card" id="view-settings" data-rcf-view="settings" hidden>
             <input id="pinInput" inputmode="numeric" />
-            <button id="btnPinSave" type="button">Salvar PIN</button>
-            <button id="btnPinRemove" type="button">Remover PIN</button>
-            <div id="rcfSettingsSecurityActions" data-rcf-slot="settings.security.actions"></div>
-            <pre id="pinOut">Pronto.</pre>
-            <pre id="logsOut">Pronto.</pre>
+            <button class="btn ok" id="btnPinSave" type="button">Salvar PIN</button>
+            <button class="btn danger" id="btnPinRemove" type="button">Remover PIN</button>
+            <pre class="mono" id="pinOut">Pronto.</pre>
+            <pre class="mono small" id="logsOut">Pronto.</pre>
           </section>
-          <section class="view" id="view-logs" data-rcf-view="logs" hidden>
-            <pre id="logsViewBox">Pronto.</pre>
+
+          <section class="view card" id="view-logs" data-rcf-view="logs" hidden>
+            <pre class="mono small" id="logsViewBox">Pronto.</pre>
           </section>
-          <section class="view" id="view-admin" data-rcf-view="admin" hidden>
-            <div id="rcfAdminSlotTop" data-rcf-slot="admin.top"><pre id="adminOut">Pronto.</pre></div>
+
+          <section class="view card" id="view-admin" data-rcf-view="admin" hidden>
+            <div id="rcfAdminSlotTop" data-rcf-slot="admin.top"><pre class="mono" id="adminOut">Pronto.</pre></div>
             <div id="rcfAdminSlotIntegrations" data-rcf-slot="admin.integrations"></div>
             <div id="admin-injector" data-rcf-slot="admin.injector">
-              <button id="btnToggleInjectorLog" type="button">Mostrar log</button>
-              <pre id="scanOut">Pronto.</pre>
-              <select id="injMode"><option value="INSERT">INSERT</option><option value="REPLACE">REPLACE</option><option value="DELETE">DELETE</option></select>
+              <pre class="mono small" id="scanOut">Pronto.</pre>
+              <select id="injMode">
+                <option value="INSERT">INSERT</option>
+                <option value="REPLACE">REPLACE</option>
+                <option value="DELETE">DELETE</option>
+              </select>
               <select id="injTarget"></select>
-              <textarea id="injPayload" rows="8" spellcheck="false"></textarea>
-              <div>
-                <button id="btnPreview" type="button">Preview</button>
-                <button id="btnApply" type="button">Apply</button>
-                <button id="btnRollback" type="button">Rollback</button>
+              <textarea id="injPayload" class="textarea" rows="8" spellcheck="false"></textarea>
+              <div class="row">
+                <button class="btn small" id="btnPreview" type="button">Preview</button>
+                <button class="btn small ok" id="btnApply" type="button">Apply</button>
+                <button class="btn small danger" id="btnRollback" type="button">Rollback</button>
               </div>
-              <pre id="diffOut">Pronto.</pre>
-              <div id="rcfAdminSlotLogs" data-rcf-slot="admin.logs"><pre id="injLog" class="rcf-collapsed">Pronto.</pre></div>
+              <pre class="mono small" id="diffOut">Pronto.</pre>
+              <div id="rcfAdminSlotLogs" data-rcf-slot="admin.logs">
+                <pre class="mono small rcf-collapsed" id="injLog">Pronto.</pre>
+              </div>
             </div>
-            <pre id="maintOut">Pronto.</pre>
+            <pre class="mono" id="maintOut">Pronto.</pre>
           </section>
-          <section class="view" id="view-diagnostics" data-rcf-view="diagnostics" hidden>
-            <div>
-              <button id="btnRunV8Check" type="button">Run V8 Check</button>
-              <button id="btnScanOverlays" type="button">Scan Overlays</button>
-              <button id="btnMicroTests" type="button">Microtests</button>
+
+          <section class="view card" id="view-diagnostics" data-rcf-view="diagnostics" hidden>
+            <div class="row">
+              <button class="btn small" id="btnRunV8Check" type="button">Run V8 Check</button>
+              <button class="btn small" id="btnScanOverlays" type="button">Scan Overlays</button>
+              <button class="btn small" id="btnMicroTests" type="button">Microtests</button>
             </div>
-            <pre id="diagOut">Pronto.</pre>
+            <pre class="mono" id="diagOut">Pronto.</pre>
           </section>
         </main>
-        <aside id="toolsDrawer" data-rcf-panel="tools.drawer">
+
+        <div class="tools" id="toolsDrawer" data-rcf-panel="tools.drawer">
           <div id="statusText" data-rcf="status.text">OK ✅</div>
-          <div>
-            <button id="btnClearCaches" type="button">Clear SW Cache</button>
-            <button id="btnUnregisterSW" type="button">Unregister SW</button>
+          <pre class="mono small" id="logsBox">Pronto.</pre>
+          <div class="row">
+            <button class="btn small" id="btnClearCaches" type="button">Clear SW Cache</button>
+            <button class="btn small" id="btnUnregisterSW" type="button">Unregister SW</button>
+            <button class="btn small" id="btnCloseTools" type="button">Fechar</button>
           </div>
-          <pre id="logsBox">Pronto.</pre>
-          <button id="btnCloseTools" type="button">Fechar</button>
-        </aside>
-        <button id="btnOpenTools" type="button">Tools</button>
+        </div>
+
+        <button id="btnOpenTools" class="btn small" type="button">Tools</button>
         <button id="rcfFab" type="button">⚡</button>
         <div id="rcfFabPanel">
-          <div id="fabStatus">OK ✅</div>
+          <div class="fab-status" id="fabStatus">OK ✅</div>
           <button id="btnFabClose" type="button">Fechar</button>
           <button id="btnFabTools" type="button">Tools</button>
           <button id="btnFabAdmin" type="button">Admin</button>
@@ -1014,147 +988,12 @@
         </div>
       </div>
     `;
-  }
-
-  function strengthenShellStructure() {
-    const root = $("#rcfRoot");
-    if (!root) return false;
-
-    const ensure = (id, tag = "div", parentSel = "#rcfRoot", html = "") => {
-      let el = document.getElementById(id);
-      if (el) return el;
-      const parent = document.querySelector(parentSel) || root;
-      el = document.createElement(tag);
-      el.id = id;
-      if (html) el.innerHTML = html;
-      parent.appendChild(el);
-      return el;
-    };
-
-    const views = ensure("views", "main", "#rcfRoot");
-    const viewIds = [
-      "view-dashboard",
-      "view-newapp",
-      "view-editor",
-      "view-agent",
-      "view-generator",
-      "view-settings",
-      "view-logs",
-      "view-admin",
-      "view-diagnostics"
-    ];
-    for (const id of viewIds) {
-      const el = ensure(id, "section", "#views");
-      el.classList.add("view");
-      if (!el.hasAttribute("data-rcf-view")) {
-        el.setAttribute("data-rcf-view", id.replace(/^view-/, ""));
-      }
-      if (id !== "view-dashboard" && !el.classList.contains("active")) {
-        el.hidden = true;
-        try { el.style.display = "none"; } catch {}
-      }
-    }
-
-    ensure("appsList", "div", "#view-dashboard").setAttribute("data-rcf-slot", "apps.list");
-    ensure("filesList", "div", "#view-editor").setAttribute("data-rcf-slot", "files.list");
-    ensure("fileContent", "textarea", "#view-editor");
-    ensure("editorHead", "div", "#view-editor");
-    ensure("editorOut", "pre", "#view-editor");
-    ensure("agentCmd", "input", "#view-agent");
-    ensure("btnAgentRun", "button", "#view-agent");
-    ensure("btnAgentHelp", "button", "#view-agent");
-    ensure("agentOut", "pre", "#view-agent");
-    ensure("rcfAgentSlotActions", "div", "#view-agent").setAttribute("data-rcf-slot", "agent.actions");
-    ensure("rcfAgentSlotTools", "div", "#view-agent").setAttribute("data-rcf-slot", "agent.tools");
-    ensure("rcfGenSlotActions", "div", "#view-generator").setAttribute("data-rcf-slot", "generator.actions");
-    ensure("rcfGenSlotTools", "div", "#view-generator").setAttribute("data-rcf-slot", "generator.tools");
-    ensure("pinInput", "input", "#view-settings");
-    ensure("pinOut", "pre", "#view-settings");
-    ensure("logsOut", "pre", "#view-settings");
-    ensure("logsViewBox", "pre", "#view-logs");
-    ensure("toolsDrawer", "aside", "#rcfRoot");
-    ensure("statusText", "div", "#toolsDrawer");
-    ensure("statusTextTop", "div", "#rcfRoot");
-    ensure("logsBox", "pre", "#toolsDrawer");
-    ensure("rcfAdminSlotTop", "div", "#view-admin").setAttribute("data-rcf-slot", "admin.top");
-    ensure("rcfAdminSlotIntegrations", "div", "#view-admin").setAttribute("data-rcf-slot", "admin.integrations");
-    ensure("admin-injector", "div", "#view-admin").setAttribute("data-rcf-slot", "admin.injector");
-    ensure("scanOut", "pre", "#admin-injector");
-    ensure("injMode", "select", "#admin-injector");
-    ensure("injTarget", "select", "#admin-injector");
-    ensure("injPayload", "textarea", "#admin-injector");
-    ensure("btnPreview", "button", "#admin-injector");
-    ensure("btnApply", "button", "#admin-injector");
-    ensure("btnRollback", "button", "#admin-injector");
-    ensure("diffOut", "pre", "#admin-injector");
-    ensure("injLog", "pre", "#admin-injector");
-    ensure("maintOut", "pre", "#view-admin");
-    ensure("btnRunV8Check", "button", "#view-diagnostics");
-    ensure("btnScanOverlays", "button", "#view-diagnostics");
-    ensure("btnMicroTests", "button", "#view-diagnostics");
-    ensure("diagOut", "pre", "#view-diagnostics");
-    ensure("btnOpenTools", "button", "#rcfRoot");
-    ensure("btnClearCaches", "button", "#toolsDrawer");
-    ensure("btnUnregisterSW", "button", "#toolsDrawer");
-    ensure("btnCloseTools", "button", "#toolsDrawer");
-    ensure("rcfFab", "button", "#rcfRoot");
-    ensure("rcfFabPanel", "div", "#rcfRoot");
-    ensure("fabStatus", "div", "#rcfFabPanel");
-    ensure("btnFabClose", "button", "#rcfFabPanel");
-    ensure("btnFabTools", "button", "#rcfFabPanel");
-    ensure("btnFabAdmin", "button", "#rcfFabPanel");
-    ensure("btnFabDoctor", "button", "#rcfFabPanel");
-    ensure("btnFabLogs", "button", "#rcfFabPanel");
-    ensure("btnCreateNewApp", "button", "#view-dashboard");
-    ensure("btnOpenEditor", "button", "#view-dashboard");
-    ensure("btnSaveFile", "button", "#view-editor");
-    ensure("btnPinSave", "button", "#view-settings");
-    ensure("btnPinRemove", "button", "#view-settings");
-    ensure("btnToggleInjectorLog", "button", "#admin-injector");
-    ensure("activeAppText", "div", "#view-dashboard");
-
-    const injMode = $("#injMode");
-    if (injMode && !injMode.options.length) {
-      injMode.innerHTML = '<option value="INSERT">INSERT</option><option value="REPLACE">REPLACE</option><option value="DELETE">DELETE</option>';
-    }
-
-    return true;
-  }
-
-  function renderShell() {
-    const root = ensureFallbackRoot();
-    if (!root) return;
-
-    try {
-      const shell = window.RCF_UI_SHELL;
-      if (shell && typeof shell.mount === "function") {
-        const ok = shell.mount({
-          root,
-          brandTitle: UI.brandTitle,
-          brandSubtitle: UI.brandSubtitle
-        });
-        if (ok !== false && $("#rcfRoot")) {
-          strengthenShellStructure();
-          try { Logger.write("shell:", "official ui_shell mount ✅"); } catch {}
-          return;
-        }
-      }
-    } catch (e) {
-      try { Logger.write("shell mount err:", e?.message || e); } catch {}
-    }
-
-    if (!$("#rcfRoot")) {
-      root.innerHTML = buildFallbackShellHtml();
-      try { Logger.write("shell:", "fallback minimal shell ✅"); } catch {}
-    }
     strengthenShellStructure();
+    try { Logger.write("shell:", "fallback minimal shell ✅"); } catch {}
   }
 
   function refreshLogsViews() { Logger._mirrorUI(Logger.getAll()); }
 
-  // =========================================================
-  // PREVIEW TEARDOWN
-  // =========================================================
   function teardownPreviewHard() {
     try { window.RCF_PREVIEW?.teardown?.(); } catch {}
     try {
@@ -1169,7 +1008,7 @@
       for (const el of nodes) {
         try {
           if (!el || el === document.body) continue;
-          if (el.id === "toolsDrawer" || el.id === "rcfFabPanel" || el.id === "rcfFab") continue;
+          if (["toolsDrawer", "rcfFabPanel", "rcfFab"].includes(el.id)) continue;
           el.remove();
           removed++;
         } catch {}
@@ -1182,7 +1021,6 @@
       const vh = Math.max(document.documentElement.clientHeight, window.innerHeight || 0);
       const ifr = Array.from(document.querySelectorAll("iframe"));
       let removedIfr = 0;
-
       for (const el of ifr) {
         try {
           const id = (el.id || "").toLowerCase();
@@ -1190,7 +1028,6 @@
           const src = (el.src || "").toLowerCase();
           const looksPreview = id.includes("preview") || cls.includes("preview") || src.includes("preview") || src.includes("sandbox") || src.includes("timesheet");
           if (!looksPreview) continue;
-
           const cs = getComputedStyle(el);
           const pos = cs?.position || "";
           const zi = parseInt(cs?.zIndex || "0", 10);
@@ -1198,7 +1035,6 @@
           const area = Math.max(0, r.width) * Math.max(0, r.height);
           const isOverlay = (pos === "fixed") && Number.isFinite(zi) && zi >= 80 && area >= (vw * vh * 0.20);
           if (!isOverlay) continue;
-
           try { el.src = "about:blank"; } catch {}
           try { el.remove(); } catch {}
           removedIfr++;
@@ -1212,7 +1048,6 @@
       const vh = Math.max(document.documentElement.clientHeight, window.innerHeight || 0);
       const all = Array.from(document.querySelectorAll("body *"));
       let removed = 0;
-
       for (const el of all) {
         if (!el || el === document.body) continue;
         const cs = getComputedStyle(el);
@@ -1224,7 +1059,7 @@
         const r = el.getBoundingClientRect();
         const area = Math.max(0, r.width) * Math.max(0, r.height);
         if (area < (vw * vh * 0.25)) continue;
-        if (el.id === "toolsDrawer" || el.id === "rcfFabPanel" || el.id === "rcfFab") continue;
+        if (["toolsDrawer", "rcfFabPanel", "rcfFab"].includes(el.id)) continue;
         try { el.remove(); removed++; } catch {}
         if (removed >= 6) break;
       }
@@ -1240,66 +1075,47 @@
     try { Logger.write("preview:", "teardown hard (ok)"); } catch {}
   }
 
-  // =========================================================
-  // VIEW ROUTER / FALLBACK LOCAL RIGOROSO
-  // =========================================================
-  function applyViewStateLocally(name) {
-    const cleanName = String(name || "").replace(/[^a-z0-9_-]/gi, "");
-    const targetId = "view-" + cleanName;
-    const views = $$(".view, [data-rcf-view]", $("#views") || document).filter((el, idx, arr) => arr.indexOf(el) === idx);
-    const tabs = $$(`[data-view], [data-rcf-view-btn]`, document);
-
-    views.forEach(v => {
+  function syncViewVisibility(name) {
+    const cleanName = String(name || "").trim();
+    $$(".view").forEach(v => {
       try {
+        const isTarget = v.id === ("view-" + cleanName) || v.getAttribute("data-rcf-view") === cleanName;
         v.classList.remove("active");
         v.hidden = true;
-        v.setAttribute("aria-hidden", "true");
         v.style.display = "none";
+        v.setAttribute("aria-hidden", "true");
+        if (isTarget) {
+          v.classList.add("active");
+          v.hidden = false;
+          v.style.display = "";
+          v.setAttribute("aria-hidden", "false");
+        }
       } catch {}
     });
 
-    tabs.forEach(b => {
+    $$("[data-view]").forEach(b => {
       try {
-        b.classList.remove("active");
-        b.setAttribute("aria-pressed", "false");
+        const on = String(b.getAttribute("data-view") || "") === cleanName;
+        b.classList.toggle("active", on);
+        b.setAttribute("aria-pressed", on ? "true" : "false");
       } catch {}
     });
-
-    const view = document.getElementById(targetId) || document.querySelector(`[data-rcf-view="${cleanName}"]`);
-    if (view) {
-      try {
-        view.hidden = false;
-        view.removeAttribute("aria-hidden");
-        view.style.display = "";
-        view.classList.add("active");
-      } catch {}
-    }
-
-    tabs.forEach(b => {
-      try {
-        const hit = (b.getAttribute("data-view") || b.getAttribute("data-rcf-view-btn") || "") === cleanName;
-        if (!hit) return;
-        b.classList.add("active");
-        b.setAttribute("aria-pressed", "true");
-      } catch {}
-    });
-
-    return !!view;
   }
 
   function setView(name) {
     if (!name) return;
-    const cleanName = String(name || "").trim().toLowerCase();
-    const now = Date.now();
+    const cleanName = String(name).trim().replace(/[^a-z0-9_-]/gi, "");
+    if (!cleanName) return;
 
     try {
+      const now = Date.now();
       if (setView.__busy__) {
         const dt = now - (setView.__busy_ts__ || 0);
-        if (dt < 450) return;
+        if (dt < 500) return;
       }
       setView.__busy__ = true;
       setView.__busy_ts__ = now;
-      setTimeout(() => { try { setView.__busy__ = false; } catch {} }, 700);
+      setTimeout(() => { try { setView.__busy__ = false; } catch {} }, 650);
     } catch {}
 
     try {
@@ -1311,29 +1127,21 @@
       const router = window.RCF_UI_ROUTER;
       if (router && typeof router.setView === "function") {
         const ok = router.setView(cleanName, {
-          State,
-          saveAll,
-          refreshLogsViews,
-          teardownPreviewHard,
-          logger: Logger,
-          localApply: applyViewStateLocally
+          State, saveAll, refreshLogsViews, teardownPreviewHard, logger: Logger
         });
-        if (ok !== false) {
-          applyViewStateLocally(cleanName);
-          State.active.view = cleanName;
-          saveAll("view.router");
-          if (["logs", "settings", "admin", "diagnostics"].includes(cleanName)) refreshLogsViews();
-          Logger.write("view:", cleanName);
-          return;
-        }
+        syncViewVisibility(cleanName);
+        State.active.view = cleanName;
+        saveAll("view.router");
+        if (["logs", "settings", "admin", "diagnostics"].includes(cleanName)) refreshLogsViews();
+        if (ok !== false) return;
       }
     } catch (e) {
       try { Logger.write("router setView err:", e?.message || e); } catch {}
     }
 
-    applyViewStateLocally(cleanName);
     State.active.view = cleanName;
     saveAll("view.local");
+    syncViewVisibility(cleanName);
 
     if (["logs", "settings", "admin", "diagnostics"].includes(cleanName)) refreshLogsViews();
     Logger.write("view:", cleanName);
@@ -1416,11 +1224,11 @@
     try {
       const pre = $("#injLog");
       const btn = $("#btnToggleInjectorLog");
-      if (!pre || !btn) return;
+      if (!pre) return;
       const wantCollapsed = !!collapsed;
       if (wantCollapsed) pre.classList.add("rcf-collapsed");
       else pre.classList.remove("rcf-collapsed");
-      btn.textContent = wantCollapsed ? "Mostrar log" : "Esconder log";
+      if (btn) btn.textContent = wantCollapsed ? "Mostrar log" : "Esconder log";
     } catch {}
   }
 
@@ -1436,22 +1244,17 @@
     try {
       const pre = $("#injLog");
       if (!pre) return;
-      const isCollapsed = pre.classList.contains("rcf-collapsed");
-      setInjectorLogCollapsed(!isCollapsed);
+      setInjectorLogCollapsed(!pre.classList.contains("rcf-collapsed"));
     } catch {}
   }
 
-  // =========================================================
-  // APPS / EDITOR
-  // =========================================================
   function getActiveApp() {
     if (!State.active.appSlug) return null;
     return State.apps.find(a => a.slug === State.active.appSlug) || null;
   }
 
   function ensureAppFiles(app) {
-    if (!app.files) app.files = {};
-    if (typeof app.files !== "object") app.files = {};
+    if (!app.files || typeof app.files !== "object") app.files = {};
   }
 
   function deleteApp(slug) {
@@ -1461,7 +1264,6 @@
     if (!app) return false;
     const ok = confirm(`Apagar o app "${app.name}" (${app.slug})?\n\nIsso não tem volta.`);
     if (!ok) return false;
-
     State.apps = State.apps.filter(a => a.slug !== s);
     if (State.active.appSlug === s) {
       State.active.appSlug = null;
@@ -1469,11 +1271,9 @@
       const text = $("#activeAppText");
       if (text) textContentSafe(text, "Sem app ativo ✅");
     }
-
     saveAll("app.delete");
     renderAppsList();
     renderFilesList();
-
     uiMsg("#editorOut", "✅ App apagado.");
     Logger.write("app deleted:", s);
     safeSetStatus("Apagado ✅");
@@ -1484,12 +1284,10 @@
   function renderAppsList() {
     const box = $("#appsList");
     if (!box) return;
-
     if (!State.apps.length) {
       box.innerHTML = `<div class="hint">Nenhum app salvo ainda.</div>`;
       return;
     }
-
     box.innerHTML = "";
     State.apps.forEach(app => {
       const row = document.createElement("div");
@@ -1507,16 +1305,9 @@
       `;
       box.appendChild(row);
     });
-
     $$('[data-act="select"]', box).forEach(btn => bindTap(btn, () => setActiveApp(btn.getAttribute("data-slug"))));
-    $$('[data-act="edit"]', box).forEach(btn => bindTap(btn, () => {
-      setActiveApp(btn.getAttribute("data-slug"));
-      setView("editor");
-    }));
-    $$('[data-act="delete"]', box).forEach(btn => bindTap(btn, () => {
-      const slug = btn.getAttribute("data-slug");
-      deleteApp(slug);
-    }));
+    $$('[data-act="edit"]', box).forEach(btn => bindTap(btn, () => { setActiveApp(btn.getAttribute("data-slug")); setView("editor"); }));
+    $$('[data-act="delete"]', box).forEach(btn => bindTap(btn, () => deleteApp(btn.getAttribute("data-slug"))));
   }
 
   function renderFilesList() {
@@ -1527,14 +1318,12 @@
       box.innerHTML = `<div class="hint">Selecione um app para ver arquivos.</div>`;
       return;
     }
-
     ensureAppFiles(app);
     const files = Object.keys(app.files);
     if (!files.length) {
       box.innerHTML = `<div class="hint">App sem arquivos.</div>`;
       return;
     }
-
     box.innerHTML = "";
     files.forEach(fname => {
       const item = document.createElement("div");
@@ -1550,16 +1339,12 @@
     if (!app) return false;
     ensureAppFiles(app);
     if (!(fname in app.files)) return false;
-
     State.active.file = fname;
     saveAll("file.open");
-
     const head = $("#editorHead");
     if (head) head.textContent = `Arquivo atual: ${fname}`;
-
     const ta = $("#fileContent");
     if (ta) ta.value = String(app.files[fname] ?? "");
-
     renderFilesList();
     return true;
   }
@@ -1567,19 +1352,15 @@
   function setActiveApp(slug) {
     const app = State.apps.find(a => a.slug === slug);
     if (!app) return false;
-
     ensureAppFiles(app);
     State.active.appSlug = slug;
     State.active.file = State.active.file || Object.keys(app.files || {})[0] || null;
     saveAll("app.select");
-
     const text = $("#activeAppText");
     if (text) textContentSafe(text, `App ativo: ${app.name} (${app.slug}) ✅`);
-
     renderAppsList();
     renderFilesList();
     if (State.active.file) openFile(State.active.file);
-
     Logger.write("app selected:", slug);
     return true;
   }
@@ -1587,11 +1368,9 @@
   function createApp(name, slugMaybe) {
     const nameClean = String(name || "").trim();
     if (!nameClean) return { ok: false, msg: "Nome inválido" };
-
-    const slug = slugify(slugMaybe || nameClean);
+    let slug = slugify(slugMaybe || nameClean);
     if (!slug) return { ok: false, msg: "Slug inválido" };
     if (State.apps.some(a => a.slug === slug)) return { ok: false, msg: "Slug já existe" };
-
     const app = {
       name: nameClean,
       slug,
@@ -1602,12 +1381,10 @@
         "app.js": `console.log("${nameClean}");`
       }
     };
-
     State.apps.push(app);
     saveAll("app.create");
     renderAppsList();
     setActiveApp(slug);
-
     return { ok: true, msg: `✅ App criado: ${nameClean} (${slug})` };
   }
 
@@ -1616,19 +1393,14 @@
     if (!app) return uiMsg("#editorOut", "⚠️ Sem app ativo.");
     const fname = State.active.file;
     if (!fname) return uiMsg("#editorOut", "⚠️ Sem arquivo ativo.");
-
     const ta = $("#fileContent");
     ensureAppFiles(app);
     app.files[fname] = ta ? String(ta.value || "") : "";
-
     saveAll("file.save");
     uiMsg("#editorOut", "✅ Arquivo salvo.");
     Logger.write("file saved:", app.slug, fname);
   }
 
-  // =========================================================
-  // PIN
-  // =========================================================
   const Pin = {
     key: "admin_pin",
     get() { return Storage.get(this.key, ""); },
@@ -1636,9 +1408,6 @@
     clear() { Storage.del(this.key); }
   };
 
-  // =========================================================
-  // SW HELPERS
-  // =========================================================
   async function swRegister() {
     try {
       if (!("serviceWorker" in navigator)) {
@@ -1649,7 +1418,7 @@
       Logger.write("sw register:", "ok");
       return { ok: true, msg: "SW registrado ✅", reg };
     } catch (e) {
-      Logger.write("sw register fail:", (e?.message || e));
+      Logger.write("sw register fail:", e?.message || e);
       return { ok: false, msg: "Falhou registrar SW: " + (e?.message || e) };
     }
   }
@@ -1687,19 +1456,16 @@
       out.detail = "serviceWorker não suportado neste browser";
       return out;
     }
-
     const tryGet = async () => {
       try {
         const a = await navigator.serviceWorker.getRegistration("./");
         if (a) return a;
-        const b = await navigator.serviceWorker.getRegistration();
-        return b || null;
+        return (await navigator.serviceWorker.getRegistration()) || null;
       } catch (e) {
         out.err = String(e?.message || e);
         return null;
       }
     };
-
     let reg = await tryGet();
     if (reg) {
       out.ok = true;
@@ -1707,7 +1473,6 @@
       out.detail = "já estava registrado";
       return out;
     }
-
     out.attempts++;
     try {
       const r = await swRegister();
@@ -1715,7 +1480,6 @@
     } catch (e) {
       out.err = String(e?.message || e);
     }
-
     await sleep(350);
     reg = await tryGet();
     if (reg) {
@@ -1724,7 +1488,6 @@
       out.detail = "registrou após auto-fix";
       return out;
     }
-
     out.status = "missing";
     out.detail = (location.protocol !== "https:" && location.hostname !== "localhost")
       ? "SW exige HTTPS (ou localhost)."
@@ -1732,9 +1495,6 @@
     return out;
   }
 
-  // =========================================================
-  // DIAGNOSTICS
-  // =========================================================
   function scanOverlays() {
     const suspects = [];
     const vw = Math.max(document.documentElement.clientWidth, window.innerWidth || 0);
@@ -1743,8 +1503,7 @@
     for (const el of all) {
       try {
         const cs = getComputedStyle(el);
-        if (!cs) continue;
-        if (cs.pointerEvents === "none") continue;
+        if (!cs || cs.pointerEvents === "none") continue;
         const pos = cs.position;
         if (pos !== "fixed" && pos !== "absolute") continue;
         const zi = parseInt(cs.zIndex || "0", 10);
@@ -1772,22 +1531,11 @@
   function runMicroTests() {
     const results = [];
     const push = (name, pass, info = "") => results.push({ name, pass: !!pass, info: String(info || "") });
-
-    try { push("TEST_RENDER", !!$("#rcfRoot") && !!$("#views"), !!$("#rcfRoot") ? "UI root ok" : "UI root missing"); }
-    catch (e) { push("TEST_RENDER", false, e?.message || e); }
-
-    try { push("TEST_IMPORTS", !!window.RCF_LOGGER && !!window.RCF && !!window.RCF.state, "globals"); }
-    catch (e) { push("TEST_IMPORTS", false, e?.message || e); }
-
-    try { push("TEST_STATE_INIT", !!State && Array.isArray(State.apps) && !!State.active && typeof State.cfg === "object", "state"); }
-    catch (e) { push("TEST_STATE_INIT", false, e?.message || e); }
-
-    try { push("TEST_EVENT_BIND", !!$("#btnOpenTools") && !!$("#btnAgentRun") && !!$("#btnSaveFile"), "buttons"); }
-    catch (e) { push("TEST_EVENT_BIND", false, e?.message || e); }
-
-    try { push("TEST_UI_REGISTRY", !!window.RCF_UI && typeof window.RCF_UI.getSlot === "function", "RCF_UI"); }
-    catch (e) { push("TEST_UI_REGISTRY", false, e?.message || e); }
-
+    try { push("TEST_RENDER", !!$("#rcfRoot") && !!$("#views"), !!$("#rcfRoot") ? "UI root ok" : "UI root missing"); } catch (e) { push("TEST_RENDER", false, e?.message || e); }
+    try { push("TEST_IMPORTS", !!window.RCF_LOGGER && !!window.RCF && !!window.RCF.state, "globals"); } catch (e) { push("TEST_IMPORTS", false, e?.message || e); }
+    try { push("TEST_STATE_INIT", !!State && Array.isArray(State.apps) && !!State.active && typeof State.cfg === "object", "state"); } catch (e) { push("TEST_STATE_INIT", false, e?.message || e); }
+    try { push("TEST_EVENT_BIND", !!$("#btnOpenTools") && !!$("#btnAgentRun") && !!$("#btnSaveFile"), "buttons"); } catch (e) { push("TEST_EVENT_BIND", false, e?.message || e); }
+    try { push("TEST_UI_REGISTRY", !!window.RCF_UI && typeof window.RCF_UI.getSlot === "function", "RCF_UI"); } catch (e) { push("TEST_UI_REGISTRY", false, e?.message || e); }
     const passCount = results.filter(r => r.pass).length;
     return { ok: passCount === results.length, pass: passCount, total: results.length, results };
   }
@@ -1810,49 +1558,37 @@
       if (ok) { pass++; lines.push(`PASS: ${label}${detail ? " — " + detail : ""}`); }
       else { fail++; const t = `FAIL: ${label}${detail ? " — " + detail : ""}`; lines.push(t); failList.push(label + (detail ? `: ${detail}` : "")); }
     };
-
     add(!!window.__RCF_BOOTED__, "[BOOT] __RCF_BOOTED__", window.__RCF_BOOTED__ ? "lock ativo" : "lock ausente");
-
     const css = cssLoadedCheck();
     add(css.ok, "[CSS] CSS_TOKEN", `token: "${css.token}"`);
-
     const swr = await swCheckAutoFix();
     if (swr.ok) add(true, "[SW] SW_REGISTERED", swr.detail || "registrado");
     else lines.push(`WARN: [SW] SW_REGISTERED — ${swr.detail || swr.status}${swr.err ? " | err=" + swr.err : ""}`);
-
     const overlay = scanOverlays();
     add(overlay.ok, "[CLICK] OVERLAY_SCANNER", overlay.ok ? "ok" : "erro");
     add((overlay.suspects || []).length === 0, "[CLICK] OVERLAY_BLOCK", (overlay.suspects || []).length ? `suspects=${overlay.suspects.length}` : "nenhum");
-
     const mt = runMicroTests();
     add(mt.ok, "[MICROTEST] ALL", `${mt.pass}/${mt.total}`);
-
     const stable = (fail === 0);
     window.RCF_STABLE = stable;
-
     lines.unshift("=========================================================");
     lines.unshift("RCF — V8 STABILITY CHECK (REPORT)");
     lines.push("=========================================================");
     lines.push(`PASS: ${pass} | FAIL: ${fail}`);
     lines.push(`RCF_STABLE: ${stable ? "TRUE ✅" : "FALSE ❌"}`);
     lines.push("");
-
     if (!stable) {
       lines.push("FAIL LIST:");
       for (const f of failList) lines.push(`- ${f}`);
     } else {
       lines.push("STATUS: RCF_STABLE = TRUE ✅");
     }
-
     const report = lines.join("\n");
     uiMsg("#diagOut", report);
     Logger.write("V8 check:", stable ? "PASS ✅" : "FAIL ❌", `${pass}/${pass + fail}`);
     return { stable, pass, fail, report, overlay, microtests: mt, css, sw: swr };
   }
 
-  // =========================================================
-  // SCAN / TARGETS / INJECTOR SAFE
-  // =========================================================
   function simpleHash(str) {
     let h = 2166136261;
     const s = String(str ?? "");
@@ -1962,7 +1698,6 @@
 
   async function scanFactoryFiles() {
     const index = { meta: { scannedAt: nowISO(), source: "", count: 0 }, files: [] };
-
     try {
       const olist = await OverridesVFS.listFiles();
       for (const p0 of (olist || []).slice(0, 800)) {
@@ -2003,13 +1738,11 @@
       try { parsed = JSON.parse(bundleText); } catch { parsed = null; }
       let entries = [];
       if (parsed && Array.isArray(parsed.files)) {
-        entries = parsed.files
-          .map(it => {
-            const rawPath = it && (it.path || it.file || it.name);
-            const rawVal = it && ("content" in it ? it.content : (it.text ?? it.data ?? ""));
-            return [rawPath, rawVal];
-          })
-          .filter(([p]) => !!p);
+        entries = parsed.files.map(it => {
+          const rawPath = it && (it.path || it.file || it.name);
+          const rawVal  = it && ("content" in it ? it.content : (it.text ?? it.data ?? ""));
+          return [rawPath, rawVal];
+        }).filter(([p]) => !!p);
       } else {
         const filesObj = (parsed && parsed.files && typeof parsed.files === "object") ? parsed.files : (parsed && typeof parsed === "object" ? parsed : {});
         entries = Object.entries(filesObj || {});
@@ -2028,8 +1761,8 @@
     }
 
     Logger.write("scan fallback -> DOM anchors");
-    const html = document.documentElement ? document.documentElement.outerHTML : "";
     index.meta.source = "C:dom_anchors_only";
+    const html = document.documentElement ? document.documentElement.outerHTML : "";
     index.files.push({ path: "/runtime/document.html", type: "html", size: html.length, hash: simpleHash(html), markers: detectMarkers(html), anchors: getAnchorsForContent("html", html) });
     index.meta.count = index.files.length;
     Storage.set("RCF_FILE_INDEX", index);
@@ -2040,7 +1773,6 @@
   function generateTargetMap(fileIndex) {
     const idx = fileIndex || Storage.get("RCF_FILE_INDEX", null);
     if (!idx || !Array.isArray(idx.files)) return { ok: false, err: "RCF_FILE_INDEX ausente. Rode Scan & Index primeiro." };
-
     const targets = [];
     for (const f of idx.files) {
       const path = String(f.path || "");
@@ -2052,20 +1784,10 @@
       if (!markers.length) {
         const anchors = Array.isArray(f.anchors) ? f.anchors : [];
         for (const a of anchors) {
-          targets.push({
-            targetId: `${path}::${a.id}`,
-            path,
-            kind: "ANCHOR",
-            offset: a.at,
-            anchorId: a.id,
-            supportedModes: ["INSERT", "REPLACE", "DELETE"],
-            defaultRisk: (String(a.id || "").includes("BODY") || String(a.id || "").includes("JS_EOF")) ? "medium" : "low",
-            note: a.note
-          });
+          targets.push({ targetId: `${path}::${a.id}`, path, kind: "ANCHOR", offset: a.at, anchorId: a.id, supportedModes: ["INSERT", "REPLACE", "DELETE"], defaultRisk: (String(a.id || "").includes("BODY") || String(a.id || "").includes("JS_EOF")) ? "medium" : "low", note: a.note });
         }
       }
     }
-
     const seen = new Set();
     const uniq = [];
     for (const t of targets) {
@@ -2074,7 +1796,6 @@
       uniq.push(t);
       if (uniq.length >= 800) break;
     }
-
     if (uniq.length < 2) {
       const fallbackPaths = ["/index.html", "/app/index.html"];
       for (const fp of fallbackPaths) {
@@ -2083,7 +1804,6 @@
         if (uniq.length >= 2) break;
       }
     }
-
     const out = { meta: { createdAt: nowISO(), count: uniq.length, source: (idx.meta && idx.meta.source) || "" }, targets: uniq };
     Storage.set("RCF_TARGET_MAP", out);
     Logger.write("targets:", "count=" + out.meta.count, "source=" + out.meta.source);
@@ -2135,13 +1855,11 @@
     const p = normalizePath(path);
     const ov = await OverridesVFS.readFile(p);
     if (ov != null) return String(ov);
-
     const vfs = (window.RCF_VFS || window.RCF_FS || window.RCF_FILES || window.RCF_STORE) || null;
     if (vfs) {
       const txt = await vfsRead(vfs, p);
       return (txt == null) ? "" : String(txt);
     }
-
     const bundleText = getLocalMotherBundleText() || (await tryFetchLocalBundleFromCfg()) || "";
     if (bundleText) {
       try {
@@ -2161,16 +1879,13 @@
         if (v != null) return String(v);
       } catch {}
     }
-
     if (p === "/runtime/document.html") return document.documentElement ? document.documentElement.outerHTML : "";
-
     if (["/app/index.html", "/app/styles.css", "/app/app.js", "/index.html", "/styles.css", "/app.js"].includes(p)) {
       try {
         const res = await fetch(p, { cache: "no-store" });
         if (res.ok) return await res.text();
       } catch {}
     }
-
     return "";
   }
 
@@ -2187,7 +1902,6 @@
         return { ok: false, err: e?.message || e };
       }
     }
-
     try {
       await OverridesVFS.writeFile(p, String(newText ?? ""));
       return { ok: true, mode: "override.writeFile" };
@@ -2199,7 +1913,6 @@
   function applyAtTarget(oldText, target, mode, payload) {
     const s = String(oldText ?? "");
     const pl = String(payload ?? "");
-
     const resolveOffset = () => {
       if (!target || target.kind !== "ANCHOR") return Math.max(0, Math.min(s.length, target.offset || 0));
       if ((target.offset || 0) > 0) return Math.max(0, Math.min(s.length, target.offset || 0));
@@ -2214,17 +1927,13 @@
       }
       return Math.max(0, Math.min(s.length, target.offset || 0));
     };
-
     if (target.kind === "MARKER") {
       const at = Math.max(0, Math.min(s.length, target.offset || 0));
-      if (mode === "INSERT") return s.slice(0, at) + pl + "\n" + s.slice(at);
-      if (mode === "REPLACE") return s.slice(0, at) + pl + "\n" + s.slice(at);
+      if (mode === "INSERT" || mode === "REPLACE") return s.slice(0, at) + pl + "\n" + s.slice(at);
       if (mode === "DELETE") return s.replace(target.note || "@RCF:INJECT", "");
     }
-
     const at = resolveOffset();
-    if (mode === "INSERT") return s.slice(0, at) + "\n" + pl + "\n" + s.slice(at);
-    if (mode === "REPLACE") return s.slice(0, at) + "\n" + pl + "\n" + s.slice(at);
+    if (mode === "INSERT" || mode === "REPLACE") return s.slice(0, at) + "\n" + pl + "\n" + s.slice(at);
     if (mode === "DELETE") {
       if (!pl.trim()) return s;
       return s.split(pl).join("");
@@ -2252,30 +1961,25 @@
     const map = Storage.get("RCF_TARGET_MAP", null);
     const targets = map && Array.isArray(map.targets) ? map.targets : [];
     Logger.write("apply:", "targets count=" + targets.length);
-
     const pre = await injectorPreview();
     if (!pre.ok) {
       uiMsg("#diffOut", "❌ " + (pre.err || "preview falhou"));
       Logger.write("apply:", "FAIL target inválido");
       return { ok: false };
     }
-
     InjectState.lastSnapshot = { path: pre.t.path, oldText: pre.oldText, newText: pre.newText, targetId: pre.t.targetId, ts: nowISO() };
-
     const before = runMicroTests();
     if (!before.ok) {
       uiMsg("#diffOut", "❌ Microtests BEFORE falharam. Abortando.\n" + JSON.stringify(before, null, 2));
       Logger.write("apply:", "FAIL microtests before");
       return { ok: false };
     }
-
     const w = await writeTextToInventoryPath(pre.t.path, pre.newText);
     if (!w.ok) {
       uiMsg("#diffOut", "❌ Não consegui escrever.\n" + (w.err || ""));
       Logger.write("apply:", "FAIL write", pre.t.path, pre.t.targetId);
       return { ok: false };
     }
-
     const after = runMicroTests();
     if (!after.ok) {
       await writeTextToInventoryPath(pre.t.path, pre.oldText);
@@ -2283,7 +1987,6 @@
       Logger.write("apply:", "AFTER FAIL -> rollback", pre.t.path, pre.t.targetId);
       return { ok: false, rolledBack: true };
     }
-
     Logger.write("apply:", "OK", pre.t.path, pre.t.targetId, "mode=" + pre.mode, "write=" + w.mode);
     uiMsg("#diffOut", "✅ Aplicado com sucesso (SAFE).");
     return { ok: true };
@@ -2299,20 +2002,12 @@
     return { ok: true };
   }
 
-  // =========================================================
-  // AGENT
-  // =========================================================
   const Agent = {
     _mem: { inj: { mode: "INSERT", targetId: "", payload: "" } },
-
-    _out(text) {
-      const out = $("#agentOut");
-      if (out) out.textContent = String(text ?? "");
-    },
-
+    _out(text) { const out = $("#agentOut"); if (out) out.textContent = String(text ?? ""); },
     help() {
       return [
-        "AGENT HELP (FINAL)",
+        "AGENT HELP (V8)",
         "",
         "Base:",
         "- help",
@@ -2344,38 +2039,30 @@
         "- build \"Nome do App\" [mods...]"
       ].join("\n");
     },
-
     list() {
       if (!State.apps.length) return "(vazio)";
       return State.apps.map(a => `${a.slug} — ${a.name}`).join("\n");
     },
-
     show() {
       const app = getActiveApp();
       const idx = Storage.get("RCF_FILE_INDEX", null);
       const map = Storage.get("RCF_TARGET_MAP", null);
-      const cIdx = idx?.meta?.count ?? 0;
-      const cTg = map?.meta?.count ?? 0;
       return [
         `mode: ${State.cfg.mode}`,
         `apps: ${State.apps.length}`,
         `active app: ${app ? `${app.name} (${app.slug})` : "-"}`,
         `active file: ${State.active.file || "-"}`,
         `view: ${State.active.view}`,
-        `index: files=${cIdx} source=${idx?.meta?.source || "-"}`,
-        `targets: count=${cTg}`
+        `index: files=${idx?.meta?.count ?? 0} source=${idx?.meta?.source || "-"}`,
+        `targets: count=${map?.meta?.count ?? 0}`
       ].join("\n");
     },
-
     _setCmdUI(mode, targetId, payload) {
-      const m = $("#injMode");
-      const t = $("#injTarget");
-      const p = $("#injPayload");
+      const m = $("#injMode"), t = $("#injTarget"), p = $("#injPayload");
       if (m && mode) m.value = mode;
       if (t && targetId) t.value = targetId;
       if (p && payload != null) p.value = payload;
     },
-
     _pickTargetByContains(part) {
       const map = Storage.get("RCF_TARGET_MAP", null);
       const targets = map && Array.isArray(map.targets) ? map.targets : [];
@@ -2383,40 +2070,34 @@
       if (!q) return null;
       return targets.find(x => String(x.targetId || "").toLowerCase().includes(q)) || null;
     },
-
     async _scan() {
       const idx = await scanFactoryFiles();
       return `✅ Scan OK\nsource=${idx.meta.source}\nfiles=${idx.meta.count}\nscannedAt=${idx.meta.scannedAt}`;
     },
-
     _targets() {
       const idx = Storage.get("RCF_FILE_INDEX", null);
       const r = generateTargetMap(idx);
       if (!r.ok) return `❌ ${r.err || "falhou gerar map"}`;
       return `✅ Target Map OK\ncount=${r.map.meta.count}\nsource=${r.map.meta.source}\ncreatedAt=${r.map.meta.createdAt}`;
     },
-
     _paths() {
       const idx = Storage.get("RCF_FILE_INDEX", null);
       const files = idx && Array.isArray(idx.files) ? idx.files : [];
       if (!files.length) return "⚠️ Sem index. Rode: scan";
       return files.slice(0, 120).map(f => f.path).join("\n") + (files.length > 120 ? `\n... (${files.length - 120} mais)` : "");
     },
-
     async _peek(path) {
       const p = normalizePath(path);
       const txt = await readTextFromInventoryPath(p);
       const head = String(txt || "").slice(0, 1200);
       return `PEEK ${p}\nlen=${(txt || "").length}\n\n${head}${(txt || "").length > 1200 ? "\n\n...(truncado)" : ""}`;
     },
-
     async _find(q) {
       const idx = Storage.get("RCF_FILE_INDEX", null);
       const files = idx && Array.isArray(idx.files) ? idx.files : [];
       if (!files.length) return "⚠️ Sem index. Rode: scan";
       const needle = String(q || "").trim();
       if (!needle) return "⚠️ Use: find TEXTO";
-
       const needleLow = needle.toLowerCase();
       const hits = [];
       const LIMIT_FILES = 45;
@@ -2432,11 +2113,9 @@
         }
         if (hits.length >= 8) break;
       }
-
       if (!hits.length) return `❌ Não achei "${needle}" (busca limitada a ${LIMIT_FILES} arquivos, 8 hits max).`;
       return `✅ HITS para "${needle}"\n` + hits.join("\n\n");
     },
-
     async route(cmdRaw) {
       const cmd = String(cmdRaw || "").trim();
       if (!cmd) return this._out("Comando vazio. Use: help");
@@ -2448,19 +2127,7 @@
 
       if (lower.startsWith("open ")) {
         const target = lower.replace("open ", "").trim();
-        const map = {
-          dashboard: "dashboard",
-          newapp: "newapp",
-          "new app": "newapp",
-          editor: "editor",
-          generator: "generator",
-          agent: "agent",
-          settings: "settings",
-          admin: "admin",
-          logs: "logs",
-          diagnostics: "diagnostics",
-          diag: "diagnostics"
-        };
+        const map = { dashboard: "dashboard", newapp: "newapp", "new app": "newapp", editor: "editor", generator: "generator", agent: "agent", settings: "settings", admin: "admin", logs: "logs", diagnostics: "diagnostics", diag: "diagnostics" };
         const v = map[target] || target;
         setView(v);
         return this._out(`OK. view=${v}`);
@@ -2508,16 +2175,8 @@
       }
 
       if (lower === "paths") return this._out(this._paths());
-
-      if (lower.startsWith("peek ")) {
-        const p = cmd.replace(/^peek\s+/i, "").trim();
-        return this._out(await this._peek(p));
-      }
-
-      if (lower.startsWith("find ")) {
-        const q = cmd.replace(/^find\s+/i, "").trim();
-        return this._out(await this._find(q));
-      }
+      if (lower.startsWith("peek ")) return this._out(await this._peek(cmd.replace(/^peek\s+/i, "").trim()));
+      if (lower.startsWith("find ")) return this._out(await this._find(cmd.replace(/^find\s+/i, "").trim()));
 
       if (lower.startsWith("inj mode ")) {
         const mode = cmd.replace(/^inj\s+mode\s+/i, "").trim().toUpperCase();
@@ -2580,7 +2239,6 @@
         if (!ENG || typeof ENG.createSpec !== "function" || typeof ENG.createAppFromSpec !== "function") {
           return this._out("❌ ENGINE não carregou. Verifique se os scripts /js/engine/*.js estão no index.html.");
         }
-
         const r1 = ENG.createSpec({ name, modules: mods });
         if (!r1 || !r1.ok) return this._out("❌ " + (r1?.err || "spec falhou"));
         const r2 = ENG.createAppFromSpec(r1.spec);
@@ -2596,38 +2254,27 @@
     }
   };
 
-  // =========================================================
-  // DOCTOR
-  // =========================================================
   function runDoctor() {
     if (runDoctor.__running__) return;
     runDoctor.__running__ = true;
-    try { Logger.write("doctor: start"); } catch {}
     try {
+      try { Logger.write("doctor: start"); } catch {}
       try { window.dispatchEvent(new CustomEvent("RCF:DOCTOR", { detail: { ts: Date.now() } })); } catch {}
       try {
-        const candidates = [
-          window.RCF_DOCTOR_SCAN,
-          window.RCF_DOCTOR,
-          window.__RCF_DOCTOR__,
-          window.RCF_DIAGNOSTICS && window.RCF_DIAGNOSTICS.doctor
-        ].filter(Boolean);
+        const candidates = [window.RCF_DOCTOR_SCAN, window.RCF_DOCTOR, window.__RCF_DOCTOR__, window.RCF_DIAGNOSTICS && window.RCF_DIAGNOSTICS.doctor].filter(Boolean);
         for (const obj of candidates) {
           if (typeof obj.open === "function") { obj.open(); try { Logger.write("doctor: open()"); } catch {} return; }
           if (typeof obj.show === "function") { obj.show(); try { Logger.write("doctor: show()"); } catch {} return; }
         }
       } catch {}
-
       try {
         const D = window.RCF_DIAGNOSTICS;
         if (D && typeof D.run === "function") D.run({ silent: false });
       } catch (e) { try { Logger.write("doctor: diagnostics fail " + (e && e.message ? e.message : e)); } catch {} }
-
       try {
         const SM = window.RCF_SCANMAP;
         if (SM && typeof SM.scanNow === "function") SM.scanNow();
       } catch (e) { try { Logger.write("doctor: scanmap fail " + (e && e.message ? e.message : e)); } catch {} }
-
       try { setView("logs"); } catch {}
       try { Logger.write("doctor: done (fallback)"); } catch {}
     } finally {
@@ -2642,9 +2289,42 @@
     window.RCF_DOCTOR.open = () => runDoctor();
   } catch {}
 
-  // =========================================================
-  // BIND UI
-  // =========================================================
+  function getApprovedVisualModules() {
+    return [
+      ["RCF_UI_BOOTSTRAP", window.RCF_UI_BOOTSTRAP],
+      ["RCF_UI_VIEWS", window.RCF_UI_VIEWS],
+      ["RCF_UI_HEADER", window.RCF_UI_HEADER],
+      ["RCF_UI_DASHBOARD", window.RCF_UI_DASHBOARD],
+      ["RCF_UI_CARDS", window.RCF_UI_CARDS],
+      ["RCF_UI_APPS_WIDGETS", window.RCF_UI_APPS_WIDGETS],
+      ["RCF_UI_PROJECTS", window.RCF_UI_PROJECTS],
+      ["RCF_UI_FACTORY_VIEW", window.RCF_UI_FACTORY_VIEW]
+    ].filter(([, mod]) => !!mod && typeof mod === "object");
+  }
+
+  function mountApprovedVisualModules(stage = "pre-hydrate", extraCtx = {}) {
+    const ctx = Object.assign({
+      root: document,
+      $, $$, State, Storage, Logger, saveAll, setView,
+      renderAppsList, renderFilesList, refreshLogsViews, safeSetStatus
+    }, extraCtx || {});
+
+    const methods = stage === "post-hydrate" ? ["refresh"] : ["init", "mount"];
+
+    for (const [name, mod] of getApprovedVisualModules()) {
+      for (const method of methods) {
+        try {
+          const fn = mod && mod[method];
+          if (typeof fn !== "function") continue;
+          fn.call(mod, ctx);
+          try { Logger.write("ui module:", name, method, "ok"); } catch {}
+        } catch (e) {
+          try { Logger.write("ui module err:", name, method, e?.message || e); } catch {}
+        }
+      }
+    }
+  }
+
   function bindUI() {
     try {
       const ev = window.RCF_UI_EVENTS;
@@ -2656,25 +2336,24 @@
           syncFabStatusText, toggleInjectorLogCollapsed,
           renderAppsList, renderFilesList, openFile,
           setActiveApp, createApp, saveFile,
-          refreshLogsViews,
-          safeSetStatus, uiMsg, Agent, runDoctor,
+          refreshLogsViews, safeSetStatus, uiMsg, Agent, runDoctor,
           swRegister, swUnregisterAll, swClearCaches,
           runV8StabilityCheck, scanOverlays, runMicroTests,
-          Pin, saveAll,
-          scanFactoryFiles, generateTargetMap, populateTargetsDropdown,
+          Pin, saveAll, scanFactoryFiles, generateTargetMap, populateTargetsDropdown,
           injectorPreview, injectorApplySafe, injectorRollback,
-          textContentSafe, slugify, ensureAppFiles,
-          getActiveApp, LoggerWrite: (...a) => Logger.write(...a)
+          textContentSafe, slugify, ensureAppFiles, getActiveApp,
+          LoggerWrite: (...a) => Logger.write(...a)
         });
         if (ok !== false) {
           try { Logger.write("events:", "external ui_events bind ✅"); } catch {}
+          return;
         }
       }
     } catch (e) {
       try { Logger.write("events bind err:", e?.message || e); } catch {}
     }
 
-    $$('[data-view]').forEach(btn => bindTap(btn, () => setView(btn.getAttribute('data-view'))));
+    $$("[data-view]").forEach(btn => bindTap(btn, () => setView(btn.getAttribute("data-view"))));
     bindTap($("#btnOpenTools"), () => { openTools(true); openFabPanel(false); });
     bindTap($("#btnCloseTools"), () => openTools(false));
     bindTap($("#rcfFab"), () => { toggleFabPanel(); syncFabStatusText(); });
@@ -2683,118 +2362,43 @@
     bindTap($("#btnFabAdmin"), () => { openFabPanel(false); setView("admin"); });
     bindTap($("#btnFabDoctor"), () => { openFabPanel(false); runDoctor(); });
     bindTap($("#btnFabLogs"), () => { openFabPanel(false); setView("logs"); });
-    bindTap($("#btnCreateNewApp"), () => setView("newapp"));
-    bindTap($("#btnOpenEditor"), () => setView("editor"));
+
+    bindTap($("#btnCreateNewApp"), () => {
+      const name = ($("#newAppName")?.value || "").trim();
+      const slug = ($("#newAppSlug")?.value || "").trim();
+      const r = createApp(name, slug);
+      uiMsg("#editorOut", r.msg);
+      if (r.ok) setView("dashboard");
+    });
+
     bindTap($("#btnAgentRun"), () => Agent.route($("#agentCmd")?.value || ""));
     bindTap($("#btnAgentHelp"), () => uiMsg("#agentOut", Agent.help()));
     bindTap($("#btnSaveFile"), () => saveFile());
     bindTap($("#btnToggleInjectorLog"), () => toggleInjectorLogCollapsed());
+
     bindTap($("#btnPreview"), async () => {
-      try {
-        const r = await injectorPreview();
-        if (!r?.ok) uiMsg("#diffOut", "❌ " + (r?.err || "preview falhou"));
-      } catch (e) {
-        uiMsg("#diffOut", "❌ " + (e?.message || e));
-      }
+      const r = await injectorPreview();
+      if (!r.ok) uiMsg("#diffOut", "❌ " + (r.err || "preview falhou"));
     });
-    bindTap($("#btnApply"), async () => {
-      try {
-        safeSetStatus("Apply…");
-        syncFabStatusText();
-        const r = await injectorApplySafe();
-        if (!r?.ok) uiMsg("#diffOut", "❌ APPLY FAIL" + (r?.rolledBack ? " (rollback feito)" : ""));
-        safeSetStatus("OK ✅");
-        syncFabStatusText();
-      } catch (e) {
-        safeSetStatus("ERRO ❌");
-        syncFabStatusText();
-        uiMsg("#diffOut", "❌ " + (e?.message || e));
-      }
-    });
-    bindTap($("#btnRollback"), async () => {
-      try {
-        safeSetStatus("Rollback…");
-        syncFabStatusText();
-        const r = await injectorRollback();
-        if (!r?.ok) uiMsg("#diffOut", "❌ rollback falhou");
-        safeSetStatus("OK ✅");
-        syncFabStatusText();
-      } catch (e) {
-        safeSetStatus("ERRO ❌");
-        syncFabStatusText();
-        uiMsg("#diffOut", "❌ " + (e?.message || e));
-      }
-    });
-    bindTap($("#btnRunV8Check"), async () => {
-      try {
-        const r = await runV8StabilityCheck();
-        if (r?.report) uiMsg("#diagOut", r.report);
-      } catch (e) {
-        uiMsg("#diagOut", "❌ " + (e?.message || e));
-      }
-    });
-    bindTap($("#btnScanOverlays"), () => {
-      try {
-        const r = scanOverlays();
-        uiMsg("#diagOut", JSON.stringify(r, null, 2));
-      } catch (e) {
-        uiMsg("#diagOut", "❌ " + (e?.message || e));
-      }
-    });
-    bindTap($("#btnMicroTests"), () => {
-      try {
-        const r = runMicroTests();
-        uiMsg("#diagOut", JSON.stringify(r, null, 2));
-      } catch (e) {
-        uiMsg("#diagOut", "❌ " + (e?.message || e));
-      }
-    });
+    bindTap($("#btnApply"), async () => { await injectorApplySafe(); });
+    bindTap($("#btnRollback"), async () => { await injectorRollback(); });
+
+    bindTap($("#btnRunV8Check"), async () => { await runV8StabilityCheck(); });
+    bindTap($("#btnScanOverlays"), () => { uiMsg("#diagOut", safeJsonStringify(scanOverlays())); });
+    bindTap($("#btnMicroTests"), () => { uiMsg("#diagOut", safeJsonStringify(runMicroTests())); });
+
     bindTap($("#btnClearCaches"), async () => {
-      try {
-        const r = await swClearCaches();
-        safeSetStatus(r?.ok ? "Caches limpos ✅" : "ERRO ❌");
-        syncFabStatusText();
-        Logger.write("cache clear:", r?.ok ? "ok" : "fail", safeJsonStringify(r || {}));
-      } catch (e) {
-        safeSetStatus("ERRO ❌");
-        syncFabStatusText();
-        Logger.write("cache clear err:", e?.message || e);
-      }
+      const r = await swClearCaches();
+      safeSetStatus(r.ok ? "Caches limpos ✅" : "Cache erro ❌");
+      syncFabStatusText();
     });
     bindTap($("#btnUnregisterSW"), async () => {
-      try {
-        const r = await swUnregisterAll();
-        safeSetStatus(r?.ok ? "SW removido ✅" : "ERRO ❌");
-        syncFabStatusText();
-        Logger.write("sw unregister:", r?.ok ? "ok" : "fail", safeJsonStringify(r || {}));
-      } catch (e) {
-        safeSetStatus("ERRO ❌");
-        syncFabStatusText();
-        Logger.write("sw unregister err:", e?.message || e);
-      }
-    });
-    bindTap($("#btnPinSave"), () => {
-      const pin = String($("#pinInput")?.value || "").trim();
-      if (!pin) return uiMsg("#pinOut", "⚠️ PIN vazio.");
-      Pin.set(pin);
-      uiMsg("#pinOut", "PIN salvo ✅");
-    });
-    bindTap($("#btnPinRemove"), () => {
-      Pin.clear();
-      uiMsg("#pinOut", "PIN removido ✅");
-    });
-    bindTap($("#btnNewAppCreate"), () => {
-      const name = String($("#newAppName")?.value || "").trim();
-      const slug = String($("#newAppSlug")?.value || "").trim();
-      const r = createApp(name, slug);
-      uiMsg("#newAppOut", r.msg || "Pronto.");
-      if (r.ok) setView("dashboard");
+      const r = await swUnregisterAll();
+      safeSetStatus(r.ok ? "SW removido ✅" : "SW erro ❌");
+      syncFabStatusText();
     });
   }
 
-  // =========================================================
-  // HYDRATE
-  // =========================================================
   function hydrateUIFromState() {
     refreshLogsViews();
     renderAppsList();
@@ -2819,9 +2423,6 @@
     try { window.RCF_UI?.refresh?.(); } catch {}
   }
 
-  // =========================================================
-  // SAFE INIT
-  // =========================================================
   async function safeInit() {
     try {
       Stability.install();
@@ -2833,19 +2434,15 @@
       installRCFUIRegistry();
       installFactoryIAAliases();
       syncUiCoreBridge("safeInit.registry");
-      mountApprovedVisualModules("mount", { phase: "pre-hydrate" });
+      mountApprovedVisualModules("pre-hydrate");
       try { notifyUIReady(); } catch {}
       bindUI();
       hydrateUIFromState();
-      mountApprovedVisualModules("post-hydrate", { phase: "post-hydrate" });
+      mountApprovedVisualModules("post-hydrate");
       syncUiCoreBridge("safeInit.hydrate");
 
-      try {
-        window.RCF_ENGINE?.init?.({ State, Storage, Logger });
-        Logger.write("engine:", "init ok ✅");
-      } catch (e) {
-        Logger.write("engine init err:", e?.message || e);
-      }
+      try { window.RCF_ENGINE?.init?.({ State, Storage, Logger }); Logger.write("engine:", "init ok ✅"); }
+      catch (e) { Logger.write("engine init err:", e?.message || e); }
 
       try {
         const swr = await Promise.race([
@@ -2857,7 +2454,7 @@
         Logger.write("sw warn:", "exception", e?.message || e);
       }
 
-      Logger.write("RCF final init ok — mode:", State.cfg.mode);
+      Logger.write("RCF V8.1.1 init ok — mode:", State.cfg.mode);
       try {
         window.__RCF_BOOTED__ = true;
         const st = window[__BOOT_KEY] || {};
@@ -2888,5 +2485,4 @@
   } else {
     safeInit();
   }
-
 })();
