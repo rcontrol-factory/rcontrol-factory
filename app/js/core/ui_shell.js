@@ -1,15 +1,12 @@
 /* FILE: /app/js/core/ui_shell.js
    RControl Factory — UI Shell mount (safe extraction)
-   V2.1 PADRÃO
    - Responsável apenas pelo HTML base da shell
    - Sem boot crítico
    - Sem lógica de agent/injector
    - Mantém IDs/classes compatíveis com app atual
    - Idempotente / seguro para remount
-   - PATCH: padroniza visual entre abas
-   - PATCH: separa Admin de Factory AI
-   - PATCH: adiciona Opportunity como view própria
-   - PATCH: barra inferior nova
+   - PATCH: remove FAB visual flutuante da tela
+   - PATCH: mantém compatibilidade oculta com app.js atual
 */
 (() => {
   "use strict";
@@ -57,119 +54,6 @@
     `;
   }
 
-  function buildTopTabs() {
-    return `
-      <nav class="tabs" aria-label="Navegação" data-rcf-panel="tabs">
-        <button class="tab active" data-view="dashboard" type="button">Home</button>
-        <button class="tab" data-view="newapp" type="button">Apps</button>
-        <button class="tab" data-view="editor" type="button">Editor</button>
-        <button class="tab" data-view="generator" type="button">Generator</button>
-        <button class="tab" data-view="agent" type="button">Agent</button>
-        <button class="tab" data-view="opportunity" type="button">Opportunity</button>
-        <button class="tab" data-view="admin" type="button">Admin</button>
-        <button class="tab" data-view="settings" type="button">Settings</button>
-        <button class="tab" data-view="factoryai" type="button">Factory AI</button>
-        <button class="tab" data-view="logs" type="button">Logs</button>
-      </nav>
-    `;
-  }
-
-  function buildHomeCards() {
-    return `
-      <div class="rcfMobileModules" aria-label="Módulos principais">
-        <button class="rcfMobileModuleCard" data-view="dashboard" type="button">
-          <span class="rcfMobileModuleIcon mod-dashboard" aria-hidden="true"></span>
-          <span class="rcfMobileModuleText">
-            <span class="rcfMobileModuleTitle">Dashboard</span>
-            <span class="rcfMobileModuleSub">Status & Controle</span>
-          </span>
-          <span class="rcfMobileModuleArrow" aria-hidden="true">›</span>
-        </button>
-
-        <button class="rcfMobileModuleCard" data-view="newapp" type="button">
-          <span class="rcfMobileModuleIcon mod-apps" aria-hidden="true"></span>
-          <span class="rcfMobileModuleText">
-            <span class="rcfMobileModuleTitle">Apps</span>
-            <span class="rcfMobileModuleSub">Criar & Gerenciar</span>
-          </span>
-          <span class="rcfMobileModuleArrow" aria-hidden="true">›</span>
-        </button>
-
-        <button class="rcfMobileModuleCard" data-view="editor" type="button">
-          <span class="rcfMobileModuleIcon mod-editor" aria-hidden="true"></span>
-          <span class="rcfMobileModuleText">
-            <span class="rcfMobileModuleTitle">Editor</span>
-            <span class="rcfMobileModuleSub">Projetos & Código</span>
-          </span>
-          <span class="rcfMobileModuleArrow" aria-hidden="true">›</span>
-        </button>
-
-        <button class="rcfMobileModuleCard" data-view="agent" type="button">
-          <span class="rcfMobileModuleIcon mod-agent" aria-hidden="true"></span>
-          <span class="rcfMobileModuleText">
-            <span class="rcfMobileModuleTitle">Agent</span>
-            <span class="rcfMobileModuleSub">Criação & Automação</span>
-          </span>
-          <span class="rcfMobileModuleArrow" aria-hidden="true">›</span>
-        </button>
-
-        <button class="rcfMobileModuleCard" data-view="opportunity" type="button">
-          <span class="rcfMobileModuleIcon mod-generator" aria-hidden="true"></span>
-          <span class="rcfMobileModuleText">
-            <span class="rcfMobileModuleTitle">Opportunity</span>
-            <span class="rcfMobileModuleSub">Scanner & Oportunidades</span>
-          </span>
-          <span class="rcfMobileModuleArrow" aria-hidden="true">›</span>
-        </button>
-
-        <button class="rcfMobileModuleCard" data-view="admin" type="button">
-          <span class="rcfMobileModuleIcon mod-factory" aria-hidden="true"></span>
-          <span class="rcfMobileModuleText">
-            <span class="rcfMobileModuleTitle">Admin</span>
-            <span class="rcfMobileModuleSub">Sistema & Tools</span>
-          </span>
-          <span class="rcfMobileModuleArrow" aria-hidden="true">›</span>
-        </button>
-
-        <button class="rcfMobileModuleCard" data-view="settings" type="button">
-          <span class="rcfMobileModuleIcon mod-dashboard" aria-hidden="true"></span>
-          <span class="rcfMobileModuleText">
-            <span class="rcfMobileModuleTitle">Settings</span>
-            <span class="rcfMobileModuleSub">Conta & Configurações</span>
-          </span>
-          <span class="rcfMobileModuleArrow" aria-hidden="true">›</span>
-        </button>
-
-        <button class="rcfMobileModuleCard" data-view="factoryai" type="button">
-          <span class="rcfMobileModuleIcon mod-agent" aria-hidden="true"></span>
-          <span class="rcfMobileModuleText">
-            <span class="rcfMobileModuleTitle">Factory AI</span>
-            <span class="rcfMobileModuleSub">IA do núcleo da Factory</span>
-          </span>
-          <span class="rcfMobileModuleArrow" aria-hidden="true">›</span>
-        </button>
-
-        <button class="rcfMobileModuleCard" data-view="logs" type="button">
-          <span class="rcfMobileModuleIcon mod-editor" aria-hidden="true"></span>
-          <span class="rcfMobileModuleText">
-            <span class="rcfMobileModuleTitle">Logs</span>
-            <span class="rcfMobileModuleSub">Registro & Auditoria</span>
-          </span>
-          <span class="rcfMobileModuleArrow" aria-hidden="true">›</span>
-        </button>
-
-        <button class="rcfMobileModuleCard" data-view="diagnostics" type="button">
-          <span class="rcfMobileModuleIcon mod-factory" aria-hidden="true"></span>
-          <span class="rcfMobileModuleText">
-            <span class="rcfMobileModuleTitle">Diagnostics</span>
-            <span class="rcfMobileModuleSub">Check & Estabilidade</span>
-          </span>
-          <span class="rcfMobileModuleArrow" aria-hidden="true">›</span>
-        </button>
-      </div>
-    `;
-  }
-
   function buildShellHTML(ctx = {}) {
     return `
       <div id="rcfRoot" data-rcf-app="rcf.factory">
@@ -183,7 +67,16 @@
             </div>
           </div>
 
-          ${buildTopTabs()}
+          <nav class="tabs" aria-label="Navegação" data-rcf-panel="tabs">
+            <button class="tab active" data-view="dashboard" type="button">Dashboard</button>
+            <button class="tab" data-view="newapp" type="button">New App</button>
+            <button class="tab" data-view="editor" type="button">Editor</button>
+            <button class="tab" data-view="generator" type="button">Generator</button>
+            <button class="tab" data-view="agent" type="button">Agent</button>
+            <button class="tab" data-view="admin" type="button">Admin</button>
+            <button class="tab" data-view="settings" type="button">Settings</button>
+            <button class="tab" data-view="logs" type="button">Logs</button>
+          </nav>
         </header>
 
         <main class="container views" id="views" data-rcf-panel="views">
@@ -191,8 +84,8 @@
             <div class="rcfDashHero">
               <div class="rcfDashHeroHead">
                 <div>
-                  <h1>Home</h1>
-                  <p>Central principal da Factory com acesso rápido a todos os módulos.</p>
+                  <h1>Dashboard</h1>
+                  <p>Central do projeto. Selecione um app e comece a editar.</p>
                 </div>
                 <div class="status-box">
                   <div class="badge" id="activeAppText">Sem app ativo ✅</div>
@@ -202,7 +95,52 @@
                 </div>
               </div>
 
-              ${buildHomeCards()}
+              <div class="rcfMobileModules" aria-label="Módulos principais">
+                <button class="rcfMobileModuleCard" data-view="dashboard" type="button">
+                  <span class="rcfMobileModuleIcon mod-dashboard" aria-hidden="true"></span>
+                  <span class="rcfMobileModuleText">
+                    <span class="rcfMobileModuleTitle">Dashboard</span>
+                    <span class="rcfMobileModuleSub">Status &amp; Controle</span>
+                  </span>
+                  <span class="rcfMobileModuleArrow" aria-hidden="true">›</span>
+                </button>
+
+                <button class="rcfMobileModuleCard" data-view="newapp" type="button">
+                  <span class="rcfMobileModuleIcon mod-apps" aria-hidden="true"></span>
+                  <span class="rcfMobileModuleText">
+                    <span class="rcfMobileModuleTitle">Apps</span>
+                    <span class="rcfMobileModuleSub">Criar &amp; Gerenciar</span>
+                  </span>
+                  <span class="rcfMobileModuleArrow" aria-hidden="true">›</span>
+                </button>
+
+                <button class="rcfMobileModuleCard" data-view="editor" type="button">
+                  <span class="rcfMobileModuleIcon mod-editor" aria-hidden="true"></span>
+                  <span class="rcfMobileModuleText">
+                    <span class="rcfMobileModuleTitle">Editor</span>
+                    <span class="rcfMobileModuleSub">Projetos &amp; Código</span>
+                  </span>
+                  <span class="rcfMobileModuleArrow" aria-hidden="true">›</span>
+                </button>
+
+                <button class="rcfMobileModuleCard" data-view="agent" type="button">
+                  <span class="rcfMobileModuleIcon mod-agent" aria-hidden="true"></span>
+                  <span class="rcfMobileModuleText">
+                    <span class="rcfMobileModuleTitle">Agent</span>
+                    <span class="rcfMobileModuleSub">IA + Automação</span>
+                  </span>
+                  <span class="rcfMobileModuleArrow" aria-hidden="true">›</span>
+                </button>
+
+                <button class="rcfMobileModuleCard" data-view="admin" type="button">
+                  <span class="rcfMobileModuleIcon mod-factory" aria-hidden="true"></span>
+                  <span class="rcfMobileModuleText">
+                    <span class="rcfMobileModuleTitle">Factory</span>
+                    <span class="rcfMobileModuleSub">Sistema &amp; Tools</span>
+                  </span>
+                  <span class="rcfMobileModuleArrow" aria-hidden="true">›</span>
+                </button>
+              </div>
 
               <div class="rcfDashPanels">
                 <div class="rcfDashPanel rcfDashPanelWide">
@@ -214,8 +152,8 @@
           </section>
 
           <section class="view card" id="view-newapp" data-rcf-view="newapp">
-            <h1>Apps</h1>
-            <p class="hint">Crie e organize aplicativos mantendo o mesmo padrão visual da Factory.</p>
+            <h1>Novo App</h1>
+            <p class="hint">Cria um mini-app dentro da Factory.</p>
             <div class="row form">
               <input id="newAppName" placeholder="Nome do app" />
               <input id="newAppSlug" placeholder="slug (opcional)" />
@@ -227,7 +165,7 @@
 
           <section class="view card" id="view-editor" data-rcf-view="editor">
             <h1>Editor</h1>
-            <p class="hint">Arquivos, estrutura e ajustes do app ativo, no mesmo padrão da shell.</p>
+            <p class="hint">Escolha um arquivo e edite.</p>
             <div class="row">
               <div class="badge" id="editorHead">Arquivo atual: -</div>
               <div class="spacer"></div>
@@ -251,7 +189,7 @@
 
           <section class="view card" id="view-generator" data-rcf-view="generator">
             <h1>Generator</h1>
-            <p class="hint">Geração, teste e validação de builds.</p>
+            <p class="hint">Gera ZIP do app selecionado.</p>
             <div id="rcfGenSlotActions" data-rcf-slot="generator.actions">
               <div class="row">
                 <button class="btn ok" id="btnGenZip" type="button">Build ZIP</button>
@@ -263,8 +201,7 @@
           </section>
 
           <section class="view card" id="view-agent" data-rcf-view="agent">
-            <h1>Agent</h1>
-            <p class="hint">Agente de criação e operação de aplicativos.</p>
+            <h1>Agente</h1>
             <div class="row cmd">
               <input id="agentCmd" placeholder='Ex: create "Meu App" meu-app' />
               <button class="btn ok" id="btnAgentRun" type="button">Executar</button>
@@ -275,23 +212,9 @@
             <pre class="mono" id="agentOut">Pronto.</pre>
           </section>
 
-          <section class="view card" id="view-opportunity" data-rcf-view="opportunity">
-            <h1>Opportunity Scanner</h1>
-            <p class="hint">Centro de oportunidades, ideias rentáveis e priorização de apps.</p>
-            <div class="card">
-              <h2>Top oportunidades</h2>
-              <div class="hint">Aqui vão entrar as melhores oportunidades fixadas no topo.</div>
-            </div>
-            <div class="card">
-              <h2>Fila de análise</h2>
-              <div class="hint">Aqui entram oportunidades em observação, triagem e validação.</div>
-            </div>
-            <pre class="mono" id="opportunityOut">Pronto.</pre>
-          </section>
-
           <section class="view card" id="view-settings" data-rcf-view="settings">
             <h1>Settings</h1>
-            <p class="hint">Conta, acesso, segurança e preferências gerais.</p>
+
             <div class="card" id="settings-security">
               <h2>Segurança</h2>
               <div id="rcfSettingsSecurityActions" data-rcf-slot="settings.security.actions"></div>
@@ -302,6 +225,7 @@
               </div>
               <pre class="mono" id="pinOut">Pronto.</pre>
             </div>
+
             <div class="card" id="settings-logs">
               <h2>Logs</h2>
               <div class="row">
@@ -313,23 +237,8 @@
             </div>
           </section>
 
-          <section class="view card" id="view-factoryai" data-rcf-view="factoryai">
-            <h1>Factory AI</h1>
-            <p class="hint">IA interna do núcleo da Factory, separada do Admin operacional.</p>
-            <div class="card">
-              <h2>Diagnóstico do núcleo</h2>
-              <div class="hint">Análise, manutenção guiada e evolução do núcleo da Factory.</div>
-            </div>
-            <div class="card">
-              <h2>Sugestões internas</h2>
-              <div class="hint">Espaço para recomendações, correções e melhorias da própria Factory.</div>
-            </div>
-            <pre class="mono" id="factoryAiOut">Pronto.</pre>
-          </section>
-
           <section class="view card" id="view-logs" data-rcf-view="logs">
             <h1>Logs</h1>
-            <p class="hint">Registro operacional e auditoria.</p>
             <div class="row">
               <button class="btn ghost" id="btnLogsRefresh2" type="button">Atualizar</button>
               <button class="btn ok" id="btnCopyLogs" type="button">Copiar</button>
@@ -340,7 +249,7 @@
 
           <section class="view card" id="view-admin" data-rcf-view="admin">
             <h1>Admin</h1>
-            <p class="hint">Controles administrativos, maintenance, integrations e injector.</p>
+
             <div id="rcfAdminSlotTop" data-rcf-slot="admin.top">
               <div class="row">
                 <button class="btn ghost" id="btnAdminDiag" type="button">Diagnosticar (local)</button>
@@ -407,7 +316,6 @@
 
           <section class="view card" id="view-diagnostics" data-rcf-view="diagnostics">
             <h1>Diagnostics</h1>
-            <p class="hint">Checks de estabilidade e leitura técnica da Factory.</p>
             <div class="row">
               <button class="btn ok" id="btnDiagRun" type="button">Rodar V8 Stability Check</button>
               <button class="btn ghost" id="btnDiagScan" type="button">Scan overlays</button>
@@ -420,10 +328,10 @@
 
         <nav class="rcfBottomNav" aria-label="Navegação mobile">
           <button class="tab active" data-view="dashboard" type="button">Home</button>
+          <button class="tab" data-view="newapp" type="button">Apps</button>
+          <button class="tab" data-view="editor" type="button">Editor</button>
           <button class="tab" data-view="agent" type="button">Agent</button>
-          <button class="tab" data-view="opportunity" type="button">Opportunity</button>
-          <button class="tab" data-view="settings" type="button">Settings</button>
-          <button class="tab" data-view="factoryai" type="button">Factory AI</button>
+          <button class="tab" data-view="admin" type="button">Factory</button>
         </nav>
 
         <div class="tools" id="toolsDrawer" data-rcf-panel="tools.drawer">
@@ -447,22 +355,34 @@
           </div>
         </div>
 
-        <button id="rcfFab" type="button" aria-label="Ações rápidas">⚡</button>
-        <div id="rcfFabPanel" role="dialog" aria-label="Ações rápidas">
-          <div class="fab-title">
-            <div>RCF</div>
-            <div class="fab-status" id="fabStatus">OK ✅</div>
-          </div>
-          <div class="fab-row">
-            <button class="btn ghost" id="btnFabTools" type="button">Ferramentas</button>
-            <button class="btn ghost" id="btnFabAdmin" type="button">Admin</button>
-          </div>
-          <div class="fab-row" style="margin-top:8px">
-            <button class="btn ghost" id="btnFabDoctor" type="button">Doctor</button>
-            <button class="btn ghost" id="btnFabLogs" type="button">Logs</button>
-          </div>
-          <div class="fab-row" style="margin-top:8px">
-            <button class="btn danger" id="btnFabClose" type="button">Fechar</button>
+        <!-- Compatibilidade oculta com app.js atual: FAB removido visualmente -->
+        <div
+          id="rcfFabCompat"
+          hidden
+          aria-hidden="true"
+          style="display:none !important; visibility:hidden !important; pointer-events:none !important;"
+        >
+          <button id="rcfFab" type="button" tabindex="-1" aria-hidden="true">⚡</button>
+
+          <div id="rcfFabPanel" role="dialog" aria-label="Ações rápidas" hidden>
+            <div class="fab-title">
+              <div>RCF</div>
+              <div class="fab-status" id="fabStatus">OK ✅</div>
+            </div>
+
+            <div class="fab-row">
+              <button class="btn ghost" id="btnFabTools" type="button" tabindex="-1">Ferramentas</button>
+              <button class="btn ghost" id="btnFabAdmin" type="button" tabindex="-1">Admin</button>
+            </div>
+
+            <div class="fab-row" style="margin-top:8px">
+              <button class="btn ghost" id="btnFabDoctor" type="button" tabindex="-1">Doctor</button>
+              <button class="btn ghost" id="btnFabLogs" type="button" tabindex="-1">Logs</button>
+            </div>
+
+            <div class="fab-row" style="margin-top:8px">
+              <button class="btn danger" id="btnFabClose" type="button" tabindex="-1">Fechar</button>
+            </div>
           </div>
         </div>
       </div>
@@ -488,6 +408,15 @@
         hdr.id = "rcfHeader";
         hdr.setAttribute("data-rcf-ui-slot", "header");
         topbar.insertAdjacentElement("afterbegin", hdr);
+      }
+
+      const compat = qs("#rcfFabCompat", root);
+      if (compat) {
+        compat.hidden = true;
+        compat.setAttribute("aria-hidden", "true");
+        compat.style.display = "none";
+        compat.style.visibility = "hidden";
+        compat.style.pointerEvents = "none";
       }
 
       return true;
