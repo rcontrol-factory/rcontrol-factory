@@ -1,6 +1,6 @@
 /* FILE: /app/js/ui/ui_factory_view.js
    RControl Factory — Factory View Module
-   V2 SAFE MOUNT
+   V2.1 SAFE MOUNT
    PATCH MÍNIMO:
    - remove Dashboard da composição da Factory
    - mantém Factory focada em módulos/sistema/integrações/projetos
@@ -8,6 +8,7 @@
    - evita duplicação visual da Home dentro da Factory
    - adiciona init + mount + refresh compatíveis com app.js V8.1.1
    - resolve host/view automaticamente
+   - FIX: não monta mais dentro do Agent
 */
 
 (() => {
@@ -15,10 +16,6 @@
 
   function qs(sel, root = document) {
     try { return root.querySelector(sel); } catch { return null; }
-  }
-
-  function qsa(sel, root = document) {
-    try { return Array.from(root.querySelectorAll(sel)); } catch { return []; }
   }
 
   const API = {
@@ -37,12 +34,21 @@
 
     log(...args) {
       try {
-        const L = this.d.Logger || window.RCF_LOGGER;
+        const L = this.d.Logger;
         if (L && typeof L.write === "function") {
           L.write("[ui_factory_view]", ...args);
           return;
         }
       } catch {}
+
+      try {
+        const LG = window.RCF_LOGGER;
+        if (LG && typeof LG.push === "function") {
+          LG.push("INFO", ["[ui_factory_view]", ...args].join(" "));
+          return;
+        }
+      } catch {}
+
       try { console.log("[ui_factory_view]", ...args); } catch {}
     },
 
@@ -50,6 +56,7 @@
       try {
         if (typeof this.d.escapeHtml === "function") return this.d.escapeHtml(v);
       } catch {}
+
       return String(v ?? "").replace(/[&<>"]/g, c => ({
         "&": "&amp;",
         "<": "&lt;",
@@ -63,9 +70,7 @@
         "#view-factory",
         '[data-rcf-view="factory"]',
         "#rcfFactoryView",
-        "[data-rcf-factory-view]",
-        "#view-agent",
-        '[data-rcf-view="agent"]'
+        "[data-rcf-factory-view]"
       ];
 
       for (const sel of tries) {
@@ -191,7 +196,7 @@
 
     renderAppsWidgets() {
       try {
-        if (window.RCF_UI_APPS_WIDGETS?.render) {
+        if (window.RCF_UI_APPS_WIDGETS && typeof window.RCF_UI_APPS_WIDGETS.render === "function") {
           return !!window.RCF_UI_APPS_WIDGETS.render("#rcfFactoryAppsWidgetsSlot");
         }
       } catch {}
@@ -203,7 +208,7 @@
         const slot = qs("#rcfFactoryGatewaysSlot");
         if (!slot) return false;
 
-        if (window.RCF_UI_GATEWAYS?.render) {
+        if (window.RCF_UI_GATEWAYS && typeof window.RCF_UI_GATEWAYS.render === "function") {
           return !!window.RCF_UI_GATEWAYS.render("#rcfFactoryGatewaysSlot");
         }
 
@@ -216,7 +221,7 @@
 
     renderProjects() {
       try {
-        if (window.RCF_UI_PROJECTS?.render) {
+        if (window.RCF_UI_PROJECTS && typeof window.RCF_UI_PROJECTS.render === "function") {
           return !!window.RCF_UI_PROJECTS.render("#rcfFactoryProjectsSlot");
         }
       } catch {}
@@ -236,7 +241,7 @@
       try {
         const view = this.resolveFactoryView();
         if (!view) {
-          this.log("mount skip: factory/agent view ausente");
+          this.log("mount skip: factory view ausente");
           return false;
         }
 
