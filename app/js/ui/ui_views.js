@@ -1,6 +1,6 @@
 /* FILE: /app/js/ui/ui_views.js
    RControl Factory — UI Views
-   V3.0 SAFE SINGLE-VIEW ISOLATION
+   V3.1 SAFE SINGLE-VIEW ISOLATION FIX
    - Isola uma view por vez de forma real
    - Esconde legado visual fora da Home
    - Remove vazamento de Tools/legacy shell nas views internas
@@ -8,6 +8,8 @@
    - Mantém Generator separado de Opportunity Scan
    - Factory AI fica como view própria
    - Admin continua separado
+   - Adiciona suporte real a Github / Updates / Deploy
+   - Faz fallback seguro para dashboard se a view alvo falhar
    - Compatível com Safari / iPhone / PWA
 */
 (() => {
@@ -47,6 +49,10 @@
     "factory-ai": "factory-ai",
     "factory ai": "factory-ai",
 
+    github: "github",
+    updates: "updates",
+    deploy: "deploy",
+
     logs: "logs",
     diagnostics: "diagnostics",
     diag: "diagnostics",
@@ -64,6 +70,9 @@
     "settings",
     "factory-ai",
     "admin",
+    "github",
+    "updates",
+    "deploy",
     "logs",
     "diagnostics"
   ];
@@ -79,7 +88,7 @@
   const MOD = {
     _ctx: null,
     _mounted: false,
-    _styleId: "rcfUiViewsStyleV30",
+    _styleId: "rcfUiViewsStyleV31",
     _globalBound: false,
 
     init(ctx = {}) {
@@ -124,8 +133,10 @@
     },
 
     setView(name, opts = {}) {
-      const next = this.normalizeViewName(name || "dashboard");
-      if (!next) return false;
+      this._ensureViewsExist();
+
+      let next = this.normalizeViewName(name || "dashboard");
+      if (!next) next = "dashboard";
 
       const state = this._getState();
       const prev = this.normalizeViewName(state?.active?.view || "dashboard");
@@ -140,15 +151,21 @@
         } catch {}
       }
 
+      let target = this._getViewEl(next);
+      if (!target) {
+        next = "dashboard";
+        target = this._getViewEl("dashboard");
+      }
+
       this._hideAllViews();
       this._cleanupLegacyBleed(next);
 
-      const target = this._getViewEl(next);
       if (target) {
         target.hidden = false;
         target.style.display = "";
         target.classList.add("active");
         target.setAttribute("data-rcf-visible", "1");
+        target.setAttribute("aria-hidden", "false");
       }
 
       try {
@@ -225,11 +242,10 @@
         section.setAttribute("data-rcf-view", view);
         section.setAttribute("aria-hidden", "true");
 
-        const title = this._titleFor(view);
         section.innerHTML = `
           <div class="rcfViewPlaceholder" data-rcf-view-placeholder="${this._escAttr(view)}">
             <button class="rcfViewBackBtn" type="button" data-rcf-back-home="1">← Home</button>
-            <h1>${this._esc(title)}</h1>
+            <h1>${this._esc(this._titleFor(view))}</h1>
             <p>${this._esc(this._subtitleFor(view))}</p>
             ${this._slotsFor(view)}
           </div>
@@ -371,42 +387,6 @@
       });
     },
 
-    _clearViewBody(viewName) {
-      const view = this._getViewEl(viewName);
-      if (!view) return false;
-
-      const placeholder = view.querySelector(".rcfViewPlaceholder");
-      const keepIds = new Set([
-        "pinOut",
-        "agentOut",
-        "editorOut",
-        "diagOut",
-        "logsOut",
-        "logsViewBox",
-        "filesList",
-        "appsList",
-        "editorHead",
-        "fileContent"
-      ]);
-
-      Array.from(view.children).forEach((node) => {
-        try {
-          if (placeholder && node === placeholder) return;
-          node.remove();
-        } catch {}
-      });
-
-      Array.from(view.querySelectorAll("*")).forEach((node) => {
-        try {
-          if (!node.id) return;
-          if (keepIds.has(node.id)) return;
-          if (placeholder && placeholder.contains(node) && !node.hasAttribute("data-rcf-slot")) return;
-        } catch {}
-      });
-
-      return true;
-    },
-
     _syncSpecialModules(view) {
       const normalized = this.normalizeViewName(view);
 
@@ -431,11 +411,11 @@
         this._removeFallbackAdminBlocks();
       }
 
-      if (!["agent"].includes(normalized)) {
+      if (normalized !== "agent") {
         this._removeFallbackAgentBlocks();
       }
 
-      if (!["editor"].includes(normalized)) {
+      if (normalized !== "editor") {
         this._removeFallbackProjectsBlocks();
       }
 
@@ -462,20 +442,33 @@
         '.rcfUiCodePanel',
         '.rcfUiProjectsList'
       ].forEach((sel) => {
-        document.querySelectorAll(`#view-admin ${sel}, #view-settings ${sel}, #view-factory-ai ${sel}, #view-opportunity-scan ${sel}, #view-generator ${sel}`).forEach((el) => {
+        document.querySelectorAll(
+          `#view-admin ${sel},
+           #view-settings ${sel},
+           #view-factory-ai ${sel},
+           #view-opportunity-scan ${sel},
+           #view-generator ${sel},
+           #view-github ${sel},
+           #view-updates ${sel},
+           #view-deploy ${sel}`
+        ).forEach((el) => {
           try { el.remove(); } catch {}
         });
       });
     },
 
     _removeFallbackAgentBlocks() {
-      document.querySelectorAll('#view-agent-ia [data-rcf-ui-agent-block="1"], #view-factory-ai [data-rcf-ui-agent-block="1"], #view-settings [data-rcf-ui-agent-block="1"]').forEach((el) => {
+      document.querySelectorAll(
+        '#view-agent-ia [data-rcf-ui-agent-block="1"], #view-factory-ai [data-rcf-ui-agent-block="1"], #view-settings [data-rcf-ui-agent-block="1"]'
+      ).forEach((el) => {
         try { el.remove(); } catch {}
       });
     },
 
     _removeFallbackProjectsBlocks() {
-      document.querySelectorAll('#view-settings [data-rcf-ui-projects-block="1"], #view-factory-ai [data-rcf-ui-projects-block="1"], #view-opportunity-scan [data-rcf-ui-projects-block="1"], #view-generator [data-rcf-ui-projects-block="1"]').forEach((el) => {
+      document.querySelectorAll(
+        '#view-settings [data-rcf-ui-projects-block="1"], #view-factory-ai [data-rcf-ui-projects-block="1"], #view-opportunity-scan [data-rcf-ui-projects-block="1"], #view-generator [data-rcf-ui-projects-block="1"], #view-github [data-rcf-ui-projects-block="1"], #view-updates [data-rcf-ui-projects-block="1"], #view-deploy [data-rcf-ui-projects-block="1"]'
+      ).forEach((el) => {
         try { el.remove(); } catch {}
       });
     },
@@ -549,6 +542,9 @@
         settings: "Settings",
         "factory-ai": "Factory AI",
         admin: "Admin",
+        github: "Github",
+        updates: "Updates",
+        deploy: "Deploy",
         logs: "Logs",
         diagnostics: "Diagnostics"
       };
@@ -567,6 +563,9 @@
         settings: "Configurações da Factory.",
         "factory-ai": "Supervisão e evolução da Factory.",
         admin: "Ferramentas administrativas e manutenção.",
+        github: "Integração, sync e versionamento.",
+        updates: "Atualizações e hotfix da Factory.",
+        deploy: "Preparação e entrega de publicação.",
         logs: "Visualização de logs.",
         diagnostics: "Diagnóstico e estabilidade."
       };
@@ -601,6 +600,27 @@
           <div id="rcfAdminSlotIntegrations" data-rcf-slot="admin.integrations"></div>
           <div id="rcfAdminSlotLogs" data-rcf-slot="admin.logs"></div>
           <div id="admin-injector" data-rcf-slot="admin.injector"></div>
+        `;
+      }
+
+      if (view === "github") {
+        return `
+          <div id="rcfGithubSlotTop" data-rcf-slot="github.top"></div>
+          <div id="rcfGithubSlotMain" data-rcf-slot="github.main"></div>
+        `;
+      }
+
+      if (view === "updates") {
+        return `
+          <div id="rcfUpdatesSlotTop" data-rcf-slot="updates.top"></div>
+          <div id="rcfUpdatesSlotMain" data-rcf-slot="updates.main"></div>
+        `;
+      }
+
+      if (view === "deploy") {
+        return `
+          <div id="rcfDeploySlotTop" data-rcf-slot="deploy.top"></div>
+          <div id="rcfDeploySlotMain" data-rcf-slot="deploy.main"></div>
         `;
       }
 
