@@ -1,12 +1,13 @@
 /* FILE: /app/js/ui/ui_views.js
    RControl Factory — UI Views enhancer
-   - Compatível com a nova arquitetura modular
+   V2.2 SAFE NAV MAP
+   - Compatível com a arquitetura modular atual
    - Mantém fallback leve
    - Evita reinjeções duplicadas
-   - Não quebra fluxo antigo
-   - PATCH: corrige mapeamento dos cards principais
-   - PATCH: separa Admin de Factory AI
-   - PATCH: evita sobrescrever #appsList do dashboard novo
+   - Corrige mapeamento dos cards/top nav/bottom nav
+   - Separa Admin de Factory AI
+   - Normaliza views legadas: factory/system -> admin
+   - Mantém Factory AI como ação própria
 */
 (() => {
   "use strict";
@@ -37,14 +38,42 @@
     }
   }
 
-  function hasNewFactoryMounted() {
-    return !!qs(
-      "#rcfFactoryUiRoot, #rcfRoot .rcfMobileModules, #rcfRoot .rcfBottomNav, [data-rcf-ui-dashboard-root='1'], [data-rcf-ui-factory-root='1']"
-    );
+  function normalizeViewName(raw) {
+    const v = String(raw || "").trim().toLowerCase();
+
+    if (!v) return "";
+
+    if (v === "home") return "dashboard";
+    if (v === "dashboard") return "dashboard";
+
+    if (v === "apps") return "newapp";
+    if (v === "newapp") return "newapp";
+    if (v === "new-app") return "newapp";
+    if (v === "new app") return "newapp";
+
+    if (v === "editor") return "editor";
+    if (v === "agent") return "agent";
+    if (v === "generator") return "generator";
+
+    if (v === "factory") return "admin";
+    if (v === "system") return "admin";
+    if (v === "admin") return "admin";
+
+    if (v === "factoryai") return "factoryai";
+    if (v === "factory-ai") return "factoryai";
+    if (v === "factory ai") return "factoryai";
+
+    if (v === "logs") return "logs";
+    if (v === "settings") return "settings";
+    if (v === "diagnostics") return "diagnostics";
+    if (v === "diag") return "diagnostics";
+    if (v === "doctor") return "diagnostics";
+
+    return v;
   }
 
-  function hasDashboardSafeMounted() {
-    return !!qs('[data-rcf-ui-dashboard-root="1"], #view-dashboard [data-rcf-ui="dashboard-section"]');
+  function hasNewFactoryMounted() {
+    return !!qs("#rcfFactoryUiRoot, #rcfRoot .rcfMobileModules, #rcfRoot .rcfBottomNav");
   }
 
   function makeMenuCard(iconClass, title, subtitle, view, extraAttrs = "") {
@@ -92,25 +121,34 @@
       return true;
     } catch {}
 
+    try {
+      document.dispatchEvent(new CustomEvent("RCF:FACTORY_AI", {
+        detail: { source: "ui_views", target: "factoryai" }
+      }));
+      return true;
+    } catch {}
+
     return false;
   }
 
   function navTo(view) {
-    const v = String(view || "").trim().toLowerCase();
+    const v = normalizeViewName(view);
+
+    if (!v) return false;
 
     if (v === "factoryai") {
       if (openFactoryAI()) return true;
 
       try {
         if (window.RCF && typeof window.RCF.setView === "function") {
-          window.RCF.setView("admin");
+          window.RCF.setView("agent");
           return true;
         }
       } catch {}
 
       try {
         document.dispatchEvent(new CustomEvent("rcf:view", {
-          detail: { view: "admin", source: "factoryai-fallback" }
+          detail: { view: "agent", source: "factoryai-fallback" }
         }));
         return true;
       } catch {}
@@ -133,10 +171,114 @@
     return false;
   }
 
+  function normalizeNodeView(node) {
+    if (!node || typeof node.getAttribute !== "function") return "";
+    const raw = node.getAttribute("data-view") || node.getAttribute("data-rcf-nav-view") || "";
+    const norm = normalizeViewName(raw);
+
+    try {
+      if (norm && raw !== norm && node.hasAttribute("data-view")) node.setAttribute("data-view", norm);
+    } catch {}
+
+    try {
+      if (norm && raw !== norm && node.hasAttribute("data-rcf-nav-view")) node.setAttribute("data-rcf-nav-view", norm);
+    } catch {}
+
+    return norm;
+  }
+
+  function relabelBottomNav(root = document) {
+    const map = {
+      dashboard: "Home",
+      newapp: "Apps",
+      editor: "Editor",
+      agent: "Agent",
+      generator: "Generator",
+      admin: "Admin",
+      logs: "Logs"
+    };
+
+    qsa(".rcfBottomNav .tab[data-view]", root).forEach(tab => {
+      const norm = normalizeNodeView(tab);
+      if (!norm) return;
+
+      const label = map[norm];
+      if (!label) return;
+
+      try { tab.textContent = label; } catch {}
+    });
+  }
+
+  function relabelTopNav(root = document) {
+    const map = {
+      dashboard: "Dashboard",
+      newapp: "New App",
+      editor: "Editor",
+      agent: "Agent",
+      generator: "Generator",
+      admin: "Admin",
+      logs: "Logs",
+      settings: "Settings",
+      diagnostics: "Diagnostics"
+    };
+
+    qsa("#rcfRoot [data-view]", root).forEach(btn => {
+      if (btn.closest(".rcfBottomNav")) return;
+      if (btn.classList.contains("rcfMobileModuleCard")) return;
+
+      const norm = normalizeNodeView(btn);
+      if (!norm) return;
+
+      const label = map[norm];
+      if (!label) return;
+
+      const txt = (btn.textContent || "").trim().toLowerCase();
+      const isSimplePill =
+        txt === "factory" ||
+        txt === "system" ||
+        txt === "dashboard" ||
+        txt === "editor" ||
+        txt === "agent" ||
+        txt === "logs" ||
+        txt === "new app" ||
+        txt === "apps" ||
+        txt === "generator" ||
+        txt === "admin";
+
+      if (!isSimplePill) return;
+
+      try { btn.textContent = label; } catch {}
+    });
+  }
+
+  function relabelLegacyHeroButtons(root = document) {
+    const buttons = qsa("#rcfRoot button", root);
+
+    buttons.forEach(btn => {
+      const txt = String(btn.textContent || "").trim().toLowerCase();
+
+      if (txt === "factory") {
+        const norm = normalizeNodeView(btn);
+        if (norm === "admin") {
+          try { btn.textContent = "Admin"; } catch {}
+        }
+      }
+
+      if (txt === "system") {
+        try {
+          btn.setAttribute("data-view", "admin");
+          btn.textContent = "Admin";
+        } catch {}
+      }
+    });
+  }
+
   function bindNavCards(host) {
     qsa("[data-rcf-nav-view]", host).forEach(btn => {
       if (btn.__rcf_nav_bound__) return;
       btn.__rcf_nav_bound__ = true;
+
+      normalizeNodeView(btn);
 
       btn.addEventListener("click", () => {
         navTo(btn.getAttribute("data-rcf-nav-view"));
@@ -149,6 +291,8 @@
       if (btn.__rcf_mobile_nav_bound__) return;
       btn.__rcf_mobile_nav_bound__ = true;
 
+      normalizeNodeView(btn);
+
       btn.addEventListener("click", () => {
         navTo(btn.getAttribute("data-view"));
       }, { passive: true });
@@ -158,10 +302,16 @@
       if (btn.__rcf_bottom_nav_bound__) return;
       btn.__rcf_bottom_nav_bound__ = true;
 
+      normalizeNodeView(btn);
+
       btn.addEventListener("click", () => {
         navTo(btn.getAttribute("data-view"));
       }, { passive: true });
     });
+
+    relabelBottomNav(root);
+    relabelTopNav(root);
+    relabelLegacyHeroButtons(root);
   }
 
   function buildDashboardCards() {
@@ -177,38 +327,26 @@
   }
 
   function ensureDashboardCardsFallback() {
-    if (hasNewFactoryMounted() || hasDashboardSafeMounted()) {
+    const host = qs("#appsList");
+    if (!host) return false;
+
+    if (hasNewFactoryMounted()) {
+      host.setAttribute("data-rcf-ui-enhanced", "factory-view");
       bindShellMobileCards(document);
       return true;
-    }
-
-    const view = qs("#view-dashboard");
-    if (!view) return false;
-
-    let host = qs('[data-rcf-ui-dashboard-fallback-menu="1"]', view);
-
-    if (!host) {
-      const appsList = qs("#appsList", view);
-
-      if (appsList && appsList.closest('[data-rcf-ui="dashboard-section"]')) {
-        return true;
-      }
-
-      host = document.createElement("div");
-      host.setAttribute("data-rcf-ui-dashboard-fallback-menu", "1");
-      host.className = "rcfUiDashboardFallbackMenu";
-
-      if (appsList && appsList.parentNode) {
-        appsList.parentNode.insertBefore(host, appsList);
-      } else {
-        view.appendChild(host);
-      }
     }
 
     if (host.getAttribute("data-rcf-ui-enhanced") === "1") {
       bindNavCards(host);
       return true;
     }
+
+    try {
+      const rt = window.RCF_UI_RUNTIME;
+      if (rt && typeof rt.renderAppsList === "function") {
+        rt.renderAppsList();
+      }
+    } catch {}
 
     host.innerHTML = buildDashboardCards();
     host.setAttribute("data-rcf-ui-enhanced", "1");
@@ -342,11 +480,23 @@ startFactoryDeploy();</pre>
     }
   }
 
+  function normalizeLegacyButtons(root = document) {
+    qsa("#rcfRoot [data-view], #rcfRoot [data-rcf-nav-view]", root).forEach(node => {
+      normalizeNodeView(node);
+    });
+  }
+
   const API = {
     __mounted: false,
 
+    init() {
+      return this;
+    },
+
     mount() {
       try {
+        normalizeLegacyButtons(document);
+
         if (hasNewFactoryMounted()) {
           bindShellMobileCards(document);
           syncProjectsWithCodePanel();
@@ -357,8 +507,24 @@ startFactoryDeploy();</pre>
         ensureDashboardCardsFallback();
         ensureAgentCardsFallback();
         ensureProjectsPanelFallback();
+        relabelBottomNav(document);
+        relabelTopNav(document);
+        relabelLegacyHeroButtons(document);
 
         this.__mounted = true;
+        return true;
+      } catch {
+        return false;
+      }
+    },
+
+    refresh() {
+      try {
+        normalizeLegacyButtons(document);
+        bindShellMobileCards(document);
+        relabelBottomNav(document);
+        relabelTopNav(document);
+        relabelLegacyHeroButtons(document);
         return true;
       } catch {
         return false;
