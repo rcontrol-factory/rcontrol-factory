@@ -1,9 +1,9 @@
 /* FILE: /app/js/ui/ui_dashboard.js
    RControl Factory — UI Dashboard
-   V3.4 FAST HOME NAV FIXED + SAFE REBIND + SAFE ROUTE FALLBACK
+   V3.5 FAST HOME NAV FIXED + SPECIAL PANELS
    - Home leve e rápida para Safari / iPhone / PWA
    - Card normal abre tela direto
-   - Só cards especiais expandem (Dashboard / RCF Factory)
+   - Dashboard e RCF Factory abrem painel próprio (sem empurrar texto)
    - Ícones não ficam vazios
    - Menos re-render pesado
    - Esconde shell/cabeçalho legado na Home
@@ -24,8 +24,10 @@
     _viewSel: "#view-dashboard",
     _surfaceSel: "#rcfDashboardSurface",
     _gridSel: "#rcfDashboardCards",
+    _detailSel: "#rcfDashboardDetailPanel",
     _expandedCardId: null,
-    _bindVersion: "v3.4",
+    _bindVersion: "v3.5",
+    _openSpecialPanel: null,
 
     init(ctx = {}) {
       this._ctx = Object.assign({}, this._ctx || {}, ctx || {});
@@ -41,6 +43,7 @@
       this._bindWithinDashboard();
       this._markDashboardMode();
       this._syncDynamicBits();
+      this._applySpecialPanelState();
       this._booted = true;
       return true;
     },
@@ -53,6 +56,7 @@
       this._bindWithinDashboard();
       this._markDashboardMode();
       this._syncDynamicBits();
+      this._applySpecialPanelState();
       return true;
     },
 
@@ -72,6 +76,7 @@
       }
 
       this._syncDynamicBits();
+      this._applySpecialPanelState();
       return true;
     },
 
@@ -106,6 +111,10 @@
 
     _grid() {
       try { return document.querySelector(this._gridSel); } catch { return null; }
+    },
+
+    _detailPanel() {
+      try { return document.querySelector(this._detailSel); } catch { return null; }
     },
 
     _getState() {
@@ -275,6 +284,22 @@
       } catch {}
 
       return false;
+    },
+
+    _openSpecial(name) {
+      const panel = String(name || "").trim();
+      if (!panel) return false;
+      this._expandedCardId = null;
+      this._openSpecialPanel = panel;
+      this._applyExpandedState();
+      this._applySpecialPanelState();
+      return true;
+    },
+
+    _closeSpecial() {
+      this._openSpecialPanel = null;
+      this._applySpecialPanelState();
+      return true;
     },
 
     _ensureStyle() {
@@ -447,7 +472,8 @@
 
 #view-dashboard .rcfDashCardHead:focus,
 #view-dashboard .rcfDashActionBtn:focus,
-#view-dashboard .rcfDashAppGo:focus{
+#view-dashboard .rcfDashAppGo:focus,
+#view-dashboard .rcfDashDetailBack:focus{
   outline:none;
 }
 
@@ -572,7 +598,8 @@
   gap:8px;
 }
 
-#view-dashboard .rcfDashActionBtn{
+#view-dashboard .rcfDashActionBtn,
+#view-dashboard .rcfDashDetailBtn{
   display:inline-flex;
   align-items:center;
   justify-content:center;
@@ -590,12 +617,14 @@
   touch-action:manipulation;
 }
 
-#view-dashboard .rcfDashActionBtn.primary{
+#view-dashboard .rcfDashActionBtn.primary,
+#view-dashboard .rcfDashDetailBtn.primary{
   background:linear-gradient(180deg, rgba(112,152,255,.16), rgba(112,152,255,.08));
   border-color:rgba(112,152,255,.16);
 }
 
-#view-dashboard .rcfDashActionBtn.ghost{
+#view-dashboard .rcfDashActionBtn.ghost,
+#view-dashboard .rcfDashDetailBtn.ghost{
   background:rgba(255,255,255,.70);
 }
 
@@ -695,6 +724,63 @@
   touch-action:manipulation;
 }
 
+#view-dashboard .rcfDashDetailPanel{
+  display:none;
+  position:relative;
+  border-radius:22px;
+  border:1px solid rgba(108,125,160,.10);
+  background:linear-gradient(180deg,rgba(255,255,255,.95),rgba(246,248,252,.86));
+  box-shadow:0 10px 24px rgba(28,40,69,.06);
+  padding:16px;
+}
+
+#view-dashboard .rcfDashDetailPanel.is-open{
+  display:grid;
+  gap:12px;
+}
+
+#view-dashboard .rcfDashDetailTop{
+  display:flex;
+  align-items:center;
+  gap:10px;
+}
+
+#view-dashboard .rcfDashDetailBack{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  min-height:42px;
+  padding:10px 14px;
+  border-radius:14px;
+  border:1px solid rgba(88,106,141,.09);
+  background:rgba(255,255,255,.78);
+  color:#243150;
+  font-size:13px;
+  font-weight:900;
+  cursor:pointer;
+}
+
+#view-dashboard .rcfDashDetailTitle{
+  margin:0;
+  font-size:20px;
+  line-height:1.08;
+  font-weight:900;
+  color:#243150;
+}
+
+#view-dashboard .rcfDashDetailText{
+  margin:0;
+  font-size:13px;
+  line-height:1.46;
+  color:rgba(37,50,78,.84);
+}
+
+#view-dashboard .rcfDashDetailActions{
+  display:grid;
+  grid-template-columns:1fr;
+  gap:8px;
+}
+
 @media (max-width: 720px){
   #view-dashboard .rcfDashMobileHome{
     padding-top:10px;
@@ -719,6 +805,7 @@
     font-size:19px;
   }
 }
+
       `.trim();
 
       document.head.appendChild(st);
@@ -788,6 +875,14 @@
         surface.appendChild(grid);
       }
 
+      let detail = view.querySelector(this._detailSel);
+      if (!detail) {
+        detail = document.createElement("section");
+        detail.id = this._detailSel.replace("#", "");
+        detail.className = "rcfDashDetailPanel";
+        surface.appendChild(detail);
+      }
+
       return true;
     },
 
@@ -806,7 +901,7 @@
           sub: "Visão central da Factory",
           body: "Painel principal com leitura rápida do estado da Factory, apps ativos e operação geral.",
           chips: ["Painel", "Resumo", "Métricas"],
-          expandable: true,
+          specialPanel: "dashboard-panel",
           stats: [
             { label: "Apps", value: String(appsCount) },
             { label: "Ativo", value: activeSlug || "—" },
@@ -1012,7 +1107,7 @@
           sub: "Core, tools e manutenção especial",
           body: "Card especial do núcleo da Factory. Aqui ficam os acessos de ferramentas, doctor e manutenção central, sem misturar com Factory AI.",
           chips: ["Factory", "Core", "Doctor"],
-          expandable: true,
+          specialPanel: "rcf-factory-special",
           actions: [
             { label: "Abrir Tools", action: "open-tools", kind: "primary" },
             { label: "Abrir Doctor", action: "open-doctor", kind: "ghost" },
@@ -1064,6 +1159,78 @@
       `;
     },
 
+    _buildSpecialPanelHtml(name) {
+      const appsCount = this._getApps().length;
+      const activeApp = this._getActiveApp();
+      const activeSlug = activeApp && activeApp.slug ? activeApp.slug : "—";
+
+      if (name === "dashboard-panel") {
+        return `
+          <div class="rcfDashDetailTop">
+            <button class="rcfDashDetailBack" type="button" data-rcf-close-special="1">← Voltar</button>
+            <div>
+              <h2 class="rcfDashDetailTitle">Dashboard</h2>
+            </div>
+          </div>
+          <p class="rcfDashDetailText">Painel principal da Factory com leitura rápida do estado atual.</p>
+          <div class="rcfDashStats">
+            <div class="rcfDashStat"><div class="rcfDashStatLabel">Apps</div><div class="rcfDashStatValue">${this._esc(String(appsCount))}</div></div>
+            <div class="rcfDashStat"><div class="rcfDashStatLabel">Ativo</div><div class="rcfDashStatValue">${this._esc(activeSlug)}</div></div>
+            <div class="rcfDashStat"><div class="rcfDashStatLabel">Modo</div><div class="rcfDashStatValue">SAFE</div></div>
+            <div class="rcfDashStat"><div class="rcfDashStatLabel">UI</div><div class="rcfDashStatValue">ON</div></div>
+          </div>
+          <div class="rcfDashDetailActions">
+            <button class="rcfDashDetailBtn primary" type="button" data-rcf-action="refresh-dashboard">Atualizar painel</button>
+            <button class="rcfDashDetailBtn ghost" type="button" data-view="logs" data-rcf-open-view="logs">Abrir Logs</button>
+            <button class="rcfDashDetailBtn ghost" type="button" data-view="diagnostics" data-rcf-open-view="diagnostics">Abrir Diagnostics</button>
+          </div>
+        `;
+      }
+
+      if (name === "rcf-factory-special") {
+        return `
+          <div class="rcfDashDetailTop">
+            <button class="rcfDashDetailBack" type="button" data-rcf-close-special="1">← Voltar</button>
+            <div>
+              <h2 class="rcfDashDetailTitle">RCF Factory</h2>
+            </div>
+          </div>
+          <p class="rcfDashDetailText">Núcleo central da Factory com ferramentas, doctor e manutenção especial.</p>
+          <div class="rcfDashMeta">
+            <span class="rcfDashMetaChip">Factory</span>
+            <span class="rcfDashMetaChip">Core</span>
+            <span class="rcfDashMetaChip">Doctor</span>
+          </div>
+          <div class="rcfDashDetailActions">
+            <button class="rcfDashDetailBtn primary" type="button" data-rcf-action="open-tools">Abrir Tools</button>
+            <button class="rcfDashDetailBtn ghost" type="button" data-rcf-action="open-doctor">Abrir Doctor</button>
+            <button class="rcfDashDetailBtn ghost" type="button" data-view="admin" data-rcf-open-view="admin">Abrir Admin</button>
+          </div>
+        `;
+      }
+
+      return "";
+    },
+
+    _applySpecialPanelState() {
+      try {
+        const panel = this._detailPanel();
+        const grid = this._grid();
+        if (!panel || !grid) return;
+
+        if (!this._openSpecialPanel) {
+          panel.classList.remove("is-open");
+          panel.innerHTML = "";
+          grid.style.display = "";
+          return;
+        }
+
+        panel.innerHTML = this._buildSpecialPanelHtml(this._openSpecialPanel);
+        panel.classList.add("is-open");
+        grid.style.display = "none";
+      } catch {}
+    },
+
     _renderCards(force) {
       const grid = this._grid();
       if (!grid) return false;
@@ -1087,8 +1254,8 @@
         let headAttrs = "";
         if (card.route) {
           headAttrs = `data-view="${this._escAttr(card.route)}" data-rcf-route-view="${this._escAttr(card.route)}"`;
-        } else if (card.expandable) {
-          headAttrs = `data-rcf-toggle-card="${this._escAttr(card.id)}"`;
+        } else if (card.specialPanel) {
+          headAttrs = `data-rcf-special-panel="${this._escAttr(card.specialPanel)}"`;
         }
 
         return `
@@ -1150,15 +1317,6 @@
         const activeApp = this._getActiveApp();
         const activeSlug = activeApp && activeApp.slug ? activeApp.slug : "—";
 
-        const panel = document.querySelector('[data-rcf-card="dashboard-panel"]');
-        if (panel) {
-          const statVals = panel.querySelectorAll(".rcfDashStatValue");
-          if (statVals[0]) statVals[0].textContent = String(appsCount);
-          if (statVals[1]) statVals[1].textContent = activeSlug;
-          if (statVals[2]) statVals[2].textContent = "SAFE";
-          if (statVals[3]) statVals[3].textContent = "ON";
-        }
-
         const appsCard = document.querySelector('[data-rcf-card="apps"] .rcfDashCardSub');
         if (appsCard) {
           appsCard.textContent = appsCount ? `${appsCount} app(s) salvo(s)` : "Criar & gerenciar";
@@ -1169,6 +1327,10 @@
           const existing = appsBody.querySelector(".rcfDashAppsList, .rcfDashEmpty");
           const html = this._renderAppsSnapshot();
           if (existing) existing.outerHTML = html;
+        }
+
+        if (this._openSpecialPanel) {
+          this._applySpecialPanelState();
         }
       } catch {}
     },
@@ -1182,8 +1344,6 @@
           const id = String(card.getAttribute("data-rcf-card") || "");
           const open = !!this._expandedCardId && this._expandedCardId === id;
           card.classList.toggle("is-open", open);
-          const btn = card.querySelector("[data-rcf-toggle-card]");
-          if (btn) btn.setAttribute("aria-expanded", open ? "true" : "false");
         });
       } catch {}
     },
@@ -1199,21 +1359,29 @@
       } catch {}
 
       const handler = (ev) => {
+        const specialBtn = ev.target && ev.target.closest ? ev.target.closest("[data-rcf-special-panel]") : null;
+        if (specialBtn) {
+          ev.preventDefault();
+          ev.stopPropagation();
+          const panel = String(specialBtn.getAttribute("data-rcf-special-panel") || "").trim();
+          if (panel) this._openSpecial(panel);
+          return;
+        }
+
+        const closeSpecial = ev.target && ev.target.closest ? ev.target.closest("[data-rcf-close-special]") : null;
+        if (closeSpecial) {
+          ev.preventDefault();
+          ev.stopPropagation();
+          this._closeSpecial();
+          return;
+        }
+
         const routeBtn = ev.target && ev.target.closest ? ev.target.closest("[data-rcf-route-view]") : null;
         if (routeBtn) {
           ev.preventDefault();
           ev.stopPropagation();
           const next = String(routeBtn.getAttribute("data-rcf-route-view") || routeBtn.getAttribute("data-view") || "").trim();
           if (next) this._openViewSafe(next);
-          return;
-        }
-
-        const toggle = ev.target && ev.target.closest ? ev.target.closest("[data-rcf-toggle-card]") : null;
-        if (toggle) {
-          ev.preventDefault();
-          ev.stopPropagation();
-          const id = String(toggle.getAttribute("data-rcf-toggle-card") || "").trim();
-          this.toggleCard(id);
           return;
         }
 
@@ -1254,18 +1422,6 @@
           try { this.refresh(this._ctx || {}); } catch {}
         });
       }
-    },
-
-    toggleCard(id) {
-      const next = String(id || "").trim();
-      if (!next) return false;
-
-      if (this._expandedCardId === next) this._expandedCardId = null;
-      else this._expandedCardId = next;
-
-      this._applyExpandedState();
-      this._markDashboardMode();
-      return true;
     },
 
     _markDashboardMode() {
