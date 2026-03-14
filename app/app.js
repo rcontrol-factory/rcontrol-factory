@@ -650,6 +650,7 @@
     try {
       if (__uiVisualModulesPromise) return __uiVisualModulesPromise;
       __uiVisualModulesPromise = (async () => {
+        await loadScriptOnce("./js/core/ui_shell.js", "data-rcf-ui-shell");
         await loadScriptOnce("./js/ui/ui_bootstrap.js", "data-rcf-ui-bootstrap");
         await loadScriptOnce("./js/ui/ui_views.js", "data-rcf-ui-views");
         await loadScriptOnce("./js/ui/ui_header.js", "data-rcf-ui-header");
@@ -659,6 +660,7 @@
         await loadScriptOnce("./js/ui/ui_projects.js", "data-rcf-ui-projects");
         await loadScriptOnce("./js/ui/ui_factory_view.js", "data-rcf-ui-factory-view");
         return {
+          shell: window.RCF_UI_SHELL || null,
           bootstrap: window.RCF_UI_BOOTSTRAP || null,
           views: window.RCF_UI_VIEWS || null,
           header: window.RCF_UI_HEADER || null,
@@ -672,6 +674,7 @@
       return await __uiVisualModulesPromise;
     } catch {
       return {
+        shell: window.RCF_UI_SHELL || null,
         bootstrap: window.RCF_UI_BOOTSTRAP || null,
         views: window.RCF_UI_VIEWS || null,
         header: window.RCF_UI_HEADER || null,
@@ -685,16 +688,22 @@
   }
 
   function callModuleMethod(mod, methods, arg) {
+    let called = 0;
     try {
-      if (!mod || typeof mod !== "object") return false;
+      if (!mod || typeof mod !== "object") return 0;
       for (const name of methods) {
         const fn = mod && mod[name];
-        if (typeof fn === "function") {
-          try { fn.call(mod, arg); return true; } catch (e) { Logger.write(`module ${name} err:`, e?.message || e); }
+        if (typeof fn !== "function") continue;
+        try {
+          fn.call(mod, arg);
+          called++;
+          try { Logger.write("module phase:", name); } catch {}
+        } catch (e) {
+          try { Logger.write(`module ${name} err:`, e?.message || e); } catch {}
         }
       }
     } catch {}
-    return false;
+    return called;
   }
 
   function mountApprovedVisualModules(stage = "mount", extra = {}) {
@@ -714,23 +723,36 @@
     };
 
     const mods = [
-      window.RCF_UI_BOOTSTRAP,
-      window.RCF_UI_VIEWS,
-      window.RCF_UI_HEADER,
-      window.RCF_UI_DASHBOARD,
-      window.RCF_UI_CARDS,
-      window.RCF_UI_APPS_WIDGETS,
-      window.RCF_UI_PROJECTS,
-      window.RCF_UI_FACTORY_VIEW
+      ["RCF_UI_BOOTSTRAP", window.RCF_UI_BOOTSTRAP],
+      ["RCF_UI_VIEWS", window.RCF_UI_VIEWS],
+      ["RCF_UI_HEADER", window.RCF_UI_HEADER],
+      ["RCF_UI_DASHBOARD", window.RCF_UI_DASHBOARD],
+      ["RCF_UI_CARDS", window.RCF_UI_CARDS],
+      ["RCF_UI_APPS_WIDGETS", window.RCF_UI_APPS_WIDGETS],
+      ["RCF_UI_PROJECTS", window.RCF_UI_PROJECTS],
+      ["RCF_UI_FACTORY_VIEW", window.RCF_UI_FACTORY_VIEW]
     ];
 
+    const methods = (stage === "post-hydrate") ? ["refresh"] : ["init", "mount"];
     let called = 0;
-    for (const mod of mods) {
+
+    for (const [modName, mod] of mods) {
       if (!mod || typeof mod !== "object") continue;
-      if (callModuleMethod(mod, stage === "post-hydrate"
-        ? ["remountSoft", "refresh", "mount", "init"]
-        : ["mount", "remountSoft", "refresh", "init"], ctx)) {
+      let phases = 0;
+      for (const method of methods) {
+        const fn = mod && mod[method];
+        if (typeof fn !== "function") continue;
+        try {
+          fn.call(mod, ctx);
+          phases++;
+          try { Logger.write("visual module phase:", modName, method, stage); } catch {}
+        } catch (e) {
+          try { Logger.write(`visual module ${method} err:`, modName, e?.message || e); } catch {}
+        }
+      }
+      if (phases > 0) {
         called++;
+        try { Logger.write("visual module ok:", modName, stage, `phases=${phases}`); } catch {}
       }
     }
 
@@ -952,17 +974,31 @@
               <select id="injMode"><option value="INSERT">INSERT</option><option value="REPLACE">REPLACE</option><option value="DELETE">DELETE</option></select>
               <select id="injTarget"></select>
               <textarea id="injPayload" rows="8" spellcheck="false"></textarea>
+              <div>
+                <button id="btnPreview" type="button">Preview</button>
+                <button id="btnApply" type="button">Apply</button>
+                <button id="btnRollback" type="button">Rollback</button>
+              </div>
               <pre id="diffOut">Pronto.</pre>
               <div id="rcfAdminSlotLogs" data-rcf-slot="admin.logs"><pre id="injLog" class="rcf-collapsed">Pronto.</pre></div>
             </div>
             <pre id="maintOut">Pronto.</pre>
           </section>
           <section class="view" id="view-diagnostics" data-rcf-view="diagnostics" hidden>
+            <div>
+              <button id="btnRunV8Check" type="button">Run V8 Check</button>
+              <button id="btnScanOverlays" type="button">Scan Overlays</button>
+              <button id="btnMicroTests" type="button">Microtests</button>
+            </div>
             <pre id="diagOut">Pronto.</pre>
           </section>
         </main>
         <aside id="toolsDrawer" data-rcf-panel="tools.drawer">
           <div id="statusText" data-rcf="status.text">OK ✅</div>
+          <div>
+            <button id="btnClearCaches" type="button">Clear SW Cache</button>
+            <button id="btnUnregisterSW" type="button">Unregister SW</button>
+          </div>
           <pre id="logsBox">Pronto.</pre>
           <button id="btnCloseTools" type="button">Fechar</button>
         </aside>
@@ -1047,11 +1083,19 @@
     ensure("injMode", "select", "#admin-injector");
     ensure("injTarget", "select", "#admin-injector");
     ensure("injPayload", "textarea", "#admin-injector");
+    ensure("btnPreview", "button", "#admin-injector");
+    ensure("btnApply", "button", "#admin-injector");
+    ensure("btnRollback", "button", "#admin-injector");
     ensure("diffOut", "pre", "#admin-injector");
     ensure("injLog", "pre", "#admin-injector");
     ensure("maintOut", "pre", "#view-admin");
+    ensure("btnRunV8Check", "button", "#view-diagnostics");
+    ensure("btnScanOverlays", "button", "#view-diagnostics");
+    ensure("btnMicroTests", "button", "#view-diagnostics");
     ensure("diagOut", "pre", "#view-diagnostics");
     ensure("btnOpenTools", "button", "#rcfRoot");
+    ensure("btnClearCaches", "button", "#toolsDrawer");
+    ensure("btnUnregisterSW", "button", "#toolsDrawer");
     ensure("btnCloseTools", "button", "#toolsDrawer");
     ensure("rcfFab", "button", "#rcfRoot");
     ensure("rcfFabPanel", "div", "#rcfRoot");
@@ -2645,6 +2689,90 @@
     bindTap($("#btnAgentHelp"), () => uiMsg("#agentOut", Agent.help()));
     bindTap($("#btnSaveFile"), () => saveFile());
     bindTap($("#btnToggleInjectorLog"), () => toggleInjectorLogCollapsed());
+    bindTap($("#btnPreview"), async () => {
+      try {
+        const r = await injectorPreview();
+        if (!r?.ok) uiMsg("#diffOut", "❌ " + (r?.err || "preview falhou"));
+      } catch (e) {
+        uiMsg("#diffOut", "❌ " + (e?.message || e));
+      }
+    });
+    bindTap($("#btnApply"), async () => {
+      try {
+        safeSetStatus("Apply…");
+        syncFabStatusText();
+        const r = await injectorApplySafe();
+        if (!r?.ok) uiMsg("#diffOut", "❌ APPLY FAIL" + (r?.rolledBack ? " (rollback feito)" : ""));
+        safeSetStatus("OK ✅");
+        syncFabStatusText();
+      } catch (e) {
+        safeSetStatus("ERRO ❌");
+        syncFabStatusText();
+        uiMsg("#diffOut", "❌ " + (e?.message || e));
+      }
+    });
+    bindTap($("#btnRollback"), async () => {
+      try {
+        safeSetStatus("Rollback…");
+        syncFabStatusText();
+        const r = await injectorRollback();
+        if (!r?.ok) uiMsg("#diffOut", "❌ rollback falhou");
+        safeSetStatus("OK ✅");
+        syncFabStatusText();
+      } catch (e) {
+        safeSetStatus("ERRO ❌");
+        syncFabStatusText();
+        uiMsg("#diffOut", "❌ " + (e?.message || e));
+      }
+    });
+    bindTap($("#btnRunV8Check"), async () => {
+      try {
+        const r = await runV8StabilityCheck();
+        if (r?.report) uiMsg("#diagOut", r.report);
+      } catch (e) {
+        uiMsg("#diagOut", "❌ " + (e?.message || e));
+      }
+    });
+    bindTap($("#btnScanOverlays"), () => {
+      try {
+        const r = scanOverlays();
+        uiMsg("#diagOut", JSON.stringify(r, null, 2));
+      } catch (e) {
+        uiMsg("#diagOut", "❌ " + (e?.message || e));
+      }
+    });
+    bindTap($("#btnMicroTests"), () => {
+      try {
+        const r = runMicroTests();
+        uiMsg("#diagOut", JSON.stringify(r, null, 2));
+      } catch (e) {
+        uiMsg("#diagOut", "❌ " + (e?.message || e));
+      }
+    });
+    bindTap($("#btnClearCaches"), async () => {
+      try {
+        const r = await swClearCaches();
+        safeSetStatus(r?.ok ? "Caches limpos ✅" : "ERRO ❌");
+        syncFabStatusText();
+        Logger.write("cache clear:", r?.ok ? "ok" : "fail", safeJsonStringify(r || {}));
+      } catch (e) {
+        safeSetStatus("ERRO ❌");
+        syncFabStatusText();
+        Logger.write("cache clear err:", e?.message || e);
+      }
+    });
+    bindTap($("#btnUnregisterSW"), async () => {
+      try {
+        const r = await swUnregisterAll();
+        safeSetStatus(r?.ok ? "SW removido ✅" : "ERRO ❌");
+        syncFabStatusText();
+        Logger.write("sw unregister:", r?.ok ? "ok" : "fail", safeJsonStringify(r || {}));
+      } catch (e) {
+        safeSetStatus("ERRO ❌");
+        syncFabStatusText();
+        Logger.write("sw unregister err:", e?.message || e);
+      }
+    });
     bindTap($("#btnPinSave"), () => {
       const pin = String($("#pinInput")?.value || "").trim();
       if (!pin) return uiMsg("#pinOut", "⚠️ PIN vazio.");
