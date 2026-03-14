@@ -1,11 +1,10 @@
 /* FILE: /app/js/ui/ui_dashboard.js
    RControl Factory — UI Dashboard
-   - Home mobile com cards verticais organizados
-   - Esconde cabeçalho/abas antigas quando estiver na Home
-   - Cards comuns entram direto na tela
-   - Apenas RCF Factory permanece como card especial expansível
-   - Github / Updates / Deploy / Dashboard possuem rota própria
-   - Compatível com Safari / iPhone / PWA
+   - Home mobile leve e direta
+   - Cards principais com navegação imediata
+   - Apenas RCF Factory permanece expansível
+   - Menos custo visual para Safari / iPhone / PWA
+   - Corrige sensação de travamento ao entrar nos módulos
 */
 (() => {
   "use strict";
@@ -73,11 +72,12 @@
       return ctxState || rootState || { apps: [], active: { view: "dashboard" } };
     },
 
-    _setView(view) {
+    _normalizeView(view) {
       const raw = String(view || "").trim().toLowerCase();
       const aliases = {
         home: "dashboard",
         dashboard: "dashboard",
+        apps: "newapp",
         newapp: "newapp",
         "new-app": "newapp",
         editor: "editor",
@@ -97,19 +97,26 @@
         logs: "logs",
         diagnostics: "diagnostics"
       };
-      const normalized = aliases[raw] || raw;
+      return aliases[raw] || raw;
+    },
+
+    _setView(view) {
+      const normalized = this._normalizeView(view);
 
       try {
         if (this._ctx && typeof this._ctx.setView === "function") return this._ctx.setView(normalized);
       } catch {}
+
       try {
         if (window.RCF && typeof window.RCF.setView === "function") return window.RCF.setView(normalized);
       } catch {}
+
       try {
         if (window.RCF_UI_ROUTER && typeof window.RCF_UI_ROUTER.setView === "function") {
           return window.RCF_UI_ROUTER.setView(normalized);
         }
       } catch {}
+
       return false;
     },
 
@@ -117,11 +124,13 @@
       try {
         if (this._ctx && typeof this._ctx.setActiveApp === "function") return this._ctx.setActiveApp(slug);
       } catch {}
+
       try {
         if (window.RCF_UI_RUNTIME && typeof window.RCF_UI_RUNTIME.setActiveApp === "function") {
           return window.RCF_UI_RUNTIME.setActiveApp(slug);
         }
       } catch {}
+
       try {
         if (window.RCF && window.RCF.state && Array.isArray(window.RCF.state.apps)) {
           const app = window.RCF.state.apps.find(a => a && a.slug === slug);
@@ -132,6 +141,7 @@
           return true;
         }
       } catch {}
+
       return false;
     },
 
@@ -142,6 +152,7 @@
           return true;
         }
       } catch {}
+
       try {
         const drawer = document.querySelector("#toolsDrawer");
         if (drawer) {
@@ -151,6 +162,7 @@
           return true;
         }
       } catch {}
+
       return false;
     },
 
@@ -161,11 +173,34 @@
           return true;
         }
       } catch {}
+
       try {
         document.dispatchEvent(new CustomEvent("RCF:DOCTOR", { detail: { source: "ui_dashboard" } }));
         return true;
       } catch {}
+
       return false;
+    },
+
+    _fastNavigate(view) {
+      const v = this._normalizeView(view);
+      if (!v) return false;
+
+      try {
+        document.body.style.pointerEvents = "none";
+      } catch {}
+
+      requestAnimationFrame(() => {
+        try {
+          this._setView(v);
+        } finally {
+          setTimeout(() => {
+            try { document.body.style.pointerEvents = ""; } catch {}
+          }, 60);
+        }
+      });
+
+      return true;
     },
 
     _ensureStyle() {
@@ -191,43 +226,24 @@
   display:block;
   width:100%;
   min-height:100%;
-  padding:14px 0 28px;
+  padding:12px 0 26px;
 }
 
 #view-dashboard .rcfDashSurface{
   display:grid;
-  gap:14px;
+  gap:12px;
 }
 
 #view-dashboard .rcfDashHero{
   position:relative;
   overflow:hidden;
-  border-radius:26px;
+  border-radius:24px;
   border:1px solid rgba(112,128,162,.14);
-  background:
-    linear-gradient(180deg, rgba(255,255,255,.82), rgba(244,247,252,.66)),
-    url("./assets/backgrounds/internal-background.jpeg");
-  background-size:cover;
-  background-position:center;
-  box-shadow:
-    0 16px 34px rgba(29,42,72,.08),
-    inset 0 1px 0 rgba(255,255,255,.92);
-  padding:16px;
-}
-
-#view-dashboard .rcfDashHero::before{
-  content:"";
-  position:absolute;
-  inset:0;
-  pointer-events:none;
-  background:
-    linear-gradient(180deg, rgba(255,255,255,.28), rgba(255,255,255,.06)),
-    radial-gradient(circle at 15% 15%, rgba(255,255,255,.55), rgba(255,255,255,0) 24%);
-}
-
-#view-dashboard .rcfDashHero > *{
-  position:relative;
-  z-index:1;
+  background:linear-gradient(180deg, rgba(255,255,255,.92), rgba(246,248,252,.82));
+  box-shadow:0 12px 26px rgba(29,42,72,.06), inset 0 1px 0 rgba(255,255,255,.92);
+  padding:15px;
+  content-visibility:auto;
+  contain:layout paint style;
 }
 
 #view-dashboard .rcfDashBrand{
@@ -243,9 +259,9 @@
   min-width:62px;
   border-radius:18px;
   object-fit:cover;
-  background:rgba(255,255,255,.78);
-  border:1px solid rgba(100,116,145,.12);
-  box-shadow:0 10px 22px rgba(26,39,68,.08);
+  background:#fff;
+  border:1px solid rgba(100,116,145,.10);
+  box-shadow:0 8px 18px rgba(26,39,68,.06);
 }
 
 #view-dashboard .rcfDashBrandFallback{
@@ -259,9 +275,9 @@
   font-size:22px;
   font-weight:900;
   color:#1d2b4d;
-  background:rgba(255,255,255,.78);
-  border:1px solid rgba(100,116,145,.12);
-  box-shadow:0 10px 22px rgba(26,39,68,.08);
+  background:#fff;
+  border:1px solid rgba(100,116,145,.10);
+  box-shadow:0 8px 18px rgba(26,39,68,.06);
 }
 
 #view-dashboard .rcfDashBrandText{
@@ -307,7 +323,7 @@
   padding:6px 11px;
   border-radius:999px;
   border:1px solid rgba(92,110,145,.10);
-  background:rgba(255,255,255,.56);
+  background:rgba(255,255,255,.82);
   color:rgba(36,49,80,.88);
   font-size:12px;
   font-weight:800;
@@ -326,30 +342,10 @@
   overflow:hidden;
   border-radius:24px;
   border:1px solid rgba(108,125,160,.12);
-  background:
-    linear-gradient(180deg, rgba(255,255,255,.88), rgba(244,247,252,.70)),
-    url("./assets/backgrounds/internal-background.jpeg");
-  background-size:cover;
-  background-position:center;
-  box-shadow:
-    0 14px 30px rgba(28,40,69,.08),
-    inset 0 1px 0 rgba(255,255,255,.88);
-}
-
-#view-dashboard .rcfDashCard::before{
-  content:"";
-  position:absolute;
-  inset:0;
-  pointer-events:none;
-  background:
-    linear-gradient(135deg, rgba(255,255,255,.20), rgba(255,255,255,0) 38%),
-    radial-gradient(circle at 100% 0%, rgba(118,172,255,.07), rgba(118,172,255,0) 28%),
-    radial-gradient(circle at 0% 100%, rgba(255,193,132,.08), rgba(255,193,132,0) 26%);
-}
-
-#view-dashboard .rcfDashCard > *{
-  position:relative;
-  z-index:1;
+  background:linear-gradient(180deg, rgba(255,255,255,.92), rgba(246,248,252,.84));
+  box-shadow:0 12px 24px rgba(28,40,69,.06), inset 0 1px 0 rgba(255,255,255,.92);
+  content-visibility:auto;
+  contain:layout paint style;
 }
 
 #view-dashboard .rcfDashCardHead{
@@ -379,8 +375,8 @@
   min-width:68px;
   border-radius:20px;
   border:1px solid rgba(106,124,159,.10);
-  background:linear-gradient(180deg, rgba(255,255,255,.94), rgba(234,240,250,.86));
-  box-shadow:0 10px 24px rgba(28,40,68,.08), inset 0 1px 0 rgba(255,255,255,.92);
+  background:linear-gradient(180deg, rgba(255,255,255,.98), rgba(239,243,249,.92));
+  box-shadow:0 8px 18px rgba(28,40,68,.06), inset 0 1px 0 rgba(255,255,255,.94);
 }
 
 #view-dashboard .rcfDashCardIcon{
@@ -439,7 +435,7 @@
   line-height:1;
   opacity:.36;
   transform:translateY(-1px) rotate(0deg);
-  transition:transform .18s ease, opacity .18s ease;
+  transition:transform .16s ease, opacity .16s ease;
 }
 
 #view-dashboard .rcfDashCard.is-open .rcfDashCardArrow{
@@ -477,7 +473,7 @@
   padding:6px 10px;
   border-radius:999px;
   border:1px solid rgba(92,110,145,.10);
-  background:rgba(255,255,255,.58);
+  background:rgba(255,255,255,.78);
   font-size:12px;
   font-weight:800;
   color:rgba(37,50,78,.84);
@@ -497,7 +493,7 @@
   padding:10px 14px;
   border-radius:14px;
   border:1px solid rgba(88,106,141,.10);
-  background:rgba(255,255,255,.72);
+  background:rgba(255,255,255,.82);
   color:#243150;
   font-size:13px;
   font-weight:900;
@@ -512,7 +508,7 @@
 }
 
 #view-dashboard .rcfDashActionBtn.ghost{
-  background:rgba(255,255,255,.58);
+  background:rgba(255,255,255,.74);
 }
 
 #view-dashboard .rcfDashActionBtn:focus{
@@ -523,7 +519,7 @@
   padding:16px;
   border-radius:18px;
   border:1px dashed rgba(84,105,145,.18);
-  background:rgba(255,255,255,.42);
+  background:rgba(255,255,255,.52);
   text-align:center;
   font-size:13px;
   color:rgba(37,50,78,.78);
@@ -542,7 +538,7 @@
   padding:10px 12px;
   border-radius:14px;
   border:1px solid rgba(84,105,145,.08);
-  background:rgba(255,255,255,.54);
+  background:rgba(255,255,255,.66);
 }
 
 #view-dashboard .rcfDashAppMeta{
@@ -579,7 +575,7 @@
   padding:8px 10px;
   border-radius:12px;
   border:1px solid rgba(84,105,145,.08);
-  background:rgba(255,255,255,.72);
+  background:rgba(255,255,255,.82);
   color:#243150;
   font-weight:900;
 }
@@ -695,9 +691,7 @@
           sub: "Visão central da Factory",
           body: "Entrada principal da Factory com visão geral e atalhos do fluxo.",
           chips: ["Dashboard", "Home", "Central"],
-          actions: [
-            { label: "Abrir Dashboard", view: "dashboard", kind: "primary" }
-          ],
+          actions: [{ label: "Abrir Dashboard", view: "dashboard", kind: "primary" }],
           expandable: false,
           headView: "dashboard"
         },
@@ -726,9 +720,7 @@
           sub: activeSlug ? `App ativo: ${activeSlug}` : "Projetos & código",
           body: "Área de edição de arquivos e conteúdo dos apps ativos.",
           chips: ["Arquivos", "Código", activeSlug ? activeSlug : "Sem ativo"],
-          actions: [
-            { label: "Abrir Editor", view: "editor", kind: "primary" }
-          ],
+          actions: [{ label: "Abrir Editor", view: "editor", kind: "primary" }],
           expandable: false,
           headView: "editor"
         },
@@ -757,9 +749,7 @@
           sub: "Procurar oportunidades rentáveis",
           body: "Scanner de oportunidades de apps com foco em viabilidade e lucro. Esta área é separada do Generator.",
           chips: ["Scanner", "Pesquisa", "Rentável"],
-          actions: [
-            { label: "Abrir Opportunity Scan", view: "opportunity-scan", kind: "primary" }
-          ],
+          actions: [{ label: "Abrir Opportunity Scan", view: "opportunity-scan", kind: "primary" }],
           expandable: false,
           headView: "opportunity-scan"
         },
@@ -772,9 +762,7 @@
           sub: "Gerar, testar e validar apps",
           body: "Área de build, preview, geração e validação técnica. Não compartilha função com Opportunity Scan.",
           chips: ["Build", "Teste", "Preview"],
-          actions: [
-            { label: "Abrir Generator", view: "generator", kind: "primary" }
-          ],
+          actions: [{ label: "Abrir Generator", view: "generator", kind: "primary" }],
           expandable: false,
           headView: "generator"
         },
@@ -787,9 +775,7 @@
           sub: "Supervisão e evolução da Factory",
           body: "Camada reservada para a IA da própria Factory, separada de Admin e de Agent.",
           chips: ["Core", "IA", "Supervisão"],
-          actions: [
-            { label: "Abrir Factory AI", view: "factory-ai", kind: "primary" }
-          ],
+          actions: [{ label: "Abrir Factory AI", view: "factory-ai", kind: "primary" }],
           expandable: false,
           headView: "factory-ai"
         },
@@ -818,9 +804,7 @@
           sub: "Sync e versionamento",
           body: "Integração com sincronização, versionamento e operação de atualização vinda do núcleo.",
           chips: ["Github", "Sync", "Versionamento"],
-          actions: [
-            { label: "Abrir Github", view: "github", kind: "primary" }
-          ],
+          actions: [{ label: "Abrir Github", view: "github", kind: "primary" }],
           expandable: false,
           headView: "github"
         },
@@ -833,9 +817,7 @@
           sub: "Fluxo de atualização e hotfix",
           body: "Área voltada a atualizações, hotfix e revisão do estado atual da Factory.",
           chips: ["Updates", "Hotfix", "Sync"],
-          actions: [
-            { label: "Abrir Updates", view: "updates", kind: "primary" }
-          ],
+          actions: [{ label: "Abrir Updates", view: "updates", kind: "primary" }],
           expandable: false,
           headView: "updates"
         },
@@ -848,9 +830,7 @@
           sub: "Preparar publicação e entrega",
           body: "Fluxo de deploy, entrega e revisão final antes de publicação dos apps.",
           chips: ["Deploy", "Entrega", "Build"],
-          actions: [
-            { label: "Abrir Deploy", view: "deploy", kind: "primary" }
-          ],
+          actions: [{ label: "Abrir Deploy", view: "deploy", kind: "primary" }],
           expandable: false,
           headView: "deploy"
         },
@@ -863,9 +843,7 @@
           sub: "Parâmetros e preferências",
           body: "Configurações gerais da Factory, preferências e ajustes do ambiente interno.",
           chips: ["Settings", "Config", "Sistema"],
-          actions: [
-            { label: "Abrir Settings", view: "settings", kind: "primary" }
-          ],
+          actions: [{ label: "Abrir Settings", view: "settings", kind: "primary" }],
           expandable: false,
           headView: "settings"
         },
@@ -878,9 +856,7 @@
           sub: "Histórico e acompanhamento",
           body: "Visualização de logs, rastros e registro de atividade do sistema.",
           chips: ["Logs", "Histórico", "Monitoramento"],
-          actions: [
-            { label: "Abrir Logs", view: "logs", kind: "primary" }
-          ],
+          actions: [{ label: "Abrir Logs", view: "logs", kind: "primary" }],
           expandable: false,
           headView: "logs"
         },
@@ -893,9 +869,7 @@
           sub: "Verificação e estabilidade",
           body: "Área de diagnóstico e estabilidade para validar integridade e comportamento da Factory.",
           chips: ["Diag", "Check", "Stability"],
-          actions: [
-            { label: "Abrir Diagnostics", view: "diagnostics", kind: "primary" }
-          ],
+          actions: [{ label: "Abrir Diagnostics", view: "diagnostics", kind: "primary" }],
           expandable: false,
           headView: "diagnostics"
         },
@@ -921,9 +895,7 @@
     _renderAppsSnapshot() {
       const state = this._getState();
       const apps = Array.isArray(state.apps) ? state.apps.slice(0, 4) : [];
-      if (!apps.length) {
-        return `<div class="rcfDashEmpty">Nenhum app salvo ainda.</div>`;
-      }
+      if (!apps.length) return `<div class="rcfDashEmpty">Nenhum app salvo ainda.</div>`;
 
       return `
         <div class="rcfDashAppsList">
@@ -969,6 +941,8 @@
                   class="rcfDashCardIcon"
                   src="${this._escAttr(iconSrc)}"
                   alt="${this._escAttr(card.title)}"
+                  loading="lazy"
+                  decoding="async"
                   onerror="this.style.display='none'; this.nextElementSibling.style.display='inline-flex';"
                 />
                 <span class="rcfDashCardIconFallback" style="display:none;">${this._esc(card.iconFallback || "•")}</span>
@@ -1020,7 +994,7 @@
           const id = String(toggle.getAttribute("data-rcf-toggle-card") || "").trim();
 
           if (!expandable && headView) {
-            this._setView(headView);
+            this._fastNavigate(headView);
             return;
           }
 
@@ -1048,7 +1022,7 @@
           }
 
           const view = String(openBtn.getAttribute("data-rcf-open-view") || "").trim();
-          if (view) this._setView(view);
+          if (view) this._fastNavigate(view);
         }
       }, { passive: false });
 
