@@ -1,10 +1,11 @@
 /* FILE: /app/js/ui/ui_projects.js
    RControl Factory — Projects Module
    PATCH MÍNIMO:
-   - troca "Chat IA" por "Factory AI"
-   - adiciona card próprio de Admin
-   - corrige tabs Projects/Código
-   - liga ações "Abrir" à navegação via data-view
+   - remove Factory AI de Projects
+   - remove Admin de Projects
+   - mantém tabs Projects/Código
+   - mantém ações "Abrir" via data-view
+   - preserva estrutura estável
 */
 
 (() => {
@@ -51,20 +52,6 @@
           slug: "painel-central",
           description: "Sistema principal da Factory",
           view: "dashboard"
-        },
-
-        {
-          name: "Factory AI",
-          slug: "factory-ai",
-          description: "IA da Factory e automação",
-          view: "agent"
-        },
-
-        {
-          name: "Admin",
-          slug: "admin",
-          description: "Controles e gestão interna",
-          view: "admin"
         },
 
         {
