@@ -1,10 +1,11 @@
 /* FILE: /app/js/ui/ui_dashboard.js
    RControl Factory — UI Dashboard
-   V3.1 FAST HOME NAV
+   V3.2 FAST HOME NAV FIXED
    - Home leve e rápida para Safari / iPhone / PWA
-   - Card principal abre a tela direto
-   - Sem expansão pesada no clique do card
-   - Scroll mais estável
+   - Card normal abre tela direto
+   - Só cards especiais expandem (Dashboard / RCF Factory)
+   - Ícones não ficam vazios
+   - Menos re-render pesado
    - Esconde shell/cabeçalho legado na Home
    - Mantém Dashboard card presente
    - Mantém RCF Factory como card especial
@@ -20,6 +21,7 @@
     _viewSel: "#view-dashboard",
     _surfaceSel: "#rcfDashboardSurface",
     _gridSel: "#rcfDashboardCards",
+    _expandedCardId: null,
 
     init(ctx = {}) {
       this._ctx = Object.assign({}, this._ctx || {}, ctx || {});
@@ -57,7 +59,6 @@
       if (!this._ensureDashboardShell()) return false;
 
       this._markDashboardMode();
-      this._syncDynamicBits();
 
       const grid = this._grid();
       if (!grid || !grid.children.length) {
@@ -66,6 +67,7 @@
         this._renderCards(false);
       }
 
+      this._syncDynamicBits();
       return true;
     },
 
@@ -249,7 +251,13 @@
 #rcfRoot[data-rcf-dashboard-mode="cards"] .rcfDashLegacy,
 #rcfRoot[data-rcf-dashboard-mode="cards"] .rcfDashLegacyNav,
 #rcfRoot[data-rcf-dashboard-mode="cards"] .rcfDashTopNav,
-#rcfRoot[data-rcf-dashboard-mode="cards"] .rcfDashHorizontalNav{
+#rcfRoot[data-rcf-dashboard-mode="cards"] .rcfDashHorizontalNav,
+#rcfRoot[data-rcf-dashboard-mode="cards"] .shell-header,
+#rcfRoot[data-rcf-dashboard-mode="cards"] .shell-hero,
+#rcfRoot[data-rcf-dashboard-mode="cards"] .shell-top,
+#rcfRoot[data-rcf-dashboard-mode="cards"] .legacy-header,
+#rcfRoot[data-rcf-dashboard-mode="cards"] .legacy-shell,
+#rcfRoot[data-rcf-dashboard-mode="cards"] .legacy-topbar{
   display:none !important;
 }
 
@@ -263,7 +271,6 @@
   width:100%;
   min-height:100%;
   padding:12px 0 28px;
-  contain:layout style paint;
 }
 
 #view-dashboard .rcfDashSurface{
@@ -303,7 +310,7 @@
 }
 
 #view-dashboard .rcfDashBrandFallback{
-  display:none;
+  display:flex;
   align-items:center;
   justify-content:center;
   font-size:22px;
@@ -398,6 +405,7 @@
 }
 
 #view-dashboard .rcfDashCardIconWrap{
+  position:relative;
   display:inline-flex;
   align-items:center;
   justify-content:center;
@@ -407,22 +415,26 @@
   border-radius:20px;
   border:1px solid rgba(106,124,159,.08);
   background:linear-gradient(180deg, rgba(255,255,255,.98), rgba(238,242,248,.92));
+  overflow:hidden;
 }
 
 #view-dashboard .rcfDashCardIcon{
+  position:relative;
+  z-index:2;
   width:46px;
   height:46px;
   object-fit:cover;
   border-radius:14px;
+  background:transparent;
 }
 
 #view-dashboard .rcfDashCardIconFallback{
-  display:none;
+  position:absolute;
+  inset:0;
+  z-index:1;
+  display:flex;
   align-items:center;
   justify-content:center;
-  width:46px;
-  height:46px;
-  border-radius:14px;
   font-size:24px;
   font-weight:900;
 }
@@ -463,6 +475,12 @@
   font-size:24px;
   line-height:1;
   opacity:.36;
+  transition:transform .16s ease, opacity .16s ease;
+}
+
+#view-dashboard .rcfDashCard.is-open .rcfDashCardArrow{
+  transform:rotate(90deg);
+  opacity:.72;
 }
 
 #view-dashboard .rcfDashCardBody{
@@ -697,7 +715,7 @@
               class="rcfDashBrandLogo"
               src="${this._escAttr(this._brandAsset())}"
               alt="RCF"
-              onerror="this.style.display='none'; this.nextElementSibling.style.display='inline-flex';"
+              onerror="this.style.display='none';"
             />
             <span class="rcfDashBrandFallback">RCF</span>
             <div class="rcfDashBrandText">
@@ -741,6 +759,7 @@
           sub: "Visão central da Factory",
           body: "Painel principal com leitura rápida do estado da Factory, apps ativos e operação geral.",
           chips: ["Painel", "Resumo", "Métricas"],
+          expandable: true,
           stats: [
             { label: "Apps", value: String(appsCount) },
             { label: "Ativo", value: activeSlug || "—" },
@@ -946,6 +965,7 @@
           sub: "Core, tools e manutenção especial",
           body: "Card especial do núcleo da Factory. Aqui ficam os acessos de ferramentas, doctor e manutenção central, sem misturar com Factory AI.",
           chips: ["Factory", "Core", "Doctor"],
+          expandable: true,
           actions: [
             { label: "Abrir Tools", action: "open-tools", kind: "primary" },
             { label: "Abrir Doctor", action: "open-doctor", kind: "ghost" },
@@ -1002,6 +1022,7 @@
 
       if (!force && currentIds === wantedIds) {
         this._syncDynamicBits();
+        this._applyExpandedState();
         return true;
       }
 
@@ -1009,9 +1030,10 @@
         const iconSrc = this._moduleAsset(card.iconAsset);
         const extraApps = card.extra === "apps" ? this._renderAppsSnapshot() : "";
         const statsHtml = this._renderStats(card.stats);
-        const headAttrs = card.route
-          ? `data-rcf-route-view="${this._escAttr(card.route)}"`
-          : `data-rcf-toggle-card="${this._escAttr(card.id)}"`;
+
+        let headAttrs = "";
+        if (card.route) headAttrs = `data-rcf-route-view="${this._escAttr(card.route)}"`;
+        else if (card.expandable) headAttrs = `data-rcf-toggle-card="${this._escAttr(card.id)}"`;
 
         return `
           <article class="rcfDashCard" data-rcf-card="${this._escAttr(card.id)}">
@@ -1022,13 +1044,15 @@
               ${headAttrs}
             >
               <span class="rcfDashCardIconWrap" aria-hidden="true">
+                <span class="rcfDashCardIconFallback">${this._esc(card.iconFallback || "•")}</span>
                 <img
                   class="rcfDashCardIcon"
                   src="${this._escAttr(iconSrc)}"
                   alt="${this._escAttr(card.title)}"
-                  onerror="this.style.display='none'; this.nextElementSibling.style.display='inline-flex';"
+                  loading="lazy"
+                  decoding="async"
+                  onerror="this.style.display='none';"
                 />
-                <span class="rcfDashCardIconFallback">${this._esc(card.iconFallback || "•")}</span>
               </span>
               <span class="rcfDashCardText">
                 <span class="rcfDashCardKicker">${this._esc(card.kicker)}</span>
@@ -1060,6 +1084,7 @@
       }).join("");
 
       this._syncDynamicBits();
+      this._applyExpandedState();
       return true;
     },
 
@@ -1089,6 +1114,21 @@
           const html = this._renderAppsSnapshot();
           if (existing) existing.outerHTML = html;
         }
+      } catch {}
+    },
+
+    _applyExpandedState() {
+      try {
+        const grid = this._grid();
+        if (!grid) return;
+
+        grid.querySelectorAll(".rcfDashCard").forEach(card => {
+          const id = String(card.getAttribute("data-rcf-card") || "");
+          const open = !!this._expandedCardId && this._expandedCardId === id;
+          card.classList.toggle("is-open", open);
+          const btn = card.querySelector("[data-rcf-toggle-card]");
+          if (btn) btn.setAttribute("aria-expanded", open ? "true" : "false");
+        });
       } catch {}
     },
 
@@ -1149,26 +1189,10 @@
       const next = String(id || "").trim();
       if (!next) return false;
 
-      const grid = this._grid();
-      if (!grid) return false;
+      if (this._expandedCardId === next) this._expandedCardId = null;
+      else this._expandedCardId = next;
 
-      const card = grid.querySelector(`.rcfDashCard[data-rcf-card="${CSS && CSS.escape ? CSS.escape(next) : next}"]`);
-      if (!card) return false;
-
-      const willOpen = !card.classList.contains("is-open");
-
-      grid.querySelectorAll(".rcfDashCard").forEach(el => {
-        el.classList.remove("is-open");
-        const btn = el.querySelector("[data-rcf-toggle-card]");
-        if (btn) btn.setAttribute("aria-expanded", "false");
-      });
-
-      if (willOpen) {
-        card.classList.add("is-open");
-        const btn = card.querySelector("[data-rcf-toggle-card]");
-        if (btn) btn.setAttribute("aria-expanded", "true");
-      }
-
+      this._applyExpandedState();
       this._markDashboardMode();
       return true;
     },
