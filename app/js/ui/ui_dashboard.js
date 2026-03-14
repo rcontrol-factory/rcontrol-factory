@@ -1,10 +1,10 @@
 /* FILE: /app/js/ui/ui_dashboard.js
    RControl Factory — UI Dashboard
-   - Home mobile com cards verticais
+   - Home mobile com cards verticais organizados
    - Esconde cabeçalho/abas antigas quando estiver na Home
-   - Cards principais podem expandir só quando fizer sentido
-   - Github / Updates / Deploy não expandem inline
-   - RCF Factory fica separado de Factory AI
+   - Cards comuns entram direto na tela
+   - Apenas RCF Factory permanece como card especial expansível
+   - Github / Updates / Deploy / Dashboard possuem rota própria
    - Compatível com Safari / iPhone / PWA
 */
 (() => {
@@ -74,15 +74,40 @@
     },
 
     _setView(view) {
+      const raw = String(view || "").trim().toLowerCase();
+      const aliases = {
+        home: "dashboard",
+        dashboard: "dashboard",
+        newapp: "newapp",
+        "new-app": "newapp",
+        editor: "editor",
+        agent: "agent",
+        "agent-ia": "agent-ia",
+        agentia: "agent-ia",
+        factoryai: "factory-ai",
+        "factory-ai": "factory-ai",
+        opportunity: "opportunity-scan",
+        "opportunity-scan": "opportunity-scan",
+        generator: "generator",
+        admin: "admin",
+        github: "github",
+        updates: "updates",
+        deploy: "deploy",
+        settings: "settings",
+        logs: "logs",
+        diagnostics: "diagnostics"
+      };
+      const normalized = aliases[raw] || raw;
+
       try {
-        if (this._ctx && typeof this._ctx.setView === "function") return this._ctx.setView(view);
+        if (this._ctx && typeof this._ctx.setView === "function") return this._ctx.setView(normalized);
       } catch {}
       try {
-        if (window.RCF && typeof window.RCF.setView === "function") return window.RCF.setView(view);
+        if (window.RCF && typeof window.RCF.setView === "function") return window.RCF.setView(normalized);
       } catch {}
       try {
         if (window.RCF_UI_ROUTER && typeof window.RCF_UI_ROUTER.setView === "function") {
-          return window.RCF_UI_ROUTER.setView(view);
+          return window.RCF_UI_ROUTER.setView(normalized);
         }
       } catch {}
       return false;
@@ -662,6 +687,21 @@
 
       return [
         {
+          id: "dashboard",
+          iconAsset: "dashboard",
+          iconFallback: "🏠",
+          kicker: "Painel",
+          title: "Dashboard",
+          sub: "Visão central da Factory",
+          body: "Entrada principal da Factory com visão geral e atalhos do fluxo.",
+          chips: ["Dashboard", "Home", "Central"],
+          actions: [
+            { label: "Abrir Dashboard", view: "dashboard", kind: "primary" }
+          ],
+          expandable: false,
+          headView: "dashboard"
+        },
+        {
           id: "apps",
           iconAsset: "apps",
           iconFallback: "📦",
@@ -779,10 +819,10 @@
           body: "Integração com sincronização, versionamento e operação de atualização vinda do núcleo.",
           chips: ["Github", "Sync", "Versionamento"],
           actions: [
-            { label: "Abrir Admin", view: "admin", kind: "primary" }
+            { label: "Abrir Github", view: "github", kind: "primary" }
           ],
           expandable: false,
-          headView: "admin"
+          headView: "github"
         },
         {
           id: "updates",
@@ -794,10 +834,10 @@
           body: "Área voltada a atualizações, hotfix e revisão do estado atual da Factory.",
           chips: ["Updates", "Hotfix", "Sync"],
           actions: [
-            { label: "Abrir Admin", view: "admin", kind: "primary" }
+            { label: "Abrir Updates", view: "updates", kind: "primary" }
           ],
           expandable: false,
-          headView: "admin"
+          headView: "updates"
         },
         {
           id: "deploy",
@@ -809,10 +849,10 @@
           body: "Fluxo de deploy, entrega e revisão final antes de publicação dos apps.",
           chips: ["Deploy", "Entrega", "Build"],
           actions: [
-            { label: "Abrir Admin", view: "admin", kind: "primary" }
+            { label: "Abrir Deploy", view: "deploy", kind: "primary" }
           ],
           expandable: false,
-          headView: "admin"
+          headView: "deploy"
         },
         {
           id: "settings",
@@ -938,7 +978,7 @@
                 <span class="rcfDashCardTitle">${this._esc(card.title)}</span>
                 <span class="rcfDashCardSub">${this._esc(card.sub)}</span>
               </span>
-              <span class="rcfDashCardArrow" aria-hidden="true">${card.expandable ? "›" : "›"}</span>
+              <span class="rcfDashCardArrow" aria-hidden="true">›</span>
             </button>
             ${hasBody ? `
               <div class="rcfDashCardBody">
