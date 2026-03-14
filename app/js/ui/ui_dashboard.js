@@ -1,6 +1,6 @@
 /* FILE: /app/js/ui/ui_dashboard.js
    RControl Factory — UI Dashboard
-   V3.3 FAST HOME NAV FIXED + SAFE REBIND
+   V3.4 FAST HOME NAV FIXED + SAFE REBIND + SAFE ROUTE FALLBACK
    - Home leve e rápida para Safari / iPhone / PWA
    - Card normal abre tela direto
    - Só cards especiais expandem (Dashboard / RCF Factory)
@@ -10,6 +10,8 @@
    - Mantém Dashboard card presente
    - Mantém RCF Factory como card especial
    - FIX: rebinding seguro do click no #view-dashboard
+   - FIX: card normal também publica data-view padrão
+   - FIX: fallback real de navegação caso o handler local falhe
 */
 (() => {
   "use strict";
@@ -23,7 +25,7 @@
     _surfaceSel: "#rcfDashboardSurface",
     _gridSel: "#rcfDashboardCards",
     _expandedCardId: null,
-    _bindVersion: "v3.3",
+    _bindVersion: "v3.4",
 
     init(ctx = {}) {
       this._ctx = Object.assign({}, this._ctx || {}, ctx || {});
@@ -242,6 +244,36 @@
           return true;
         }
       } catch {}
+      return false;
+    },
+
+    _openViewSafe(view, slug = "") {
+      const next = String(view || "").trim();
+      if (!next) return false;
+
+      try {
+        if (slug) this._setActiveApp(slug);
+      } catch {}
+
+      try {
+        const ok = this._setView(next);
+        if (ok !== false) return true;
+      } catch {}
+
+      try {
+        document.dispatchEvent(new CustomEvent("rcf:view", {
+          detail: { view: next, source: "ui_dashboard" }
+        }));
+      } catch {}
+
+      try {
+        const btn = document.querySelector(`[data-view="${next}"]`);
+        if (btn && typeof btn.click === "function") {
+          btn.click();
+          return true;
+        }
+      } catch {}
+
       return false;
     },
 
@@ -1004,7 +1036,13 @@
                 <div class="rcfDashAppName">${this._esc(app.name || app.slug || "App")}</div>
                 <div class="rcfDashAppSlug">${this._esc(app.slug || "-")}</div>
               </div>
-              <button class="rcfDashAppGo" type="button" data-rcf-open-view="editor" data-rcf-app-slug="${this._escAttr(app.slug || "")}">Abrir</button>
+              <button
+                class="rcfDashAppGo"
+                type="button"
+                data-view="editor"
+                data-rcf-open-view="editor"
+                data-rcf-app-slug="${this._escAttr(app.slug || "")}"
+              >Abrir</button>
             </div>
           `).join("")}
         </div>
@@ -1047,8 +1085,11 @@
         const statsHtml = this._renderStats(card.stats);
 
         let headAttrs = "";
-        if (card.route) headAttrs = `data-rcf-route-view="${this._escAttr(card.route)}"`;
-        else if (card.expandable) headAttrs = `data-rcf-toggle-card="${this._escAttr(card.id)}"`;
+        if (card.route) {
+          headAttrs = `data-view="${this._escAttr(card.route)}" data-rcf-route-view="${this._escAttr(card.route)}"`;
+        } else if (card.expandable) {
+          headAttrs = `data-rcf-toggle-card="${this._escAttr(card.id)}"`;
+        }
 
         return `
           <article class="rcfDashCard" data-rcf-card="${this._escAttr(card.id)}">
@@ -1088,7 +1129,7 @@
                   <button
                     class="rcfDashActionBtn ${this._escAttr(action.kind || "ghost")}"
                     type="button"
-                    ${action.view ? `data-rcf-open-view="${this._escAttr(action.view)}"` : ""}
+                    ${action.view ? `data-view="${this._escAttr(action.view)}" data-rcf-open-view="${this._escAttr(action.view)}"` : ""}
                     ${action.action ? `data-rcf-action="${this._escAttr(action.action)}"` : ""}
                   >${this._esc(action.label || "Abrir")}</button>
                 `).join("")}
@@ -1162,8 +1203,8 @@
         if (routeBtn) {
           ev.preventDefault();
           ev.stopPropagation();
-          const next = String(routeBtn.getAttribute("data-rcf-route-view") || "").trim();
-          if (next) this._setView(next);
+          const next = String(routeBtn.getAttribute("data-rcf-route-view") || routeBtn.getAttribute("data-view") || "").trim();
+          if (next) this._openViewSafe(next);
           return;
         }
 
@@ -1182,10 +1223,8 @@
           ev.stopPropagation();
 
           const slug = String(openBtn.getAttribute("data-rcf-app-slug") || "").trim();
-          if (slug) this._setActiveApp(slug);
-
-          const next = String(openBtn.getAttribute("data-rcf-open-view") || "").trim();
-          if (next) this._setView(next);
+          const next = String(openBtn.getAttribute("data-rcf-open-view") || openBtn.getAttribute("data-view") || "").trim();
+          if (next) this._openViewSafe(next, slug);
           return;
         }
 
