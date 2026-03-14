@@ -1,6 +1,6 @@
 /* FILE: /app/js/ui/ui_dashboard.js
    RControl Factory — UI Dashboard
-   V3.2 FAST HOME NAV FIXED
+   V3.3 FAST HOME NAV FIXED + SAFE REBIND
    - Home leve e rápida para Safari / iPhone / PWA
    - Card normal abre tela direto
    - Só cards especiais expandem (Dashboard / RCF Factory)
@@ -9,6 +9,7 @@
    - Esconde shell/cabeçalho legado na Home
    - Mantém Dashboard card presente
    - Mantém RCF Factory como card especial
+   - FIX: rebinding seguro do click no #view-dashboard
 */
 (() => {
   "use strict";
@@ -22,6 +23,7 @@
     _surfaceSel: "#rcfDashboardSurface",
     _gridSel: "#rcfDashboardCards",
     _expandedCardId: null,
+    _bindVersion: "v3.3",
 
     init(ctx = {}) {
       this._ctx = Object.assign({}, this._ctx || {}, ctx || {});
@@ -76,6 +78,19 @@
         const root = document.querySelector(this._rootSel);
         if (root) root.removeAttribute("data-rcf-dashboard-mode");
       } catch {}
+
+      try {
+        const view = this._view();
+        if (view && view.__rcf_dashboard_click_handler__) {
+          view.removeEventListener("click", view.__rcf_dashboard_click_handler__, false);
+          view.__rcf_dashboard_click_handler__ = null;
+        }
+        if (view) {
+          view.__rcf_dashboard_bind_version__ = "";
+          view.__rcf_dashboard_bound__ = false;
+        }
+      } catch {}
+
       return true;
     },
 
@@ -1134,13 +1149,19 @@
 
     _bindWithinDashboard() {
       const view = this._view();
-      if (!view || view.__rcf_dashboard_bound__) return;
-      view.__rcf_dashboard_bound__ = true;
+      if (!view) return;
 
-      view.addEventListener("click", (ev) => {
+      try {
+        if (view.__rcf_dashboard_click_handler__) {
+          view.removeEventListener("click", view.__rcf_dashboard_click_handler__, false);
+        }
+      } catch {}
+
+      const handler = (ev) => {
         const routeBtn = ev.target && ev.target.closest ? ev.target.closest("[data-rcf-route-view]") : null;
         if (routeBtn) {
           ev.preventDefault();
+          ev.stopPropagation();
           const next = String(routeBtn.getAttribute("data-rcf-route-view") || "").trim();
           if (next) this._setView(next);
           return;
@@ -1149,6 +1170,7 @@
         const toggle = ev.target && ev.target.closest ? ev.target.closest("[data-rcf-toggle-card]") : null;
         if (toggle) {
           ev.preventDefault();
+          ev.stopPropagation();
           const id = String(toggle.getAttribute("data-rcf-toggle-card") || "").trim();
           this.toggleCard(id);
           return;
@@ -1157,6 +1179,7 @@
         const openBtn = ev.target && ev.target.closest ? ev.target.closest("[data-rcf-open-view]") : null;
         if (openBtn) {
           ev.preventDefault();
+          ev.stopPropagation();
 
           const slug = String(openBtn.getAttribute("data-rcf-app-slug") || "").trim();
           if (slug) this._setActiveApp(slug);
@@ -1169,6 +1192,7 @@
         const actionBtn = ev.target && ev.target.closest ? ev.target.closest("[data-rcf-action]") : null;
         if (actionBtn) {
           ev.preventDefault();
+          ev.stopPropagation();
           const act = String(actionBtn.getAttribute("data-rcf-action") || "").trim();
 
           if (act === "open-tools") this._openTools();
@@ -1178,11 +1202,19 @@
             this._saveAll("dashboard.refresh");
           }
         }
-      }, { passive: false });
+      };
 
-      window.addEventListener("RCF:UI_READY", () => {
-        try { this.refresh(this._ctx || {}); } catch {}
-      });
+      view.addEventListener("click", handler, { passive: false });
+      view.__rcf_dashboard_click_handler__ = handler;
+      view.__rcf_dashboard_bind_version__ = this._bindVersion;
+      view.__rcf_dashboard_bound__ = true;
+
+      if (!this.__uiReadyBound__) {
+        this.__uiReadyBound__ = true;
+        window.addEventListener("RCF:UI_READY", () => {
+          try { this.refresh(this._ctx || {}); } catch {}
+        });
+      }
     },
 
     toggleCard(id) {
