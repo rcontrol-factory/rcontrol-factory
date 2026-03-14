@@ -1,10 +1,12 @@
 /* FILE: /app/js/ui/ui_dashboard.js
-   RControl Factory — Dashboard Module — V2 SAFE MOUNT
+   RControl Factory — Dashboard Module — V2.1 SAFE MOUNT
    - Compatível com app.js V8.1.1
    - Suporta init + mount + refresh
    - Evita dupla montagem
    - Resolve a view oficial/fallback automaticamente
    - Mantém dashboard leve e operacional
+   - PATCH: Factory AI separado de Agent/Admin
+   - PATCH: navegação segura para Factory AI com fallback
 */
 
 (() => {
@@ -70,23 +72,72 @@
       } catch {}
     },
 
+    openFactoryAI() {
+      try {
+        if (window.RCF_FACTORY_IA && typeof window.RCF_FACTORY_IA.open === "function") {
+          window.RCF_FACTORY_IA.open();
+          return true;
+        }
+      } catch {}
+
+      try {
+        document.dispatchEvent(new CustomEvent("rcf:factory-ai", {
+          detail: { source: "ui_dashboard", target: "factoryai" }
+        }));
+        return true;
+      } catch {}
+
+      return false;
+    },
+
     navTo(view) {
+      const v = String(view || "").trim().toLowerCase();
+
+      if (!v) return false;
+
+      if (v === "factory-ai" || v === "factoryai") {
+        if (this.openFactoryAI()) return true;
+
+        try {
+          if (typeof this.d.setView === "function") {
+            this.d.setView("agent");
+            return true;
+          }
+        } catch {}
+
+        try {
+          if (window.RCF && typeof window.RCF.setView === "function") {
+            window.RCF.setView("agent");
+            return true;
+          }
+        } catch {}
+
+        try {
+          document.dispatchEvent(new CustomEvent("rcf:view", {
+            detail: { view: "agent", source: "factory-ai-fallback" }
+          }));
+          return true;
+        } catch {}
+
+        return false;
+      }
+
       try {
         if (typeof this.d.setView === "function") {
-          this.d.setView(view);
+          this.d.setView(v);
           return true;
         }
       } catch {}
 
       try {
         if (window.RCF && typeof window.RCF.setView === "function") {
-          window.RCF.setView(view);
+          window.RCF.setView(v);
           return true;
         }
       } catch {}
 
       try {
-        document.dispatchEvent(new CustomEvent("rcf:view", { detail: { view } }));
+        document.dispatchEvent(new CustomEvent("rcf:view", { detail: { view: v } }));
         return true;
       } catch {}
 
@@ -165,6 +216,7 @@
 
     ensureHost(viewEl) {
       if (!viewEl) return null;
+
       let host = qs('[data-rcf-ui-dashboard-root="1"]', viewEl);
       if (host) return host;
 
@@ -296,21 +348,14 @@
           btn.__rcf_dash_action_bound__ = true;
 
           this.bind(btn, () => {
-
-            const act = btn.getAttribute("data-rcf-dash-action");
+            const act = String(btn.getAttribute("data-rcf-dash-action") || "").trim().toLowerCase();
 
             if (act === "newapp") this.navTo("newapp");
-
             else if (act === "editor") this.navTo("editor");
-
             else if (act === "agent") this.navTo("agent");
-
             else if (act === "factory") this.navTo("factory");
-
-            else if (act === "factory-ai") this.navTo("factory-ai");
-
+            else if (act === "factory-ai") this.navTo("factoryai");
             else if (act === "admin") this.navTo("admin");
-
           });
         });
       } catch {}
@@ -338,7 +383,7 @@
     refreshNumbers(root = document) {
       try {
         const count = this.getAppsCount();
-        const aiOnline = !!(window.RCF_ENGINE || window.RCF_AGENT_ZIP_BRIDGE || window.RCF_AI);
+        const aiOnline = !!(window.RCF_ENGINE || window.RCF_AGENT_ZIP_BRIDGE || window.RCF_AI || window.RCF_FACTORY_IA);
 
         const elApps = root.querySelector("#dashAppsCount");
         if (elApps) elApps.textContent = String(count).padStart(2, "0");
@@ -419,6 +464,7 @@
         if (target) {
           const el = this.d.$ ? this.d.$(target) : qs(target);
           if (!el) return false;
+
           el.innerHTML = this.buildView();
           this.bindActions(el);
           this.refreshNumbers(el);
@@ -428,6 +474,7 @@
           return true;
         }
       } catch {}
+
       return this.mount(this.__deps || {});
     },
 
