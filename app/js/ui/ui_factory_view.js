@@ -1,10 +1,13 @@
 /* FILE: /app/js/ui/ui_factory_view.js
    RControl Factory — Factory View Module
+   V2 SAFE MOUNT
    PATCH MÍNIMO:
    - remove Dashboard da composição da Factory
    - mantém Factory focada em módulos/sistema/integrações/projetos
    - preserva fallback seguro
    - evita duplicação visual da Home dentro da Factory
+   - adiciona init + mount + refresh compatíveis com app.js V8.1.1
+   - resolve host/view automaticamente
 */
 
 (() => {
@@ -14,16 +17,78 @@
     try { return root.querySelector(sel); } catch { return null; }
   }
 
+  function qsa(sel, root = document) {
+    try { return Array.from(root.querySelectorAll(sel)); } catch { return []; }
+  }
+
   const API = {
     __deps: null,
+    __mounted: false,
+    __mountCount: 0,
 
     init(deps) {
-      this.__deps = deps || this.__deps || {};
+      this.__deps = Object.assign({}, this.__deps || {}, deps || {});
       return this;
     },
 
     get d() {
       return this.__deps || {};
+    },
+
+    log(...args) {
+      try {
+        const L = this.d.Logger || window.RCF_LOGGER;
+        if (L && typeof L.write === "function") {
+          L.write("[ui_factory_view]", ...args);
+          return;
+        }
+      } catch {}
+      try { console.log("[ui_factory_view]", ...args); } catch {}
+    },
+
+    escHtml(v) {
+      try {
+        if (typeof this.d.escapeHtml === "function") return this.d.escapeHtml(v);
+      } catch {}
+      return String(v ?? "").replace(/[&<>"]/g, c => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        "\"": "&quot;"
+      }[c]));
+    },
+
+    resolveFactoryView() {
+      const tries = [
+        "#view-factory",
+        '[data-rcf-view="factory"]',
+        "#rcfFactoryView",
+        "[data-rcf-factory-view]",
+        "#view-agent",
+        '[data-rcf-view="agent"]'
+      ];
+
+      for (const sel of tries) {
+        const el = qs(sel);
+        if (el) return el;
+      }
+
+      return null;
+    },
+
+    ensureHost(viewEl) {
+      if (!viewEl) return null;
+
+      let host = qs('[data-rcf-ui-factory-root="1"]', viewEl);
+      if (host) return host;
+
+      host = document.createElement("div");
+      host.setAttribute("data-rcf-ui-factory-root", "1");
+
+      viewEl.innerHTML = "";
+      viewEl.appendChild(host);
+
+      return host;
     },
 
     buildAppsWidgetsSlot() {
@@ -38,8 +103,8 @@
       return `
         <section class="rcfUiFactoryBlock" data-rcf-factory-block="apps-widgets">
           <div class="rcfUiFactoryBlockHead">
-            <h2>${title}</h2>
-            <p class="hint">${subtitle}</p>
+            <h2>${this.escHtml(title)}</h2>
+            <p class="hint">${this.escHtml(subtitle)}</p>
           </div>
           <div id="rcfFactoryAppsWidgetsSlot"></div>
         </section>
@@ -58,8 +123,8 @@
       return `
         <section class="rcfUiFactoryBlock" data-rcf-factory-block="gateways">
           <div class="rcfUiFactoryBlockHead">
-            <h2>${title}</h2>
-            <p class="hint">${subtitle}</p>
+            <h2>${this.escHtml(title)}</h2>
+            <p class="hint">${this.escHtml(subtitle)}</p>
           </div>
           <div id="rcfFactoryGatewaysSlot"></div>
         </section>
@@ -78,8 +143,8 @@
       return `
         <section class="rcfUiFactoryBlock" data-rcf-factory-block="projects">
           <div class="rcfUiFactoryBlockHead">
-            <h2>${title}</h2>
-            <p class="hint">${subtitle}</p>
+            <h2>${this.escHtml(title)}</h2>
+            <p class="hint">${this.escHtml(subtitle)}</p>
           </div>
           <div id="rcfFactoryProjectsSlot"></div>
         </section>
@@ -94,7 +159,7 @@
 
           <div class="rcfActivityList">
             <div class="rcfActivityItem">
-              <strong>Mensagens</strong><br>
+              <strong>Messages</strong><br>
               Mensageria e eventos
             </div>
 
@@ -114,11 +179,13 @@
 
     buildView() {
       return `
-        <div class="rcfUiFactoryView" data-rcf-ui="factory-view">
-          ${this.buildAppsWidgetsSlot()}
-          ${this.buildGatewaysSlot()}
-          ${this.buildProjectsSlot()}
-        </div>
+        <section class="rcfUiSection rcfUiFactorySection" data-rcf-ui="factory-view">
+          <div class="rcfUiFactoryView" data-rcf-ui-factory-view="1">
+            ${this.buildAppsWidgetsSlot()}
+            ${this.buildGatewaysSlot()}
+            ${this.buildProjectsSlot()}
+          </div>
+        </section>
       `;
     },
 
@@ -159,23 +226,83 @@
     refreshChildren() {
       try { window.RCF_UI_APPS_WIDGETS?.refresh?.(); } catch {}
       try { window.RCF_UI_PROJECTS?.refresh?.(); } catch {}
+      try { window.RCF_UI_GATEWAYS?.refresh?.(); } catch {}
       return true;
     },
 
-    render(targetSelector) {
-      const d = this.d;
+    mount(ctx = {}) {
+      this.init(ctx);
 
       try {
-        const el = d.$ ? d.$(targetSelector) : qs(targetSelector);
-        if (!el) return false;
+        const view = this.resolveFactoryView();
+        if (!view) {
+          this.log("mount skip: factory/agent view ausente");
+          return false;
+        }
 
-        const alreadyMounted =
-          el.getAttribute("data-rcf-factory-mounted") === "1" &&
-          qs(".rcfUiFactoryView", el);
+        const host = this.ensureHost(view);
+        if (!host) {
+          this.log("mount skip: host ausente");
+          return false;
+        }
 
-        if (!alreadyMounted) {
-          el.innerHTML = this.buildView();
-          el.setAttribute("data-rcf-factory-mounted", "1");
+        host.innerHTML = this.buildView();
+        view.setAttribute("data-rcf-ui-factory-mounted", "1");
+
+        this.renderAppsWidgets();
+        this.renderGateways();
+        this.renderProjects();
+        this.refreshChildren();
+
+        this.__mounted = true;
+        this.__mountCount += 1;
+
+        this.log("mount ok", "count=" + this.__mountCount);
+        return true;
+      } catch (e) {
+        this.log("mount err:", e?.message || e);
+        return false;
+      }
+    },
+
+    render(targetSelector) {
+      try {
+        if (targetSelector) {
+          const el = this.d.$ ? this.d.$(targetSelector) : qs(targetSelector);
+          if (!el) return false;
+
+          const alreadyMounted =
+            el.getAttribute("data-rcf-factory-mounted") === "1" &&
+            qs('[data-rcf-ui-factory-view="1"]', el);
+
+          if (!alreadyMounted) {
+            el.innerHTML = this.buildView();
+            el.setAttribute("data-rcf-factory-mounted", "1");
+          }
+
+          this.renderAppsWidgets();
+          this.renderGateways();
+          this.renderProjects();
+          this.refreshChildren();
+
+          this.__mounted = true;
+          return true;
+        }
+      } catch {}
+
+      return this.mount(this.__deps || {});
+    },
+
+    refresh(ctx = {}) {
+      this.init(ctx);
+
+      try {
+        const view = this.resolveFactoryView();
+        const mounted = view && view.getAttribute("data-rcf-ui-factory-mounted") === "1";
+        const host = view ? qs('[data-rcf-ui-factory-root="1"]', view) : null;
+
+        if (!mounted || !host) {
+          return this.mount(this.__deps || {});
         }
 
         this.renderAppsWidgets();
@@ -184,19 +311,8 @@
         this.refreshChildren();
 
         return true;
-      } catch {
-        return false;
-      }
-    },
-
-    refresh() {
-      try {
-        this.renderAppsWidgets();
-        this.renderGateways();
-        this.renderProjects();
-        this.refreshChildren();
-        return true;
-      } catch {
+      } catch (e) {
+        this.log("refresh err:", e?.message || e);
         return false;
       }
     }
