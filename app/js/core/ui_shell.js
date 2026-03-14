@@ -1,12 +1,14 @@
 /* FILE: /app/js/core/ui_shell.js
-   RControl Factory — UI Shell mount (SAFE CLEAN V3.0)
+   RControl Factory — UI Shell mount (SAFE CLEAN V3.1)
    - Shell base limpa
    - Remove navegação superior antiga
    - Remove dashboard antigo embutido na shell
    - Corrige bottom nav oficial
    - Opportunity Scan separado de Generator
    - Factory AI separado de Admin
-   - Rebuild seguro quando detectar shell velha em runtime
+   - Rebuild seguro sem destruir dashboard novo
+   - FIX: não confundir .rcfDashHero com shell velha
+   - FIX: bottom nav alinhada com Agent IA
 */
 (() => {
   "use strict";
@@ -83,7 +85,7 @@
 
   function buildShellHTML(ctx = {}) {
     return `
-      <div id="rcfRoot" data-rcf-app="rcf.factory" data-rcf-shell-version="3.0">
+      <div id="rcfRoot" data-rcf-app="rcf.factory" data-rcf-shell-version="3.1">
         <header class="topbar" data-rcf-panel="topbar">
           <div class="brand" data-rcf-panel="brand">
             ${brandHeaderHTML(ctx)}
@@ -295,7 +297,7 @@
 
         <nav class="rcfBottomNav" aria-label="Navegação mobile">
           <button class="tab active" data-view="dashboard" data-label="home" type="button">Home</button>
-          <button class="tab" data-view="agent" data-label="agent" type="button">Agent</button>
+          <button class="tab" data-view="agent-ia" data-label="agentia" type="button">Agent IA</button>
           <button class="tab" data-view="opportunity-scan" data-label="opportunity" type="button">Opportunity</button>
           <button class="tab" data-view="settings" data-label="settings" type="button">Settings</button>
           <button class="tab" data-view="factory-ai" data-label="factoryai" type="button">Factory AI</button>
@@ -359,19 +361,26 @@
     try {
       if (!existing) return true;
 
-      if (existing.getAttribute("data-rcf-shell-version") !== "3.0") return true;
+      const ver = String(existing.getAttribute("data-rcf-shell-version") || "").trim();
+      if (!ver) return true;
+
+      if (ver !== "3.1" && ver !== "3.0") return true;
 
       if (qs(".tabs", existing)) return true;
       if (qs(".rcfMobileModules", existing)) return true;
-      if (qs(".rcfDashHero", existing)) return true;
 
       const bottomOpp = qs('.rcfBottomNav [data-label="opportunity"]', existing);
       if (!bottomOpp) return true;
       if ((bottomOpp.getAttribute("data-view") || "").trim() !== "opportunity-scan") return true;
 
+      const bottomFactory = qs('.rcfBottomNav [data-label="factoryai"]', existing);
+      if (!bottomFactory) return true;
+      if ((bottomFactory.getAttribute("data-view") || "").trim() !== "factory-ai") return true;
+
       if (!qs("#view-opportunity-scan", existing)) return true;
       if (!qs("#view-factory-ai", existing)) return true;
       if (!qs("#view-generator", existing)) return true;
+      if (!qs("#view-agent-ia", existing)) return true;
 
       return false;
     } catch {
@@ -435,15 +444,21 @@
       if (bottom) {
         const expected = [
           ["home", "dashboard", "Home"],
-          ["agent", "agent", "Agent"],
+          ["agentia", "agent-ia", "Agent IA"],
           ["opportunity", "opportunity-scan", "Opportunity"],
           ["settings", "settings", "Settings"],
           ["factoryai", "factory-ai", "Factory AI"]
         ];
 
         expected.forEach(([label, view, text]) => {
-          const btn = qs(`[data-label="${label}"]`, bottom);
-          if (!btn) return;
+          let btn = qs(`[data-label="${label}"]`, bottom);
+          if (!btn) {
+            btn = document.createElement("button");
+            btn.className = "tab";
+            btn.type = "button";
+            btn.setAttribute("data-label", label);
+            bottom.appendChild(btn);
+          }
           btn.setAttribute("data-view", view);
           btn.textContent = text;
         });
@@ -462,6 +477,7 @@
 
       const existing = document.getElementById("rcfRoot");
       if (existing && !shouldRebuild(existing)) {
+        existing.setAttribute("data-rcf-shell-version", "3.1");
         ensureStructuralSlots(existing);
         return true;
       }
