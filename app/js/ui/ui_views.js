@@ -1,6 +1,6 @@
 /* FILE: /app/js/ui/ui_views.js
    RControl Factory — UI Views
-   V3.1 SAFE SINGLE-VIEW ISOLATION FIX
+   V3.2 SAFE SINGLE-VIEW ISOLATION HARD FIX
    - Isola uma view por vez de forma real
    - Esconde legado visual fora da Home
    - Remove vazamento de Tools/legacy shell nas views internas
@@ -88,7 +88,7 @@
   const MOD = {
     _ctx: null,
     _mounted: false,
-    _styleId: "rcfUiViewsStyleV31",
+    _styleId: "rcfUiViewsStyleV32",
     _globalBound: false,
 
     init(ctx = {}) {
@@ -159,6 +159,8 @@
 
       this._hideAllViews();
       this._cleanupLegacyBleed(next);
+      this._purgeForeignFallbackBlocks(next);
+      this._syncShellVisibility(next);
 
       if (target) {
         target.hidden = false;
@@ -178,7 +180,6 @@
       this._markActiveButtons(next);
       this._markBottomNav(next);
       this._markDashboardMode(next);
-      this._syncShellVisibility(next);
       this._syncSpecialModules(next);
 
       try {
@@ -270,11 +271,11 @@
       }
 
       const current = Array.from(nav.querySelectorAll("[data-view]"))
-        .map(btn => String(btn.getAttribute("data-view") || "").trim());
-      const expected = BOTTOM_NAV_ITEMS.map(item => item.view).join("|");
+        .map((btn) => String(btn.getAttribute("data-view") || "").trim());
+      const expected = BOTTOM_NAV_ITEMS.map((item) => item.view).join("|");
 
       if (current.join("|") !== expected) {
-        nav.innerHTML = BOTTOM_NAV_ITEMS.map(item => `
+        nav.innerHTML = BOTTOM_NAV_ITEMS.map((item) => `
           <button class="tab" data-view="${this._escAttr(item.view)}" type="button">${this._esc(item.label)}</button>
         `).join("");
       }
@@ -320,9 +321,12 @@
       const root = this._getRoot();
       if (!root) return;
 
-      const inDashboard = this.normalizeViewName(view) === "dashboard";
+      const normalized = this.normalizeViewName(view);
+      const inDashboard = normalized === "dashboard";
 
-      const legacySelectors = [
+      const hideOutsideDashboard = [
+        ".topbar",
+        ".tabs:not(.rcfBottomNav)",
         ".rcfLegacyShell",
         ".rcfLegacyHeader",
         ".rcfLegacyTop",
@@ -330,12 +334,10 @@
         ".rcfDashLegacyNav",
         ".rcfDashTopNav",
         ".rcfDashHorizontalNav",
-        ".tabs:not(.rcfBottomNav)",
-        ".topbar",
         '[data-rcf-legacy="1"]'
       ];
 
-      legacySelectors.forEach((sel) => {
+      hideOutsideDashboard.forEach((sel) => {
         root.querySelectorAll(sel).forEach((el) => {
           try {
             if (inDashboard) {
@@ -350,11 +352,18 @@
       });
 
       const drawer = root.querySelector("#toolsDrawer");
-      if (drawer && !inDashboard) {
+      if (drawer) {
         try {
-          drawer.classList.remove("open");
-          drawer.hidden = true;
-          drawer.style.display = "none";
+          if (inDashboard) {
+            if (!drawer.classList.contains("open")) {
+              drawer.hidden = true;
+              drawer.style.display = "none";
+            }
+          } else {
+            drawer.classList.remove("open");
+            drawer.hidden = true;
+            drawer.style.display = "none";
+          }
         } catch {}
       }
     },
@@ -387,6 +396,61 @@
       });
     },
 
+    _purgeForeignFallbackBlocks(activeView) {
+      const normalized = this.normalizeViewName(activeView);
+
+      const adminBlocks = [
+        '[data-rcf-ui-agent-block="1"]',
+        '[data-rcf-ui-projects-block="1"]',
+        '.rcfUiSectionDivider',
+        '.rcfUiListGroup',
+        '.rcfUiProjectsHead',
+        '.rcfUiCodePanel',
+        '.rcfUiProjectsList',
+        '.rcfUiProjectItem',
+        '.rcfUiProjectsHead',
+        '.rcfUiTabs'
+      ];
+
+      const nonAdminViews = [
+        "settings",
+        "factory-ai",
+        "opportunity-scan",
+        "generator",
+        "github",
+        "updates",
+        "deploy",
+        "logs",
+        "diagnostics"
+      ];
+
+      if (normalized !== "admin") {
+        nonAdminViews.forEach((view) => {
+          adminBlocks.forEach((sel) => {
+            document.querySelectorAll(`#view-${view} ${sel}`).forEach((el) => {
+              try { el.remove(); } catch {}
+            });
+          });
+        });
+      }
+
+      if (normalized !== "agent") {
+        document.querySelectorAll(
+          '#view-agent-ia [data-rcf-ui-agent-block="1"], #view-factory-ai [data-rcf-ui-agent-block="1"], #view-settings [data-rcf-ui-agent-block="1"], #view-github [data-rcf-ui-agent-block="1"], #view-updates [data-rcf-ui-agent-block="1"], #view-deploy [data-rcf-ui-agent-block="1"]'
+        ).forEach((el) => {
+          try { el.remove(); } catch {}
+        });
+      }
+
+      if (normalized !== "editor") {
+        document.querySelectorAll(
+          '#view-settings [data-rcf-ui-projects-block="1"], #view-factory-ai [data-rcf-ui-projects-block="1"], #view-opportunity-scan [data-rcf-ui-projects-block="1"], #view-generator [data-rcf-ui-projects-block="1"], #view-github [data-rcf-ui-projects-block="1"], #view-updates [data-rcf-ui-projects-block="1"], #view-deploy [data-rcf-ui-projects-block="1"]'
+        ).forEach((el) => {
+          try { el.remove(); } catch {}
+        });
+      }
+    },
+
     _syncSpecialModules(view) {
       const normalized = this.normalizeViewName(view);
 
@@ -407,17 +471,7 @@
         });
       });
 
-      if (normalized !== "admin") {
-        this._removeFallbackAdminBlocks();
-      }
-
-      if (normalized !== "agent") {
-        this._removeFallbackAgentBlocks();
-      }
-
-      if (normalized !== "editor") {
-        this._removeFallbackProjectsBlocks();
-      }
+      this._purgeForeignFallbackBlocks(normalized);
 
       if (normalized === "dashboard") {
         try {
@@ -430,47 +484,18 @@
       if (normalized === "factory-ai") {
         this._tryMountFactoryAI();
       }
-    },
 
-    _removeFallbackAdminBlocks() {
-      [
-        '[data-rcf-ui-agent-block="1"]',
-        '[data-rcf-ui-projects-block="1"]',
-        '.rcfUiSectionDivider',
-        '.rcfUiListGroup',
-        '.rcfUiProjectsHead',
-        '.rcfUiCodePanel',
-        '.rcfUiProjectsList'
-      ].forEach((sel) => {
-        document.querySelectorAll(
-          `#view-admin ${sel},
-           #view-settings ${sel},
-           #view-factory-ai ${sel},
-           #view-opportunity-scan ${sel},
-           #view-generator ${sel},
-           #view-github ${sel},
-           #view-updates ${sel},
-           #view-deploy ${sel}`
-        ).forEach((el) => {
-          try { el.remove(); } catch {}
-        });
-      });
-    },
+      if (normalized === "github") {
+        this._tryMountGenericModule("github");
+      }
 
-    _removeFallbackAgentBlocks() {
-      document.querySelectorAll(
-        '#view-agent-ia [data-rcf-ui-agent-block="1"], #view-factory-ai [data-rcf-ui-agent-block="1"], #view-settings [data-rcf-ui-agent-block="1"]'
-      ).forEach((el) => {
-        try { el.remove(); } catch {}
-      });
-    },
+      if (normalized === "updates") {
+        this._tryMountGenericModule("updates");
+      }
 
-    _removeFallbackProjectsBlocks() {
-      document.querySelectorAll(
-        '#view-settings [data-rcf-ui-projects-block="1"], #view-factory-ai [data-rcf-ui-projects-block="1"], #view-opportunity-scan [data-rcf-ui-projects-block="1"], #view-generator [data-rcf-ui-projects-block="1"], #view-github [data-rcf-ui-projects-block="1"], #view-updates [data-rcf-ui-projects-block="1"], #view-deploy [data-rcf-ui-projects-block="1"]'
-      ).forEach((el) => {
-        try { el.remove(); } catch {}
-      });
+      if (normalized === "deploy") {
+        this._tryMountGenericModule("deploy");
+      }
     },
 
     _tryMountFactoryAI() {
@@ -497,6 +522,16 @@
         return true;
       }
 
+      return false;
+    },
+
+    _tryMountGenericModule(name) {
+      try {
+        document.dispatchEvent(new CustomEvent("rcf:view-module", {
+          detail: { source: "ui_views", view: name }
+        }));
+        return true;
+      } catch {}
       return false;
     },
 
