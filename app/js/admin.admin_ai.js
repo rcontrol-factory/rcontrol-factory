@@ -1,6 +1,6 @@
 /* FILE: /app/js/admin.admin_ai.js
    RControl Factory — Factory AI
-   v3.6 CHAT CORE CLEAN FINAL
+   v3.7 CHAT CORE COMPOSER REFINED
 
    - Factory AI em modo chat-first real
    - nome oficial padronizado: Factory AI
@@ -8,12 +8,12 @@
    - fallback seguro para admin apenas se necessário
    - remove duplicação visual pesada da tela
    - visual clean mobile-first
-   - composer compacto no padrão aprovado
-   - apenas um botão de anexo: botão "+" à esquerda
-   - remove clipe duplicado dentro da barra
-   - remove aviso grande inicial dentro do chat
-   - estado vazio discreto quando ainda não houver conversa
-   - anexos aparecem em chips no composer
+   - composer refinado no padrão de chat compacto
+   - botão "+" integrado dentro do card de mensagem
+   - remove duplicação de clip/attach
+   - textarea compacta com auto-grow controlado
+   - enviar e limpar ficam juntos à direita, em formato seguro
+   - anexos aparecem em chips acima do composer
    - inferência automática de ação por linguagem natural
    - usa actions compatíveis com backend atual
    - tenta /api/factory-ai com fallback para /api/admin-ai
@@ -24,12 +24,12 @@
 (() => {
   "use strict";
 
-  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v36) return;
+  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v37) return;
 
-  const VERSION = "v3.6";
+  const VERSION = "v3.7";
   const BOX_ID = "rcfFactoryAIBox";
   const CHAT_ID = "rcfFactoryAIChat";
-  const STYLE_ID = "rcfFactoryAIStyleV36";
+  const STYLE_ID = "rcfFactoryAIStyleV37";
 
   const STATE = {
     busy: false,
@@ -292,12 +292,12 @@
 
     const sendBtn = document.getElementById("rcfFactoryAISend");
     const clearBtn = document.getElementById("rcfFactoryAIClear");
-    const attachBtnLeft = document.getElementById("rcfFactoryAIAttachBtnLeft");
+    const attachBtn = document.getElementById("rcfFactoryAIAttachBtn");
     const input = document.getElementById("rcfFactoryAIPrompt");
 
     if (sendBtn) sendBtn.disabled = !!busy;
     if (clearBtn) clearBtn.disabled = false;
-    if (attachBtnLeft) attachBtnLeft.disabled = !!busy;
+    if (attachBtn) attachBtn.disabled = !!busy;
     if (input) input.disabled = !!busy;
   }
 
@@ -503,41 +503,42 @@
 }
 
 #${BOX_ID} .rcfAiInputShell{
-  display:flex;
-  align-items:center;
+  position:relative;
+  display:grid;
+  grid-template-columns:auto 1fr auto;
   gap:10px;
+  align-items:end;
 }
 
 #${BOX_ID} .rcfAiAttachWrap{
   position:relative;
-  flex:0 0 auto;
+  align-self:center;
 }
 
-#${BOX_ID} .rcfAiMiniBtn{
-  width:46px;
-  height:46px;
-  min-width:46px;
-  border-radius:16px;
-  border:1px solid rgba(31,41,55,.10);
-  background:rgba(255,255,255,.96);
-  color:#26407a;
-  font-size:22px;
-  font-weight:900;
+#${BOX_ID} .rcfAiAttachBtn{
+  width:22px;
+  height:22px;
+  min-width:22px;
+  border:none;
+  background:transparent;
+  color:#7088c8;
+  font-size:28px;
+  line-height:1;
+  font-weight:700;
   cursor:pointer;
+  padding:0;
   display:flex;
   align-items:center;
   justify-content:center;
-  -webkit-tap-highlight-color:transparent;
 }
 
 #${BOX_ID} .rcfAiInputCard{
-  flex:1 1 auto;
   display:flex;
   align-items:center;
   gap:8px;
-  min-height:58px;
-  padding:8px 12px;
-  border-radius:20px;
+  min-height:52px;
+  padding:6px 10px 6px 2px;
+  border-radius:18px;
   border:1px solid rgba(31,41,55,.10);
   background:#fff;
   box-shadow:0 1px 0 rgba(255,255,255,.65) inset;
@@ -545,10 +546,10 @@
 
 #${BOX_ID} .rcfAiPrompt{
   flex:1 1 auto;
-  min-height:42px;
-  max-height:110px;
+  min-height:28px;
+  max-height:88px;
   resize:none;
-  padding:9px 2px;
+  padding:10px 8px 10px 10px;
   border:none;
   outline:none;
   background:transparent;
@@ -561,10 +562,16 @@
   color:rgba(24,35,63,.38);
 }
 
+#${BOX_ID} .rcfAiActionGroup{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  align-self:center;
+}
+
 #${BOX_ID} .rcfAiSendBtn{
-  flex:0 0 auto;
-  min-width:108px;
-  height:50px;
+  min-width:92px;
+  height:46px;
   padding:0 16px;
   border-radius:18px;
   border:1px solid rgba(112,152,255,.20);
@@ -576,10 +583,24 @@
   -webkit-tap-highlight-color:transparent;
 }
 
+#${BOX_ID} .rcfAiClearBtn{
+  width:40px;
+  height:40px;
+  min-width:40px;
+  border-radius:14px;
+  border:1px solid rgba(31,41,55,.08);
+  background:rgba(255,255,255,.88);
+  color:#6f7a96;
+  font-size:16px;
+  font-weight:900;
+  cursor:pointer;
+  -webkit-tap-highlight-color:transparent;
+}
+
 #${BOX_ID} .rcfAiMenu{
   position:absolute;
-  left:0;
-  bottom:56px;
+  left:-4px;
+  bottom:38px;
   min-width:190px;
   display:none;
   z-index:30;
@@ -624,35 +645,6 @@
   color:rgba(32,45,77,.80);
 }
 
-#${BOX_ID} .rcfAiRightBottom{
-  display:flex;
-  align-items:center;
-  gap:10px;
-  flex-wrap:wrap;
-}
-
-#${BOX_ID} .rcfAiBtn{
-  display:inline-flex;
-  align-items:center;
-  justify-content:center;
-  min-width:98px;
-  min-height:42px;
-  padding:10px 14px;
-  border-radius:14px;
-  border:1px solid rgba(31,41,55,.08);
-  background:rgba(255,255,255,.88);
-  color:#26407a;
-  font-size:14px;
-  font-weight:900;
-  cursor:pointer;
-  -webkit-tap-highlight-color:transparent;
-}
-
-#${BOX_ID} .rcfAiHint{
-  font-size:12px;
-  color:rgba(32,45,77,.64);
-}
-
 #${BOX_ID} details.rcfAiDetails{
   border:1px solid rgba(31,41,55,.08);
   border-radius:18px;
@@ -689,12 +681,18 @@
     font-size:18px;
   }
   #${BOX_ID} .rcfAiInputShell{
-    align-items:stretch;
+    grid-template-columns:auto 1fr auto;
+    gap:8px;
   }
   #${BOX_ID} .rcfAiSendBtn{
-    min-width:92px;
-    height:48px;
+    min-width:82px;
+    height:44px;
     padding:0 14px;
+  }
+  #${BOX_ID} .rcfAiClearBtn{
+    width:38px;
+    height:38px;
+    min-width:38px;
   }
   #${BOX_ID} .rcfAiAttachmentName{
     max-width:110px;
@@ -825,19 +823,11 @@
     const attachments = getAttachmentPayload();
 
     if (action === "analyze-logs") {
-      return {
-        snapshot,
-        logs: collectLogs(),
-        attachments
-      };
+      return { snapshot, logs: collectLogs(), attachments };
     }
 
     if (action === "factory_diagnosis") {
-      return {
-        snapshot,
-        doctor: collectDoctorReport(),
-        attachments
-      };
+      return { snapshot, doctor: collectDoctorReport(), attachments };
     }
 
     if (action === "propose-patch" || action === "generate-code") {
@@ -871,10 +861,7 @@
       };
     }
 
-    return {
-      snapshot,
-      attachments
-    };
+    return { snapshot, attachments };
   }
 
   function getAttachmentPayload() {
@@ -1151,7 +1138,7 @@
   }
 
   function closeAttachMenus() {
-    ["rcfFactoryAIClipMenuLeft"].forEach((id) => {
+    ["rcfFactoryAIClipMenuMain"].forEach((id) => {
       const menu = document.getElementById(id);
       if (menu) menu.classList.remove("open");
     });
@@ -1167,8 +1154,8 @@
   function autoResizePrompt(el) {
     try {
       if (!el) return;
-      el.style.height = "42px";
-      const next = Math.min(Math.max(el.scrollHeight, 42), 110);
+      el.style.height = "28px";
+      const next = Math.min(Math.max(el.scrollHeight, 28), 88);
       el.style.height = next + "px";
     } catch {}
   }
@@ -1255,13 +1242,13 @@
     });
   }
 
-  function bindMenuItems(menuId) {
+  function bindMenuItems() {
     [
-      ["rcfFactoryAIChooseImage_" + menuId, "rcfFactoryAIInputImage"],
-      ["rcfFactoryAIChoosePdf_" + menuId, "rcfFactoryAIInputPdf"],
-      ["rcfFactoryAIChooseZip_" + menuId, "rcfFactoryAIInputZip"],
-      ["rcfFactoryAIChooseFile_" + menuId, "rcfFactoryAIInputFile"],
-      ["rcfFactoryAIChooseVideo_" + menuId, "rcfFactoryAIInputVideo"]
+      ["rcfFactoryAIChooseImage", "rcfFactoryAIInputImage"],
+      ["rcfFactoryAIChoosePdf", "rcfFactoryAIInputPdf"],
+      ["rcfFactoryAIChooseZip", "rcfFactoryAIInputZip"],
+      ["rcfFactoryAIChooseFile", "rcfFactoryAIInputFile"],
+      ["rcfFactoryAIChooseVideo", "rcfFactoryAIInputVideo"]
     ].forEach(([btnId, inputId]) => {
       const btn = document.getElementById(btnId);
       if (!btn || btn.__boundPick) return;
@@ -1276,7 +1263,7 @@
     const sendBtn = document.getElementById("rcfFactoryAISend");
     const clearBtn = document.getElementById("rcfFactoryAIClear");
     const promptEl = document.getElementById("rcfFactoryAIPrompt");
-    const attachBtnLeft = document.getElementById("rcfFactoryAIAttachBtnLeft");
+    const attachBtn = document.getElementById("rcfFactoryAIAttachBtn");
 
     if (sendBtn && !sendBtn.__bound) {
       sendBtn.__bound = true;
@@ -1288,10 +1275,26 @@
     if (clearBtn && !clearBtn.__bound) {
       clearBtn.__bound = true;
       clearBtn.addEventListener("click", () => {
+        const hasTyped = !!String(promptEl?.value || "").trim();
+        const hasHistory = Array.isArray(STATE.history) && STATE.history.length > 0;
+        const hasAttachments = Array.isArray(STATE.attachments) && STATE.attachments.length > 0;
+
+        if (hasTyped || hasHistory || hasAttachments) {
+          const ok = window.confirm("Limpar conversa e composer?");
+          if (!ok) return;
+        }
+
         clearChat();
         clearAttachments();
         closeAttachMenus();
-      }, { passive: true });
+
+        if (promptEl) {
+          try {
+            promptEl.value = "";
+            autoResizePrompt(promptEl);
+          } catch {}
+        }
+      }, { passive: false });
     }
 
     if (promptEl && !promptEl.__boundInput) {
@@ -1312,37 +1315,37 @@
       });
     }
 
-    if (attachBtnLeft && !attachBtnLeft.__bound) {
-      attachBtnLeft.__bound = true;
-      attachBtnLeft.addEventListener("click", () => {
-        toggleAttachMenu("rcfFactoryAIClipMenuLeft");
+    if (attachBtn && !attachBtn.__bound) {
+      attachBtn.__bound = true;
+      attachBtn.addEventListener("click", () => {
+        toggleAttachMenu("rcfFactoryAIClipMenuMain");
       }, { passive: true });
     }
 
-    bindMenuItems("left");
+    bindMenuItems();
     bindAttachmentInputs();
     renderAttachments();
 
-    if (!document.__rcfFactoryAIOutsideClickV36) {
-      document.__rcfFactoryAIOutsideClickV36 = true;
+    if (!document.__rcfFactoryAIOutsideClickV37) {
+      document.__rcfFactoryAIOutsideClickV37 = true;
       document.addEventListener("click", (ev) => {
         try {
-          const left = document.getElementById("rcfFactoryAIAttachWrapLeft");
-          if (left && left.contains(ev.target)) return;
+          const wrap = document.getElementById("rcfFactoryAIAttachWrap");
+          if (wrap && wrap.contains(ev.target)) return;
           closeAttachMenus();
         } catch {}
       }, { passive: true });
     }
   }
 
-  function buildAttachMenu(menuId) {
+  function buildAttachMenu() {
     return `
-      <div id="${menuId}" class="rcfAiMenu">
-        <button class="rcfAiMenuItem" id="rcfFactoryAIChooseImage_left" type="button">🖼️ Imagem</button>
-        <button class="rcfAiMenuItem" id="rcfFactoryAIChoosePdf_left" type="button">📄 PDF</button>
-        <button class="rcfAiMenuItem" id="rcfFactoryAIChooseZip_left" type="button">🗜️ ZIP</button>
-        <button class="rcfAiMenuItem" id="rcfFactoryAIChooseFile_left" type="button">📎 Arquivo</button>
-        <button class="rcfAiMenuItem" id="rcfFactoryAIChooseVideo_left" type="button">🎬 Vídeo</button>
+      <div id="rcfFactoryAIClipMenuMain" class="rcfAiMenu">
+        <button class="rcfAiMenuItem" id="rcfFactoryAIChooseImage" type="button">🖼️ Imagem</button>
+        <button class="rcfAiMenuItem" id="rcfFactoryAIChoosePdf" type="button">📄 PDF</button>
+        <button class="rcfAiMenuItem" id="rcfFactoryAIChooseZip" type="button">🗜️ ZIP</button>
+        <button class="rcfAiMenuItem" id="rcfFactoryAIChooseFile" type="button">📎 Arquivo</button>
+        <button class="rcfAiMenuItem" id="rcfFactoryAIChooseVideo" type="button">🎬 Vídeo</button>
       </div>
     `;
   }
@@ -1367,9 +1370,15 @@
           <div id="rcfFactoryAIAttachments" class="rcfAiAttachRow" style="display:none"></div>
 
           <div class="rcfAiInputShell">
-            <div class="rcfAiAttachWrap" id="rcfFactoryAIAttachWrapLeft">
-              <button class="rcfAiMiniBtn" id="rcfFactoryAIAttachBtnLeft" type="button" aria-label="Adicionar arquivo" title="Adicionar arquivo">＋</button>
-              ${buildAttachMenu("rcfFactoryAIClipMenuLeft")}
+            <div class="rcfAiAttachWrap" id="rcfFactoryAIAttachWrap">
+              <button
+                class="rcfAiAttachBtn"
+                id="rcfFactoryAIAttachBtn"
+                type="button"
+                aria-label="Adicionar anexo"
+                title="Adicionar anexo"
+              >＋</button>
+              ${buildAttachMenu()}
             </div>
 
             <div class="rcfAiInputCard">
@@ -1380,7 +1389,10 @@
               ></textarea>
             </div>
 
-            <button class="rcfAiSendBtn" id="rcfFactoryAISend" type="button">Enviar</button>
+            <div class="rcfAiActionGroup">
+              <button class="rcfAiClearBtn" id="rcfFactoryAIClear" type="button" aria-label="Limpar conversa" title="Limpar conversa">⌫</button>
+              <button class="rcfAiSendBtn" id="rcfFactoryAISend" type="button">Enviar</button>
+            </div>
           </div>
 
           <input id="rcfFactoryAIInputImage" class="rcfAiHiddenInput" type="file" accept="image/*" multiple>
@@ -1391,10 +1403,6 @@
 
           <div class="rcfAiBottom">
             <div id="rcfFactoryAIComposerStatus" class="rcfAiStatus">aguardando</div>
-            <div class="rcfAiRightBottom">
-              <div class="rcfAiHint">Em breve: leitura real de imagem, ZIP, PDF, vídeo e arquivos direto no chat.</div>
-              <button class="rcfAiBtn" id="rcfFactoryAIClear" type="button">Limpar</button>
-            </div>
           </div>
 
           <details class="rcfAiDetails">
@@ -1484,7 +1492,7 @@
   }
 
   window.RCF_FACTORY_AI = {
-    __v36: true,
+    __v37: true,
     version: VERSION,
     mount,
     clearChat,
@@ -1501,7 +1509,7 @@
   };
 
   window.RCF_ADMIN_AI = Object.assign(window.RCF_ADMIN_AI || {}, {
-    __v36_bridge: true,
+    __v37_bridge: true,
     version: VERSION,
     mount,
     clearChat,
