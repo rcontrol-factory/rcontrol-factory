@@ -1,6 +1,6 @@
 /* FILE: /app/js/admin.admin_ai.js
    RControl Factory — Factory AI
-   v3.7 CHAT CORE COMPOSER REFINED
+   v3.8 CHAT CORE COMPOSER FINAL
 
    - Factory AI em modo chat-first real
    - nome oficial padronizado: Factory AI
@@ -8,11 +8,11 @@
    - fallback seguro para admin apenas se necessário
    - remove duplicação visual pesada da tela
    - visual clean mobile-first
-   - composer refinado no padrão de chat compacto
-   - botão "+" integrado dentro do card de mensagem
-   - remove duplicação de clip/attach
-   - textarea compacta com auto-grow controlado
-   - enviar e limpar ficam juntos à direita, em formato seguro
+   - composer final refinado
+   - botão "+" dentro da barra à esquerda
+   - botão "Enviar" dentro da barra à direita
+   - remove botão limpar
+   - textarea central compacta com auto-grow controlado
    - anexos aparecem em chips acima do composer
    - inferência automática de ação por linguagem natural
    - usa actions compatíveis com backend atual
@@ -24,12 +24,12 @@
 (() => {
   "use strict";
 
-  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v37) return;
+  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v38) return;
 
-  const VERSION = "v3.7";
+  const VERSION = "v3.8";
   const BOX_ID = "rcfFactoryAIBox";
   const CHAT_ID = "rcfFactoryAIChat";
-  const STYLE_ID = "rcfFactoryAIStyleV37";
+  const STYLE_ID = "rcfFactoryAIStyleV38";
 
   const STATE = {
     busy: false,
@@ -291,12 +291,10 @@
     STATE.busy = !!busy;
 
     const sendBtn = document.getElementById("rcfFactoryAISend");
-    const clearBtn = document.getElementById("rcfFactoryAIClear");
     const attachBtn = document.getElementById("rcfFactoryAIAttachBtn");
     const input = document.getElementById("rcfFactoryAIPrompt");
 
     if (sendBtn) sendBtn.disabled = !!busy;
-    if (clearBtn) clearBtn.disabled = false;
     if (attachBtn) attachBtn.disabled = !!busy;
     if (input) input.disabled = !!busy;
   }
@@ -504,25 +502,38 @@
 
 #${BOX_ID} .rcfAiInputShell{
   position:relative;
+}
+
+#${BOX_ID} .rcfAiInputCard{
   display:grid;
   grid-template-columns:auto 1fr auto;
-  gap:10px;
-  align-items:end;
+  align-items:center;
+  gap:8px;
+  min-height:54px;
+  padding:6px 8px;
+  border-radius:18px;
+  border:1px solid rgba(31,41,55,.10);
+  background:#fff;
+  box-shadow:0 1px 0 rgba(255,255,255,.65) inset;
 }
 
 #${BOX_ID} .rcfAiAttachWrap{
   position:relative;
-  align-self:center;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  width:28px;
+  min-width:28px;
 }
 
 #${BOX_ID} .rcfAiAttachBtn{
-  width:22px;
-  height:22px;
-  min-width:22px;
+  width:24px;
+  height:24px;
+  min-width:24px;
   border:none;
   background:transparent;
   color:#7088c8;
-  font-size:28px;
+  font-size:30px;
   line-height:1;
   font-weight:700;
   cursor:pointer;
@@ -532,24 +543,12 @@
   justify-content:center;
 }
 
-#${BOX_ID} .rcfAiInputCard{
-  display:flex;
-  align-items:center;
-  gap:8px;
-  min-height:52px;
-  padding:6px 10px 6px 2px;
-  border-radius:18px;
-  border:1px solid rgba(31,41,55,.10);
-  background:#fff;
-  box-shadow:0 1px 0 rgba(255,255,255,.65) inset;
-}
-
 #${BOX_ID} .rcfAiPrompt{
-  flex:1 1 auto;
+  width:100%;
   min-height:28px;
   max-height:88px;
   resize:none;
-  padding:10px 8px 10px 10px;
+  padding:10px 4px;
   border:none;
   outline:none;
   background:transparent;
@@ -562,18 +561,17 @@
   color:rgba(24,35,63,.38);
 }
 
-#${BOX_ID} .rcfAiActionGroup{
+#${BOX_ID} .rcfAiSendWrap{
   display:flex;
   align-items:center;
-  gap:8px;
-  align-self:center;
+  justify-content:flex-end;
 }
 
 #${BOX_ID} .rcfAiSendBtn{
   min-width:92px;
-  height:46px;
+  height:42px;
   padding:0 16px;
-  border-radius:18px;
+  border-radius:16px;
   border:1px solid rgba(112,152,255,.20);
   background:linear-gradient(180deg, rgba(223,232,255,.98), rgba(212,224,255,.92));
   color:#26407a;
@@ -583,24 +581,10 @@
   -webkit-tap-highlight-color:transparent;
 }
 
-#${BOX_ID} .rcfAiClearBtn{
-  width:40px;
-  height:40px;
-  min-width:40px;
-  border-radius:14px;
-  border:1px solid rgba(31,41,55,.08);
-  background:rgba(255,255,255,.88);
-  color:#6f7a96;
-  font-size:16px;
-  font-weight:900;
-  cursor:pointer;
-  -webkit-tap-highlight-color:transparent;
-}
-
 #${BOX_ID} .rcfAiMenu{
   position:absolute;
   left:-4px;
-  bottom:38px;
+  bottom:34px;
   min-width:190px;
   display:none;
   z-index:30;
@@ -680,19 +664,10 @@
   #${BOX_ID} .rcfAiHeadTitle{
     font-size:18px;
   }
-  #${BOX_ID} .rcfAiInputShell{
-    grid-template-columns:auto 1fr auto;
-    gap:8px;
-  }
   #${BOX_ID} .rcfAiSendBtn{
     min-width:82px;
-    height:44px;
+    height:40px;
     padding:0 14px;
-  }
-  #${BOX_ID} .rcfAiClearBtn{
-    width:38px;
-    height:38px;
-    min-width:38px;
   }
   #${BOX_ID} .rcfAiAttachmentName{
     max-width:110px;
@@ -1261,7 +1236,6 @@
 
   function bindBox() {
     const sendBtn = document.getElementById("rcfFactoryAISend");
-    const clearBtn = document.getElementById("rcfFactoryAIClear");
     const promptEl = document.getElementById("rcfFactoryAIPrompt");
     const attachBtn = document.getElementById("rcfFactoryAIAttachBtn");
 
@@ -1270,31 +1244,6 @@
       sendBtn.addEventListener("click", () => {
         sendPrompt(String(promptEl?.value || "").trim(), "");
       }, { passive: true });
-    }
-
-    if (clearBtn && !clearBtn.__bound) {
-      clearBtn.__bound = true;
-      clearBtn.addEventListener("click", () => {
-        const hasTyped = !!String(promptEl?.value || "").trim();
-        const hasHistory = Array.isArray(STATE.history) && STATE.history.length > 0;
-        const hasAttachments = Array.isArray(STATE.attachments) && STATE.attachments.length > 0;
-
-        if (hasTyped || hasHistory || hasAttachments) {
-          const ok = window.confirm("Limpar conversa e composer?");
-          if (!ok) return;
-        }
-
-        clearChat();
-        clearAttachments();
-        closeAttachMenus();
-
-        if (promptEl) {
-          try {
-            promptEl.value = "";
-            autoResizePrompt(promptEl);
-          } catch {}
-        }
-      }, { passive: false });
     }
 
     if (promptEl && !promptEl.__boundInput) {
@@ -1326,8 +1275,8 @@
     bindAttachmentInputs();
     renderAttachments();
 
-    if (!document.__rcfFactoryAIOutsideClickV37) {
-      document.__rcfFactoryAIOutsideClickV37 = true;
+    if (!document.__rcfFactoryAIOutsideClickV38) {
+      document.__rcfFactoryAIOutsideClickV38 = true;
       document.addEventListener("click", (ev) => {
         try {
           const wrap = document.getElementById("rcfFactoryAIAttachWrap");
@@ -1370,28 +1319,27 @@
           <div id="rcfFactoryAIAttachments" class="rcfAiAttachRow" style="display:none"></div>
 
           <div class="rcfAiInputShell">
-            <div class="rcfAiAttachWrap" id="rcfFactoryAIAttachWrap">
-              <button
-                class="rcfAiAttachBtn"
-                id="rcfFactoryAIAttachBtn"
-                type="button"
-                aria-label="Adicionar anexo"
-                title="Adicionar anexo"
-              >＋</button>
-              ${buildAttachMenu()}
-            </div>
-
             <div class="rcfAiInputCard">
+              <div class="rcfAiAttachWrap" id="rcfFactoryAIAttachWrap">
+                <button
+                  class="rcfAiAttachBtn"
+                  id="rcfFactoryAIAttachBtn"
+                  type="button"
+                  aria-label="Adicionar anexo"
+                  title="Adicionar anexo"
+                >＋</button>
+                ${buildAttachMenu()}
+              </div>
+
               <textarea
                 id="rcfFactoryAIPrompt"
                 class="rcfAiPrompt"
                 placeholder="Digite sua mensagem..."
               ></textarea>
-            </div>
 
-            <div class="rcfAiActionGroup">
-              <button class="rcfAiClearBtn" id="rcfFactoryAIClear" type="button" aria-label="Limpar conversa" title="Limpar conversa">⌫</button>
-              <button class="rcfAiSendBtn" id="rcfFactoryAISend" type="button">Enviar</button>
+              <div class="rcfAiSendWrap">
+                <button class="rcfAiSendBtn" id="rcfFactoryAISend" type="button">Enviar</button>
+              </div>
             </div>
           </div>
 
@@ -1492,7 +1440,7 @@
   }
 
   window.RCF_FACTORY_AI = {
-    __v37: true,
+    __v38: true,
     version: VERSION,
     mount,
     clearChat,
@@ -1509,7 +1457,7 @@
   };
 
   window.RCF_ADMIN_AI = Object.assign(window.RCF_ADMIN_AI || {}, {
-    __v37_bridge: true,
+    __v38_bridge: true,
     version: VERSION,
     mount,
     clearChat,
