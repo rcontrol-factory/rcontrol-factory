@@ -1,6 +1,6 @@
 /* FILE: /app/js/admin.admin_ai.js
    RControl Factory — Factory AI
-   v3.8 CHAT CORE COMPOSER FINAL
+   v3.9 CHAT CORE AUDIO READY
 
    - Factory AI em modo chat-first real
    - nome oficial padronizado: Factory AI
@@ -8,12 +8,13 @@
    - fallback seguro para admin apenas se necessário
    - remove duplicação visual pesada da tela
    - visual clean mobile-first
-   - composer final refinado
-   - botão "+" dentro da barra à esquerda
-   - botão "Enviar" dentro da barra à direita
-   - remove botão limpar
-   - textarea central compacta com auto-grow controlado
-   - anexos aparecem em chips acima do composer
+   - composer refinado no estilo de chat moderno
+   - botão "+" fora da cápsula do input
+   - botão enviar compacto
+   - textarea com auto-grow leve
+   - suporte visual a anexos
+   - leitura em voz (speechSynthesis) pronta
+   - captura por voz preparada com fallback seguro
    - inferência automática de ação por linguagem natural
    - usa actions compatíveis com backend atual
    - tenta /api/factory-ai com fallback para /api/admin-ai
@@ -24,12 +25,17 @@
 (() => {
   "use strict";
 
-  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v38) return;
+  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v39) return;
 
-  const VERSION = "v3.8";
+  const VERSION = "v3.9";
   const BOX_ID = "rcfFactoryAIBox";
   const CHAT_ID = "rcfFactoryAIChat";
-  const STYLE_ID = "rcfFactoryAIStyleV38";
+  const STYLE_ID = "rcfFactoryAIStyleV39";
+
+  const SpeechRecognitionCtor =
+    window.SpeechRecognition ||
+    window.webkitSpeechRecognition ||
+    null;
 
   const STATE = {
     busy: false,
@@ -38,7 +44,9 @@
     lastEndpoint: "",
     bootedAt: new Date().toISOString(),
     syncTimer: null,
-    attachments: []
+    attachments: [],
+    isListening: false,
+    currentUtterance: null
   };
 
   function log(level, msg) {
@@ -292,10 +300,12 @@
 
     const sendBtn = document.getElementById("rcfFactoryAISend");
     const attachBtn = document.getElementById("rcfFactoryAIAttachBtn");
+    const voiceBtn = document.getElementById("rcfFactoryAIVoiceBtn");
     const input = document.getElementById("rcfFactoryAIPrompt");
 
     if (sendBtn) sendBtn.disabled = !!busy;
     if (attachBtn) attachBtn.disabled = !!busy;
+    if (voiceBtn) voiceBtn.disabled = !!busy;
     if (input) input.disabled = !!busy;
   }
 
@@ -453,6 +463,27 @@
   opacity:.56;
 }
 
+#${BOX_ID} .rcfAiMsgTools{
+  display:flex;
+  justify-content:flex-end;
+  gap:8px;
+  margin-top:8px;
+}
+
+#${BOX_ID} .rcfAiMiniBtn{
+  min-width:34px;
+  height:34px;
+  border-radius:12px;
+  border:1px solid rgba(31,41,55,.08);
+  background:rgba(255,255,255,.94);
+  color:#5a6b98;
+  font-size:16px;
+  cursor:pointer;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+}
+
 #${BOX_ID} .rcfAiComposer{
   display:grid;
   gap:10px;
@@ -501,39 +532,30 @@
 }
 
 #${BOX_ID} .rcfAiInputShell{
-  position:relative;
-}
-
-#${BOX_ID} .rcfAiInputCard{
   display:grid;
-  grid-template-columns:auto 1fr auto;
-  align-items:center;
-  gap:8px;
-  min-height:54px;
-  padding:6px 8px;
-  border-radius:18px;
-  border:1px solid rgba(31,41,55,.10);
-  background:#fff;
-  box-shadow:0 1px 0 rgba(255,255,255,.65) inset;
+  grid-template-columns:auto 1fr;
+  gap:10px;
+  align-items:end;
 }
 
 #${BOX_ID} .rcfAiAttachWrap{
   position:relative;
   display:flex;
-  align-items:center;
+  align-items:flex-end;
   justify-content:center;
-  width:28px;
-  min-width:28px;
+  width:32px;
+  min-width:32px;
+  padding-bottom:8px;
 }
 
 #${BOX_ID} .rcfAiAttachBtn{
-  width:24px;
-  height:24px;
-  min-width:24px;
+  width:28px;
+  height:28px;
+  min-width:28px;
   border:none;
   background:transparent;
   color:#7088c8;
-  font-size:30px;
+  font-size:34px;
   line-height:1;
   font-weight:700;
   cursor:pointer;
@@ -543,12 +565,25 @@
   justify-content:center;
 }
 
+#${BOX_ID} .rcfAiInputCard{
+  display:grid;
+  grid-template-columns:1fr auto auto;
+  align-items:end;
+  gap:8px;
+  min-height:54px;
+  padding:6px 8px;
+  border-radius:18px;
+  border:1px solid rgba(31,41,55,.10);
+  background:#fff;
+  box-shadow:0 1px 0 rgba(255,255,255,.65) inset;
+}
+
 #${BOX_ID} .rcfAiPrompt{
   width:100%;
   min-height:28px;
   max-height:88px;
   resize:none;
-  padding:10px 4px;
+  padding:10px 6px;
   border:none;
   outline:none;
   background:transparent;
@@ -561,24 +596,42 @@
   color:rgba(24,35,63,.38);
 }
 
-#${BOX_ID} .rcfAiSendWrap{
-  display:flex;
+#${BOX_ID} .rcfAiVoiceBtn{
+  width:34px;
+  height:34px;
+  min-width:34px;
+  border:none;
+  background:transparent;
+  color:#7b8ab7;
+  font-size:19px;
+  cursor:pointer;
+  display:inline-flex;
   align-items:center;
-  justify-content:flex-end;
+  justify-content:center;
+  border-radius:12px;
+}
+
+#${BOX_ID} .rcfAiVoiceBtn.listening{
+  background:rgba(112,152,255,.12);
+  color:#26407a;
 }
 
 #${BOX_ID} .rcfAiSendBtn{
-  min-width:92px;
-  height:42px;
-  padding:0 16px;
-  border-radius:16px;
+  min-width:34px;
+  width:34px;
+  height:34px;
+  padding:0;
+  border-radius:999px;
   border:1px solid rgba(112,152,255,.20);
   background:linear-gradient(180deg, rgba(223,232,255,.98), rgba(212,224,255,.92));
   color:#26407a;
-  font-size:15px;
+  font-size:16px;
   font-weight:900;
   cursor:pointer;
   -webkit-tap-highlight-color:transparent;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
 }
 
 #${BOX_ID} .rcfAiMenu{
@@ -664,11 +717,6 @@
   #${BOX_ID} .rcfAiHeadTitle{
     font-size:18px;
   }
-  #${BOX_ID} .rcfAiSendBtn{
-    min-width:82px;
-    height:40px;
-    padding:0 14px;
-  }
   #${BOX_ID} .rcfAiAttachmentName{
     max-width:110px;
   }
@@ -691,18 +739,34 @@
       return;
     }
 
-    box.innerHTML = STATE.history.map((item) => {
+    box.innerHTML = STATE.history.map((item, idx) => {
       const isUser = item.role === "user";
+      const canSpeak = !isUser;
       return `
         <div class="rcfAiMsgRow ${isUser ? "user" : "assistant"}">
           <div class="rcfAiBubble ${isUser ? "userBubble" : ""}">
             <div class="rcfAiMsgLabel">${isUser ? "Você" : "Factory AI"}</div>
             <div class="rcfAiMsgText">${esc(item.text)}</div>
             <div class="rcfAiMsgTime">${esc(item.ts)}</div>
+            ${canSpeak ? `
+              <div class="rcfAiMsgTools">
+                <button class="rcfAiMiniBtn" type="button" data-rcf-speak-idx="${idx}" title="Ler resposta">🔊</button>
+              </div>
+            ` : ``}
           </div>
         </div>
       `;
     }).join("");
+
+    qsa("[data-rcf-speak-idx]", box).forEach((btn) => {
+      if (btn.__boundSpeak) return;
+      btn.__boundSpeak = true;
+      btn.addEventListener("click", () => {
+        const idx = Number(btn.getAttribute("data-rcf-speak-idx"));
+        const item = Array.isArray(STATE.history) ? STATE.history[idx] : null;
+        if (item && item.text) speakText(item.text);
+      }, { passive: true });
+    });
 
     try { box.scrollTop = box.scrollHeight; } catch {}
   }
@@ -831,7 +895,8 @@
           wantsZipFlow: true,
           wantsPdfFlow: true,
           wantsImageFlow: true,
-          wantsVideoFlow: true
+          wantsVideoFlow: true,
+          wantsAudioFlow: true
         }
       };
     }
@@ -981,6 +1046,7 @@
 
     clearAttachments();
     closeAttachMenus();
+    stopListening();
   }
 
   function normalizePickedFiles(fileList, forcedKind = "") {
@@ -999,6 +1065,7 @@
         else if (mime.startsWith("video/")) kind = "video";
         else if (mime === "application/pdf") kind = "pdf";
         else if (/zip|compressed|x-zip/i.test(mime) || /\.zip$/i.test(name)) kind = "zip";
+        else if (mime.startsWith("audio/")) kind = "audio";
       }
 
       return {
@@ -1057,7 +1124,8 @@
       "rcfFactoryAIInputPdf",
       "rcfFactoryAIInputZip",
       "rcfFactoryAIInputFile",
-      "rcfFactoryAIInputVideo"
+      "rcfFactoryAIInputVideo",
+      "rcfFactoryAIInputAudio"
     ].forEach((id) => {
       const el = document.getElementById(id);
       if (el) {
@@ -1083,7 +1151,8 @@
         item.kind === "image" ? "🖼️" :
         item.kind === "pdf" ? "📄" :
         item.kind === "zip" ? "🗜️" :
-        item.kind === "video" ? "🎬" : "📎";
+        item.kind === "video" ? "🎬" :
+        item.kind === "audio" ? "🎤" : "📎";
 
       return `
         <div class="rcfAiAttachmentChip">
@@ -1133,6 +1202,130 @@
       const next = Math.min(Math.max(el.scrollHeight, 28), 88);
       el.style.height = next + "px";
     } catch {}
+  }
+
+  function stopSpeaking() {
+    try {
+      if (window.speechSynthesis) window.speechSynthesis.cancel();
+    } catch {}
+    STATE.currentUtterance = null;
+  }
+
+  function speakText(text) {
+    try {
+      stopSpeaking();
+      if (!("speechSynthesis" in window)) {
+        setComposerStatus("leitura por voz indisponível");
+        return;
+      }
+      const utter = new SpeechSynthesisUtterance(String(text || ""));
+      utter.lang = "pt-BR";
+      utter.rate = 1;
+      utter.pitch = 1;
+      utter.onend = () => {
+        STATE.currentUtterance = null;
+      };
+      STATE.currentUtterance = utter;
+      window.speechSynthesis.speak(utter);
+      setComposerStatus("lendo resposta");
+    } catch {
+      setComposerStatus("leitura por voz indisponível");
+    }
+  }
+
+  function setVoiceBtnState() {
+    const btn = document.getElementById("rcfFactoryAIVoiceBtn");
+    if (!btn) return;
+
+    if (STATE.isListening) {
+      btn.classList.add("listening");
+      btn.setAttribute("title", "Parar gravação");
+      btn.setAttribute("aria-label", "Parar gravação");
+      btn.textContent = "⏺";
+    } else {
+      btn.classList.remove("listening");
+      btn.setAttribute("title", SpeechRecognitionCtor ? "Falar por áudio" : "Áudio indisponível");
+      btn.setAttribute("aria-label", SpeechRecognitionCtor ? "Falar por áudio" : "Áudio indisponível");
+      btn.textContent = "🎤";
+    }
+  }
+
+  function stopListening() {
+    try {
+      const rec = window.__RCF_FACTORY_AI_REC__;
+      if (rec && typeof rec.stop === "function") rec.stop();
+    } catch {}
+    STATE.isListening = false;
+    setVoiceBtnState();
+  }
+
+  function startListening() {
+    if (!SpeechRecognitionCtor) {
+      setComposerStatus("áudio não suportado neste navegador");
+      return;
+    }
+
+    try {
+      stopListening();
+
+      const rec = new SpeechRecognitionCtor();
+      window.__RCF_FACTORY_AI_REC__ = rec;
+      rec.lang = "pt-BR";
+      rec.interimResults = true;
+      rec.maxAlternatives = 1;
+      rec.continuous = false;
+
+      const input = document.getElementById("rcfFactoryAIPrompt");
+      if (!input) return;
+
+      let finalText = String(input.value || "");
+
+      rec.onstart = () => {
+        STATE.isListening = true;
+        setVoiceBtnState();
+        setComposerStatus("ouvindo...");
+      };
+
+      rec.onresult = (event) => {
+        let interim = "";
+        let complete = finalText;
+
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const txt = String(event.results[i][0]?.transcript || "");
+          if (event.results[i].isFinal) {
+            complete += (complete ? " " : "") + txt.trim();
+          } else {
+            interim += " " + txt.trim();
+          }
+        }
+
+        input.value = (complete + interim).trim();
+        autoResizePrompt(input);
+      };
+
+      rec.onerror = () => {
+        STATE.isListening = false;
+        setVoiceBtnState();
+        setComposerStatus("falha no áudio");
+      };
+
+      rec.onend = () => {
+        STATE.isListening = false;
+        setVoiceBtnState();
+        setComposerStatus("aguardando");
+      };
+
+      rec.start();
+    } catch {
+      STATE.isListening = false;
+      setVoiceBtnState();
+      setComposerStatus("áudio não suportado neste navegador");
+    }
+  }
+
+  function toggleListening() {
+    if (STATE.isListening) stopListening();
+    else startListening();
   }
 
   function cleanupFactoryAIHost() {
@@ -1202,7 +1395,8 @@
       ["rcfFactoryAIInputPdf", "pdf"],
       ["rcfFactoryAIInputZip", "zip"],
       ["rcfFactoryAIInputFile", "file"],
-      ["rcfFactoryAIInputVideo", "video"]
+      ["rcfFactoryAIInputVideo", "video"],
+      ["rcfFactoryAIInputAudio", "audio"]
     ];
 
     map.forEach(([id, kind]) => {
@@ -1223,7 +1417,8 @@
       ["rcfFactoryAIChoosePdf", "rcfFactoryAIInputPdf"],
       ["rcfFactoryAIChooseZip", "rcfFactoryAIInputZip"],
       ["rcfFactoryAIChooseFile", "rcfFactoryAIInputFile"],
-      ["rcfFactoryAIChooseVideo", "rcfFactoryAIInputVideo"]
+      ["rcfFactoryAIChooseVideo", "rcfFactoryAIInputVideo"],
+      ["rcfFactoryAIChooseAudio", "rcfFactoryAIInputAudio"]
     ].forEach(([btnId, inputId]) => {
       const btn = document.getElementById(btnId);
       if (!btn || btn.__boundPick) return;
@@ -1238,6 +1433,7 @@
     const sendBtn = document.getElementById("rcfFactoryAISend");
     const promptEl = document.getElementById("rcfFactoryAIPrompt");
     const attachBtn = document.getElementById("rcfFactoryAIAttachBtn");
+    const voiceBtn = document.getElementById("rcfFactoryAIVoiceBtn");
 
     if (sendBtn && !sendBtn.__bound) {
       sendBtn.__bound = true;
@@ -1271,12 +1467,20 @@
       }, { passive: true });
     }
 
+    if (voiceBtn && !voiceBtn.__bound) {
+      voiceBtn.__bound = true;
+      voiceBtn.addEventListener("click", () => {
+        toggleListening();
+      }, { passive: true });
+    }
+
     bindMenuItems();
     bindAttachmentInputs();
     renderAttachments();
+    setVoiceBtnState();
 
-    if (!document.__rcfFactoryAIOutsideClickV38) {
-      document.__rcfFactoryAIOutsideClickV38 = true;
+    if (!document.__rcfFactoryAIOutsideClickV39) {
+      document.__rcfFactoryAIOutsideClickV39 = true;
       document.addEventListener("click", (ev) => {
         try {
           const wrap = document.getElementById("rcfFactoryAIAttachWrap");
@@ -1295,6 +1499,7 @@
         <button class="rcfAiMenuItem" id="rcfFactoryAIChooseZip" type="button">🗜️ ZIP</button>
         <button class="rcfAiMenuItem" id="rcfFactoryAIChooseFile" type="button">📎 Arquivo</button>
         <button class="rcfAiMenuItem" id="rcfFactoryAIChooseVideo" type="button">🎬 Vídeo</button>
+        <button class="rcfAiMenuItem" id="rcfFactoryAIChooseAudio" type="button">🎤 Áudio</button>
       </div>
     `;
   }
@@ -1319,27 +1524,33 @@
           <div id="rcfFactoryAIAttachments" class="rcfAiAttachRow" style="display:none"></div>
 
           <div class="rcfAiInputShell">
-            <div class="rcfAiInputCard">
-              <div class="rcfAiAttachWrap" id="rcfFactoryAIAttachWrap">
-                <button
-                  class="rcfAiAttachBtn"
-                  id="rcfFactoryAIAttachBtn"
-                  type="button"
-                  aria-label="Adicionar anexo"
-                  title="Adicionar anexo"
-                >＋</button>
-                ${buildAttachMenu()}
-              </div>
+            <div class="rcfAiAttachWrap" id="rcfFactoryAIAttachWrap">
+              <button
+                class="rcfAiAttachBtn"
+                id="rcfFactoryAIAttachBtn"
+                type="button"
+                aria-label="Adicionar anexo"
+                title="Adicionar anexo"
+              >＋</button>
+              ${buildAttachMenu()}
+            </div>
 
+            <div class="rcfAiInputCard">
               <textarea
                 id="rcfFactoryAIPrompt"
                 class="rcfAiPrompt"
                 placeholder="Digite sua mensagem..."
               ></textarea>
 
-              <div class="rcfAiSendWrap">
-                <button class="rcfAiSendBtn" id="rcfFactoryAISend" type="button">Enviar</button>
-              </div>
+              <button
+                class="rcfAiVoiceBtn"
+                id="rcfFactoryAIVoiceBtn"
+                type="button"
+                aria-label="Falar por áudio"
+                title="Falar por áudio"
+              >🎤</button>
+
+              <button class="rcfAiSendBtn" id="rcfFactoryAISend" type="button" aria-label="Enviar" title="Enviar">➤</button>
             </div>
           </div>
 
@@ -1348,6 +1559,7 @@
           <input id="rcfFactoryAIInputZip" class="rcfAiHiddenInput" type="file" accept=".zip,application/zip,application/x-zip-compressed" multiple>
           <input id="rcfFactoryAIInputFile" class="rcfAiHiddenInput" type="file" multiple>
           <input id="rcfFactoryAIInputVideo" class="rcfAiHiddenInput" type="file" accept="video/*" multiple>
+          <input id="rcfFactoryAIInputAudio" class="rcfAiHiddenInput" type="file" accept="audio/*" multiple>
 
           <div class="rcfAiBottom">
             <div id="rcfFactoryAIComposerStatus" class="rcfAiStatus">aguardando</div>
@@ -1440,11 +1652,13 @@
   }
 
   window.RCF_FACTORY_AI = {
-    __v38: true,
+    __v39: true,
     version: VERSION,
     mount,
     clearChat,
     sendPrompt,
+    stopListening,
+    speakText,
     getHistory() {
       return Array.isArray(STATE.history) ? STATE.history.slice() : [];
     },
@@ -1457,7 +1671,7 @@
   };
 
   window.RCF_ADMIN_AI = Object.assign(window.RCF_ADMIN_AI || {}, {
-    __v38_bridge: true,
+    __v39_bridge: true,
     version: VERSION,
     mount,
     clearChat,
