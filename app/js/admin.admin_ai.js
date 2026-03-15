@@ -1,9 +1,10 @@
 /* FILE: /app/js/admin.admin_ai.js
    RControl Factory — Factory AI
-   v2.0 FACTORY-IA CORE + CHAT + SNAPSHOT + SAFE FALLBACK
+   v2.1 FACTORY-IA SLOT REHOME + CHAT LIVE
 
    - evolui Admin AI antigo para Factory AI
-   - tenta montar na view/slot oficial da Factory AI
+   - monta na view/slot oficial da Factory AI
+   - reencaixa a box automaticamente se o slot mudar
    - fallback seguro para Admin se a view nova ainda não estiver pronta
    - histórico visual tipo chat-lite
    - múltiplas perguntas sem reload
@@ -17,11 +18,12 @@
 (() => {
   "use strict";
 
-  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v20) return;
+  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v21) return;
 
-  const VERSION = "v2.0";
+  const VERSION = "v2.1";
   const BOX_ID = "rcfFactoryAIBox";
   const CHAT_ID = "rcfFactoryAIChat";
+  const ACTIONS_ID = "rcfFactoryAIQuickActions";
 
   const STATE = {
     busy: false,
@@ -92,52 +94,79 @@
     return false;
   }
 
-  function getSlot() {
+  function getPreferredSlots() {
+    const out = {
+      tools: null,
+      actions: null,
+      fallback: null,
+      mountedIn: ""
+    };
+
     try {
       const ui = window.RCF_UI;
       if (ui && typeof ui.getSlot === "function") {
-        const officialFactorySlot =
+        out.tools =
           ui.getSlot("factoryai.tools") ||
-          ui.getSlot("factoryai.actions");
+          null;
 
-        if (officialFactorySlot) {
-          STATE.mountedIn = "factoryai.slot";
-          return officialFactorySlot;
-        }
+        out.actions =
+          ui.getSlot("factoryai.actions") ||
+          null;
 
-        const adminFallbackSlot =
+        out.fallback =
           ui.getSlot("admin.integrations") ||
-          ui.getSlot("admin.top");
-
-        if (adminFallbackSlot) {
-          STATE.mountedIn = "admin.slot";
-          return adminFallbackSlot;
-        }
+          ui.getSlot("admin.top") ||
+          null;
       }
     } catch (_) {}
 
-    const directFactory =
-      document.getElementById("rcfFactoryAISlotTools") ||
-      document.getElementById("rcfFactoryAISlotActions") ||
-      document.querySelector('[data-rcf-slot="factoryai.tools"]') ||
-      document.querySelector('[data-rcf-slot="factoryai.actions"]') ||
-      document.querySelector("#view-factory-ai");
-
-    if (directFactory) {
-      STATE.mountedIn = "factoryai.direct";
-      return directFactory;
+    if (!out.tools) {
+      out.tools =
+        document.getElementById("rcfFactoryAISlotTools") ||
+        document.querySelector('[data-rcf-slot="factoryai.tools"]') ||
+        null;
     }
 
-    const adminFallback =
-      document.getElementById("rcfAdminSlotIntegrations") ||
-      document.querySelector('[data-rcf-slot="admin.integrations"]') ||
-      document.querySelector("#view-admin .integrations") ||
-      document.querySelector("#view-admin") ||
-      document.querySelector('[data-rcf-view="admin"]');
+    if (!out.actions) {
+      out.actions =
+        document.getElementById("rcfFactoryAISlotActions") ||
+        document.querySelector('[data-rcf-slot="factoryai.actions"]') ||
+        null;
+    }
 
-    if (adminFallback) {
-      STATE.mountedIn = "admin.direct";
-      return adminFallback;
+    if (!out.fallback) {
+      out.fallback =
+        document.getElementById("rcfAdminSlotIntegrations") ||
+        document.querySelector('[data-rcf-slot="admin.integrations"]') ||
+        document.querySelector("#view-admin .integrations") ||
+        document.querySelector("#view-admin") ||
+        document.querySelector('[data-rcf-view="admin"]') ||
+        null;
+    }
+
+    if (out.tools || out.actions) out.mountedIn = "factoryai";
+    else if (out.fallback) out.mountedIn = "admin";
+    else out.mountedIn = "";
+
+    return out;
+  }
+
+  function getPrimarySlot() {
+    const slots = getPreferredSlots();
+
+    if (slots.tools) {
+      STATE.mountedIn = "factoryai.tools";
+      return slots.tools;
+    }
+
+    if (slots.actions) {
+      STATE.mountedIn = "factoryai.actions";
+      return slots.actions;
+    }
+
+    if (slots.fallback) {
+      STATE.mountedIn = "admin.fallback";
+      return slots.fallback;
     }
 
     STATE.mountedIn = "";
@@ -146,12 +175,21 @@
 
   function syncVisibility() {
     const box = document.getElementById(BOX_ID);
-    if (!box) return;
+    const quick = document.getElementById(ACTIONS_ID);
+    if (!box && !quick) return;
 
     const showFactory = isFactoryAIViewVisible();
     const showAdminFallback = !showFactory && isAdminViewVisible() && /^admin/.test(STATE.mountedIn || "");
 
-    box.style.display = (showFactory || showAdminFallback) ? "" : "none";
+    const visible = !!(showFactory || showAdminFallback);
+
+    try {
+      if (box) box.style.display = visible ? "" : "none";
+    } catch (_) {}
+
+    try {
+      if (quick) quick.style.display = visible ? "" : "none";
+    } catch (_) {}
   }
 
   function collectLogs(limit = 30) {
@@ -293,12 +331,15 @@
       "rcfFactoryAIProposePatch",
       "rcfFactoryAIGenerateCode",
       "rcfFactoryAISend",
-      "rcfFactoryAIClear"
+      "rcfFactoryAIClear",
+      "rcfFactoryAIQuickAnalyze",
+      "rcfFactoryAIQuickPatch",
+      "rcfFactoryAIQuickCode"
     ];
 
     ids.forEach(id => {
       const el = document.getElementById(id);
-      if (el) el.disabled = !!busy && id !== "rcfFactoryAIClear";
+      if (el) el.disabled = !!busy && !/Clear/.test(id);
     });
   }
 
@@ -523,48 +564,54 @@
     const btnCode = document.getElementById("rcfFactoryAIGenerateCode");
     const btnSend = document.getElementById("rcfFactoryAISend");
     const btnClear = document.getElementById("rcfFactoryAIClear");
+    const btnQuickAnalyze = document.getElementById("rcfFactoryAIQuickAnalyze");
+    const btnQuickPatch = document.getElementById("rcfFactoryAIQuickPatch");
+    const btnQuickCode = document.getElementById("rcfFactoryAIQuickCode");
     const promptEl = document.getElementById("rcfFactoryAIPrompt");
 
     if (btnFactory && !btnFactory.__bound) {
       btnFactory.__bound = true;
-      btnFactory.addEventListener("click", () => {
-        handleModeAction("analyze-architecture", "");
-      }, { passive: true });
+      btnFactory.addEventListener("click", () => handleModeAction("analyze-architecture", ""), { passive: true });
     }
 
     if (btnLogs && !btnLogs.__bound) {
       btnLogs.__bound = true;
-      btnLogs.addEventListener("click", () => {
-        handleModeAction("analyze-logs", "");
-      }, { passive: true });
+      btnLogs.addEventListener("click", () => handleModeAction("analyze-logs", ""), { passive: true });
     }
 
     if (btnDoctor && !btnDoctor.__bound) {
       btnDoctor.__bound = true;
-      btnDoctor.addEventListener("click", () => {
-        handleModeAction("factory_diagnosis", "");
-      }, { passive: true });
+      btnDoctor.addEventListener("click", () => handleModeAction("factory_diagnosis", ""), { passive: true });
     }
 
     if (btnSuggest && !btnSuggest.__bound) {
       btnSuggest.__bound = true;
-      btnSuggest.addEventListener("click", () => {
-        handleModeAction("suggest-improvement", "");
-      }, { passive: true });
+      btnSuggest.addEventListener("click", () => handleModeAction("suggest-improvement", ""), { passive: true });
     }
 
     if (btnPatch && !btnPatch.__bound) {
       btnPatch.__bound = true;
-      btnPatch.addEventListener("click", () => {
-        handleModeAction("propose-patch", "");
-      }, { passive: true });
+      btnPatch.addEventListener("click", () => handleModeAction("propose-patch", ""), { passive: true });
     }
 
     if (btnCode && !btnCode.__bound) {
       btnCode.__bound = true;
-      btnCode.addEventListener("click", () => {
-        handleModeAction("generate-code", "");
-      }, { passive: true });
+      btnCode.addEventListener("click", () => handleModeAction("generate-code", ""), { passive: true });
+    }
+
+    if (btnQuickAnalyze && !btnQuickAnalyze.__bound) {
+      btnQuickAnalyze.__bound = true;
+      btnQuickAnalyze.addEventListener("click", () => handleModeAction("analyze-architecture", ""), { passive: true });
+    }
+
+    if (btnQuickPatch && !btnQuickPatch.__bound) {
+      btnQuickPatch.__bound = true;
+      btnQuickPatch.addEventListener("click", () => handleModeAction("propose-patch", ""), { passive: true });
+    }
+
+    if (btnQuickCode && !btnQuickCode.__bound) {
+      btnQuickCode.__bound = true;
+      btnQuickCode.addEventListener("click", () => handleModeAction("generate-code", ""), { passive: true });
     }
 
     if (btnSend && !btnSend.__bound) {
@@ -585,10 +632,21 @@
 
     if (btnClear && !btnClear.__bound) {
       btnClear.__bound = true;
-      btnClear.addEventListener("click", () => {
-        clearChat();
-      }, { passive: true });
+      btnClear.addEventListener("click", () => clearChat(), { passive: true });
     }
+  }
+
+  function buildQuickActionsHtml() {
+    return `
+      <div style="display:grid;gap:10px">
+        <div class="hint">Ações rápidas da Factory IA</div>
+        <div style="display:grid;grid-template-columns:1fr;gap:8px">
+          <button class="btn ghost" id="rcfFactoryAIQuickAnalyze" type="button">Analisar estrutura</button>
+          <button class="btn ghost" id="rcfFactoryAIQuickPatch" type="button">Propor patch</button>
+          <button class="btn ghost" id="rcfFactoryAIQuickCode" type="button">Gerar código</button>
+        </div>
+      </div>
+    `;
   }
 
   function buildBoxHtml() {
@@ -651,24 +709,65 @@
     `;
   }
 
-  function mount() {
-    const existing = document.getElementById(BOX_ID);
-    if (existing) {
-      syncVisibility();
-      return true;
+  function ensureQuickActionsBox(actionsSlot) {
+    if (!actionsSlot) return null;
+
+    let box = document.getElementById(ACTIONS_ID);
+    if (!box) {
+      box = document.createElement("div");
+      box.id = ACTIONS_ID;
+      box.className = "card";
+      box.style.marginTop = "12px";
+      box.innerHTML = buildQuickActionsHtml();
+      actionsSlot.appendChild(box);
+    } else if (box.parentNode !== actionsSlot) {
+      actionsSlot.appendChild(box);
     }
 
-    const slot = getSlot();
-    if (!slot) return false;
+    return box;
+  }
 
-    const box = document.createElement("div");
-    box.id = BOX_ID;
-    box.className = "card";
-    box.style.marginTop = "12px";
-    box.setAttribute("data-rcf-factory-ai", "1");
-    box.innerHTML = buildBoxHtml();
+  function ensureMainBox(primarySlot) {
+    let box = document.getElementById(BOX_ID);
+    if (!primarySlot) return null;
 
-    slot.appendChild(box);
+    if (!box) {
+      box = document.createElement("div");
+      box.id = BOX_ID;
+      box.className = "card";
+      box.style.marginTop = "12px";
+      box.setAttribute("data-rcf-factory-ai", "1");
+      box.innerHTML = buildBoxHtml();
+      primarySlot.appendChild(box);
+      bindBox();
+      renderChat();
+    } else if (box.parentNode !== primarySlot) {
+      primarySlot.appendChild(box);
+      bindBox();
+      renderChat();
+    }
+
+    return box;
+  }
+
+  function mount() {
+    const slots = getPreferredSlots();
+    const primary = slots.tools || slots.actions || slots.fallback || null;
+    if (!primary) return false;
+
+    if (slots.tools || slots.actions) {
+      STATE.mountedIn = slots.tools ? "factoryai.tools" : "factoryai.actions";
+    } else {
+      STATE.mountedIn = "admin.fallback";
+    }
+
+    const mainBox = ensureMainBox(primary);
+    if (!mainBox) return false;
+
+    if (slots.actions) {
+      ensureQuickActionsBox(slots.actions);
+    }
+
     bindBox();
     renderChat();
     syncVisibility();
@@ -686,17 +785,23 @@
   }
 
   function startVisibilitySync() {
-    setInterval(syncVisibility, 500);
+    setInterval(() => {
+      try { mount(); } catch (_) {}
+      try { syncVisibility(); } catch (_) {}
+    }, 900);
+
     try {
       document.addEventListener("click", () => {
-        setTimeout(syncVisibility, 50);
-        setTimeout(syncVisibility, 250);
+        setTimeout(() => { try { mount(); } catch (_) {} }, 50);
+        setTimeout(() => { try { syncVisibility(); } catch (_) {} }, 50);
+        setTimeout(() => { try { mount(); } catch (_) {} }, 250);
+        setTimeout(() => { try { syncVisibility(); } catch (_) {} }, 250);
       }, { passive: true });
     } catch (_) {}
   }
 
   window.RCF_FACTORY_AI = {
-    __v20: true,
+    __v21: true,
     version: VERSION,
     mount,
     clearChat,
@@ -705,7 +810,7 @@
   };
 
   window.RCF_ADMIN_AI = Object.assign(window.RCF_ADMIN_AI || {}, {
-    __v20_bridge: true,
+    __v21_bridge: true,
     version: VERSION,
     mount,
     clearChat
