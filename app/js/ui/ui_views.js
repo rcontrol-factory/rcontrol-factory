@@ -1,6 +1,6 @@
 /* FILE: /app/js/ui/ui_views.js
    RControl Factory — UI Views
-   V3.2 SAFE SINGLE-VIEW ISOLATION HARD FIX
+   V3.3 FACTORY-AI REAL MOUNT FIX
    - Isola uma view por vez de forma real
    - Esconde legado visual fora da Home
    - Remove vazamento de Tools/legacy shell nas views internas
@@ -11,6 +11,10 @@
    - Adiciona suporte real a Github / Updates / Deploy
    - Faz fallback seguro para dashboard se a view alvo falhar
    - Compatível com Safari / iPhone / PWA
+   - FIX: monta ui_factory_view de verdade ao abrir Factory AI
+   - FIX: usa save silencioso no sync inicial
+   - FIX: restringe marcação de botões ativos
+   - FIX: usa window.RCF.setView quando existir
 */
 (() => {
   "use strict";
@@ -88,7 +92,7 @@
   const MOD = {
     _ctx: null,
     _mounted: false,
-    _styleId: "rcfUiViewsStyleV32",
+    _styleId: "rcfUiViewsStyleV33",
     _globalBound: false,
 
     init(ctx = {}) {
@@ -105,6 +109,7 @@
       this._ensureStyle();
       this._ensureViewsExist();
       this._ensureBottomNav();
+      this._bindGlobal();
       this._syncInitialState();
       this._mounted = true;
       return true;
@@ -115,6 +120,7 @@
       this._ensureStyle();
       this._ensureViewsExist();
       this._ensureBottomNav();
+      this._bindGlobal();
       this._syncInitialState();
       return true;
     },
@@ -123,6 +129,7 @@
       this._ctx = Object.assign({}, this._ctx || {}, ctx || {});
       this._ensureViewsExist();
       this._ensureBottomNav();
+      this._bindGlobal();
       this._syncInitialState();
       return true;
     },
@@ -182,10 +189,12 @@
       this._markDashboardMode(next);
       this._syncSpecialModules(next);
 
-      try {
-        if (opts && typeof opts.saveAll === "function") opts.saveAll("ui_views.setView");
-        else if (this._ctx && typeof this._ctx.saveAll === "function") this._ctx.saveAll("ui_views.setView");
-      } catch {}
+      if (!opts || !opts.silent) {
+        try {
+          if (opts && typeof opts.saveAll === "function") opts.saveAll("ui_views.setView");
+          else if (this._ctx && typeof this._ctx.saveAll === "function") this._ctx.saveAll("ui_views.setView");
+        } catch {}
+      }
 
       return true;
     },
@@ -197,7 +206,7 @@
     _syncInitialState() {
       const state = this._getState();
       const wanted = this.normalizeViewName(state?.active?.view || "dashboard");
-      this.setView(wanted);
+      this.setView(wanted, { silent: true });
     },
 
     _getState() {
@@ -287,10 +296,22 @@
     _markActiveButtons(view) {
       const normalized = this.normalizeViewName(view);
 
-      document.querySelectorAll("[data-view]").forEach((el) => {
+      const selectors = [
+        ".rcfBottomNav [data-view]",
+        ".tabs [data-view]",
+        "[data-rcf-nav] [data-view]",
+        "button.tab[data-view]"
+      ];
+
+      document.querySelectorAll(selectors.join(",")).forEach((el) => {
         const target = this.normalizeViewName(el.getAttribute("data-view") || "");
-        if (target === normalized) el.classList.add("active");
-        else el.classList.remove("active");
+        if (target === normalized) {
+          el.classList.add("active");
+          el.setAttribute("aria-current", "page");
+        } else {
+          el.classList.remove("active");
+          el.removeAttribute("aria-current");
+        }
       });
     },
 
@@ -301,8 +322,13 @@
 
       nav.querySelectorAll("[data-view]").forEach((btn) => {
         const target = this.normalizeViewName(btn.getAttribute("data-view") || "");
-        if (target === normalized) btn.classList.add("active");
-        else btn.classList.remove("active");
+        if (target === normalized) {
+          btn.classList.add("active");
+          btn.setAttribute("aria-current", "page");
+        } else {
+          btn.classList.remove("active");
+          btn.removeAttribute("aria-current");
+        }
       });
     },
 
@@ -502,27 +528,44 @@
       const view = this._getViewEl("factory-ai");
       if (!view) return false;
 
-      const hasRealFactoryAI =
-        !!window.RCF_FACTORY_IA ||
-        !!window.RCF_ADMIN_IA ||
-        !!window.ADMIN_IA ||
-        !!window.RCF_FACTORY_AI;
+      let mounted = false;
 
-      if (hasRealFactoryAI) {
-        try {
-          document.dispatchEvent(new CustomEvent("rcf:factory-ai", {
-            detail: { source: "ui_views", view: "factory-ai" }
-          }));
-        } catch {}
-        try {
-          document.dispatchEvent(new CustomEvent("RCF:FACTORY_AI", {
-            detail: { source: "ui_views", view: "factory-ai" }
-          }));
-        } catch {}
-        return true;
-      }
+      try {
+        if (window.RCF_UI_FACTORY_VIEW) {
+          if (typeof window.RCF_UI_FACTORY_VIEW.mount === "function") {
+            mounted = window.RCF_UI_FACTORY_VIEW.mount(this._ctx || {}) !== false || mounted;
+          }
+          if (typeof window.RCF_UI_FACTORY_VIEW.refresh === "function") {
+            mounted = window.RCF_UI_FACTORY_VIEW.refresh(this._ctx || {}) !== false || mounted;
+          }
+        }
+      } catch {}
 
-      return false;
+      try {
+        if (window.RCF_FACTORY_AI && typeof window.RCF_FACTORY_AI.mount === "function") {
+          mounted = window.RCF_FACTORY_AI.mount() !== false || mounted;
+        }
+      } catch {}
+
+      try {
+        if (window.RCF_ADMIN_AI && typeof window.RCF_ADMIN_AI.mount === "function") {
+          mounted = window.RCF_ADMIN_AI.mount() !== false || mounted;
+        }
+      } catch {}
+
+      try {
+        document.dispatchEvent(new CustomEvent("rcf:factory-ai", {
+          detail: { source: "ui_views", view: "factory-ai" }
+        }));
+      } catch {}
+
+      try {
+        document.dispatchEvent(new CustomEvent("RCF:FACTORY_AI", {
+          detail: { source: "ui_views", view: "factory-ai" }
+        }));
+      } catch {}
+
+      return mounted;
     },
 
     _tryMountGenericModule(name) {
@@ -535,25 +578,45 @@
       return false;
     },
 
+    _requestSetView(next) {
+      const normalized = this.normalizeViewName(next);
+      if (!normalized) return false;
+
+      try {
+        if (window.RCF && typeof window.RCF.setView === "function") {
+          return window.RCF.setView(normalized) !== false;
+        }
+      } catch {}
+
+      return this.setView(normalized);
+    },
+
     _bindGlobal() {
       if (this._globalBound) return;
       this._globalBound = true;
 
       document.addEventListener("click", (ev) => {
-        const btn = ev.target && ev.target.closest ? ev.target.closest("[data-view]") : null;
-        if (btn) {
-          const next = this.normalizeViewName(btn.getAttribute("data-view") || "");
-          if (!next) return;
-          ev.preventDefault();
-          this.setView(next);
-          return;
-        }
-
         const back = ev.target && ev.target.closest ? ev.target.closest("[data-rcf-back-home]") : null;
         if (back) {
           ev.preventDefault();
-          this.setView("dashboard");
+          this._requestSetView("dashboard");
+          return;
         }
+
+        const btn = ev.target && ev.target.closest ? ev.target.closest("[data-view]") : null;
+        if (!btn) return;
+
+        const isBottomNav = !!btn.closest(".rcfBottomNav");
+        const isTab = btn.classList && btn.classList.contains("tab");
+        const isNavScoped = !!btn.closest("[data-rcf-nav]");
+
+        if (!isBottomNav && !isTab && !isNavScoped) return;
+
+        const next = this.normalizeViewName(btn.getAttribute("data-view") || "");
+        if (!next) return;
+
+        ev.preventDefault();
+        this._requestSetView(next);
       }, { passive: false });
 
       window.addEventListener("RCF:UI_READY", () => {
