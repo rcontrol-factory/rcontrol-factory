@@ -1,24 +1,27 @@
 /* FILE: /app/js/admin.admin_ai.js
    RControl Factory — Factory AI
-   v3.0 CHAT-FIRST OFFICIAL
+   v3.1 CHAT-FIRST OFFICIAL STABLE
 
    - Factory AI em modo chat-first
    - remove painel técnico pesado como interface principal
-   - mantém mount oficial em factoryai.tools
-   - mantém fallback seguro para admin se necessário
+   - mount oficial preferindo factoryai.tools
+   - fallback admin apenas se slot oficial ainda não existir
    - inferência automática de ação por linguagem natural
    - tenta /api/factory-ai com fallback para /api/admin-ai
    - snapshot estrutural continua existindo, mas discreto
    - histórico visual tipo chat
    - preparado para crescer depois para imagem / ZIP / PDF / arquivos
    - não executa patch automático
+   - reduz remount agressivo
+   - evita binds duplicados
+   - limpa textarea após envio
 */
 (() => {
   "use strict";
 
-  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v30) return;
+  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v31) return;
 
-  const VERSION = "v3.0";
+  const VERSION = "v3.1";
   const BOX_ID = "rcfFactoryAIBox";
   const CHAT_ID = "rcfFactoryAIChat";
   const STATUS_ID = "rcfFactoryAIStateMini";
@@ -28,7 +31,9 @@
     history: [],
     mountedIn: "",
     lastEndpoint: "",
-    bootedAt: new Date().toISOString()
+    bootedAt: new Date().toISOString(),
+    intervalStarted: false,
+    lastVisible: false
   };
 
   function log(level, msg) {
@@ -150,13 +155,18 @@
     return out;
   }
 
+  function computeVisible() {
+    const showFactory = isFactoryAIViewVisible();
+    const showAdminFallback = !showFactory && isAdminViewVisible() && /^admin/.test(STATE.mountedIn || "");
+    return !!(showFactory || showAdminFallback);
+  }
+
   function syncVisibility() {
     const box = document.getElementById(BOX_ID);
     const mini = document.getElementById(STATUS_ID);
+    const visible = computeVisible();
 
-    const showFactory = isFactoryAIViewVisible();
-    const showAdminFallback = !showFactory && isAdminViewVisible() && /^admin/.test(STATE.mountedIn || "");
-    const visible = !!(showFactory || showAdminFallback);
+    STATE.lastVisible = visible;
 
     try {
       if (box) {
@@ -416,8 +426,7 @@
       p.includes("gere codigo") ||
       p.includes("código completo") ||
       p.includes("codigo completo") ||
-      p.includes("arquivo completo") ||
-      p.includes("code")
+      p.includes("arquivo completo")
     ) {
       return { action: "generate-code", label: "Código" };
     }
@@ -587,7 +596,9 @@
   }
 
   function sendPrompt(rawPrompt, forcedAction = "") {
+    const promptEl = document.getElementById("rcfFactoryAIPrompt");
     const prompt = String(rawPrompt || "").trim();
+
     if (!prompt) {
       setStatus("aguardando");
       setResult("Digite uma instrução primeiro.");
@@ -599,6 +610,11 @@
       : inferActionFromPrompt(prompt);
 
     pushChat("user", prompt, { actionLabel: route.label });
+
+    try {
+      if (promptEl) promptEl.value = "";
+    } catch (_) {}
+
     callFactoryAI(route.action, buildPayload(route.action), prompt);
   }
 
@@ -638,7 +654,6 @@
       sugArch.__bound = true;
       sugArch.addEventListener("click", () => {
         const text = "Analise a arquitetura atual da Factory e me diga o próximo passo mais seguro.";
-        if (promptEl) promptEl.value = text;
         sendPrompt(text, "analyze-architecture");
       }, { passive: true });
     }
@@ -647,7 +662,6 @@
       sugPatch.__bound = true;
       sugPatch.addEventListener("click", () => {
         const text = "Proponha um patch mínimo e seguro para a Factory sem quebrar o boot.";
-        if (promptEl) promptEl.value = text;
         sendPrompt(text, "propose-patch");
       }, { passive: true });
     }
@@ -656,7 +670,6 @@
       sugCode.__bound = true;
       sugCode.addEventListener("click", () => {
         const text = "Gere código com patch mínimo para a Factory, em arquivo completo.";
-        if (promptEl) promptEl.value = text;
         sendPrompt(text, "generate-code");
       }, { passive: true });
     }
@@ -774,8 +787,10 @@
       primarySlot.appendChild(box);
       bindBox();
       renderChat();
-    } else if (box.parentNode !== primarySlot) {
-      primarySlot.appendChild(box);
+    } else {
+      if (box.parentNode !== primarySlot) {
+        primarySlot.appendChild(box);
+      }
       bindBox();
       renderChat();
     }
@@ -785,7 +800,9 @@
 
   function mount() {
     const slots = getPreferredSlots();
-    const primary = slots.tools || slots.actions || slots.fallback || null;
+
+    const officialPrimary = slots.tools || slots.actions || null;
+    const primary = officialPrimary || slots.fallback || null;
     if (!primary) return false;
 
     if (slots.tools) STATE.mountedIn = "factoryai.tools";
@@ -811,28 +828,41 @@
     if (mount()) return true;
     setTimeout(() => { try { mount(); } catch (_) {} }, 700);
     setTimeout(() => { try { mount(); } catch (_) {} }, 1600);
-    setTimeout(() => { try { mount(); } catch (_) {} }, 2800);
     return false;
   }
 
   function startVisibilitySync() {
+    if (STATE.intervalStarted) return;
+    STATE.intervalStarted = true;
+
     setInterval(() => {
-      try { mount(); } catch (_) {}
-      try { syncVisibility(); } catch (_) {}
-    }, 900);
+      try {
+        syncVisibility();
+
+        const visible = computeVisible();
+        if (visible) {
+          mount();
+        }
+      } catch (_) {}
+    }, 1200);
 
     try {
       document.addEventListener("click", () => {
-        setTimeout(() => { try { mount(); } catch (_) {} }, 50);
-        setTimeout(() => { try { syncVisibility(); } catch (_) {} }, 50);
-        setTimeout(() => { try { mount(); } catch (_) {} }, 250);
-        setTimeout(() => { try { syncVisibility(); } catch (_) {} }, 250);
+        setTimeout(() => {
+          try { syncVisibility(); } catch (_) {}
+        }, 60);
+
+        setTimeout(() => {
+          try {
+            if (computeVisible()) mount();
+          } catch (_) {}
+        }, 220);
       }, { passive: true });
     } catch (_) {}
   }
 
   window.RCF_FACTORY_AI = {
-    __v30: true,
+    __v31: true,
     version: VERSION,
     mount,
     clearChat,
@@ -842,7 +872,7 @@
   };
 
   window.RCF_ADMIN_AI = Object.assign(window.RCF_ADMIN_AI || {}, {
-    __v30_bridge: true,
+    __v31_bridge: true,
     version: VERSION,
     mount,
     clearChat
