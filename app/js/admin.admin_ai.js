@@ -1,30 +1,29 @@
 /* FILE: /app/js/admin.admin_ai.js
    RControl Factory — Factory AI
-   v3.3 CHAT CORE CLEAN REMAKE
+   v3.4 CHAT CORE OFFICIAL CLEAN
 
-   - Factory AI em modo chat central limpo
-   - remake visual completo do chat
-   - nome padronizado: Factory AI
-   - monta preferencialmente no slot oficial factoryai.tools
-   - fallback seguro para admin apenas se a view oficial ainda não existir
-   - remove duplicação visual e blocos sobrando da tela
+   - Factory AI em modo chat-first real
+   - nome oficial padronizado: Factory AI
+   - mount preferencial no slot oficial factoryai.tools
+   - fallback seguro para admin apenas se necessário
+   - remove duplicação visual pesada da tela
+   - visual clean mobile-first
    - inferência automática de ação por linguagem natural
-   - usa somente actions permitidas no backend atual
+   - usa somente actions compatíveis com backend atual
    - tenta /api/factory-ai com fallback para /api/admin-ai
-   - snapshot estrutural fica discreto em details
-   - histórico visual tipo chat
+   - contexto técnico discreto em details
    - não executa patch automático
 */
 
 (() => {
   "use strict";
 
-  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v33) return;
+  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v34) return;
 
-  const VERSION = "v3.3";
+  const VERSION = "v3.4";
   const BOX_ID = "rcfFactoryAIBox";
   const CHAT_ID = "rcfFactoryAIChat";
-  const STYLE_ID = "rcfFactoryAIStyleV33";
+  const STYLE_ID = "rcfFactoryAIStyleV34";
 
   const STATE = {
     busy: false,
@@ -302,113 +301,114 @@
 #${BOX_ID}{
   margin-top:12px;
   border:1px solid rgba(31,41,55,.08);
-  border-radius:24px;
-  background:linear-gradient(180deg, rgba(255,255,255,.94), rgba(248,250,255,.88));
+  border-radius:26px;
+  background:linear-gradient(180deg,rgba(255,255,255,.96),rgba(248,250,255,.90));
   box-shadow:0 10px 26px rgba(15,23,42,.05);
   overflow:hidden;
 }
+#${BOX_ID}.card{padding:0;}
 
-#${BOX_ID}.card{
-  padding:0;
-}
-
-#${BOX_ID} .rcfAiWrap{
+#${BOX_ID} .rcfAiShell{
   display:grid;
-  gap:14px;
-  padding:18px;
+  grid-template-rows:auto 1fr auto;
+  min-height:620px;
 }
 
-#${BOX_ID} .rcfAiHero{
-  display:grid;
-  gap:10px;
+#${BOX_ID} .rcfAiHead{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  padding:18px 18px 14px;
+  border-bottom:1px solid rgba(31,41,55,.06);
+  background:rgba(255,255,255,.72);
 }
 
-#${BOX_ID} .rcfAiEyebrow{
-  font-size:11px;
-  font-weight:900;
-  letter-spacing:.14em;
-  text-transform:uppercase;
-  opacity:.62;
+#${BOX_ID} .rcfAiHeadLeft{
+  min-width:0;
+  display:flex;
+  align-items:center;
+  gap:12px;
 }
 
-#${BOX_ID} .rcfAiTitle{
+#${BOX_ID} .rcfAiAvatar{
+  width:44px;
+  height:44px;
+  min-width:44px;
+  border-radius:16px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-size:20px;
+  border:1px solid rgba(95,115,155,.12);
+  background:linear-gradient(180deg,rgba(255,255,255,.98),rgba(239,244,252,.92));
+}
+
+#${BOX_ID} .rcfAiHeadText{
+  min-width:0;
+}
+
+#${BOX_ID} .rcfAiHeadTitle{
   margin:0;
-  font-size:clamp(24px,4.6vw,34px);
-  line-height:1.04;
+  font-size:20px;
+  line-height:1.05;
   font-weight:900;
   color:#202d4d;
 }
 
-#${BOX_ID} .rcfAiSub{
-  margin:0;
-  font-size:15px;
-  line-height:1.48;
-  color:rgba(32,45,77,.82);
+#${BOX_ID} .rcfAiHeadSub{
+  margin:4px 0 0;
+  font-size:13px;
+  line-height:1.35;
+  color:rgba(32,45,77,.72);
 }
 
-#${BOX_ID} .rcfAiChips{
-  display:flex;
-  flex-wrap:wrap;
-  gap:8px;
-}
-
-#${BOX_ID} .rcfAiChip{
+#${BOX_ID} .rcfAiPill{
   display:inline-flex;
   align-items:center;
   min-height:32px;
-  padding:6px 11px;
+  padding:6px 10px;
   border-radius:999px;
   border:1px solid rgba(90,110,150,.12);
-  background:rgba(255,255,255,.78);
+  background:rgba(255,255,255,.82);
   font-size:12px;
   font-weight:800;
-  color:rgba(32,45,77,.82);
-}
-
-#${BOX_ID} .rcfAiStage{
-  display:grid;
-  gap:12px;
-  padding:14px;
-  border-radius:20px;
-  border:1px solid rgba(31,41,55,.08);
-  background:rgba(255,255,255,.72);
+  color:rgba(32,45,77,.76);
+  white-space:nowrap;
 }
 
 #${CHAT_ID}{
-  min-height:280px;
-  max-height:42vh;
+  min-height:320px;
+  max-height:52vh;
   overflow:auto;
-  padding:6px;
-  border-radius:18px;
-  background:rgba(246,248,252,.72);
-  border:1px solid rgba(31,41,55,.06);
+  padding:16px;
+  background:linear-gradient(180deg,rgba(246,248,252,.72),rgba(250,251,255,.62));
 }
 
 #${BOX_ID} .rcfAiMsgRow{
   display:flex;
-  margin-top:10px;
+  gap:10px;
+  margin-bottom:12px;
 }
-
 #${BOX_ID} .rcfAiMsgRow.user{
   justify-content:flex-end;
 }
-
 #${BOX_ID} .rcfAiMsgRow.assistant{
   justify-content:flex-start;
 }
 
-#${BOX_ID} .rcfAiMsg{
-  width:min(100%, 680px);
-  padding:14px;
-  border-radius:18px;
+#${BOX_ID} .rcfAiBubble{
+  width:min(100%, 690px);
+  padding:14px 16px;
+  border-radius:20px;
   border:1px solid rgba(31,41,55,.08);
-  background:rgba(255,255,255,.9);
+  background:rgba(255,255,255,.92);
   box-shadow:0 2px 10px rgba(15,23,42,.04);
 }
 
-#${BOX_ID} .rcfAiMsg.userBubble{
-  background:linear-gradient(180deg, rgba(112,152,255,.14), rgba(112,152,255,.09));
-  border-color:rgba(112,152,255,.18);
+#${BOX_ID} .rcfAiBubble.userBubble{
+  background:linear-gradient(180deg,rgba(112,152,255,.16),rgba(112,152,255,.09));
+  border-color:rgba(112,152,255,.20);
 }
 
 #${BOX_ID} .rcfAiMsgLabel{
@@ -416,14 +416,14 @@
   font-weight:900;
   letter-spacing:.08em;
   text-transform:uppercase;
-  opacity:.62;
+  opacity:.60;
   margin-bottom:8px;
 }
 
 #${BOX_ID} .rcfAiMsgText{
   white-space:pre-wrap;
   word-break:break-word;
-  line-height:1.5;
+  line-height:1.54;
   color:#202d4d;
   font-size:15px;
 }
@@ -437,18 +437,25 @@
 #${BOX_ID} .rcfAiComposer{
   display:grid;
   gap:10px;
-  padding:14px;
-  border-radius:20px;
-  border:1px solid rgba(31,41,55,.08);
-  background:rgba(255,255,255,.84);
+  padding:14px 16px 16px;
+  border-top:1px solid rgba(31,41,55,.06);
+  background:rgba(255,255,255,.82);
+}
+
+#${BOX_ID} .rcfAiInputWrap{
+  display:grid;
+  grid-template-columns:1fr auto;
+  gap:10px;
+  align-items:end;
 }
 
 #${BOX_ID} .rcfAiPrompt{
   width:100%;
-  min-height:122px;
+  min-height:86px;
+  max-height:180px;
   resize:vertical;
-  padding:14px;
-  border-radius:16px;
+  padding:14px 14px;
+  border-radius:18px;
   border:1px solid rgba(31,41,55,.10);
   box-sizing:border-box;
   background:#fff;
@@ -463,7 +470,34 @@
   box-shadow:0 0 0 3px rgba(112,152,255,.10);
 }
 
-#${BOX_ID} .rcfAiComposerBar{
+#${BOX_ID} .rcfAiRightBtns{
+  display:grid;
+  gap:8px;
+}
+
+#${BOX_ID} .rcfAiBtn{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  min-width:116px;
+  min-height:46px;
+  padding:10px 14px;
+  border-radius:16px;
+  border:1px solid rgba(31,41,55,.08);
+  background:rgba(255,255,255,.88);
+  color:#26407a;
+  font-size:15px;
+  font-weight:900;
+  cursor:pointer;
+  -webkit-tap-highlight-color:transparent;
+}
+
+#${BOX_ID} .rcfAiBtn.primary{
+  background:linear-gradient(180deg, rgba(112,152,255,.18), rgba(112,152,255,.10));
+  border-color:rgba(112,152,255,.20);
+}
+
+#${BOX_ID} .rcfAiBottom{
   display:flex;
   justify-content:space-between;
   align-items:center;
@@ -474,40 +508,12 @@
 #${BOX_ID} .rcfAiStatus{
   font-size:13px;
   font-weight:800;
-  color:rgba(32,45,77,.78);
+  color:rgba(32,45,77,.80);
 }
 
-#${BOX_ID} .rcfAiButtons{
-  display:flex;
-  gap:8px;
-  flex-wrap:wrap;
-}
-
-#${BOX_ID} .rcfAiBtn{
-  display:inline-flex;
-  align-items:center;
-  justify-content:center;
-  min-width:108px;
-  min-height:44px;
-  padding:10px 14px;
-  border-radius:14px;
-  border:1px solid rgba(31,41,55,.08);
-  background:rgba(255,255,255,.84);
-  color:#26407a;
-  font-size:14px;
-  font-weight:900;
-  cursor:pointer;
-  -webkit-tap-highlight-color:transparent;
-}
-
-#${BOX_ID} .rcfAiBtn.primary{
-  background:linear-gradient(180deg, rgba(112,152,255,.16), rgba(112,152,255,.08));
-  border-color:rgba(112,152,255,.18);
-}
-
-#${BOX_ID} .rcfAiSmall{
-  font-size:13px;
-  color:rgba(32,45,77,.68);
+#${BOX_ID} .rcfAiHint{
+  font-size:12px;
+  color:rgba(32,45,77,.64);
 }
 
 #${BOX_ID} details.rcfAiDetails{
@@ -532,17 +538,24 @@
 }
 
 @media (max-width: 720px){
-  #${BOX_ID} .rcfAiWrap{
-    padding:16px;
+  #${BOX_ID} .rcfAiShell{
+    min-height:560px;
   }
-  #${BOX_ID} .rcfAiTitle{
-    font-size:22px;
+  #${BOX_ID} .rcfAiHead{
+    padding:16px 16px 12px;
   }
-  #${BOX_ID} .rcfAiPrompt{
-    min-height:118px;
+  #${BOX_ID} .rcfAiHeadTitle{
+    font-size:18px;
+  }
+  #${BOX_ID} .rcfAiInputWrap{
+    grid-template-columns:1fr;
+  }
+  #${BOX_ID} .rcfAiRightBtns{
+    grid-template-columns:1fr 1fr;
   }
   #${BOX_ID} .rcfAiBtn{
-    flex:1 1 140px;
+    min-width:0;
+    width:100%;
   }
 }
     `.trim();
@@ -578,7 +591,7 @@
       const isUser = item.role === "user";
       return `
         <div class="rcfAiMsgRow ${isUser ? "user" : "assistant"}">
-          <div class="rcfAiMsg ${isUser ? "userBubble" : ""}">
+          <div class="rcfAiBubble ${isUser ? "userBubble" : ""}">
             <div class="rcfAiMsgLabel">${isUser ? "Você" : "Factory AI"}</div>
             <div class="rcfAiMsgText">${esc(item.text)}</div>
             <div class="rcfAiMsgTime">${esc(item.ts)}</div>
@@ -831,83 +844,55 @@
 
   function buildBoxHtml() {
     return `
-      <div class="rcfAiWrap">
-        <section class="rcfAiHero">
-          <div class="rcfAiEyebrow">Factory AI</div>
-          <h2 class="rcfAiTitle">Chat central da Factory</h2>
-          <p class="rcfAiSub">
-            Conversa natural para arquitetura, bugs, patch, código, layout, logs, doctor e evolução da própria Factory.
-          </p>
-          <div class="rcfAiChips">
-            <span class="rcfAiChip">OpenAI conectada</span>
-            <span class="rcfAiChip">Chat-first</span>
-            <span class="rcfAiChip">Sem patch automático</span>
+      <div class="rcfAiShell">
+        <section class="rcfAiHead">
+          <div class="rcfAiHeadLeft">
+            <div class="rcfAiAvatar">🤖</div>
+            <div class="rcfAiHeadText">
+              <h2 class="rcfAiHeadTitle">Factory AI</h2>
+              <p class="rcfAiHeadSub">Chat central da Factory para conversar, analisar, organizar e evoluir a estrutura.</p>
+            </div>
           </div>
+          <div class="rcfAiPill">OpenAI conectada</div>
         </section>
 
-        <section class="rcfAiStage">
-          <div id="${CHAT_ID}"></div>
-        </section>
+        <section id="${CHAT_ID}"></section>
 
         <section class="rcfAiComposer">
-          <textarea
-            id="rcfFactoryAIPrompt"
-            class="rcfAiPrompt"
-            placeholder="Fale com a Factory AI. Ex.: corrige o módulo da view, gera o arquivo completo, analisa os logs, lê esse contexto, organiza essa arquitetura..."
-          ></textarea>
+          <div class="rcfAiInputWrap">
+            <textarea
+              id="rcfFactoryAIPrompt"
+              class="rcfAiPrompt"
+              placeholder="Fale com a Factory AI. Ex.: corrige o módulo da view, gera o arquivo completo, analisa os logs, lê esse contexto, organiza essa arquitetura..."
+            ></textarea>
 
-          <div class="rcfAiComposerBar">
-            <div id="rcfFactoryAIComposerStatus" class="rcfAiStatus">aguardando</div>
-            <div class="rcfAiButtons">
+            <div class="rcfAiRightBtns">
               <button class="rcfAiBtn" id="rcfFactoryAIClear" type="button">Limpar</button>
               <button class="rcfAiBtn primary" id="rcfFactoryAISend" type="button">Enviar</button>
             </div>
           </div>
 
-          <div class="rcfAiSmall">Em breve: imagem, ZIP, PDF e arquivos direto no chat.</div>
-        </section>
-
-        <details class="rcfAiDetails">
-          <summary>Contexto técnico</summary>
-          <div style="margin-top:10px;display:grid;gap:10px">
-            <div>
-              <label class="hint">Snapshot Preview enviado</label>
-              <pre class="mono small rcfAiPre" id="rcfFactoryAISnapshot">{"status":"aguardando"}</pre>
-            </div>
-            <div>
-              <label class="hint">Último resultado técnico</label>
-              <pre class="mono small rcfAiPre" id="rcfFactoryAITechResult">Pronto.</pre>
-            </div>
+          <div class="rcfAiBottom">
+            <div id="rcfFactoryAIComposerStatus" class="rcfAiStatus">aguardando</div>
+            <div class="rcfAiHint">Em breve: imagem, ZIP, PDF e arquivos direto no chat.</div>
           </div>
-        </details>
+
+          <details class="rcfAiDetails">
+            <summary>Contexto técnico</summary>
+            <div style="margin-top:10px;display:grid;gap:10px">
+              <div>
+                <label class="hint">Snapshot Preview enviado</label>
+                <pre class="mono small rcfAiPre" id="rcfFactoryAISnapshot">{"status":"aguardando"}</pre>
+              </div>
+              <div>
+                <label class="hint">Último resultado técnico</label>
+                <pre class="mono small rcfAiPre" id="rcfFactoryAITechResult">Pronto.</pre>
+              </div>
+            </div>
+          </details>
+        </section>
       </div>
     `;
-  }
-
-  function applyFactoryAITextFix(root = document) {
-    try {
-      const targets = [root, getFactoryAIView(), document.body].filter(Boolean);
-
-      targets.forEach((base) => {
-        const walker = document.createTreeWalker(base, NodeFilter.SHOW_TEXT);
-        const nodes = [];
-
-        while (walker.nextNode()) nodes.push(walker.currentNode);
-
-        nodes.forEach((node) => {
-          try {
-            if (!node || !node.nodeValue) return;
-            let txt = String(node.nodeValue || "");
-            if (!txt.trim()) return;
-
-            txt = txt.replace(/\bFactory IA\b/g, "Factory AI");
-            txt = txt.replace(/\bIA da Factory\b/g, "AI da Factory");
-
-            node.nodeValue = txt;
-          } catch {}
-        });
-      });
-    } catch {}
   }
 
   function cleanupFactoryAIHost() {
@@ -939,6 +924,9 @@
       if (toolsBlock) {
         toolsBlock.style.marginTop = "0";
         toolsBlock.style.paddingTop = "0";
+        toolsBlock.style.border = "0";
+        toolsBlock.style.background = "transparent";
+        toolsBlock.style.boxShadow = "none";
       }
     } catch {}
 
@@ -949,7 +937,6 @@
       });
     } catch {}
 
-    applyFactoryAITextFix(view);
     return true;
   }
 
@@ -1003,7 +990,6 @@
     if (!mainBox) return false;
 
     try { cleanupFactoryAIHost(); } catch {}
-    try { applyFactoryAITextFix(); } catch {}
     try { syncVisibility(); } catch {}
 
     log("OK", "Factory AI mount ✅ " + VERSION + " @ " + (STATE.mountedIn || "unknown"));
@@ -1026,24 +1012,20 @@
     STATE.syncTimer = setInterval(() => {
       try { mount(); } catch {}
       try { syncVisibility(); } catch {}
-      try { applyFactoryAITextFix(); } catch {}
-    }, 900);
+    }, 1200);
 
     try {
       document.addEventListener("click", () => {
         setTimeout(() => { try { mount(); } catch {} }, 60);
         setTimeout(() => { try { syncVisibility(); } catch {} }, 60);
-        setTimeout(() => { try { applyFactoryAITextFix(); } catch {} }, 60);
-
-        setTimeout(() => { try { mount(); } catch {} }, 250);
-        setTimeout(() => { try { syncVisibility(); } catch {} }, 250);
-        setTimeout(() => { try { applyFactoryAITextFix(); } catch {} }, 250);
+        setTimeout(() => { try { mount(); } catch {} }, 260);
+        setTimeout(() => { try { syncVisibility(); } catch {} }, 260);
       }, { passive: true });
     } catch {}
   }
 
   window.RCF_FACTORY_AI = {
-    __v33: true,
+    __v34: true,
     version: VERSION,
     mount,
     clearChat,
@@ -1057,7 +1039,7 @@
   };
 
   window.RCF_ADMIN_AI = Object.assign(window.RCF_ADMIN_AI || {}, {
-    __v33_bridge: true,
+    __v34_bridge: true,
     version: VERSION,
     mount,
     clearChat,
