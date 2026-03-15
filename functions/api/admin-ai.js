@@ -1,11 +1,11 @@
 /* FILE: /app/js/admin.admin_ai.js
    RControl Factory — Factory AI
-   v3.4 CHAT CORE + ATTACH MENU
+   v3.5 CHAT CORE + ATTACH MENU REMAKE
 
    - Factory AI em modo chat central limpo
-   - mantém visual superior aprovado
-   - melhora a área inferior de escrita
-   - adiciona botão clipe
+   - mantém o topo visual aprovado
+   - refaz a área inferior para ficar mais conversável
+   - adiciona botão clipe visível e estável
    - adiciona menu de anexos
    - adiciona seleção local de imagem / PDF / ZIP / arquivo / vídeo
    - mostra anexos selecionados no composer
@@ -19,12 +19,12 @@
 (() => {
   "use strict";
 
-  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v34) return;
+  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v35) return;
 
-  const VERSION = "v3.4";
+  const VERSION = "v3.5";
   const BOX_ID = "rcfFactoryAIBox";
   const CHAT_ID = "rcfFactoryAIChat";
-  const STYLE_ID = "rcfFactoryAIStyleV34";
+  const STYLE_ID = "rcfFactoryAIStyleV35";
 
   const STATE = {
     busy: false,
@@ -305,17 +305,19 @@
 #${BOX_ID}{
   margin-top:12px;
   border:1px solid rgba(31,41,55,.08);
-  border-radius:24px;
-  background:linear-gradient(180deg, rgba(255,255,255,.95), rgba(248,250,255,.90));
-  box-shadow:0 10px 26px rgba(15,23,42,.05);
+  border-radius:28px;
+  background:linear-gradient(180deg, rgba(255,255,255,.96), rgba(248,250,255,.92));
+  box-shadow:0 12px 28px rgba(15,23,42,.05);
   overflow:hidden;
 }
 
-#${BOX_ID}.card{ padding:0; }
+#${BOX_ID}.card{
+  padding:0;
+}
 
 #${BOX_ID} .rcfAiWrap{
   display:grid;
-  gap:14px;
+  gap:16px;
   padding:18px;
 }
 
@@ -324,19 +326,19 @@
   grid-template-columns:auto 1fr auto;
   gap:14px;
   align-items:center;
-  padding-bottom:12px;
+  padding-bottom:14px;
   border-bottom:1px solid rgba(31,41,55,.06);
 }
 
 #${BOX_ID} .rcfAiRobot{
-  width:58px;
-  height:58px;
+  width:62px;
+  height:62px;
   border-radius:18px;
   display:flex;
   align-items:center;
   justify-content:center;
-  font-size:28px;
-  background:linear-gradient(180deg, rgba(240,244,255,.95), rgba(232,238,255,.82));
+  font-size:30px;
+  background:linear-gradient(180deg, rgba(240,244,255,.96), rgba(232,238,255,.84));
   border:1px solid rgba(31,41,55,.06);
   box-shadow:0 4px 14px rgba(15,23,42,.05);
 }
@@ -363,11 +365,11 @@
 #${BOX_ID} .rcfAiPill{
   display:inline-flex;
   align-items:center;
-  min-height:40px;
+  min-height:42px;
   padding:0 16px;
   border-radius:999px;
   border:1px solid rgba(90,110,150,.12);
-  background:rgba(255,255,255,.84);
+  background:rgba(255,255,255,.86);
   font-size:13px;
   font-weight:900;
   color:rgba(32,45,77,.86);
@@ -378,18 +380,18 @@
   display:grid;
   gap:12px;
   padding:14px;
-  border-radius:20px;
+  border-radius:22px;
   border:1px solid rgba(31,41,55,.08);
-  background:rgba(247,249,253,.90);
+  background:rgba(247,249,253,.92);
 }
 
 #${CHAT_ID}{
-  min-height:260px;
-  max-height:40vh;
+  min-height:320px;
+  max-height:44vh;
   overflow:auto;
-  padding:8px;
-  border-radius:18px;
-  background:rgba(243,246,252,.88);
+  padding:10px;
+  border-radius:20px;
+  background:rgba(243,246,252,.90);
   border:1px solid rgba(31,41,55,.06);
 }
 
@@ -411,12 +413,12 @@
   padding:14px;
   border-radius:18px;
   border:1px solid rgba(31,41,55,.08);
-  background:rgba(255,255,255,.95);
+  background:rgba(255,255,255,.96);
   box-shadow:0 2px 10px rgba(15,23,42,.04);
 }
 
 #${BOX_ID} .rcfAiMsg.userBubble{
-  background:linear-gradient(180deg, rgba(218,230,255,.95), rgba(232,239,255,.92));
+  background:linear-gradient(180deg, rgba(218,230,255,.96), rgba(232,239,255,.94));
   border-color:rgba(112,152,255,.16);
 }
 
@@ -432,7 +434,7 @@
 #${BOX_ID} .rcfAiMsgText{
   white-space:pre-wrap;
   word-break:break-word;
-  line-height:1.5;
+  line-height:1.52;
   color:#202d4d;
   font-size:15px;
 }
@@ -445,11 +447,11 @@
 
 #${BOX_ID} .rcfAiComposer{
   display:grid;
-  gap:10px;
-  padding:14px;
-  border-radius:20px;
+  gap:12px;
+  padding:16px;
+  border-radius:22px;
   border:1px solid rgba(31,41,55,.08);
-  background:rgba(255,255,255,.92);
+  background:rgba(255,255,255,.94);
 }
 
 #${BOX_ID} .rcfAiPromptWrap{
@@ -459,9 +461,9 @@
 
 #${BOX_ID} .rcfAiPromptRow{
   display:grid;
-  grid-template-columns:auto 1fr auto;
+  grid-template-columns:auto 1fr;
   gap:10px;
-  align-items:end;
+  align-items:start;
 }
 
 #${BOX_ID} .rcfAiClip{
@@ -469,11 +471,11 @@
 }
 
 #${BOX_ID} .rcfAiClipBtn{
-  width:48px;
-  height:48px;
-  border-radius:14px;
+  width:50px;
+  height:50px;
+  border-radius:16px;
   border:1px solid rgba(31,41,55,.08);
-  background:rgba(255,255,255,.96);
+  background:rgba(255,255,255,.98);
   color:#26407a;
   font-size:21px;
   font-weight:900;
@@ -483,14 +485,14 @@
 #${BOX_ID} .rcfAiClipMenu{
   position:absolute;
   left:0;
-  bottom:56px;
-  min-width:190px;
+  bottom:58px;
+  min-width:196px;
   display:none;
   z-index:30;
   padding:8px;
   border-radius:16px;
   border:1px solid rgba(31,41,55,.08);
-  background:rgba(255,255,255,.98);
+  background:rgba(255,255,255,.99);
   box-shadow:0 12px 26px rgba(15,23,42,.10);
 }
 
@@ -507,19 +509,24 @@
   padding:0 12px;
   border-radius:12px;
   border:1px solid transparent;
-  background:rgba(247,249,253,.9);
+  background:rgba(247,249,253,.92);
   color:#22345e;
   font-size:13px;
   font-weight:800;
   cursor:pointer;
 }
 
+#${BOX_ID} .rcfAiInputCol{
+  display:grid;
+  gap:10px;
+}
+
 #${BOX_ID} .rcfAiPrompt{
   width:100%;
-  min-height:108px;
+  min-height:126px;
   resize:vertical;
   padding:14px;
-  border-radius:16px;
+  border-radius:18px;
   border:1px solid rgba(31,41,55,.10);
   box-sizing:border-box;
   background:#fff;
@@ -532,19 +539,6 @@
   outline:none;
   border-color:rgba(112,152,255,.42);
   box-shadow:0 0 0 3px rgba(112,152,255,.10);
-}
-
-#${BOX_ID} .rcfAiSend{
-  min-width:116px;
-  min-height:48px;
-  padding:0 16px;
-  border-radius:16px;
-  border:1px solid rgba(112,152,255,.18);
-  background:linear-gradient(180deg, rgba(228,235,255,.96), rgba(217,228,255,.92));
-  color:#26407a;
-  font-size:15px;
-  font-weight:900;
-  cursor:pointer;
 }
 
 #${BOX_ID} .rcfAiAttachments{
@@ -561,7 +555,7 @@
   padding:0 12px;
   border-radius:999px;
   border:1px solid rgba(31,41,55,.08);
-  background:rgba(245,248,255,.95);
+  background:rgba(245,248,255,.96);
   color:#22345e;
   font-size:12px;
   font-weight:800;
@@ -586,7 +580,7 @@
   cursor:pointer;
 }
 
-#${BOX_ID} .rcfAiComposerBar{
+#${BOX_ID} .rcfAiBottomBar{
   display:flex;
   justify-content:space-between;
   align-items:center;
@@ -600,9 +594,9 @@
   color:rgba(32,45,77,.78);
 }
 
-#${BOX_ID} .rcfAiButtons{
+#${BOX_ID} .rcfAiBottomActions{
   display:flex;
-  gap:8px;
+  gap:10px;
   flex-wrap:wrap;
 }
 
@@ -610,16 +604,21 @@
   display:inline-flex;
   align-items:center;
   justify-content:center;
-  min-width:108px;
-  min-height:44px;
-  padding:10px 14px;
-  border-radius:14px;
+  min-width:118px;
+  min-height:46px;
+  padding:10px 16px;
+  border-radius:16px;
   border:1px solid rgba(31,41,55,.08);
-  background:rgba(255,255,255,.84);
+  background:rgba(255,255,255,.90);
   color:#26407a;
-  font-size:14px;
+  font-size:15px;
   font-weight:900;
   cursor:pointer;
+}
+
+#${BOX_ID} .rcfAiBtn.primary{
+  background:linear-gradient(180deg, rgba(228,235,255,.98), rgba(217,228,255,.94));
+  border-color:rgba(112,152,255,.18);
 }
 
 #${BOX_ID} .rcfAiSmall{
@@ -670,13 +669,20 @@
     font-size:19px;
   }
 
-  #${BOX_ID} .rcfAiPromptRow{
-    grid-template-columns:48px 1fr;
+  #${CHAT_ID}{
+    min-height:280px;
   }
 
-  #${BOX_ID} .rcfAiSend{
-    grid-column:1 / -1;
+  #${BOX_ID} .rcfAiPrompt{
+    min-height:118px;
+  }
+
+  #${BOX_ID} .rcfAiBottomActions{
     width:100%;
+  }
+
+  #${BOX_ID} .rcfAiBtn{
+    flex:1 1 140px;
   }
 
   #${BOX_ID} .rcfAiAttachmentName{
@@ -1296,8 +1302,8 @@
       }, { passive: true });
     });
 
-    if (!document.__rcfFactoryAIOutsideClick) {
-      document.__rcfFactoryAIOutsideClick = true;
+    if (!document.__rcfFactoryAIOutsideClickV35) {
+      document.__rcfFactoryAIOutsideClickV35 = true;
       document.addEventListener("click", (ev) => {
         try {
           const clip = qs(".rcfAiClip");
@@ -1353,16 +1359,16 @@
                 </div>
               </div>
 
-              <textarea
-                id="rcfFactoryAIPrompt"
-                class="rcfAiPrompt"
-                placeholder="Fale com a Factory AI. Ex.: corrige o módulo da view, gera o arquivo completo, analisa os logs, lê esse contexto, organiza essa arquitetura..."
-              ></textarea>
+              <div class="rcfAiInputCol">
+                <textarea
+                  id="rcfFactoryAIPrompt"
+                  class="rcfAiPrompt"
+                  placeholder="Fale com a Factory AI. Ex.: corrige o módulo da view, gera o arquivo completo, analisa os logs, lê esse contexto, organiza essa arquitetura..."
+                ></textarea>
 
-              <button class="rcfAiSend" id="rcfFactoryAISend" type="button">Enviar</button>
+                <div id="rcfFactoryAIAttachments" class="rcfAiAttachments" style="display:none"></div>
+              </div>
             </div>
-
-            <div id="rcfFactoryAIAttachments" class="rcfAiAttachments" style="display:none"></div>
 
             <input id="rcfFactoryAIInputImage" class="rcfAiHiddenInput" type="file" accept="image/*" multiple>
             <input id="rcfFactoryAIInputPdf" class="rcfAiHiddenInput" type="file" accept="application/pdf,.pdf" multiple>
@@ -1371,10 +1377,12 @@
             <input id="rcfFactoryAIInputVideo" class="rcfAiHiddenInput" type="file" accept="video/*" multiple>
           </div>
 
-          <div class="rcfAiComposerBar">
+          <div class="rcfAiBottomBar">
             <div id="rcfFactoryAIComposerStatus" class="rcfAiStatus">aguardando</div>
-            <div class="rcfAiButtons">
+
+            <div class="rcfAiBottomActions">
               <button class="rcfAiBtn" id="rcfFactoryAIClear" type="button">Limpar</button>
+              <button class="rcfAiBtn primary" id="rcfFactoryAISend" type="button">Enviar</button>
             </div>
           </div>
 
@@ -1472,7 +1480,7 @@
   }
 
   window.RCF_FACTORY_AI = {
-    __v34: true,
+    __v35: true,
     version: VERSION,
     mount,
     clearChat,
@@ -1489,7 +1497,7 @@
   };
 
   window.RCF_ADMIN_AI = Object.assign(window.RCF_ADMIN_AI || {}, {
-    __v34_bridge: true,
+    __v35_bridge: true,
     version: VERSION,
     mount,
     clearChat,
