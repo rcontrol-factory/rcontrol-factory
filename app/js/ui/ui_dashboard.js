@@ -1,6 +1,6 @@
 /* FILE: /app/js/ui/ui_dashboard.js
    RControl Factory — UI Dashboard
-   V3.5 FAST HOME NAV FIXED + SPECIAL PANELS
+   V3.5.1 FAST HOME NAV FIXED + SPECIAL PANELS SAFE
    - Home leve e rápida para Safari / iPhone / PWA
    - Card normal abre tela direto
    - Dashboard e RCF Factory abrem painel próprio (sem empurrar texto)
@@ -12,6 +12,8 @@
    - FIX: rebinding seguro do click no #view-dashboard
    - FIX: card normal também publica data-view padrão
    - FIX: fallback real de navegação caso o handler local falhe
+   - FIX: limpeza de estado visual ao sair da Home
+   - FIX: sincroniza aria-expanded e painéis especiais
 */
 (() => {
   "use strict";
@@ -26,7 +28,7 @@
     _gridSel: "#rcfDashboardCards",
     _detailSel: "#rcfDashboardDetailPanel",
     _expandedCardId: null,
-    _bindVersion: "v3.5",
+    _bindVersion: "v3.5.1",
     _openSpecialPanel: null,
 
     init(ctx = {}) {
@@ -68,6 +70,15 @@
 
       this._markDashboardMode();
 
+      const currentView = this._getCurrentView();
+      if (currentView !== "dashboard") {
+        this._expandedCardId = null;
+        this._openSpecialPanel = null;
+        this._applyExpandedState();
+        this._applySpecialPanelState();
+        return true;
+      }
+
       const grid = this._grid();
       if (!grid || !grid.children.length) {
         this._renderCards(true);
@@ -84,6 +95,11 @@
       try {
         const root = document.querySelector(this._rootSel);
         if (root) root.removeAttribute("data-rcf-dashboard-mode");
+      } catch {}
+
+      try {
+        this._expandedCardId = null;
+        this._openSpecialPanel = null;
       } catch {}
 
       try {
@@ -115,6 +131,24 @@
 
     _detailPanel() {
       try { return document.querySelector(this._detailSel); } catch { return null; }
+    },
+
+    _normalizeView(view) {
+      try {
+        if (window.RCF && typeof window.RCF.normalizeViewName === "function") {
+          return window.RCF.normalizeViewName(view);
+        }
+      } catch {}
+      return String(view || "").trim().toLowerCase() || "dashboard";
+    },
+
+    _getCurrentView() {
+      try {
+        const state = this._getState();
+        return this._normalizeView(state && state.active ? state.active.view : "dashboard");
+      } catch {
+        return "dashboard";
+      }
     },
 
     _getState() {
@@ -196,6 +230,7 @@
         state.active = state.active || {};
         state.active.appSlug = slug;
         state.active.file = state.active.file || null;
+        this._saveAll("dashboard.setActiveApp");
         return true;
       } catch {}
 
@@ -256,9 +291,18 @@
       return false;
     },
 
+    _closeTransientState() {
+      this._expandedCardId = null;
+      this._openSpecialPanel = null;
+      this._applyExpandedState();
+      this._applySpecialPanelState();
+    },
+
     _openViewSafe(view, slug = "") {
-      const next = String(view || "").trim();
+      const next = this._normalizeView(view);
       if (!next) return false;
+
+      this._closeTransientState();
 
       try {
         if (slug) this._setActiveApp(slug);
@@ -805,7 +849,6 @@
     font-size:19px;
   }
 }
-
       `.trim();
 
       document.head.appendChild(st);
@@ -1314,8 +1357,6 @@
     _syncDynamicBits() {
       try {
         const appsCount = this._getApps().length;
-        const activeApp = this._getActiveApp();
-        const activeSlug = activeApp && activeApp.slug ? activeApp.slug : "—";
 
         const appsCard = document.querySelector('[data-rcf-card="apps"] .rcfDashCardSub');
         if (appsCard) {
@@ -1344,6 +1385,11 @@
           const id = String(card.getAttribute("data-rcf-card") || "");
           const open = !!this._expandedCardId && this._expandedCardId === id;
           card.classList.toggle("is-open", open);
+
+          const head = card.querySelector(".rcfDashCardHead");
+          if (head) {
+            try { head.setAttribute("aria-expanded", open ? "true" : "false"); } catch {}
+          }
         });
       } catch {}
     },
@@ -1359,6 +1405,9 @@
       } catch {}
 
       const handler = (ev) => {
+        const currentView = this._getCurrentView();
+        if (currentView !== "dashboard") return;
+
         const specialBtn = ev.target && ev.target.closest ? ev.target.closest("[data-rcf-special-panel]") : null;
         if (specialBtn) {
           ev.preventDefault();
@@ -1402,9 +1451,13 @@
           ev.stopPropagation();
           const act = String(actionBtn.getAttribute("data-rcf-action") || "").trim();
 
-          if (act === "open-tools") this._openTools();
-          else if (act === "open-doctor") this._runDoctor();
-          else if (act === "refresh-dashboard") {
+          if (act === "open-tools") {
+            this._closeSpecial();
+            this._openTools();
+          } else if (act === "open-doctor") {
+            this._closeSpecial();
+            this._runDoctor();
+          } else if (act === "refresh-dashboard") {
             this._syncDynamicBits();
             this._saveAll("dashboard.refresh");
           }
@@ -1427,8 +1480,7 @@
     _markDashboardMode() {
       try {
         const root = document.querySelector(this._rootSel);
-        const state = this._getState();
-        const current = state && state.active ? String(state.active.view || "dashboard") : "dashboard";
+        const current = this._getCurrentView();
         if (!root) return;
         if (current === "dashboard") root.setAttribute("data-rcf-dashboard-mode", "cards");
         else root.removeAttribute("data-rcf-dashboard-mode");
