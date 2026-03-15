@@ -1,13 +1,15 @@
 /* FILE: /app/js/ui/ui_bootstrap.js
    RControl Factory — UI Bootstrap
-   V2.1 FACTORY-AI SCRIPT LOADER + OFFICIAL VIEW MOUNT
+   V2.2 FACTORY-AI OFFICIAL LOADER STABLE
+
    - Orquestra módulos visuais leves
    - Inicializa dependências da nova UI
    - Monta em ordem segura
    - Sem quebrar fluxo antigo
-   - CARREGA ./js/admin.admin_ai.js quando necessário
-   - Factory View monta na view oficial, não no dashboard
-   - Remount curto e seguro para encaixar Factory IA
+   - Carrega ./js/admin.admin_ai.js quando necessário
+   - Factory View monta somente na view oficial
+   - Evita remount excessivo e encaixe torto da Factory IA
+   - Mantém retries curtos e controlados
 */
 (() => {
   "use strict";
@@ -95,7 +97,7 @@
   }
 
   function getSaveAll() {
-    return function saveAllCompat() {
+    return function saveAllCompat(reason = "ui_bootstrap") {
       try {
         const State = window.RCF?.state;
         if (!State) return;
@@ -104,6 +106,12 @@
         try { localStorage.setItem("rcf:apps", JSON.stringify(State.apps ?? [])); } catch {}
         try { localStorage.setItem("rcf:active", JSON.stringify(State.active ?? {})); } catch {}
         try { localStorage.setItem("rcf:pending", JSON.stringify(State.pending ?? {})); } catch {}
+
+        try {
+          if (window.RCF_LOGGER && typeof window.RCF_LOGGER.push === "function") {
+            window.RCF_LOGGER.push("UI", "[ui_bootstrap] saveAll " + String(reason || ""));
+          }
+        } catch {}
       } catch {}
     };
   }
@@ -150,7 +158,7 @@
             State.active.file = null;
           }
 
-          getSaveAll()();
+          getSaveAll()("deleteApp");
           return true;
         } catch {
           return false;
@@ -215,22 +223,51 @@
     }
   }
 
+  function normalizePath(src) {
+    try {
+      return new URL(src, location.href).href;
+    } catch {
+      return String(src || "");
+    }
+  }
+
   function loadScriptOnce(src, marker) {
     return new Promise(resolve => {
       try {
-        const hit = document.querySelector(`script[${marker}="1"]`);
-        if (hit) return resolve(true);
+        const fullSrc = normalizePath(src);
+
+        const existingByMarker = document.querySelector(`script[${marker}="1"]`);
+        if (existingByMarker) {
+          return resolve(true);
+        }
+
+        const existingBySrc = Array.from(document.querySelectorAll("script[src]")).find(sc => {
+          try { return normalizePath(sc.getAttribute("src")) === fullSrc; } catch { return false; }
+        });
+
+        if (existingBySrc) {
+          existingBySrc.setAttribute(marker, "1");
+          return resolve(true);
+        }
+
+        let settled = false;
+        const done = (ok) => {
+          if (settled) return;
+          settled = true;
+          resolve(!!ok);
+        };
 
         const sc = document.createElement("script");
         sc.src = src;
         sc.defer = true;
         sc.async = false;
         sc.setAttribute(marker, "1");
-        sc.onload = () => resolve(true);
-        sc.onerror = () => resolve(false);
+
+        sc.onload = () => done(true);
+        sc.onerror = () => done(false);
 
         (document.head || document.documentElement).appendChild(sc);
-        setTimeout(() => resolve(false), 1800);
+        setTimeout(() => done(false), 1800);
       } catch {
         resolve(false);
       }
@@ -246,6 +283,24 @@
     );
   }
 
+  function isFactoryAIViewVisible() {
+    try {
+      const view = getFactoryAIView();
+      if (!view) return false;
+      if (view.classList.contains("active")) return true;
+      if (view.getAttribute("data-rcf-visible") === "1") return true;
+      if (view.hidden) return false;
+
+      const cs = window.getComputedStyle(view);
+      if (!cs) return false;
+      if (cs.display === "none") return false;
+      if (cs.visibility === "hidden") return false;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   const API = {
     __deps: null,
     __inited: false,
@@ -253,10 +308,22 @@
     __remountBusy__: false,
     __bootstrappedOnce__: false,
     __factoryAIScriptPromise__: null,
+    __retryTimers__: [],
 
     getDeps() {
       if (!this.__deps) this.__deps = buildDeps();
       return this.__deps;
+    },
+
+    _log(...args) {
+      try { this.getDeps().Logger.write("[ui_bootstrap]", ...args); } catch {}
+    },
+
+    _clearRetryTimers() {
+      try {
+        (this.__retryTimers__ || []).forEach(id => clearTimeout(id));
+      } catch {}
+      this.__retryTimers__ = [];
     },
 
     async ensureFactoryAIScript() {
@@ -272,14 +339,13 @@
           return await this.__factoryAIScriptPromise__;
         }
 
-        this.__factoryAIScriptPromise__ = loadScriptOnce("./js/admin.admin_ai.js", "data-rcf-factory-ai-script")
-          .then(ok => {
-            try {
-              this.getDeps().Logger.write("factory_ai script:", ok ? "load requested ✅" : "load failed ❌");
-            } catch {}
-            return ok;
-          })
-          .catch(() => false);
+        this.__factoryAIScriptPromise__ = loadScriptOnce(
+          "./js/admin.admin_ai.js",
+          "data-rcf-factory-ai-script"
+        ).then(ok => {
+          this._log("factory_ai script", ok ? "load ok" : "load fail");
+          return !!ok;
+        }).catch(() => false);
 
         return await this.__factoryAIScriptPromise__;
       } catch {
@@ -331,18 +397,24 @@
     mountFactoryView() {
       try {
         const view = getFactoryAIView();
+        if (!view) {
+          this._log("mountFactoryView skip", "official view missing");
+          return false;
+        }
 
         if (window.RCF_UI_FACTORY_VIEW && typeof window.RCF_UI_FACTORY_VIEW.mount === "function") {
           return !!window.RCF_UI_FACTORY_VIEW.mount(Object.assign({}, this.getDeps(), {
-            root: view || null,
-            viewEl: view || null
+            root: view,
+            viewEl: view,
+            officialViewOnly: true
           }));
         }
 
         if (window.RCF_UI_FACTORY_VIEW && typeof window.RCF_UI_FACTORY_VIEW.refresh === "function") {
           return !!window.RCF_UI_FACTORY_VIEW.refresh(Object.assign({}, this.getDeps(), {
-            root: view || null,
-            viewEl: view || null
+            root: view,
+            viewEl: view,
+            officialViewOnly: true
           }));
         }
 
@@ -354,6 +426,9 @@
 
     mountFactoryAIEngine() {
       try {
+        const view = getFactoryAIView();
+        if (!view) return false;
+
         let ok = false;
 
         if (window.RCF_FACTORY_AI && typeof window.RCF_FACTORY_AI.mount === "function") {
@@ -371,17 +446,39 @@
     },
 
     refreshUi() {
-      try { callSafe(window.RCF_UI_DASHBOARD, "refresh"); } catch {}
+      try { callSafe(window.RCF_UI_DASHBOARD, "refresh", this.getDeps()); } catch {}
       try { callSafe(window.RCF_UI_RUNTIME, "refreshDashboardUI"); } catch {}
       try { callSafe(window.RCF_UI_RUNTIME, "renderAppsList"); } catch {}
       try { callSafe(window.RCF_UI_RUNTIME, "renderFilesList"); } catch {}
       try { callSafe(window.RCF_UI_RUNTIME, "syncFabStatusText"); } catch {}
-      try { callSafe(window.RCF_UI_VIEWS, "mount"); } catch {}
-      try { callSafe(window.RCF_UI_FACTORY_VIEW, "refresh", Object.assign({}, this.getDeps(), {
-        root: getFactoryAIView(),
-        viewEl: getFactoryAIView()
-      })); } catch {}
+      try { callSafe(window.RCF_UI_VIEWS, "refresh", this.getDeps()); } catch {}
+
+      try {
+        const view = getFactoryAIView();
+        if (view) {
+          callSafe(window.RCF_UI_FACTORY_VIEW, "refresh", Object.assign({}, this.getDeps(), {
+            root: view,
+            viewEl: view,
+            officialViewOnly: true
+          }));
+        }
+      } catch {}
+
       return true;
+    },
+
+    scheduleFactoryAIRetries() {
+      this._clearRetryTimers();
+
+      const steps = [120, 420, 900];
+      steps.forEach(ms => {
+        const id = setTimeout(() => {
+          try { this.mountFactoryView(); } catch {}
+          try { this.mountFactoryAIEngine(); } catch {}
+          try { this.refreshUi(); } catch {}
+        }, ms);
+        this.__retryTimers__.push(id);
+      });
     },
 
     async mount() {
@@ -391,30 +488,18 @@
         this.mountShell();
         this.mountHeader();
         this.mountLegacyViews();
-        this.mountFactoryView();
 
         await this.ensureFactoryAIScript();
+
+        this.mountFactoryView();
         this.mountFactoryAIEngine();
-
         this.refreshUi();
+        this.scheduleFactoryAIRetries();
 
-        setTimeout(() => {
-          try { this.mountFactoryView(); } catch {}
-          try { this.mountFactoryAIEngine(); } catch {}
-          try { this.refreshUi(); } catch {}
-        }, 120);
-
-        setTimeout(() => {
-          try { this.mountFactoryView(); } catch {}
-          try { this.mountFactoryAIEngine(); } catch {}
-        }, 420);
-
-        setTimeout(() => {
-          try { this.mountFactoryAIEngine(); } catch {}
-        }, 900);
-
-        this.__mountCount++;
+        this.__mountCount += 1;
         this.__bootstrappedOnce__ = true;
+
+        this._log("mount ok", "count=" + this.__mountCount);
         return true;
       } catch {
         return false;
@@ -433,12 +518,13 @@
         setTimeout(run, 20);
 
         if (!this.__bootstrappedOnce__) {
-          setTimeout(run, 120);
-          setTimeout(run, 320);
+          setTimeout(run, 160);
+          setTimeout(run, 360);
         }
 
-        setTimeout(run, 760);
-        setTimeout(() => { this.__remountBusy__ = false; }, 980);
+        setTimeout(() => {
+          this.__remountBusy__ = false;
+        }, 980);
       } catch {
         this.__remountBusy__ = false;
       }
@@ -457,6 +543,16 @@
     window.addEventListener("RCF:UI_READY", () => {
       try { API.remountSoft(); } catch {}
     });
+  } catch {}
+
+  try {
+    document.addEventListener("visibilitychange", () => {
+      try {
+        if (!document.hidden && isFactoryAIViewVisible()) {
+          API.remountSoft();
+        }
+      } catch {}
+    }, { passive: true });
   } catch {}
 
 })();
