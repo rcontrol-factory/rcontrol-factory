@@ -1,14 +1,16 @@
 /* FILE: /app/js/ui/ui_factory_view.js
    RControl Factory — Factory View Module
-   V2.1 SAFE MOUNT
+   V2.2 FACTORY-AI OFFICIAL MOUNT
    PATCH MÍNIMO:
-   - remove Dashboard da composição da Factory
-   - mantém Factory focada em módulos/sistema/integrações/projetos
+   - prioriza Factory AI como view oficial
+   - cria slots reais para Factory IA
+   - mantém fallback seguro para factory/admin
    - preserva fallback seguro
-   - evita duplicação visual da Home dentro da Factory
-   - adiciona init + mount + refresh compatíveis com app.js V8.1.1
+   - evita duplicação visual da Home dentro da Factory AI
+   - adiciona init + mount + refresh compatíveis com app.js V8.x
    - resolve host/view automaticamente
    - FIX: não monta mais dentro do Agent
+   - FIX: permite encaixe do módulo Factory IA no lugar certo
 */
 
 (() => {
@@ -67,15 +69,25 @@
 
     resolveFactoryView() {
       const tries = [
+        "#view-factory-ai",
+        '[data-rcf-view="factory-ai"]',
+        "#rcfFactoryAIView",
+        "[data-rcf-factory-ai-view]",
         "#view-factory",
         '[data-rcf-view="factory"]',
         "#rcfFactoryView",
-        "[data-rcf-factory-view]"
+        "[data-rcf-factory-view]",
+        "#view-admin"
       ];
 
       for (const sel of tries) {
         const el = qs(sel);
-        if (el) return el;
+        if (!el) continue;
+
+        const id = String(el.id || el.getAttribute("data-rcf-view") || "").toLowerCase();
+        if (/agent/.test(id)) continue;
+
+        return el;
       }
 
       return null;
@@ -84,7 +96,7 @@
     ensureHost(viewEl) {
       if (!viewEl) return null;
 
-      let host = qs('[data-rcf-ui-factory-root="1"]', viewEl);
+      let host = qs(':scope > [data-rcf-ui-factory-root="1"]', viewEl);
       if (host) return host;
 
       host = document.createElement("div");
@@ -94,6 +106,45 @@
       viewEl.appendChild(host);
 
       return host;
+    },
+
+    buildHero() {
+      return `
+        <section class="rcfUiFactoryHero" data-rcf-factory-block="hero">
+          <div class="rcfUiFactoryHeroInner">
+            <div class="rcfUiFactoryHeroEyebrow">Factory IA</div>
+            <h2 class="rcfUiFactoryHeroTitle">Núcleo inteligente da Factory</h2>
+            <p class="hint">
+              Espaço oficial da IA da Factory para leitura de prompt, análise estrutural,
+              proposta de patch, geração guiada e evolução assistida do sistema.
+            </p>
+          </div>
+        </section>
+      `;
+    },
+
+    buildActionsSlot() {
+      return `
+        <section class="rcfUiFactoryBlock" data-rcf-factory-block="factory-ai-actions">
+          <div class="rcfUiFactoryBlockHead">
+            <h2>Factory IA</h2>
+            <p class="hint">Ações rápidas, estado e entrada principal</p>
+          </div>
+          <div id="rcfFactoryAISlotActions" data-rcf-slot="factoryai.actions"></div>
+        </section>
+      `;
+    },
+
+    buildToolsSlot() {
+      return `
+        <section class="rcfUiFactoryBlock" data-rcf-factory-block="factory-ai-tools">
+          <div class="rcfUiFactoryBlockHead">
+            <h2>Chat & Tools</h2>
+            <p class="hint">Chat inteligente, sugestões e análise estrutural</p>
+          </div>
+          <div id="rcfFactoryAISlotTools" data-rcf-slot="factoryai.tools"></div>
+        </section>
+      `;
     },
 
     buildAppsWidgetsSlot() {
@@ -186,12 +237,36 @@
       return `
         <section class="rcfUiSection rcfUiFactorySection" data-rcf-ui="factory-view">
           <div class="rcfUiFactoryView" data-rcf-ui-factory-view="1">
+            ${this.buildHero()}
+            ${this.buildActionsSlot()}
+            ${this.buildToolsSlot()}
             ${this.buildAppsWidgetsSlot()}
             ${this.buildGatewaysSlot()}
             ${this.buildProjectsSlot()}
           </div>
         </section>
       `;
+    },
+
+    ensureFactoryAISlots() {
+      const root = qs('[data-rcf-ui-factory-view="1"]') || qs('[data-rcf-ui-factory-root="1"]');
+      if (!root) return false;
+
+      if (!qs("#rcfFactoryAISlotActions", root)) {
+        const holder = document.createElement("div");
+        holder.id = "rcfFactoryAISlotActions";
+        holder.setAttribute("data-rcf-slot", "factoryai.actions");
+        root.appendChild(holder);
+      }
+
+      if (!qs("#rcfFactoryAISlotTools", root)) {
+        const holder = document.createElement("div");
+        holder.id = "rcfFactoryAISlotTools";
+        holder.setAttribute("data-rcf-slot", "factoryai.tools");
+        root.appendChild(holder);
+      }
+
+      return true;
     },
 
     renderAppsWidgets() {
@@ -232,6 +307,8 @@
       try { window.RCF_UI_APPS_WIDGETS?.refresh?.(); } catch {}
       try { window.RCF_UI_PROJECTS?.refresh?.(); } catch {}
       try { window.RCF_UI_GATEWAYS?.refresh?.(); } catch {}
+      try { window.RCF_FACTORY_AI?.mount?.(); } catch {}
+      try { window.RCF_ADMIN_AI?.mount?.(); } catch {}
       return true;
     },
 
@@ -241,7 +318,7 @@
       try {
         const view = this.resolveFactoryView();
         if (!view) {
-          this.log("mount skip: factory view ausente");
+          this.log("mount skip: factory/factory-ai view ausente");
           return false;
         }
 
@@ -253,7 +330,9 @@
 
         host.innerHTML = this.buildView();
         view.setAttribute("data-rcf-ui-factory-mounted", "1");
+        view.setAttribute("data-rcf-ui-factory-ai-ready", "1");
 
+        this.ensureFactoryAISlots();
         this.renderAppsWidgets();
         this.renderGateways();
         this.renderProjects();
@@ -285,6 +364,7 @@
             el.setAttribute("data-rcf-factory-mounted", "1");
           }
 
+          this.ensureFactoryAISlots();
           this.renderAppsWidgets();
           this.renderGateways();
           this.renderProjects();
@@ -310,6 +390,7 @@
           return this.mount(this.__deps || {});
         }
 
+        this.ensureFactoryAISlots();
         this.renderAppsWidgets();
         this.renderGateways();
         this.renderProjects();
