@@ -78,23 +78,38 @@
         }
 
         const views = d.$$ ? d.$$(".view") : Array.from(document.querySelectorAll(".view"));
-        const tabs = d.$$ ? d.$$("[data-view]") : Array.from(document.querySelectorAll("[data-view]"));
+        const tabs = d.$$ ? d.$$('[data-view]') : Array.from(document.querySelectorAll('[data-view]'));
 
         views.forEach(v => {
-          try { v.classList.remove("active"); } catch {}
+          try {
+            v.classList.remove("active");
+            v.hidden = true;
+            v.style.display = "none";
+            v.setAttribute("aria-hidden", "true");
+            v.removeAttribute("data-rcf-visible");
+          } catch {}
         });
 
         tabs.forEach(btn => {
-          try { btn.classList.remove("active"); } catch {}
+          try {
+            btn.classList.remove("active");
+            btn.removeAttribute("aria-current");
+          } catch {}
         });
 
         const target =
           (d.$ && d.$(`#view-${viewName}`)) ||
           document.querySelector(`#view-${viewName}`);
 
-        if (target) {
-          try { target.classList.add("active"); } catch {}
-        }
+        if (!target) return false;
+
+        try {
+          target.hidden = false;
+          target.style.display = "";
+          target.classList.add("active");
+          target.setAttribute("aria-hidden", "false");
+          target.setAttribute("data-rcf-visible", "1");
+        } catch {}
 
         tabs
           .filter(btn => {
@@ -102,7 +117,10 @@
             catch { return false; }
           })
           .forEach(btn => {
-            try { btn.classList.add("active"); } catch {}
+            try {
+              btn.classList.add("active");
+              btn.setAttribute("aria-current", "page");
+            } catch {}
           });
 
         try {
@@ -118,7 +136,7 @@
 
         try { d.saveAll?.(); } catch {}
 
-        if (viewName === "logs" || viewName === "settings" || viewName === "admin") {
+        if (["logs", "settings", "admin", "github", "updates", "deploy"].includes(viewName)) {
           try { d.refreshLogsViews?.(); } catch {}
         }
 
