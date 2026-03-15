@@ -1,16 +1,16 @@
 /* FILE: /app/js/ui/ui_factory_view.js
    RControl Factory — Factory View Module
-   V2.2 FACTORY-AI OFFICIAL MOUNT
+   V2.3 FACTORY-AI CLEAN SCREEN
    PATCH MÍNIMO:
    - prioriza Factory AI como view oficial
    - cria slots reais para Factory IA
-   - mantém fallback seguro para factory/admin
-   - preserva fallback seguro
-   - evita duplicação visual da Home dentro da Factory AI
+   - remove blocos errados da Factory geral dentro da tela da IA
+   - evita duplicação visual e botões mortos
+   - mantém fallback seguro para admin apenas se necessário
    - adiciona init + mount + refresh compatíveis com app.js V8.x
    - resolve host/view automaticamente
-   - FIX: não monta mais dentro do Agent
-   - FIX: permite encaixe do módulo Factory IA no lugar certo
+   - FIX: não monta mais Apps/Gateways/Projects dentro da Factory AI
+   - FIX: chama apenas o módulo de IA
 */
 
 (() => {
@@ -73,10 +73,6 @@
         '[data-rcf-view="factory-ai"]',
         "#rcfFactoryAIView",
         "[data-rcf-factory-ai-view]",
-        "#view-factory",
-        '[data-rcf-view="factory"]',
-        "#rcfFactoryView",
-        "[data-rcf-factory-view]",
         "#view-admin"
       ];
 
@@ -128,7 +124,7 @@
         <section class="rcfUiFactoryBlock" data-rcf-factory-block="factory-ai-actions">
           <div class="rcfUiFactoryBlockHead">
             <h2>Factory IA</h2>
-            <p class="hint">Ações rápidas, estado e entrada principal</p>
+            <p class="hint">Estado, contexto e entrada principal</p>
           </div>
           <div id="rcfFactoryAISlotActions" data-rcf-slot="factoryai.actions"></div>
         </section>
@@ -147,102 +143,29 @@
       `;
     },
 
-    buildAppsWidgetsSlot() {
-      const cfg = window.RCF_UI_CONFIG;
-      const title =
-        cfg?.get?.("sections.appsWidgets.title", "Apps & Widgets") ??
-        "Apps & Widgets";
-      const subtitle =
-        cfg?.get?.("sections.appsWidgets.subtitle", "Módulos e integrações da Factory") ??
-        "Módulos e integrações da Factory";
-
+    buildContextBlock() {
       return `
-        <section class="rcfUiFactoryBlock" data-rcf-factory-block="apps-widgets">
+        <section class="rcfUiFactoryBlock" data-rcf-factory-block="factory-ai-context">
           <div class="rcfUiFactoryBlockHead">
-            <h2>${this.escHtml(title)}</h2>
-            <p class="hint">${this.escHtml(subtitle)}</p>
+            <h2>Contexto</h2>
+            <p class="hint">Base oficial para evolução futura da IA da Factory</p>
           </div>
-          <div id="rcfFactoryAppsWidgetsSlot"></div>
+          <div class="hint">
+            Esta tela é reservada para a Factory IA. Aqui entram o chat, ações inteligentes,
+            leitura de contexto, análise estrutural e evolução guiada do sistema.
+          </div>
         </section>
-      `;
-    },
-
-    buildGatewaysSlot() {
-      const cfg = window.RCF_UI_CONFIG;
-      const title =
-        cfg?.get?.("sections.gateways.title", "APIs & Gateways") ??
-        "APIs & Gateways";
-      const subtitle =
-        cfg?.get?.("sections.gateways.subtitle", "Conexões, mensagens e integrações") ??
-        "Conexões, mensagens e integrações";
-
-      return `
-        <section class="rcfUiFactoryBlock" data-rcf-factory-block="gateways">
-          <div class="rcfUiFactoryBlockHead">
-            <h2>${this.escHtml(title)}</h2>
-            <p class="hint">${this.escHtml(subtitle)}</p>
-          </div>
-          <div id="rcfFactoryGatewaysSlot"></div>
-        </section>
-      `;
-    },
-
-    buildProjectsSlot() {
-      const cfg = window.RCF_UI_CONFIG;
-      const title =
-        cfg?.get?.("sections.projects.title", "Projects") ??
-        "Projects";
-      const subtitle =
-        cfg?.get?.("sections.projects.subtitle", "Projetos, código e deploy") ??
-        "Projetos, código e deploy";
-
-      return `
-        <section class="rcfUiFactoryBlock" data-rcf-factory-block="projects">
-          <div class="rcfUiFactoryBlockHead">
-            <h2>${this.escHtml(title)}</h2>
-            <p class="hint">${this.escHtml(subtitle)}</p>
-          </div>
-          <div id="rcfFactoryProjectsSlot"></div>
-        </section>
-      `;
-    },
-
-    buildFallbackGateways() {
-      return `
-        <div class="rcfDashPanel rcfDashPanelWide" data-rcf-ui-factory-fallback="gateways">
-          <h3>APIs & Gateways</h3>
-          <p class="hint">Conexões, mensagens e integrações</p>
-
-          <div class="rcfActivityList">
-            <div class="rcfActivityItem">
-              <strong>Messages</strong><br>
-              Mensageria e eventos
-            </div>
-
-            <div class="rcfActivityItem">
-              <strong>Webhooks</strong><br>
-              Integrações e disparos
-            </div>
-
-            <div class="rcfActivityItem">
-              <strong>Gateway</strong><br>
-              Conector modular da Factory
-            </div>
-          </div>
-        </div>
       `;
     },
 
     buildView() {
       return `
         <section class="rcfUiSection rcfUiFactorySection" data-rcf-ui="factory-view">
-          <div class="rcfUiFactoryView" data-rcf-ui-factory-view="1">
+          <div class="rcfUiFactoryView" data-rcf-ui-factory-view="1" data-rcf-ui-factory-clean="1">
             ${this.buildHero()}
             ${this.buildActionsSlot()}
             ${this.buildToolsSlot()}
-            ${this.buildAppsWidgetsSlot()}
-            ${this.buildGatewaysSlot()}
-            ${this.buildProjectsSlot()}
+            ${this.buildContextBlock()}
           </div>
         </section>
       `;
@@ -252,61 +175,52 @@
       const root = qs('[data-rcf-ui-factory-view="1"]') || qs('[data-rcf-ui-factory-root="1"]');
       if (!root) return false;
 
-      if (!qs("#rcfFactoryAISlotActions", root)) {
-        const holder = document.createElement("div");
-        holder.id = "rcfFactoryAISlotActions";
-        holder.setAttribute("data-rcf-slot", "factoryai.actions");
-        root.appendChild(holder);
+      let actions = qs("#rcfFactoryAISlotActions", root);
+      let tools = qs("#rcfFactoryAISlotTools", root);
+
+      if (!actions) {
+        actions = document.createElement("div");
+        actions.id = "rcfFactoryAISlotActions";
+        actions.setAttribute("data-rcf-slot", "factoryai.actions");
+        root.appendChild(actions);
       }
 
-      if (!qs("#rcfFactoryAISlotTools", root)) {
-        const holder = document.createElement("div");
-        holder.id = "rcfFactoryAISlotTools";
-        holder.setAttribute("data-rcf-slot", "factoryai.tools");
-        root.appendChild(holder);
+      if (!tools) {
+        tools = document.createElement("div");
+        tools.id = "rcfFactoryAISlotTools";
+        tools.setAttribute("data-rcf-slot", "factoryai.tools");
+        root.appendChild(tools);
       }
 
       return true;
     },
 
-    renderAppsWidgets() {
-      try {
-        if (window.RCF_UI_APPS_WIDGETS && typeof window.RCF_UI_APPS_WIDGETS.render === "function") {
-          return !!window.RCF_UI_APPS_WIDGETS.render("#rcfFactoryAppsWidgetsSlot");
-        }
-      } catch {}
-      return false;
-    },
+    cleanupWrongContent() {
+      const root = qs('[data-rcf-ui-factory-view="1"]');
+      if (!root) return false;
 
-    renderGateways() {
-      try {
-        const slot = qs("#rcfFactoryGatewaysSlot");
-        if (!slot) return false;
+      const wrongSelectors = [
+        "#rcfFactoryAppsWidgetsSlot",
+        "#rcfFactoryGatewaysSlot",
+        "#rcfFactoryProjectsSlot",
+        '[data-rcf-factory-block="apps-widgets"]',
+        '[data-rcf-factory-block="gateways"]',
+        '[data-rcf-factory-block="projects"]',
+        '[data-rcf-ui-factory-fallback="gateways"]',
+        ".rcfActivityList",
+        ".rcfUiTabs"
+      ];
 
-        if (window.RCF_UI_GATEWAYS && typeof window.RCF_UI_GATEWAYS.render === "function") {
-          return !!window.RCF_UI_GATEWAYS.render("#rcfFactoryGatewaysSlot");
-        }
+      wrongSelectors.forEach((sel) => {
+        root.querySelectorAll(sel).forEach((el) => {
+          try { el.remove(); } catch {}
+        });
+      });
 
-        slot.innerHTML = this.buildFallbackGateways();
-        return true;
-      } catch {
-        return false;
-      }
-    },
-
-    renderProjects() {
-      try {
-        if (window.RCF_UI_PROJECTS && typeof window.RCF_UI_PROJECTS.render === "function") {
-          return !!window.RCF_UI_PROJECTS.render("#rcfFactoryProjectsSlot");
-        }
-      } catch {}
-      return false;
+      return true;
     },
 
     refreshChildren() {
-      try { window.RCF_UI_APPS_WIDGETS?.refresh?.(); } catch {}
-      try { window.RCF_UI_PROJECTS?.refresh?.(); } catch {}
-      try { window.RCF_UI_GATEWAYS?.refresh?.(); } catch {}
       try { window.RCF_FACTORY_AI?.mount?.(); } catch {}
       try { window.RCF_ADMIN_AI?.mount?.(); } catch {}
       return true;
@@ -318,7 +232,7 @@
       try {
         const view = this.resolveFactoryView();
         if (!view) {
-          this.log("mount skip: factory/factory-ai view ausente");
+          this.log("mount skip: factory-ai/admin view ausente");
           return false;
         }
 
@@ -333,9 +247,7 @@
         view.setAttribute("data-rcf-ui-factory-ai-ready", "1");
 
         this.ensureFactoryAISlots();
-        this.renderAppsWidgets();
-        this.renderGateways();
-        this.renderProjects();
+        this.cleanupWrongContent();
         this.refreshChildren();
 
         this.__mounted = true;
@@ -365,9 +277,7 @@
           }
 
           this.ensureFactoryAISlots();
-          this.renderAppsWidgets();
-          this.renderGateways();
-          this.renderProjects();
+          this.cleanupWrongContent();
           this.refreshChildren();
 
           this.__mounted = true;
@@ -390,10 +300,13 @@
           return this.mount(this.__deps || {});
         }
 
+        const cleanRoot = qs('[data-rcf-ui-factory-clean="1"]', host);
+        if (!cleanRoot) {
+          return this.mount(this.__deps || {});
+        }
+
         this.ensureFactoryAISlots();
-        this.renderAppsWidgets();
-        this.renderGateways();
-        this.renderProjects();
+        this.cleanupWrongContent();
         this.refreshChildren();
 
         return true;
