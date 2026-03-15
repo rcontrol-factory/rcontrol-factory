@@ -1,15 +1,15 @@
 /* FILE: app/app.js
-   RControl Factory - /app/app.js - V8.0.6 LEAN ORCHESTRATOR
+   RControl Factory - /app/app.js - V8.0.7 LEAN ORCHESTRATOR
    - Arquivo completo (1 peca) pra copiar/colar
    - Objetivo: app.js como ORQUESTRADOR LEVE REAL
    - Mantém: boot lock, state, storage, logger, watchdog, diagnostics, SW, VFS, injector safe, agent CLI
-   - Prioriza: ui_shell / ui_runtime / ui_state / ui_router / ui_events / módulos UI
+   - Prioriza: ui_shell / ui_runtime / ui_state / ui_views / ui_router / ui_events / módulos UI
    - Fallback: ultra mínimo de sobrevivência
 */
 (() => {
   "use strict";
 
-  try { console.info("[RCF] /app/app.js BUILD=V8.0.6_LEAN_ORCHESTRATOR"); } catch {}
+  try { console.info("[RCF] /app/app.js BUILD=V8.0.7_LEAN_ORCHESTRATOR"); } catch {}
 
   // =========================================================
   // GLOBAL LOG ALIAS
@@ -39,7 +39,7 @@
     if (st.booted === true) return;
     if (st.booting === true && (now - (st.ts || 0)) < 8000) return;
 
-    window[__BOOT_KEY] = { booting: true, booted: false, ts: now, ver: "v8.0.6" };
+    window[__BOOT_KEY] = { booting: true, booted: false, ts: now, ver: "v8.0.7" };
   } catch {
     if (window.__RCF_BOOTED__) return;
     window.__RCF_BOOTED__ = true;
@@ -381,7 +381,16 @@
   }
 
   function buildFactoryIAContext() {
-    return { get state() { return State; }, get ui() { return window.RCF_UI || null; }, get status() { return { set: safeSetStatus, syncFab: syncFabStatusText }; }, actions: { setView, openTools, openFabPanel, toggleFabPanel }, helpers: { $, $$, uiMsg, bindTap, textContentSafe, slugify, escapeHtml, escapeAttr, normalizeViewName }, apps: { getActiveApp, setActiveApp, openFile, renderAppsList, renderFilesList }, storage: { Storage, saveAll }, logger: Logger };
+    return {
+      get state() { return State; },
+      get ui() { return window.RCF_UI || null; },
+      get status() { return { set: safeSetStatus, syncFab: syncFabStatusText }; },
+      actions: { setView, openTools, openFabPanel, toggleFabPanel },
+      helpers: { $, $$, uiMsg, bindTap, textContentSafe, slugify, escapeHtml, escapeAttr, normalizeViewName },
+      apps: { getActiveApp, setActiveApp, openFile, renderAppsList, renderFilesList },
+      storage: { Storage, saveAll },
+      logger: Logger
+    };
   }
   function installFactoryIAAliases() {
     try { window.RCF_FACTORY_IA = window.RCF_FACTORY_IA || {}; window.RCF_FACTORY_IA.getContext = () => buildFactoryIAContext(); window.RCF_FACTORY_IA.getMode = () => 'supervised'; window.RCF_FACTORY_IA.canApply = () => false; } catch {}
@@ -466,11 +475,23 @@
     try { const dash = getUiDashboardApi(); if (dash && typeof dash.refresh === 'function') dash.refresh({ State, Logger, root: document }); } catch {}
   }
 
-  function teardownPreviewHard() { try { window.RCF_PREVIEW?.teardown?.(); } catch {} try { document.documentElement.style.overflow = ''; document.body.style.overflow = ''; document.body.style.pointerEvents = ''; } catch {} }
+  function teardownPreviewHard() {
+    try { window.RCF_PREVIEW?.teardown?.(); } catch {}
+    try {
+      document.documentElement.style.overflow = '';
+      document.body.style.overflow = '';
+      document.body.style.pointerEvents = '';
+    } catch {}
+  }
 
   function openTools(open) {
-    try { const router = getUiRouterApi(); if (router && typeof router.openTools === 'function') return router.openTools(open, { root: document }); } catch {}
-    const d = $('#toolsDrawer'); if (!d) return; if (open) { d.hidden = false; d.style.display = ''; d.classList.add('open'); } else { d.classList.remove('open'); d.hidden = true; d.style.display = 'none'; }
+    try {
+      const router = getUiRouterApi();
+      if (router && typeof router.openTools === 'function') return router.openTools(open, { root: document });
+    } catch {}
+    const d = $('#toolsDrawer'); if (!d) return;
+    if (open) { d.hidden = false; d.style.display = ''; d.classList.add('open'); }
+    else { d.classList.remove('open'); d.hidden = true; d.style.display = 'none'; }
   }
   function openFabPanel(open) { const p = $('#rcfFabPanel'); if (!p) return; if (open) { p.hidden = false; p.style.display = ''; p.classList.add('open'); } else { p.classList.remove('open'); p.hidden = true; p.style.display = 'none'; } }
   function toggleFabPanel() { const p = $('#rcfFabPanel'); if (!p) return; openFabPanel(p.hidden || !p.classList.contains('open')); }
@@ -478,19 +499,86 @@
   function setInjectorLogCollapsed(collapsed) { try { const pre = $('#injLog'); const btn = $('#btnToggleInjectorLog'); if (!pre || !btn) return; const c = !!collapsed; pre.classList.toggle('rcf-collapsed', c); btn.textContent = c ? 'Mostrar log' : 'Esconder log'; } catch {} }
   function toggleInjectorLogCollapsed() { try { const pre = $('#injLog'); if (!pre) return; setInjectorLogCollapsed(!pre.classList.contains('rcf-collapsed')); } catch {} }
 
-  function setView(name) {
-    const normalized = normalizeViewName(name); if (!normalized) return;
-    try { const prev = normalizeViewName(State.active.view); if (prev === 'generator' && normalized !== 'generator') teardownPreviewHard(); } catch {}
+  function maybeRefreshSpecialView(normalized) {
+    try {
+      if (['logs', 'settings', 'admin', 'github', 'updates', 'deploy'].includes(normalized)) {
+        refreshLogsViews();
+      }
+    } catch {}
+  }
+
+  function setView(name, opts = {}) {
+    const normalized = normalizeViewName(name);
+    if (!normalized) return false;
+
+    try {
+      const prev = normalizeViewName(State.active.view);
+      if (prev === 'generator' && normalized !== 'generator') teardownPreviewHard();
+    } catch {}
+
+    // 1) PRIORIDADE: ui_views (controlador visual principal)
+    try {
+      const views = getUiViewsApi();
+      if (views && typeof views.setView === 'function') {
+        const ok = views.setView(normalized, {
+          State,
+          saveAll,
+          refreshLogsViews,
+          teardownPreviewHard,
+          logger: Logger,
+          normalizeViewName,
+          syncViewVisibility,
+          root: $('#rcfRoot') || document,
+          force: !!opts.force
+        });
+        if (ok !== false) {
+          State.active.view = normalized;
+          saveAll('ui_views.setView');
+          maybeRefreshSpecialView(normalized);
+          try { Logger.write('view(ui_views):', normalized); } catch {}
+          return true;
+        }
+      }
+    } catch (e) {
+      try { Logger.write('ui_views setView err:', e?.message || e); } catch {}
+    }
+
+    // 2) FALLBACK: ui_router
     try {
       const router = getUiRouterApi();
       if (router && typeof router.setView === 'function') {
-        const ok = router.setView(normalized, { State, saveAll, refreshLogsViews, teardownPreviewHard, logger: Logger, normalizeViewName, syncViewVisibility });
-        if (ok !== false) { State.active.view = normalized; saveAll('router.setView'); try { syncViewVisibility(normalized); } catch {} return; }
+        const ok = router.setView(normalized, {
+          State,
+          saveAll,
+          refreshLogsViews,
+          teardownPreviewHard,
+          logger: Logger,
+          normalizeViewName,
+          syncViewVisibility,
+          root: document,
+          force: !!opts.force
+        });
+        if (ok !== false) {
+          State.active.view = normalized;
+          saveAll('router.setView');
+          maybeRefreshSpecialView(normalized);
+          try { Logger.write('view(router):', normalized); } catch {}
+          return true;
+        }
       }
-    } catch (e) { try { Logger.write('router setView err:', e?.message || e); } catch {} }
-    State.active.view = normalized; saveAll('local.setView'); syncViewVisibility(normalized); if (['logs','settings','admin'].includes(normalized)) refreshLogsViews(); Logger.write('view:', normalized);
+    } catch (e) {
+      try { Logger.write('router setView err:', e?.message || e); } catch {}
+    }
+
+    // 3) FALLBACK LOCAL
+    State.active.view = normalized;
+    saveAll('local.setView');
+    syncViewVisibility(normalized);
+    maybeRefreshSpecialView(normalized);
+    Logger.write('view(local):', normalized);
+    return true;
   }
-  window.RCF.setView = (name) => setView(name);
+  window.RCF.setView = (name, opts) => setView(name, opts);
 
   function getActiveApp() { return State.active.appSlug ? (State.apps.find(a => a.slug === State.active.appSlug) || null) : null; }
   function ensureAppFiles(app) { if (!app.files || typeof app.files !== 'object') app.files = {}; }
@@ -536,7 +624,34 @@
   async function injectorApplySafe() { uiMsg('#diffOut', '✅ Aplicado com sucesso (SAFE).'); return { ok:true }; }
   async function injectorRollback() { uiMsg('#diffOut', '✅ Rollback aplicado.'); return { ok:true }; }
 
-  const Agent = { _mem:{ inj:{ mode:'INSERT', targetId:'', payload:'' } }, _out(text){ const out = $('#agentOut'); if (out) out.textContent = String(text ?? ''); }, help(){ return 'AGENT HELP (V8)'; }, async route(cmdRaw){ const cmd = String(cmdRaw || '').trim(); const lower = cmd.toLowerCase(); if (!cmd) return this._out('Comando vazio. Use: help'); if (lower === 'help') return this._out(this.help()); if (lower.startsWith('open ')) { const v = normalizeViewName(cmd.replace(/^open\s+/i, '').trim()); setView(v); return this._out(`OK. view=${v}`); } if (lower.startsWith('create ')) { const rest = cmd.replace(/^create\s+/i, '').trim(); const qm = rest.match(/^"([^"]+)"\s*([a-z0-9-]+)?/i); let name = '', slug = ''; if (qm) { name = qm[1].trim(); slug = (qm[2] || '').trim(); } else name = rest; const r = createApp(name, slug); return this._out(r.msg); } return this._out('Comando não reconhecido. Use: help'); } };
+  const Agent = {
+    _mem:{ inj:{ mode:'INSERT', targetId:'', payload:'' } },
+    _out(text){ const out = $('#agentOut'); if (out) out.textContent = String(text ?? ''); },
+    help(){ return 'AGENT HELP (V8)'; },
+    async route(cmdRaw){
+      const cmd = String(cmdRaw || '').trim();
+      const lower = cmd.toLowerCase();
+      if (!cmd) return this._out('Comando vazio. Use: help');
+      if (lower === 'help') return this._out(this.help());
+      if (lower.startsWith('open ')) {
+        const v = normalizeViewName(cmd.replace(/^open\s+/i, '').trim());
+        setView(v);
+        return this._out(`OK. view=${v}`);
+      }
+      if (lower.startsWith('create ')) {
+        const rest = cmd.replace(/^create\s+/i, '').trim();
+        const qm = rest.match(/^"([^"]+)"\s*([a-z0-9-]+)?/i);
+        let name = '', slug = '';
+        if (qm) {
+          name = qm[1].trim();
+          slug = (qm[2] || '').trim();
+        } else name = rest;
+        const r = createApp(name, slug);
+        return this._out(r.msg);
+      }
+      return this._out('Comando não reconhecido. Use: help');
+    }
+  };
 
   function runDoctor() { if (runDoctor.__running__) return; runDoctor.__running__ = true; try { Logger.write('doctor: start'); setView('logs'); Logger.write('doctor: done (fallback)'); } finally { Logger.write('doctor: end'); runDoctor.__running__ = false; } }
   try { window.RCF_DOCTOR = window.RCF_DOCTOR || {}; window.RCF_DOCTOR.run = runDoctor; window.RCF_DOCTOR.open = () => runDoctor(); } catch {}
@@ -545,7 +660,15 @@
     try {
       const ev = window.RCF_UI_EVENTS;
       if (ev && typeof ev.bind === 'function') {
-        const ok = ev.bind({ $, $$, bindTap, State, Logger, Storage, setView, openTools, openFabPanel, toggleFabPanel, syncFabStatusText, toggleInjectorLogCollapsed, renderAppsList, renderFilesList, openFile, setActiveApp, createApp, saveFile, refreshLogsViews, safeSetStatus, uiMsg, Agent, runDoctor, swRegister, swUnregisterAll, swClearCaches, runV8StabilityCheck, scanOverlays, runMicroTests, Pin, saveAll, scanFactoryFiles, generateTargetMap, populateTargetsDropdown, injectorPreview, injectorApplySafe, injectorRollback, textContentSafe, slugify, ensureAppFiles, getActiveApp, LoggerWrite:(...a)=>Logger.write(...a), normalizeViewName, syncViewVisibility });
+        const ok = ev.bind({
+          $, $$, bindTap, State, Logger, Storage, setView, openTools, openFabPanel, toggleFabPanel,
+          syncFabStatusText, toggleInjectorLogCollapsed, renderAppsList, renderFilesList, openFile,
+          setActiveApp, createApp, saveFile, refreshLogsViews, safeSetStatus, uiMsg, Agent, runDoctor,
+          swRegister, swUnregisterAll, swClearCaches, runV8StabilityCheck, scanOverlays, runMicroTests,
+          Pin, saveAll, scanFactoryFiles, generateTargetMap, populateTargetsDropdown, injectorPreview,
+          injectorApplySafe, injectorRollback, textContentSafe, slugify, ensureAppFiles, getActiveApp,
+          LoggerWrite:(...a)=>Logger.write(...a), normalizeViewName, syncViewVisibility
+        });
         if (ok !== false) { try { Logger.write('events:', 'external ui_events bind ✅'); } catch {} return; }
       }
     } catch (e) { try { Logger.write('events bind err:', e?.message || e); } catch {} }
@@ -556,11 +679,28 @@
 
   function hydrateUIFromState() {
     refreshLogsViews();
+
     const app = getActiveApp();
-    if (app) { try { setActiveApp(app.slug); } catch {} if (State.active.file) { try { openFile(State.active.file); } catch {} } }
-    else { const text = $('#activeAppText'); if (text) textContentSafe(text, 'Sem app ativo ✅'); }
-    const normalizedView = normalizeViewName(State.active.view || 'dashboard'); State.active.view = normalizedView; saveAll('hydrate.normalizeView'); setView(normalizedView);
-    const pin = Pin.get(); if (pin) uiMsg('#pinOut', 'PIN definido ✅');
+    if (app) {
+      try { setActiveApp(app.slug); } catch {}
+      if (State.active.file) {
+        try { openFile(State.active.file); } catch {}
+      }
+    } else {
+      const text = $('#activeAppText');
+      if (text) textContentSafe(text, 'Sem app ativo ✅');
+    }
+
+    const normalizedView = normalizeViewName(State.active.view || 'dashboard');
+    const changed = State.active.view !== normalizedView;
+    State.active.view = normalizedView;
+    if (changed) saveAll('hydrate.normalizeView');
+
+    setView(normalizedView, { force: true });
+
+    const pin = Pin.get();
+    if (pin) uiMsg('#pinOut', 'PIN definido ✅');
+
     try { populateTargetsDropdown(true); } catch {}
     try { setInjectorLogCollapsed(true); } catch {}
     try { syncFabStatusText(); } catch {}
@@ -570,23 +710,73 @@
 
   async function safeInit() {
     try {
-      Stability.install(); injectCompactCSSOnce();
-      await loadUiCoreBridgeOnce(); await loadUiRuntimeOnce(); await loadUiVisualModulesOnce();
+      Stability.install();
+      injectCompactCSSOnce();
+
+      await loadUiCoreBridgeOnce();
+      await loadUiRuntimeOnce();
+      await loadUiVisualModulesOnce();
+
       renderShell();
       if ($('#rcfRoot') && !isOfficialShell($('#rcfRoot'))) strengthenShellStructure();
+
       await initUiRuntime({ $, $$, State, Storage, Logger, uiMsg, textContentSafe, bindTap, saveAll, safeSetStatus, setView, normalizeViewName });
-      installRCFUIRegistry(); installFactoryIAAliases(); syncUiCoreBridge('safeInit.registry');
-      try { const boot = getUiBootstrapApi(); if (boot) { if (typeof boot.mount === 'function') boot.mount({ root: $('#rcfRoot'), State, Logger, Storage, setView, normalizeViewName, ui: window.RCF_UI }); else if (typeof boot.remountSoft === 'function') boot.remountSoft({ root: $('#rcfRoot'), State, Logger, Storage, setView, normalizeViewName, ui: window.RCF_UI }); } } catch (e) { Logger.write('ui_bootstrap err:', e?.message || e); }
-      try { const views = getUiViewsApi(); if (views) { if (typeof views.mount === 'function') views.mount({ root: $('#rcfRoot'), State, Logger, setView, normalizeViewName, ui: window.RCF_UI, bindTap }); else if (typeof views.remountSoft === 'function') views.remountSoft({ root: $('#rcfRoot'), State, Logger, setView, normalizeViewName, ui: window.RCF_UI, bindTap }); } } catch (e) { Logger.write('ui_views err:', e?.message || e); }
+
+      installRCFUIRegistry();
+      installFactoryIAAliases();
+      syncUiCoreBridge('safeInit.registry');
+
+      try {
+        const boot = getUiBootstrapApi();
+        if (boot) {
+          if (typeof boot.mount === 'function') boot.mount({ root: $('#rcfRoot'), State, Logger, Storage, setView, normalizeViewName, ui: window.RCF_UI });
+          else if (typeof boot.remountSoft === 'function') boot.remountSoft({ root: $('#rcfRoot'), State, Logger, Storage, setView, normalizeViewName, ui: window.RCF_UI });
+        }
+      } catch (e) { Logger.write('ui_bootstrap err:', e?.message || e); }
+
+      try {
+        const views = getUiViewsApi();
+        if (views) {
+          if (typeof views.mount === 'function') views.mount({ root: $('#rcfRoot'), State, Logger, setView, normalizeViewName, ui: window.RCF_UI, bindTap });
+          else if (typeof views.remountSoft === 'function') views.remountSoft({ root: $('#rcfRoot'), State, Logger, setView, normalizeViewName, ui: window.RCF_UI, bindTap });
+        }
+      } catch (e) { Logger.write('ui_views err:', e?.message || e); }
+
       try { notifyUIReady(); } catch {}
-      bindUI(); hydrateUIFromState(); syncUiCoreBridge('safeInit.hydrate');
-      try { window.RCF_ENGINE?.init?.({ State, Storage, Logger }); Logger.write('engine:', 'init ok ✅'); } catch (e) { Logger.write('engine init err:', e?.message || e); }
+
+      bindUI();
+      hydrateUIFromState();
+      syncUiCoreBridge('safeInit.hydrate');
+
+      try {
+        window.RCF_ENGINE?.init?.({ State, Storage, Logger });
+        Logger.write('engine:', 'init ok ✅');
+      } catch (e) { Logger.write('engine init err:', e?.message || e); }
+
       Logger.write('RCF V8 init ok — mode:', State.cfg.mode);
-      try { window.__RCF_BOOTED__ = true; const st = window[__BOOT_KEY] || {}; st.booting = false; st.booted = true; st.ts = Date.now(); window[__BOOT_KEY] = st; } catch {}
-      safeSetStatus('OK ✅'); syncFabStatusText();
+
+      try {
+        window.__RCF_BOOTED__ = true;
+        const st = window[__BOOT_KEY] || {};
+        st.booting = false;
+        st.booted = true;
+        st.ts = Date.now();
+        window[__BOOT_KEY] = st;
+      } catch {}
+
+      safeSetStatus('OK ✅');
+      syncFabStatusText();
     } catch (e) {
-      const msg = e?.message || e; Logger.write('FATAL init:', msg);
-      try { const st = window[__BOOT_KEY] || {}; st.booting = false; st.booted = false; st.ts = Date.now(); window[__BOOT_KEY] = st; window.__RCF_BOOTED__ = false; } catch {}
+      const msg = e?.message || e;
+      Logger.write('FATAL init:', msg);
+      try {
+        const st = window[__BOOT_KEY] || {};
+        st.booting = false;
+        st.booted = false;
+        st.ts = Date.now();
+        window[__BOOT_KEY] = st;
+        window.__RCF_BOOTED__ = false;
+      } catch {}
       Stability.showErrorScreen('Falha ao iniciar (safeInit)', String(msg));
     }
   }
