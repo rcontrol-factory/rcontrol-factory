@@ -1,6 +1,6 @@
 /* FILE: /app/js/admin.admin_ai.js
    RControl Factory — Factory AI
-   v3.5 CHAT CORE COMPOSER FIXED
+   v3.6 CHAT CORE CLEAN FINAL
 
    - Factory AI em modo chat-first real
    - nome oficial padronizado: Factory AI
@@ -8,9 +8,11 @@
    - fallback seguro para admin apenas se necessário
    - remove duplicação visual pesada da tela
    - visual clean mobile-first
-   - composer redesenhado no padrão chat compacto
-   - botão de anexo compacto
-   - menu de anexos (imagem / PDF / ZIP / arquivo / vídeo)
+   - composer compacto no padrão aprovado
+   - apenas um botão de anexo: botão "+" à esquerda
+   - remove clipe duplicado dentro da barra
+   - remove aviso grande inicial dentro do chat
+   - estado vazio discreto quando ainda não houver conversa
    - anexos aparecem em chips no composer
    - inferência automática de ação por linguagem natural
    - usa actions compatíveis com backend atual
@@ -22,12 +24,12 @@
 (() => {
   "use strict";
 
-  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v35) return;
+  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v36) return;
 
-  const VERSION = "v3.5";
+  const VERSION = "v3.6";
   const BOX_ID = "rcfFactoryAIBox";
   const CHAT_ID = "rcfFactoryAIChat";
-  const STYLE_ID = "rcfFactoryAIStyleV35";
+  const STYLE_ID = "rcfFactoryAIStyleV36";
 
   const STATE = {
     busy: false,
@@ -291,13 +293,11 @@
     const sendBtn = document.getElementById("rcfFactoryAISend");
     const clearBtn = document.getElementById("rcfFactoryAIClear");
     const attachBtnLeft = document.getElementById("rcfFactoryAIAttachBtnLeft");
-    const attachBtnRight = document.getElementById("rcfFactoryAIAttachBtnRight");
     const input = document.getElementById("rcfFactoryAIPrompt");
 
     if (sendBtn) sendBtn.disabled = !!busy;
     if (clearBtn) clearBtn.disabled = false;
     if (attachBtnLeft) attachBtnLeft.disabled = !!busy;
-    if (attachBtnRight) attachBtnRight.disabled = !!busy;
     if (input) input.disabled = !!busy;
   }
 
@@ -392,6 +392,18 @@
   overflow:auto;
   padding:16px;
   background:linear-gradient(180deg,rgba(246,248,252,.72),rgba(250,251,255,.62));
+}
+
+#${BOX_ID} .rcfAiEmpty{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  min-height:260px;
+  text-align:center;
+  color:rgba(32,45,77,.42);
+  font-size:14px;
+  line-height:1.45;
+  padding:18px;
 }
 
 #${BOX_ID} .rcfAiMsgRow{
@@ -524,7 +536,7 @@
   align-items:center;
   gap:8px;
   min-height:58px;
-  padding:8px 8px 8px 10px;
+  padding:8px 12px;
   border-radius:20px;
   border:1px solid rgba(31,41,55,.10);
   background:#fff;
@@ -536,7 +548,7 @@
   min-height:42px;
   max-height:110px;
   resize:none;
-  padding:9px 4px;
+  padding:9px 2px;
   border:none;
   outline:none;
   background:transparent;
@@ -547,28 +559,6 @@
 
 #${BOX_ID} .rcfAiPrompt::placeholder{
   color:rgba(24,35,63,.38);
-}
-
-#${BOX_ID} .rcfAiInlineAttach{
-  position:relative;
-  flex:0 0 auto;
-}
-
-#${BOX_ID} .rcfAiInlineAttachBtn{
-  width:38px;
-  height:38px;
-  min-width:38px;
-  border-radius:12px;
-  border:1px solid rgba(31,41,55,.08);
-  background:rgba(245,248,255,.96);
-  color:#26407a;
-  font-size:18px;
-  font-weight:900;
-  cursor:pointer;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  -webkit-tap-highlight-color:transparent;
 }
 
 #${BOX_ID} .rcfAiSendBtn{
@@ -715,29 +705,18 @@
     document.head.appendChild(st);
   }
 
-  function pushChat(role, text) {
-    STATE.history.push({
-      role: String(role || "system"),
-      text: String(text || ""),
-      ts: new Date().toISOString()
-    });
-    renderChat();
-  }
-
-  function ensureSeedMessage() {
-    if (STATE.history.length) return;
-
-    pushChat(
-      "assistant",
-      "Factory AI online. Pode falar normalmente comigo sobre arquitetura, bugs, patch, código, logs, doctor, layout, design, ZIP, PDF, imagem e contexto da Factory."
-    );
-  }
-
   function renderChat() {
     const box = document.getElementById(CHAT_ID);
     if (!box) return;
 
-    ensureSeedMessage();
+    if (!Array.isArray(STATE.history) || !STATE.history.length) {
+      box.innerHTML = `
+        <div class="rcfAiEmpty">
+          Converse com a Factory AI para analisar arquitetura, corrigir módulos, revisar contexto e estruturar a própria Factory.
+        </div>
+      `;
+      return;
+    }
 
     box.innerHTML = STATE.history.map((item) => {
       const isUser = item.role === "user";
@@ -757,7 +736,6 @@
 
   function clearChat() {
     STATE.history = [];
-    ensureSeedMessage();
     renderChat();
     setComposerStatus("aguardando");
     setTechResult("Pronto.");
@@ -963,7 +941,12 @@
         const msg = pretty(data || { error: "Erro ao chamar endpoint IA" });
         setComposerStatus("erro");
         setTechResult(msg);
-        pushChat("assistant", msg);
+        STATE.history.push({
+          role: "assistant",
+          text: msg,
+          ts: new Date().toISOString()
+        });
+        renderChat();
         log("ERR", "falha IA endpoint=" + endpoint);
         return;
       }
@@ -976,13 +959,23 @@
 
       setComposerStatus("concluído");
       setTechResult(text);
-      pushChat("assistant", text);
+      STATE.history.push({
+        role: "assistant",
+        text,
+        ts: new Date().toISOString()
+      });
+      renderChat();
       log("OK", "resposta recebida action=" + action + " endpoint=" + endpoint);
     } catch (e) {
       const msg = String(e?.message || e || "Erro de rede");
       setComposerStatus("erro");
       setTechResult(msg);
-      pushChat("assistant", msg);
+      STATE.history.push({
+        role: "assistant",
+        text: msg,
+        ts: new Date().toISOString()
+      });
+      renderChat();
       log("ERR", "erro de rede IA");
     } finally {
       setButtonsBusy(false);
@@ -1007,7 +1000,13 @@
       userText += `\n\n[anexos: ${list}]`;
     }
 
-    pushChat("user", userText);
+    STATE.history.push({
+      role: "user",
+      text: userText,
+      ts: new Date().toISOString()
+    });
+    renderChat();
+
     callFactoryAI(action, buildPayload(action), finalPrompt);
 
     const input = document.getElementById("rcfFactoryAIPrompt");
@@ -1152,7 +1151,7 @@
   }
 
   function closeAttachMenus() {
-    ["rcfFactoryAIClipMenuLeft", "rcfFactoryAIClipMenuRight"].forEach((id) => {
+    ["rcfFactoryAIClipMenuLeft"].forEach((id) => {
       const menu = document.getElementById(id);
       if (menu) menu.classList.remove("open");
     });
@@ -1278,7 +1277,6 @@
     const clearBtn = document.getElementById("rcfFactoryAIClear");
     const promptEl = document.getElementById("rcfFactoryAIPrompt");
     const attachBtnLeft = document.getElementById("rcfFactoryAIAttachBtnLeft");
-    const attachBtnRight = document.getElementById("rcfFactoryAIAttachBtnRight");
 
     if (sendBtn && !sendBtn.__bound) {
       sendBtn.__bound = true;
@@ -1321,26 +1319,16 @@
       }, { passive: true });
     }
 
-    if (attachBtnRight && !attachBtnRight.__bound) {
-      attachBtnRight.__bound = true;
-      attachBtnRight.addEventListener("click", () => {
-        toggleAttachMenu("rcfFactoryAIClipMenuRight");
-      }, { passive: true });
-    }
-
     bindMenuItems("left");
-    bindMenuItems("right");
     bindAttachmentInputs();
     renderAttachments();
 
-    if (!document.__rcfFactoryAIOutsideClickV35) {
-      document.__rcfFactoryAIOutsideClickV35 = true;
+    if (!document.__rcfFactoryAIOutsideClickV36) {
+      document.__rcfFactoryAIOutsideClickV36 = true;
       document.addEventListener("click", (ev) => {
         try {
           const left = document.getElementById("rcfFactoryAIAttachWrapLeft");
-          const right = document.getElementById("rcfFactoryAIAttachWrapRight");
           if (left && left.contains(ev.target)) return;
-          if (right && right.contains(ev.target)) return;
           closeAttachMenus();
         } catch {}
       }, { passive: true });
@@ -1350,11 +1338,11 @@
   function buildAttachMenu(menuId) {
     return `
       <div id="${menuId}" class="rcfAiMenu">
-        <button class="rcfAiMenuItem" id="rcfFactoryAIChooseImage_${menuId.includes("Left") ? "left" : "right"}" type="button">🖼️ Imagem</button>
-        <button class="rcfAiMenuItem" id="rcfFactoryAIChoosePdf_${menuId.includes("Left") ? "left" : "right"}" type="button">📄 PDF</button>
-        <button class="rcfAiMenuItem" id="rcfFactoryAIChooseZip_${menuId.includes("Left") ? "left" : "right"}" type="button">🗜️ ZIP</button>
-        <button class="rcfAiMenuItem" id="rcfFactoryAIChooseFile_${menuId.includes("Left") ? "left" : "right"}" type="button">📎 Arquivo</button>
-        <button class="rcfAiMenuItem" id="rcfFactoryAIChooseVideo_${menuId.includes("Left") ? "left" : "right"}" type="button">🎬 Vídeo</button>
+        <button class="rcfAiMenuItem" id="rcfFactoryAIChooseImage_left" type="button">🖼️ Imagem</button>
+        <button class="rcfAiMenuItem" id="rcfFactoryAIChoosePdf_left" type="button">📄 PDF</button>
+        <button class="rcfAiMenuItem" id="rcfFactoryAIChooseZip_left" type="button">🗜️ ZIP</button>
+        <button class="rcfAiMenuItem" id="rcfFactoryAIChooseFile_left" type="button">📎 Arquivo</button>
+        <button class="rcfAiMenuItem" id="rcfFactoryAIChooseVideo_left" type="button">🎬 Vídeo</button>
       </div>
     `;
   }
@@ -1390,11 +1378,6 @@
                 class="rcfAiPrompt"
                 placeholder="Digite sua mensagem..."
               ></textarea>
-
-              <div class="rcfAiInlineAttach" id="rcfFactoryAIAttachWrapRight">
-                <button class="rcfAiInlineAttachBtn" id="rcfFactoryAIAttachBtnRight" type="button" aria-label="Anexar" title="Anexar">📎</button>
-                ${buildAttachMenu("rcfFactoryAIClipMenuRight")}
-              </div>
             </div>
 
             <button class="rcfAiSendBtn" id="rcfFactoryAISend" type="button">Enviar</button>
@@ -1501,7 +1484,7 @@
   }
 
   window.RCF_FACTORY_AI = {
-    __v35: true,
+    __v36: true,
     version: VERSION,
     mount,
     clearChat,
@@ -1518,7 +1501,7 @@
   };
 
   window.RCF_ADMIN_AI = Object.assign(window.RCF_ADMIN_AI || {}, {
-    __v35_bridge: true,
+    __v36_bridge: true,
     version: VERSION,
     mount,
     clearChat,
