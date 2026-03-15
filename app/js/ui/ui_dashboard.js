@@ -1,19 +1,21 @@
 /* FILE: /app/js/ui/ui_dashboard.js
    RControl Factory — UI Dashboard
-   V3.5.1 FAST HOME NAV FIXED + SPECIAL PANELS SAFE
+   V3.6 CLOSED HOME MODULE
    - Home leve e rápida para Safari / iPhone / PWA
-   - Card normal abre tela direto
-   - Dashboard e RCF Factory abrem painel próprio (sem empurrar texto)
+   - Card normal abre tela direto pelo head
+   - Dashboard e RCF Factory abrem painel próprio
+   - Painel especial e grid nunca ficam conflitantes
    - Ícones não ficam vazios
    - Menos re-render pesado
    - Esconde shell/cabeçalho legado na Home
    - Mantém Dashboard card presente
    - Mantém RCF Factory como card especial
-   - FIX: rebinding seguro do click no #view-dashboard
-   - FIX: card normal também publica data-view padrão
-   - FIX: fallback real de navegação caso o handler local falhe
-   - FIX: limpeza de estado visual ao sair da Home
-   - FIX: sincroniza aria-expanded e painéis especiais
+   - Rebiding seguro do click no #view-dashboard
+   - Card normal publica data-view padrão
+   - Fallback real de navegação caso o handler local falhe
+   - Limpeza de estado visual ao sair da Home
+   - Sincroniza aria-expanded e painéis especiais
+   - Fechado para plugar com os próximos módulos sem remendo
 */
 (() => {
   "use strict";
@@ -21,15 +23,16 @@
   const MOD = {
     _ctx: null,
     _booted: false,
-    _styleId: "rcfUiDashboardStyle",
+    _styleId: "rcfUiDashboardStyleV36",
     _rootSel: "#rcfRoot",
     _viewSel: "#view-dashboard",
     _surfaceSel: "#rcfDashboardSurface",
     _gridSel: "#rcfDashboardCards",
     _detailSel: "#rcfDashboardDetailPanel",
     _expandedCardId: null,
-    _bindVersion: "v3.5.1",
+    _bindVersion: "v3.6",
     _openSpecialPanel: null,
+    __uiReadyBound__: false,
 
     init(ctx = {}) {
       this._ctx = Object.assign({}, this._ctx || {}, ctx || {});
@@ -72,10 +75,7 @@
 
       const currentView = this._getCurrentView();
       if (currentView !== "dashboard") {
-        this._expandedCardId = null;
-        this._openSpecialPanel = null;
-        this._applyExpandedState();
-        this._applySpecialPanelState();
+        this._closeTransientState();
         return true;
       }
 
@@ -320,7 +320,7 @@
       } catch {}
 
       try {
-        const btn = document.querySelector(`[data-view="${next}"]`);
+        const btn = document.querySelector(`.rcfBottomNav [data-view="${next}"], .tabs [data-view="${next}"], [data-rcf-nav] [data-view="${next}"], button.tab[data-view="${next}"]`);
         if (btn && typeof btn.click === "function") {
           btn.click();
           return true;
@@ -1460,6 +1460,26 @@
           } else if (act === "refresh-dashboard") {
             this._syncDynamicBits();
             this._saveAll("dashboard.refresh");
+          }
+          return;
+        }
+
+        const head = ev.target && ev.target.closest ? ev.target.closest(".rcfDashCardHead") : null;
+        if (head) {
+          ev.preventDefault();
+          ev.stopPropagation();
+
+          const next = String(head.getAttribute("data-rcf-route-view") || head.getAttribute("data-view") || "").trim();
+          const panel = String(head.getAttribute("data-rcf-special-panel") || "").trim();
+
+          if (panel) {
+            this._openSpecial(panel);
+            return;
+          }
+
+          if (next) {
+            this._openViewSafe(next);
+            return;
           }
         }
       };
