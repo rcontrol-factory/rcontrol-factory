@@ -1,10 +1,11 @@
 /* FILE: /app/js/admin.admin_ai.js
    RControl Factory — Factory AI
-   v2.1 FACTORY-IA SLOT REHOME + CHAT LIVE
+   v2.2 FACTORY-IA HARD MOUNT + VISIBLE CHAT
 
    - evolui Admin AI antigo para Factory AI
-   - monta na view/slot oficial da Factory AI
-   - reencaixa a box automaticamente se o slot mudar
+   - força mount no slot oficial factoryai.tools
+   - move a box automaticamente do fallback para o slot oficial
+   - visibilidade baseada na view real visível, não só em .active
    - fallback seguro para Admin se a view nova ainda não estiver pronta
    - histórico visual tipo chat-lite
    - múltiplas perguntas sem reload
@@ -13,14 +14,13 @@
    - consome snapshot estrutural refinado
    - mostra preview do snapshot enviado
    - não executa patch automático
-   - pronto para crescer depois para ZIP/contexto maior
 */
 (() => {
   "use strict";
 
-  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v21) return;
+  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v22) return;
 
-  const VERSION = "v2.1";
+  const VERSION = "v2.2";
   const BOX_ID = "rcfFactoryAIBox";
   const CHAT_ID = "rcfFactoryAIChat";
   const ACTIONS_ID = "rcfFactoryAIQuickActions";
@@ -52,67 +52,74 @@
     return String(id || "").trim().toLowerCase();
   }
 
+  function isElementVisible(el) {
+    try {
+      if (!el) return false;
+      if (el.hidden) return false;
+      const cs = window.getComputedStyle(el);
+      if (!cs) return false;
+      if (cs.display === "none") return false;
+      if (cs.visibility === "hidden") return false;
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function getFactoryAIView() {
+    return (
+      document.getElementById("view-factory-ai") ||
+      document.querySelector('[data-rcf-view="factory-ai"]') ||
+      document.querySelector("#rcfFactoryAIView") ||
+      document.querySelector("[data-rcf-factory-ai-view]")
+    );
+  }
+
+  function getAdminView() {
+    return (
+      document.getElementById("view-admin") ||
+      document.querySelector('[data-rcf-view="admin"]')
+    );
+  }
+
   function isFactoryAIViewVisible() {
     try {
-      const activeView =
-        document.querySelector(".view.active") ||
-        document.querySelector("[data-rcf-view].active") ||
-        document.querySelector('[data-rcf-visible="1"]');
+      const view = getFactoryAIView();
+      if (!view) return false;
 
-      if (!activeView) return false;
-
-      const id =
-        activeView.id ||
-        activeView.getAttribute("data-rcf-view") ||
-        "";
-
-      const norm = normalizeViewId(id);
-      if (/factory-ai/.test(norm)) return true;
-      if (/view-factory-ai/.test(norm)) return true;
-    } catch (_) {}
-
-    return false;
+      if (view.classList.contains("active")) return true;
+      if (view.getAttribute("data-rcf-visible") === "1") return true;
+      return isElementVisible(view);
+    } catch (_) {
+      return false;
+    }
   }
 
   function isAdminViewVisible() {
     try {
-      const activeView =
-        document.querySelector(".view.active") ||
-        document.querySelector("[data-rcf-view].active") ||
-        document.querySelector('[data-rcf-visible="1"]');
+      const view = getAdminView();
+      if (!view) return false;
 
-      if (!activeView) return false;
-
-      const id =
-        activeView.id ||
-        activeView.getAttribute("data-rcf-view") ||
-        "";
-
-      return /admin/i.test(String(id || ""));
-    } catch (_) {}
-
-    return false;
+      if (view.classList.contains("active")) return true;
+      if (view.getAttribute("data-rcf-visible") === "1") return true;
+      return isElementVisible(view);
+    } catch (_) {
+      return false;
+    }
   }
 
   function getPreferredSlots() {
     const out = {
       tools: null,
       actions: null,
-      fallback: null,
-      mountedIn: ""
+      fallback: null
     };
 
     try {
       const ui = window.RCF_UI;
       if (ui && typeof ui.getSlot === "function") {
-        out.tools =
-          ui.getSlot("factoryai.tools") ||
-          null;
-
-        out.actions =
-          ui.getSlot("factoryai.actions") ||
-          null;
-
+        out.tools = ui.getSlot("factoryai.tools") || null;
+        out.actions = ui.getSlot("factoryai.actions") || null;
         out.fallback =
           ui.getSlot("admin.integrations") ||
           ui.getSlot("admin.top") ||
@@ -144,10 +151,6 @@
         null;
     }
 
-    if (out.tools || out.actions) out.mountedIn = "factoryai";
-    else if (out.fallback) out.mountedIn = "admin";
-    else out.mountedIn = "";
-
     return out;
   }
 
@@ -176,7 +179,6 @@
   function syncVisibility() {
     const box = document.getElementById(BOX_ID);
     const quick = document.getElementById(ACTIONS_ID);
-    if (!box && !quick) return;
 
     const showFactory = isFactoryAIViewVisible();
     const showAdminFallback = !showFactory && isAdminViewVisible() && /^admin/.test(STATE.mountedIn || "");
@@ -184,11 +186,17 @@
     const visible = !!(showFactory || showAdminFallback);
 
     try {
-      if (box) box.style.display = visible ? "" : "none";
+      if (box) {
+        box.style.display = visible ? "" : "none";
+        box.hidden = !visible;
+      }
     } catch (_) {}
 
     try {
-      if (quick) quick.style.display = visible ? "" : "none";
+      if (quick) {
+        quick.style.display = visible ? "" : "none";
+        quick.hidden = !visible;
+      }
     } catch (_) {}
   }
 
@@ -755,11 +763,9 @@
     const primary = slots.tools || slots.actions || slots.fallback || null;
     if (!primary) return false;
 
-    if (slots.tools || slots.actions) {
-      STATE.mountedIn = slots.tools ? "factoryai.tools" : "factoryai.actions";
-    } else {
-      STATE.mountedIn = "admin.fallback";
-    }
+    if (slots.tools) STATE.mountedIn = "factoryai.tools";
+    else if (slots.actions) STATE.mountedIn = "factoryai.actions";
+    else STATE.mountedIn = "admin.fallback";
 
     const mainBox = ensureMainBox(primary);
     if (!mainBox) return false;
@@ -801,7 +807,7 @@
   }
 
   window.RCF_FACTORY_AI = {
-    __v21: true,
+    __v22: true,
     version: VERSION,
     mount,
     clearChat,
@@ -810,7 +816,7 @@
   };
 
   window.RCF_ADMIN_AI = Object.assign(window.RCF_ADMIN_AI || {}, {
-    __v21_bridge: true,
+    __v22_bridge: true,
     version: VERSION,
     mount,
     clearChat
