@@ -1,8 +1,9 @@
 /* FILE: /app/js/admin.admin_ai.js
    RControl Factory — Factory AI
-   v3.2 CHAT CORE OFFICIAL CLEAN
+   v3.3 CHAT CORE CLEAN REMAKE
 
-   - Factory AI em modo chat central real
+   - Factory AI em modo chat central limpo
+   - remake visual completo do chat
    - nome padronizado: Factory AI
    - monta preferencialmente no slot oficial factoryai.tools
    - fallback seguro para admin apenas se a view oficial ainda não existir
@@ -18,11 +19,12 @@
 (() => {
   "use strict";
 
-  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v32) return;
+  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v33) return;
 
-  const VERSION = "v3.2";
+  const VERSION = "v3.3";
   const BOX_ID = "rcfFactoryAIBox";
   const CHAT_ID = "rcfFactoryAIChat";
+  const STYLE_ID = "rcfFactoryAIStyleV33";
 
   const STATE = {
     busy: false,
@@ -291,6 +293,263 @@
     if (input) input.disabled = !!busy;
   }
 
+  function ensureStyle() {
+    if (document.getElementById(STYLE_ID)) return;
+
+    const st = document.createElement("style");
+    st.id = STYLE_ID;
+    st.textContent = `
+#${BOX_ID}{
+  margin-top:12px;
+  border:1px solid rgba(31,41,55,.08);
+  border-radius:24px;
+  background:linear-gradient(180deg, rgba(255,255,255,.94), rgba(248,250,255,.88));
+  box-shadow:0 10px 26px rgba(15,23,42,.05);
+  overflow:hidden;
+}
+
+#${BOX_ID}.card{
+  padding:0;
+}
+
+#${BOX_ID} .rcfAiWrap{
+  display:grid;
+  gap:14px;
+  padding:18px;
+}
+
+#${BOX_ID} .rcfAiHero{
+  display:grid;
+  gap:10px;
+}
+
+#${BOX_ID} .rcfAiEyebrow{
+  font-size:11px;
+  font-weight:900;
+  letter-spacing:.14em;
+  text-transform:uppercase;
+  opacity:.62;
+}
+
+#${BOX_ID} .rcfAiTitle{
+  margin:0;
+  font-size:clamp(24px,4.6vw,34px);
+  line-height:1.04;
+  font-weight:900;
+  color:#202d4d;
+}
+
+#${BOX_ID} .rcfAiSub{
+  margin:0;
+  font-size:15px;
+  line-height:1.48;
+  color:rgba(32,45,77,.82);
+}
+
+#${BOX_ID} .rcfAiChips{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+}
+
+#${BOX_ID} .rcfAiChip{
+  display:inline-flex;
+  align-items:center;
+  min-height:32px;
+  padding:6px 11px;
+  border-radius:999px;
+  border:1px solid rgba(90,110,150,.12);
+  background:rgba(255,255,255,.78);
+  font-size:12px;
+  font-weight:800;
+  color:rgba(32,45,77,.82);
+}
+
+#${BOX_ID} .rcfAiStage{
+  display:grid;
+  gap:12px;
+  padding:14px;
+  border-radius:20px;
+  border:1px solid rgba(31,41,55,.08);
+  background:rgba(255,255,255,.72);
+}
+
+#${CHAT_ID}{
+  min-height:280px;
+  max-height:42vh;
+  overflow:auto;
+  padding:6px;
+  border-radius:18px;
+  background:rgba(246,248,252,.72);
+  border:1px solid rgba(31,41,55,.06);
+}
+
+#${BOX_ID} .rcfAiMsgRow{
+  display:flex;
+  margin-top:10px;
+}
+
+#${BOX_ID} .rcfAiMsgRow.user{
+  justify-content:flex-end;
+}
+
+#${BOX_ID} .rcfAiMsgRow.assistant{
+  justify-content:flex-start;
+}
+
+#${BOX_ID} .rcfAiMsg{
+  width:min(100%, 680px);
+  padding:14px;
+  border-radius:18px;
+  border:1px solid rgba(31,41,55,.08);
+  background:rgba(255,255,255,.9);
+  box-shadow:0 2px 10px rgba(15,23,42,.04);
+}
+
+#${BOX_ID} .rcfAiMsg.userBubble{
+  background:linear-gradient(180deg, rgba(112,152,255,.14), rgba(112,152,255,.09));
+  border-color:rgba(112,152,255,.18);
+}
+
+#${BOX_ID} .rcfAiMsgLabel{
+  font-size:12px;
+  font-weight:900;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+  opacity:.62;
+  margin-bottom:8px;
+}
+
+#${BOX_ID} .rcfAiMsgText{
+  white-space:pre-wrap;
+  word-break:break-word;
+  line-height:1.5;
+  color:#202d4d;
+  font-size:15px;
+}
+
+#${BOX_ID} .rcfAiMsgTime{
+  margin-top:8px;
+  font-size:11px;
+  opacity:.56;
+}
+
+#${BOX_ID} .rcfAiComposer{
+  display:grid;
+  gap:10px;
+  padding:14px;
+  border-radius:20px;
+  border:1px solid rgba(31,41,55,.08);
+  background:rgba(255,255,255,.84);
+}
+
+#${BOX_ID} .rcfAiPrompt{
+  width:100%;
+  min-height:122px;
+  resize:vertical;
+  padding:14px;
+  border-radius:16px;
+  border:1px solid rgba(31,41,55,.10);
+  box-sizing:border-box;
+  background:#fff;
+  color:#18233f;
+  font:inherit;
+  line-height:1.45;
+}
+
+#${BOX_ID} .rcfAiPrompt:focus{
+  outline:none;
+  border-color:rgba(112,152,255,.42);
+  box-shadow:0 0 0 3px rgba(112,152,255,.10);
+}
+
+#${BOX_ID} .rcfAiComposerBar{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:10px;
+  flex-wrap:wrap;
+}
+
+#${BOX_ID} .rcfAiStatus{
+  font-size:13px;
+  font-weight:800;
+  color:rgba(32,45,77,.78);
+}
+
+#${BOX_ID} .rcfAiButtons{
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+}
+
+#${BOX_ID} .rcfAiBtn{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  min-width:108px;
+  min-height:44px;
+  padding:10px 14px;
+  border-radius:14px;
+  border:1px solid rgba(31,41,55,.08);
+  background:rgba(255,255,255,.84);
+  color:#26407a;
+  font-size:14px;
+  font-weight:900;
+  cursor:pointer;
+  -webkit-tap-highlight-color:transparent;
+}
+
+#${BOX_ID} .rcfAiBtn.primary{
+  background:linear-gradient(180deg, rgba(112,152,255,.16), rgba(112,152,255,.08));
+  border-color:rgba(112,152,255,.18);
+}
+
+#${BOX_ID} .rcfAiSmall{
+  font-size:13px;
+  color:rgba(32,45,77,.68);
+}
+
+#${BOX_ID} details.rcfAiDetails{
+  border:1px solid rgba(31,41,55,.08);
+  border-radius:18px;
+  background:rgba(255,255,255,.72);
+  padding:10px 12px;
+}
+
+#${BOX_ID} details.rcfAiDetails summary{
+  cursor:pointer;
+  font-weight:900;
+  color:#202d4d;
+}
+
+#${BOX_ID} .rcfAiPre{
+  margin-top:6px;
+  max-height:18vh;
+  overflow:auto;
+  white-space:pre-wrap;
+  word-break:break-word;
+}
+
+@media (max-width: 720px){
+  #${BOX_ID} .rcfAiWrap{
+    padding:16px;
+  }
+  #${BOX_ID} .rcfAiTitle{
+    font-size:22px;
+  }
+  #${BOX_ID} .rcfAiPrompt{
+    min-height:118px;
+  }
+  #${BOX_ID} .rcfAiBtn{
+    flex:1 1 140px;
+  }
+}
+    `.trim();
+
+    document.head.appendChild(st);
+  }
+
   function pushChat(role, text) {
     STATE.history.push({
       role: String(role || "system"),
@@ -317,23 +576,12 @@
 
     box.innerHTML = STATE.history.map((item) => {
       const isUser = item.role === "user";
-      const bg = isUser ? "rgba(88,166,255,.12)" : "rgba(255,255,255,.86)";
-      const border = isUser ? "rgba(88,166,255,.22)" : "rgba(31,41,55,.08)";
-      const justify = isUser ? "flex-end" : "flex-start";
-
       return `
-        <div style="display:flex;justify-content:${justify};margin-top:10px">
-          <div style="
-            width:min(100%, 720px);
-            padding:14px;
-            border:1px solid ${border};
-            border-radius:18px;
-            background:${bg};
-            box-shadow:0 2px 10px rgba(15,23,42,.04);
-          ">
-            <div style="font-weight:800;margin-bottom:6px">${isUser ? "Você" : "Factory AI"}</div>
-            <div style="white-space:pre-wrap;word-break:break-word;line-height:1.48">${esc(item.text)}</div>
-            <div class="hint" style="margin-top:8px;font-size:11px;opacity:.62">${esc(item.ts)}</div>
+        <div class="rcfAiMsgRow ${isUser ? "user" : "assistant"}">
+          <div class="rcfAiMsg ${isUser ? "userBubble" : ""}">
+            <div class="rcfAiMsgLabel">${isUser ? "Você" : "Factory AI"}</div>
+            <div class="rcfAiMsgText">${esc(item.text)}</div>
+            <div class="rcfAiMsgTime">${esc(item.ts)}</div>
           </div>
         </div>
       `;
@@ -362,9 +610,7 @@
       p.includes("error") ||
       p.includes("falha") ||
       p.includes("crash")
-    ) {
-      return "analyze-logs";
-    }
+    ) return "analyze-logs";
 
     if (
       p.includes("doctor") ||
@@ -372,9 +618,7 @@
       p.includes("diagnostico") ||
       p.includes("estabilidade") ||
       p.includes("stability")
-    ) {
-      return "factory_diagnosis";
-    }
+    ) return "factory_diagnosis";
 
     if (
       p.includes("patch") ||
@@ -382,9 +626,7 @@
       p.includes("fix") ||
       p.includes("ajust") ||
       p.includes("consert")
-    ) {
-      return "propose-patch";
-    }
+    ) return "propose-patch";
 
     if (
       p.includes("gerar código") ||
@@ -395,9 +637,7 @@
       p.includes("codigo completo") ||
       p.includes("arquivo completo") ||
       p.includes("code")
-    ) {
-      return "generate-code";
-    }
+    ) return "generate-code";
 
     if (
       p.includes("módulo") ||
@@ -405,18 +645,14 @@
       p.includes("arquivo") ||
       p.includes("file") ||
       p.includes("review")
-    ) {
-      return "review-module";
-    }
+    ) return "review-module";
 
     if (
       p.includes("melhoria") ||
       p.includes("melhorar") ||
       p.includes("improve") ||
       p.includes("sugest")
-    ) {
-      return "suggest-improvement";
-    }
+    ) return "suggest-improvement";
 
     if (
       p.includes("arquitetura") ||
@@ -425,9 +661,7 @@
       p.includes("orquestra") ||
       p.includes("layout") ||
       p.includes("design")
-    ) {
-      return "analyze-architecture";
-    }
+    ) return "analyze-architecture";
 
     return "summarize-structure";
   }
@@ -597,77 +831,52 @@
 
   function buildBoxHtml() {
     return `
-      <div style="display:grid;gap:14px">
-        <div>
-          <h2 style="margin:0">Factory AI</h2>
-          <div class="hint" style="margin-top:4px">
-            Chat oficial da Factory. Fale normalmente sobre arquitetura, bugs, patch, código, layout, logs, doctor, ZIP, PDF, imagens e contexto.
+      <div class="rcfAiWrap">
+        <section class="rcfAiHero">
+          <div class="rcfAiEyebrow">Factory AI</div>
+          <h2 class="rcfAiTitle">Chat central da Factory</h2>
+          <p class="rcfAiSub">
+            Conversa natural para arquitetura, bugs, patch, código, layout, logs, doctor e evolução da própria Factory.
+          </p>
+          <div class="rcfAiChips">
+            <span class="rcfAiChip">OpenAI conectada</span>
+            <span class="rcfAiChip">Chat-first</span>
+            <span class="rcfAiChip">Sem patch automático</span>
           </div>
-        </div>
+        </section>
 
-        <div id="${CHAT_ID}" style="
-          min-height:280px;
-          max-height:44vh;
-          overflow:auto;
-          padding:12px;
-          border:1px solid rgba(31,41,55,.08);
-          border-radius:20px;
-          background:rgba(255,255,255,.76);
-          box-shadow:inset 0 1px 0 rgba(255,255,255,.55);
-        "></div>
+        <section class="rcfAiStage">
+          <div id="${CHAT_ID}"></div>
+        </section>
 
-        <div style="
-          display:grid;
-          gap:10px;
-          padding:14px;
-          border:1px solid rgba(31,41,55,.08);
-          border-radius:20px;
-          background:rgba(255,255,255,.86);
-        ">
+        <section class="rcfAiComposer">
           <textarea
             id="rcfFactoryAIPrompt"
+            class="rcfAiPrompt"
             placeholder="Fale com a Factory AI. Ex.: corrige o módulo da view, gera o arquivo completo, analisa os logs, lê esse contexto, organiza essa arquitetura..."
-            style="
-              width:100%;
-              min-height:120px;
-              resize:vertical;
-              padding:14px;
-              border-radius:16px;
-              border:1px solid rgba(31,41,55,.10);
-              box-sizing:border-box;
-              background:#fff;
-              color:#18233f;
-              font:inherit;
-              line-height:1.45;
-            "
           ></textarea>
 
-          <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
-            <div id="rcfFactoryAIComposerStatus" class="hint">aguardando</div>
-            <div style="display:flex;gap:8px;flex-wrap:wrap">
-              <button class="btn ghost" id="rcfFactoryAIClear" type="button">Limpar</button>
-              <button class="btn ok" id="rcfFactoryAISend" type="button">Enviar</button>
+          <div class="rcfAiComposerBar">
+            <div id="rcfFactoryAIComposerStatus" class="rcfAiStatus">aguardando</div>
+            <div class="rcfAiButtons">
+              <button class="rcfAiBtn" id="rcfFactoryAIClear" type="button">Limpar</button>
+              <button class="rcfAiBtn primary" id="rcfFactoryAISend" type="button">Enviar</button>
             </div>
           </div>
 
-          <div class="hint">Em breve: imagem, ZIP, PDF e arquivos direto no chat.</div>
-        </div>
+          <div class="rcfAiSmall">Em breve: imagem, ZIP, PDF e arquivos direto no chat.</div>
+        </section>
 
-        <details style="
-          border:1px solid rgba(31,41,55,.08);
-          border-radius:16px;
-          background:rgba(255,255,255,.66);
-          padding:10px 12px;
-        ">
-          <summary style="cursor:pointer;font-weight:800">Contexto técnico</summary>
+        <details class="rcfAiDetails">
+          <summary>Contexto técnico</summary>
           <div style="margin-top:10px;display:grid;gap:10px">
             <div>
               <label class="hint">Snapshot Preview enviado</label>
-              <pre class="mono small" id="rcfFactoryAISnapshot" style="margin-top:6px;max-height:18vh;overflow:auto">{"status":"aguardando"}</pre>
+              <pre class="mono small rcfAiPre" id="rcfFactoryAISnapshot">{"status":"aguardando"}</pre>
             </div>
             <div>
               <label class="hint">Último resultado técnico</label>
-              <pre class="mono small" id="rcfFactoryAITechResult" style="margin-top:6px;max-height:18vh;overflow:auto">Pronto.</pre>
+              <pre class="mono small rcfAiPre" id="rcfFactoryAITechResult">Pronto.</pre>
             </div>
           </div>
         </details>
@@ -706,17 +915,8 @@
     if (!view) return false;
 
     try {
-      const heroTitle = qsa(".rcfUiFactoryHeroTitle", view);
-      heroTitle.forEach((el) => {
-        try { el.textContent = "Núcleo inteligente da Factory"; } catch {}
-      });
-    } catch {}
-
-    try {
-      const eyebrow = qsa(".rcfUiFactoryHeroEyebrow", view);
-      eyebrow.forEach((el) => {
-        try { el.textContent = "Factory AI"; } catch {}
-      });
+      const hero = qs(".rcfUiFactoryHero", view);
+      if (hero) hero.style.display = "none";
     } catch {}
 
     try {
@@ -730,13 +930,6 @@
     } catch {}
 
     try {
-      const wrong = qsa('#rcfFactoryAIQuickActions, #rcfFactoryAIStateMini, [data-rcf-factory-ai-fallback]', view);
-      wrong.forEach((el) => {
-        try { el.remove(); } catch {}
-      });
-    } catch {}
-
-    try {
       const blockHead = qs('[data-rcf-factory-block="factory-ai-tools"] .rcfUiFactoryBlockHead', view);
       if (blockHead) blockHead.style.display = "none";
     } catch {}
@@ -747,6 +940,13 @@
         toolsBlock.style.marginTop = "0";
         toolsBlock.style.paddingTop = "0";
       }
+    } catch {}
+
+    try {
+      const wrong = qsa('#rcfFactoryAIQuickActions, #rcfFactoryAIStateMini, [data-rcf-factory-ai-fallback]', view);
+      wrong.forEach((el) => {
+        try { el.remove(); } catch {}
+      });
     } catch {}
 
     applyFactoryAITextFix(view);
@@ -773,11 +973,12 @@
     let box = document.getElementById(BOX_ID);
     if (!primarySlot) return null;
 
+    ensureStyle();
+
     if (!box) {
       box = document.createElement("div");
       box.id = BOX_ID;
       box.className = "card";
-      box.style.marginTop = "12px";
       box.setAttribute("data-rcf-factory-ai", "1");
       box.innerHTML = buildBoxHtml();
       primarySlot.appendChild(box);
@@ -842,7 +1043,7 @@
   }
 
   window.RCF_FACTORY_AI = {
-    __v32: true,
+    __v33: true,
     version: VERSION,
     mount,
     clearChat,
@@ -856,7 +1057,7 @@
   };
 
   window.RCF_ADMIN_AI = Object.assign(window.RCF_ADMIN_AI || {}, {
-    __v32_bridge: true,
+    __v33_bridge: true,
     version: VERSION,
     mount,
     clearChat,
