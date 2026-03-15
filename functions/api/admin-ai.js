@@ -1,524 +1,1516 @@
-/* FILE: /functions/api/admin-ai.js
-   RControl Factory — Factory AI API
-   V3.0 CHAT-FIRST BACKEND + APPROVAL-READY
+/* FILE: /app/js/admin.admin_ai.js
+   RControl Factory — Factory AI
+   v3.4 CHAT CORE + ATTACH MENU
 
-   - mantém CORS e POST atuais
-   - continua usando OPENAI_API_KEY
-   - mantém compatibilidade com actions antigas
-   - adiciona actions novas para Factory AI orientada a aprovação
-   - aceita histórico simples de conversa
-   - aceita payload contextual expandido
-   - aceita metadados de anexos/arquivos
-   - mantém resposta aterrada no payload
-   - não autoriza invenção de estados da Factory
-   - prepara fluxo futuro de ZIP / PDF / imagem / vídeo / GitHub
-   - NÃO executa alteração automática
+   - Factory AI em modo chat central limpo
+   - mantém visual superior aprovado
+   - melhora a área inferior de escrita
+   - adiciona botão clipe
+   - adiciona menu de anexos
+   - adiciona seleção local de imagem / PDF / ZIP / arquivo / vídeo
+   - mostra anexos selecionados no composer
+   - envia metadados dos anexos junto do prompt
+   - mantém fallback seguro para admin
+   - mantém histórico visual tipo chat
+   - não executa patch automático
+   - preparado para próximo passo: ingestão real de arquivos no backend
 */
 
-export async function onRequestOptions() {
-  return new Response(null, {
-    status: 204,
-    headers: corsHeaders()
-  });
+(() => {
+  "use strict";
+
+  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v34) return;
+
+  const VERSION = "v3.4";
+  const BOX_ID = "rcfFactoryAIBox";
+  const CHAT_ID = "rcfFactoryAIChat";
+  const STYLE_ID = "rcfFactoryAIStyleV34";
+
+  const STATE = {
+    busy: false,
+    history: [],
+    mountedIn: "",
+    lastEndpoint: "",
+    bootedAt: new Date().toISOString(),
+    syncTimer: null,
+    attachments: []
+  };
+
+  function log(level, msg) {
+    try { window.RCF_LOGGER?.push?.(level, "[FACTORY_AI] " + msg); } catch {}
+    try { console.log("[FACTORY_AI]", level, msg); } catch {}
+  }
+
+  function qs(sel, root = document) {
+    try { return root.querySelector(sel); } catch { return null; }
+  }
+
+  function qsa(sel, root = document) {
+    try { return Array.from(root.querySelectorAll(sel)); } catch { return []; }
+  }
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      "\"": "&quot;"
+    }[c]));
+  }
+
+  function pretty(obj) {
+    try { return JSON.stringify(obj, null, 2); }
+    catch { return String(obj || ""); }
+  }
+
+  function isElementVisible(el) {
+    try {
+      if (!el) return false;
+      if (el.hidden) return false;
+      const cs = window.getComputedStyle(el);
+      if (!cs) return false;
+      if (cs.display === "none") return false;
+      if (cs.visibility === "hidden") return false;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function getFactoryAIView() {
+    return (
+      document.getElementById("view-factory-ai") ||
+      document.querySelector('[data-rcf-view="factory-ai"]') ||
+      document.querySelector("#rcfFactoryAIView") ||
+      document.querySelector("[data-rcf-factory-ai-view]")
+    );
+  }
+
+  function getAdminView() {
+    return (
+      document.getElementById("view-admin") ||
+      document.querySelector('[data-rcf-view="admin"]')
+    );
+  }
+
+  function isFactoryAIViewVisible() {
+    try {
+      const view = getFactoryAIView();
+      if (!view) return false;
+      if (view.classList.contains("active")) return true;
+      if (view.getAttribute("data-rcf-visible") === "1") return true;
+      return isElementVisible(view);
+    } catch {
+      return false;
+    }
+  }
+
+  function isAdminViewVisible() {
+    try {
+      const view = getAdminView();
+      if (!view) return false;
+      if (view.classList.contains("active")) return true;
+      if (view.getAttribute("data-rcf-visible") === "1") return true;
+      return isElementVisible(view);
+    } catch {
+      return false;
+    }
+  }
+
+  function getPreferredSlots() {
+    const out = {
+      tools: null,
+      fallback: null
+    };
+
+    try {
+      const ui = window.RCF_UI;
+      if (ui && typeof ui.getSlot === "function") {
+        out.tools = ui.getSlot("factoryai.tools") || null;
+        out.fallback =
+          ui.getSlot("admin.integrations") ||
+          ui.getSlot("admin.top") ||
+          null;
+      }
+    } catch {}
+
+    if (!out.tools) {
+      out.tools =
+        document.getElementById("rcfFactoryAISlotTools") ||
+        document.querySelector('[data-rcf-slot="factoryai.tools"]') ||
+        null;
+    }
+
+    if (!out.fallback) {
+      out.fallback =
+        document.getElementById("rcfAdminSlotIntegrations") ||
+        document.querySelector('[data-rcf-slot="admin.integrations"]') ||
+        document.querySelector("#view-admin .integrations") ||
+        document.querySelector("#view-admin") ||
+        document.querySelector('[data-rcf-view="admin"]') ||
+        null;
+    }
+
+    return out;
+  }
+
+  function collectLogs(limit = 30) {
+    try {
+      const logger = window.RCF_LOGGER;
+      if (logger && Array.isArray(logger.items)) {
+        return logger.items.slice(-limit);
+      }
+    } catch {}
+    return [];
+  }
+
+  function collectDoctorReport() {
+    try {
+      if (window.RCF_FACTORY_STATE?.getState?.().doctorLastRun) {
+        return window.RCF_FACTORY_STATE.getState().doctorLastRun;
+      }
+    } catch {}
+
+    try {
+      if (window.RCF_DOCTOR_SCAN?.lastReport) {
+        return window.RCF_DOCTOR_SCAN.lastReport;
+      }
+    } catch {}
+
+    return {
+      note: "Doctor report não encontrado ainda. Rode o Doctor antes.",
+      ts: new Date().toISOString()
+    };
+  }
+
+  function getSnapshotRaw() {
+    try {
+      if (window.RCF_FACTORY_IA && typeof window.RCF_FACTORY_IA.getContext === "function") {
+        return { factoryAI: window.RCF_FACTORY_IA.getContext() };
+      }
+    } catch {}
+
+    try {
+      if (window.RCF_CONTEXT && typeof window.RCF_CONTEXT.getSnapshot === "function") {
+        return window.RCF_CONTEXT.getSnapshot();
+      }
+      if (window.RCF_CONTEXT && typeof window.RCF_CONTEXT.getContext === "function") {
+        return window.RCF_CONTEXT.getContext();
+      }
+    } catch {}
+
+    return null;
+  }
+
+  function buildLeanSnapshot() {
+    const raw = getSnapshotRaw() || {};
+    const factory = raw.factory || {};
+    const modules = raw.modules || {};
+    const doctor = raw.doctor || {};
+    const environment = raw.environment || {};
+    const tree = raw.tree || {};
+    const state = window.RCF?.state || {};
+
+    return {
+      factory: {
+        version: factory.version || "unknown",
+        bootStatus: factory.bootStatus || "unknown",
+        runtimeVFS: factory.runtimeVFS || "unknown",
+        loggerReady: !!factory.loggerReady,
+        doctorReady: !!factory.doctorReady,
+        environment: factory.environment || "unknown",
+        lastUpdate: factory.lastUpdate || null,
+        mountedAs: "Factory AI",
+        activeView: state?.active?.view || "",
+        activeAppSlug: state?.active?.appSlug || "",
+        bootedAt: STATE.bootedAt
+      },
+      doctor: {
+        version: doctor.version || "unknown",
+        lastRun: doctor.lastRun || null
+      },
+      modules: {
+        active: Array.isArray(modules.active) ? modules.active : [],
+        status: {
+          logger: !!modules.logger,
+          doctor: !!modules.doctor,
+          github: !!modules.github,
+          vault: !!modules.vault,
+          bridge: !!modules.bridge,
+          adminAI: !!modules.adminAI,
+          factoryAI: true,
+          factoryState: !!modules.factoryState,
+          moduleRegistry: !!modules.moduleRegistry,
+          contextEngine: !!modules.contextEngine
+        }
+      },
+      tree: {
+        pathsCount: Number(tree.pathsCount || 0),
+        summary: tree.summary || {},
+        samples: Array.isArray(tree.samples) ? tree.samples.slice(0, 12) : []
+      },
+      flags: {
+        hasLogger: !!factory.flags?.hasLogger,
+        hasDoctor: !!factory.flags?.hasDoctor,
+        hasGitHub: !!factory.flags?.hasGitHub,
+        hasFactoryAI: true,
+        hasFactoryState: !!factory.flags?.hasFactoryState,
+        hasModuleRegistry: !!factory.flags?.hasModuleRegistry,
+        hasContextEngine: !!factory.flags?.hasContextEngine,
+        hasFactoryTree: !!factory.flags?.hasFactoryTree
+      },
+      environment: {
+        platform: environment.platform || navigator.platform || "",
+        language: environment.language || navigator.language || "",
+        ts: environment.ts || new Date().toISOString()
+      }
+    };
+  }
+
+  function setComposerStatus(txt) {
+    const el = document.getElementById("rcfFactoryAIComposerStatus");
+    if (el) el.textContent = String(txt || "");
+  }
+
+  function setTechResult(txt) {
+    const el = document.getElementById("rcfFactoryAITechResult");
+    if (el) el.textContent = String(txt || "");
+  }
+
+  function setSnapshotPreview(obj) {
+    const el = document.getElementById("rcfFactoryAISnapshot");
+    if (el) el.textContent = pretty(obj || {});
+  }
+
+  function setButtonsBusy(busy) {
+    STATE.busy = !!busy;
+
+    const sendBtn = document.getElementById("rcfFactoryAISend");
+    const clearBtn = document.getElementById("rcfFactoryAIClear");
+    const clipBtn = document.getElementById("rcfFactoryAIClipBtn");
+    const input = document.getElementById("rcfFactoryAIPrompt");
+
+    if (sendBtn) sendBtn.disabled = !!busy;
+    if (clearBtn) clearBtn.disabled = false;
+    if (clipBtn) clipBtn.disabled = !!busy;
+    if (input) input.disabled = !!busy;
+  }
+
+  function ensureStyle() {
+    if (document.getElementById(STYLE_ID)) return;
+
+    const st = document.createElement("style");
+    st.id = STYLE_ID;
+    st.textContent = `
+#${BOX_ID}{
+  margin-top:12px;
+  border:1px solid rgba(31,41,55,.08);
+  border-radius:24px;
+  background:linear-gradient(180deg, rgba(255,255,255,.95), rgba(248,250,255,.90));
+  box-shadow:0 10px 26px rgba(15,23,42,.05);
+  overflow:hidden;
 }
 
-export async function onRequestPost(context) {
-  const { request, env } = context;
+#${BOX_ID}.card{ padding:0; }
 
-  try {
-    if (!env.OPENAI_API_KEY) {
-      return json({
-        ok: false,
-        error: "OPENAI_API_KEY ausente no ambiente."
-      }, 500);
-    }
+#${BOX_ID} .rcfAiWrap{
+  display:grid;
+  gap:14px;
+  padding:18px;
+}
 
-    const body = await safeJson(request);
-    if (!body || typeof body !== "object") {
-      return json({
-        ok: false,
-        error: "JSON inválido."
-      }, 400);
-    }
+#${BOX_ID} .rcfAiHero{
+  display:grid;
+  grid-template-columns:auto 1fr auto;
+  gap:14px;
+  align-items:center;
+  padding-bottom:12px;
+  border-bottom:1px solid rgba(31,41,55,.06);
+}
 
-    const action = normalizeAction(body.action);
-    const payload = body.payload ?? null;
-    const prompt = String(body.prompt || "").trim();
-    const history = normalizeHistory(body.history);
-    const source = String(body.source || "factory-ai").trim();
-    const version = String(body.version || "").trim();
+#${BOX_ID} .rcfAiRobot{
+  width:58px;
+  height:58px;
+  border-radius:18px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-size:28px;
+  background:linear-gradient(180deg, rgba(240,244,255,.95), rgba(232,238,255,.82));
+  border:1px solid rgba(31,41,55,.06);
+  box-shadow:0 4px 14px rgba(15,23,42,.05);
+}
 
-    const attachments = normalizeAttachments(
-      body.attachments ??
-      body.files ??
-      payload?.attachments ??
-      payload?.files
+#${BOX_ID} .rcfAiHeroText{
+  min-width:0;
+}
+
+#${BOX_ID} .rcfAiTitle{
+  margin:0;
+  font-size:clamp(20px,4.2vw,30px);
+  line-height:1.06;
+  font-weight:900;
+  color:#202d4d;
+}
+
+#${BOX_ID} .rcfAiSub{
+  margin:6px 0 0 0;
+  font-size:15px;
+  line-height:1.46;
+  color:rgba(32,45,77,.82);
+}
+
+#${BOX_ID} .rcfAiPill{
+  display:inline-flex;
+  align-items:center;
+  min-height:40px;
+  padding:0 16px;
+  border-radius:999px;
+  border:1px solid rgba(90,110,150,.12);
+  background:rgba(255,255,255,.84);
+  font-size:13px;
+  font-weight:900;
+  color:rgba(32,45,77,.86);
+  white-space:nowrap;
+}
+
+#${BOX_ID} .rcfAiStage{
+  display:grid;
+  gap:12px;
+  padding:14px;
+  border-radius:20px;
+  border:1px solid rgba(31,41,55,.08);
+  background:rgba(247,249,253,.90);
+}
+
+#${CHAT_ID}{
+  min-height:260px;
+  max-height:40vh;
+  overflow:auto;
+  padding:8px;
+  border-radius:18px;
+  background:rgba(243,246,252,.88);
+  border:1px solid rgba(31,41,55,.06);
+}
+
+#${BOX_ID} .rcfAiMsgRow{
+  display:flex;
+  margin-top:10px;
+}
+
+#${BOX_ID} .rcfAiMsgRow.user{
+  justify-content:flex-end;
+}
+
+#${BOX_ID} .rcfAiMsgRow.assistant{
+  justify-content:flex-start;
+}
+
+#${BOX_ID} .rcfAiMsg{
+  width:min(100%, 680px);
+  padding:14px;
+  border-radius:18px;
+  border:1px solid rgba(31,41,55,.08);
+  background:rgba(255,255,255,.95);
+  box-shadow:0 2px 10px rgba(15,23,42,.04);
+}
+
+#${BOX_ID} .rcfAiMsg.userBubble{
+  background:linear-gradient(180deg, rgba(218,230,255,.95), rgba(232,239,255,.92));
+  border-color:rgba(112,152,255,.16);
+}
+
+#${BOX_ID} .rcfAiMsgLabel{
+  font-size:12px;
+  font-weight:900;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+  opacity:.62;
+  margin-bottom:8px;
+}
+
+#${BOX_ID} .rcfAiMsgText{
+  white-space:pre-wrap;
+  word-break:break-word;
+  line-height:1.5;
+  color:#202d4d;
+  font-size:15px;
+}
+
+#${BOX_ID} .rcfAiMsgTime{
+  margin-top:8px;
+  font-size:11px;
+  opacity:.56;
+}
+
+#${BOX_ID} .rcfAiComposer{
+  display:grid;
+  gap:10px;
+  padding:14px;
+  border-radius:20px;
+  border:1px solid rgba(31,41,55,.08);
+  background:rgba(255,255,255,.92);
+}
+
+#${BOX_ID} .rcfAiPromptWrap{
+  display:grid;
+  gap:10px;
+}
+
+#${BOX_ID} .rcfAiPromptRow{
+  display:grid;
+  grid-template-columns:auto 1fr auto;
+  gap:10px;
+  align-items:end;
+}
+
+#${BOX_ID} .rcfAiClip{
+  position:relative;
+}
+
+#${BOX_ID} .rcfAiClipBtn{
+  width:48px;
+  height:48px;
+  border-radius:14px;
+  border:1px solid rgba(31,41,55,.08);
+  background:rgba(255,255,255,.96);
+  color:#26407a;
+  font-size:21px;
+  font-weight:900;
+  cursor:pointer;
+}
+
+#${BOX_ID} .rcfAiClipMenu{
+  position:absolute;
+  left:0;
+  bottom:56px;
+  min-width:190px;
+  display:none;
+  z-index:30;
+  padding:8px;
+  border-radius:16px;
+  border:1px solid rgba(31,41,55,.08);
+  background:rgba(255,255,255,.98);
+  box-shadow:0 12px 26px rgba(15,23,42,.10);
+}
+
+#${BOX_ID} .rcfAiClipMenu.open{
+  display:grid;
+  gap:6px;
+}
+
+#${BOX_ID} .rcfAiClipItem{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  min-height:40px;
+  padding:0 12px;
+  border-radius:12px;
+  border:1px solid transparent;
+  background:rgba(247,249,253,.9);
+  color:#22345e;
+  font-size:13px;
+  font-weight:800;
+  cursor:pointer;
+}
+
+#${BOX_ID} .rcfAiPrompt{
+  width:100%;
+  min-height:108px;
+  resize:vertical;
+  padding:14px;
+  border-radius:16px;
+  border:1px solid rgba(31,41,55,.10);
+  box-sizing:border-box;
+  background:#fff;
+  color:#18233f;
+  font:inherit;
+  line-height:1.45;
+}
+
+#${BOX_ID} .rcfAiPrompt:focus{
+  outline:none;
+  border-color:rgba(112,152,255,.42);
+  box-shadow:0 0 0 3px rgba(112,152,255,.10);
+}
+
+#${BOX_ID} .rcfAiSend{
+  min-width:116px;
+  min-height:48px;
+  padding:0 16px;
+  border-radius:16px;
+  border:1px solid rgba(112,152,255,.18);
+  background:linear-gradient(180deg, rgba(228,235,255,.96), rgba(217,228,255,.92));
+  color:#26407a;
+  font-size:15px;
+  font-weight:900;
+  cursor:pointer;
+}
+
+#${BOX_ID} .rcfAiAttachments{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+}
+
+#${BOX_ID} .rcfAiAttachmentChip{
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  min-height:36px;
+  padding:0 12px;
+  border-radius:999px;
+  border:1px solid rgba(31,41,55,.08);
+  background:rgba(245,248,255,.95);
+  color:#22345e;
+  font-size:12px;
+  font-weight:800;
+  max-width:100%;
+}
+
+#${BOX_ID} .rcfAiAttachmentName{
+  max-width:180px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+#${BOX_ID} .rcfAiAttachmentRemove{
+  width:22px;
+  height:22px;
+  border-radius:999px;
+  border:none;
+  background:rgba(112,152,255,.12);
+  color:#26407a;
+  font-weight:900;
+  cursor:pointer;
+}
+
+#${BOX_ID} .rcfAiComposerBar{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:10px;
+  flex-wrap:wrap;
+}
+
+#${BOX_ID} .rcfAiStatus{
+  font-size:13px;
+  font-weight:800;
+  color:rgba(32,45,77,.78);
+}
+
+#${BOX_ID} .rcfAiButtons{
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+}
+
+#${BOX_ID} .rcfAiBtn{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  min-width:108px;
+  min-height:44px;
+  padding:10px 14px;
+  border-radius:14px;
+  border:1px solid rgba(31,41,55,.08);
+  background:rgba(255,255,255,.84);
+  color:#26407a;
+  font-size:14px;
+  font-weight:900;
+  cursor:pointer;
+}
+
+#${BOX_ID} .rcfAiSmall{
+  font-size:13px;
+  color:rgba(32,45,77,.68);
+}
+
+#${BOX_ID} details.rcfAiDetails{
+  border:1px solid rgba(31,41,55,.08);
+  border-radius:18px;
+  background:rgba(255,255,255,.72);
+  padding:10px 12px;
+}
+
+#${BOX_ID} details.rcfAiDetails summary{
+  cursor:pointer;
+  font-weight:900;
+  color:#202d4d;
+}
+
+#${BOX_ID} .rcfAiPre{
+  margin-top:6px;
+  max-height:18vh;
+  overflow:auto;
+  white-space:pre-wrap;
+  word-break:break-word;
+}
+
+#${BOX_ID} .rcfAiHiddenInput{
+  display:none;
+}
+
+@media (max-width: 720px){
+  #${BOX_ID} .rcfAiWrap{
+    padding:16px;
+  }
+
+  #${BOX_ID} .rcfAiHero{
+    grid-template-columns:auto 1fr;
+  }
+
+  #${BOX_ID} .rcfAiHero .rcfAiPill{
+    grid-column:1 / -1;
+    justify-self:start;
+  }
+
+  #${BOX_ID} .rcfAiTitle{
+    font-size:19px;
+  }
+
+  #${BOX_ID} .rcfAiPromptRow{
+    grid-template-columns:48px 1fr;
+  }
+
+  #${BOX_ID} .rcfAiSend{
+    grid-column:1 / -1;
+    width:100%;
+  }
+
+  #${BOX_ID} .rcfAiAttachmentName{
+    max-width:130px;
+  }
+}
+    `.trim();
+
+    document.head.appendChild(st);
+  }
+
+  function pushChat(role, text) {
+    STATE.history.push({
+      role: String(role || "system"),
+      text: String(text || ""),
+      ts: new Date().toISOString()
+    });
+    renderChat();
+  }
+
+  function ensureSeedMessage() {
+    if (STATE.history.length) return;
+
+    pushChat(
+      "assistant",
+      "Factory AI online. Pode falar normalmente comigo sobre arquitetura, bugs, patch, código, logs, doctor, layout, design, ZIP, PDF, imagem e contexto da Factory."
     );
+  }
 
-    const approval = normalizeApproval(
-      body.approval ??
-      payload?.approval ??
-      {}
-    );
+  function renderChat() {
+    const box = document.getElementById(CHAT_ID);
+    if (!box) return;
 
-    const allowed = new Set([
-      "factory_diagnosis",
-      "analyze-architecture",
-      "analyze-logs",
-      "review-module",
-      "suggest-improvement",
-      "summarize-structure",
-      "propose-patch",
-      "generate-code",
-      "zip-readiness",
-      "chat",
-      "plan-change",
-      "approval-check",
-      "ingest-context",
-      "github-readiness"
-    ]);
+    ensureSeedMessage();
 
-    if (!allowed.has(action)) {
-      return json({
-        ok: false,
-        error: "Ação não permitida nesta fase.",
-        action
-      }, 400);
+    box.innerHTML = STATE.history.map((item) => {
+      const isUser = item.role === "user";
+      return `
+        <div class="rcfAiMsgRow ${isUser ? "user" : "assistant"}">
+          <div class="rcfAiMsg ${isUser ? "userBubble" : ""}">
+            <div class="rcfAiMsgLabel">${isUser ? "Você" : "Factory AI"}</div>
+            <div class="rcfAiMsgText">${esc(item.text)}</div>
+            <div class="rcfAiMsgTime">${esc(item.ts)}</div>
+          </div>
+        </div>
+      `;
+    }).join("");
+
+    try { box.scrollTop = box.scrollHeight; } catch {}
+  }
+
+  function clearChat() {
+    STATE.history = [];
+    ensureSeedMessage();
+    renderChat();
+    setComposerStatus("aguardando");
+    setTechResult("Pronto.");
+    setSnapshotPreview({});
+  }
+
+  function inferActionFromPrompt(prompt) {
+    const p = String(prompt || "").trim().toLowerCase();
+
+    if (!p) return "summarize-structure";
+
+    if (
+      p.includes("log") ||
+      p.includes("erro") ||
+      p.includes("error") ||
+      p.includes("falha") ||
+      p.includes("crash")
+    ) return "analyze-logs";
+
+    if (
+      p.includes("doctor") ||
+      p.includes("diagnóstico") ||
+      p.includes("diagnostico") ||
+      p.includes("estabilidade") ||
+      p.includes("stability")
+    ) return "factory_diagnosis";
+
+    if (
+      p.includes("patch") ||
+      p.includes("corrig") ||
+      p.includes("fix") ||
+      p.includes("ajust") ||
+      p.includes("consert")
+    ) return "propose-patch";
+
+    if (
+      p.includes("gerar código") ||
+      p.includes("gerar codigo") ||
+      p.includes("gere código") ||
+      p.includes("gere codigo") ||
+      p.includes("código completo") ||
+      p.includes("codigo completo") ||
+      p.includes("arquivo completo") ||
+      p.includes("code")
+    ) return "generate-code";
+
+    if (
+      p.includes("módulo") ||
+      p.includes("modulo") ||
+      p.includes("arquivo") ||
+      p.includes("file") ||
+      p.includes("review")
+    ) return "review-module";
+
+    if (
+      p.includes("melhoria") ||
+      p.includes("melhorar") ||
+      p.includes("improve") ||
+      p.includes("sugest")
+    ) return "suggest-improvement";
+
+    if (
+      p.includes("zip") ||
+      p.includes("pdf") ||
+      p.includes("imagem") ||
+      p.includes("foto") ||
+      p.includes("arquivo") ||
+      p.includes("vídeo") ||
+      p.includes("video")
+    ) return "ingest-context";
+
+    if (
+      p.includes("arquitetura") ||
+      p.includes("estrutura") ||
+      p.includes("organiza") ||
+      p.includes("orquestra") ||
+      p.includes("layout") ||
+      p.includes("design")
+    ) return "analyze-architecture";
+
+    return "chat";
+  }
+
+  function buildPayload(action) {
+    const snapshot = buildLeanSnapshot();
+    setSnapshotPreview(snapshot);
+
+    const attachments = getAttachmentPayload();
+
+    if (action === "analyze-logs") {
+      return {
+        snapshot,
+        logs: collectLogs(),
+        attachments
+      };
     }
 
-    const input = buildGroundedPrompt({
+    if (action === "factory_diagnosis") {
+      return {
+        snapshot,
+        doctor: collectDoctorReport(),
+        attachments
+      };
+    }
+
+    if (action === "propose-patch" || action === "generate-code") {
+      return {
+        snapshot,
+        doctor: collectDoctorReport(),
+        logs: collectLogs(25),
+        attachments
+      };
+    }
+
+    if (action === "review-module") {
+      return {
+        snapshot,
+        doctor: collectDoctorReport(),
+        logs: collectLogs(12),
+        attachments
+      };
+    }
+
+    if (action === "ingest-context") {
+      return {
+        snapshot,
+        attachments,
+        capability: {
+          wantsZipFlow: true,
+          wantsPdfFlow: true,
+          wantsImageFlow: true,
+          wantsVideoFlow: true
+        }
+      };
+    }
+
+    return {
+      snapshot,
+      attachments
+    };
+  }
+
+  function getAttachmentPayload() {
+    return (STATE.attachments || []).map((item) => ({
+      name: item.name || "",
+      kind: item.kind || "unknown",
+      mime: item.mime || "",
+      size: item.size || 0,
+      summary: item.summary || ""
+    }));
+  }
+
+  async function postJSON(url, body) {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json().catch(() => ({}));
+    return { res, data };
+  }
+
+  async function callFactoryAI(action, payload, prompt) {
+    if (STATE.busy) return;
+
+    setButtonsBusy(true);
+    setComposerStatus("carregando...");
+    setTechResult("");
+
+    const body = {
       action,
       payload,
       prompt,
-      history,
-      source,
-      version,
-      attachments,
-      approval
-    });
+      history: STATE.history.slice(-12).map((m) => ({
+        role: m.role,
+        text: m.text
+      })),
+      attachments: getAttachmentPayload(),
+      source: "factory-ai",
+      version: VERSION
+    };
 
-    const upstream = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${env.OPENAI_API_KEY}`
-      },
-      body: JSON.stringify({
-        model: env.OPENAI_MODEL || "gpt-4.1-mini",
-        input
-      })
-    });
+    try {
+      let result = null;
+      let endpoint = "";
 
-    const data = await upstream.json().catch(() => ({}));
+      try {
+        result = await postJSON("/api/factory-ai", body);
+        endpoint = "/api/factory-ai";
+      } catch {
+        result = null;
+      }
 
-    if (!upstream.ok) {
-      return json({
-        ok: false,
-        error: "Falha ao chamar OpenAI.",
-        status: upstream.status,
-        details: data
-      }, 502);
+      if (!result || !result.res || (!result.res.ok && !result.data?.ok)) {
+        result = await postJSON("/api/admin-ai", body);
+        endpoint = "/api/admin-ai";
+      }
+
+      STATE.lastEndpoint = endpoint;
+
+      const { res, data } = result;
+
+      if (!res.ok || !data.ok) {
+        const msg = pretty(data || { error: "Erro ao chamar endpoint IA" });
+        setComposerStatus("erro");
+        setTechResult(msg);
+        pushChat("assistant", msg);
+        log("ERR", "falha IA endpoint=" + endpoint);
+        return;
+      }
+
+      const text =
+        data.analysis ||
+        data.answer ||
+        data.result ||
+        pretty(data);
+
+      setComposerStatus("concluído");
+      setTechResult(text);
+      pushChat("assistant", text);
+      log("OK", "resposta recebida action=" + action + " endpoint=" + endpoint);
+    } catch (e) {
+      const msg = String(e?.message || e || "Erro de rede");
+      setComposerStatus("erro");
+      setTechResult(msg);
+      pushChat("assistant", msg);
+      log("ERR", "erro de rede IA");
+    } finally {
+      setButtonsBusy(false);
+    }
+  }
+
+  function sendPrompt(rawPrompt, forcedAction = "") {
+    const prompt = String(rawPrompt || "").trim();
+
+    if (!prompt && !(STATE.attachments && STATE.attachments.length)) {
+      setComposerStatus("aguardando");
+      setTechResult("Digite uma instrução ou selecione um arquivo primeiro.");
+      return;
     }
 
-    const text = extractText(data);
+    const finalPrompt = prompt || "Analise os anexos enviados e diga o próximo passo mais seguro.";
+    const action = forcedAction || inferActionFromPrompt(finalPrompt);
 
-    return json({
-      ok: true,
-      action,
-      source,
-      version,
-      approval_required: shouldRequireApproval(action),
-      approval_state: approval.state || "unknown",
-      attachments_count: attachments.length,
-      analysis: text || "(sem texto retornado)",
-      raw: data
-    });
-  } catch (err) {
-    return json({
-      ok: false,
-      error: String(err?.message || err || "Erro interno.")
-    }, 500);
+    let userText = finalPrompt;
+    if (STATE.attachments && STATE.attachments.length) {
+      const list = STATE.attachments.map((a) => a.name).join(", ");
+      userText += `\n\n[anexos: ${list}]`;
+    }
+
+    pushChat("user", userText);
+    callFactoryAI(action, buildPayload(action), finalPrompt);
+
+    const input = document.getElementById("rcfFactoryAIPrompt");
+    if (input) {
+      try { input.value = ""; } catch {}
+    }
+
+    clearAttachments();
+    closeAttachMenu();
   }
-}
 
-function normalizeAction(value) {
-  const raw = String(value || "").trim().toLowerCase();
+  function normalizePickedFiles(fileList, forcedKind = "") {
+    const files = Array.from(fileList || []);
+    if (!files.length) return [];
 
-  if (!raw) return "chat";
+    return files.slice(0, 10).map((file) => {
+      const mime = String(file.type || "").trim();
+      const name = String(file.name || "arquivo").trim();
+      const size = Number(file.size || 0) || 0;
 
-  const aliases = {
-    "factory_diagnosis": "factory_diagnosis",
-    "analyze-architecture": "analyze-architecture",
-    "analyze-logs": "analyze-logs",
-    "review-module": "review-module",
-    "suggest-improvement": "suggest-improvement",
-    "summarize-structure": "summarize-structure",
-    "propose-patch": "propose-patch",
-    "generate-code": "generate-code",
-    "zip-readiness": "zip-readiness",
-    "chat": "chat",
-    "plan-change": "plan-change",
-    "approval-check": "approval-check",
-    "ingest-context": "ingest-context",
-    "github-readiness": "github-readiness",
+      let kind = forcedKind || "file";
 
-    // aliases úteis
-    "diagnosis": "factory_diagnosis",
-    "architecture": "analyze-architecture",
-    "logs": "analyze-logs",
-    "review": "review-module",
-    "suggest": "suggest-improvement",
-    "summary": "summarize-structure",
-    "patch": "propose-patch",
-    "code": "generate-code",
-    "zip": "zip-readiness",
-    "context": "ingest-context",
-    "github": "github-readiness"
-  };
-
-  return aliases[raw] || raw;
-}
-
-function normalizeHistory(value) {
-  if (!Array.isArray(value)) return [];
-
-  return value
-    .slice(-16)
-    .map((item) => {
-      const role = String(item?.role || "user").trim().toLowerCase();
-      const text = String(item?.text || item?.content || "").trim();
-
-      if (!text) return null;
+      if (!forcedKind) {
+        if (mime.startsWith("image/")) kind = "image";
+        else if (mime.startsWith("video/")) kind = "video";
+        else if (mime === "application/pdf") kind = "pdf";
+        else if (/zip|compressed|x-zip/i.test(mime) || /\.zip$/i.test(name)) kind = "zip";
+      }
 
       return {
-        role: role === "assistant" ? "assistant" : "user",
-        text
-      };
-    })
-    .filter(Boolean);
-}
-
-function normalizeAttachments(value) {
-  if (!Array.isArray(value)) return [];
-
-  return value
-    .slice(0, 20)
-    .map((item, index) => {
-      if (!item || typeof item !== "object") return null;
-
-      const name = String(item.name || item.filename || `file_${index + 1}`).trim();
-      const kind = String(item.kind || item.type || item.mime || "unknown").trim();
-      const mime = String(item.mime || item.contentType || "").trim();
-      const size = Number(item.size || 0) || 0;
-      const summary = String(item.summary || item.caption || item.note || "").trim();
-      const extractedText = String(item.text || item.extractedText || "").trim();
-      const url = String(item.url || "").trim();
-
-      return {
+        id: "att_" + Math.random().toString(36).slice(2, 10),
         name,
-        kind,
         mime,
         size,
-        summary,
-        extractedText,
-        url
+        kind,
+        summary: `${kind.toUpperCase()} • ${formatBytes(size)}`
       };
-    })
-    .filter(Boolean);
-}
-
-function normalizeApproval(value) {
-  const obj = value && typeof value === "object" ? value : {};
-
-  const stateRaw = String(
-    obj.state ||
-    obj.status ||
-    "unknown"
-  ).trim().toLowerCase();
-
-  let state = "unknown";
-  if (stateRaw === "approved") state = "approved";
-  else if (stateRaw === "pending") state = "pending";
-  else if (stateRaw === "rejected") state = "rejected";
-  else if (stateRaw === "not_requested") state = "not_requested";
-
-  return {
-    state,
-    requestedBy: String(obj.requestedBy || obj.requested_by || "").trim(),
-    approvedBy: String(obj.approvedBy || obj.approved_by || "").trim(),
-    note: String(obj.note || "").trim()
-  };
-}
-
-function shouldRequireApproval(action) {
-  return new Set([
-    "propose-patch",
-    "generate-code",
-    "plan-change",
-    "github-readiness"
-  ]).has(String(action || ""));
-}
-
-function buildGroundedPrompt({
-  action,
-  payload,
-  prompt,
-  history,
-  source,
-  version,
-  attachments,
-  approval
-}) {
-  const system = [
-    "Você é a Factory AI da RControl Factory.",
-    "Você opera como o chat oficial interno da Factory, usando OpenAI como motor.",
-    "Seu foco principal atual é a ESTRUTURAÇÃO E EVOLUÇÃO DA PRÓPRIA FACTORY.",
-    "Somente depois de consolidar a própria estrutura da Factory é que o Agent AI de criação de aplicativos será derivado.",
-    "",
-    "Seu trabalho nesta fase é:",
-    "- conversar naturalmente com o usuário",
-    "- entender pedidos sobre arquitetura, bugs, patch, código, layout, logs, doctor, ZIP, PDF, imagem, vídeo e contexto",
-    "- organizar próximo passo seguro",
-    "- propor mudanças sem inventar dados",
-    "- pedir/apoiar aprovação humana antes de qualquer aplicação real",
-    "",
-    "Regras de verdade e segurança:",
-    "- Use EXCLUSIVAMENTE o payload, o histórico enviado, os anexos/metadados enviados e o prompt atual.",
-    "- NÃO invente estados, módulos, falhas, versões, arquivos, árvore, logs ou inconsistências que não estejam explícitos.",
-    "- Se um dado estiver ausente, diga claramente: 'dado ausente'.",
-    "- Se algo parecer contraditório, diga: 'possível inconsistência do snapshot'.",
-    "- NÃO mande recriar a Factory do zero.",
-    "- NÃO proponha reescrever toda a plataforma.",
-    "- Priorize patch mínimo, estabilidade, segurança e evolução em camadas.",
-    "- NÃO diga que algo está quebrado apenas porque não apareceu no payload.",
-    "- Não trate ausência de dado como erro confirmado.",
-    "",
-    "Regra de aprovação:",
-    "- Você NÃO aplica nada automaticamente.",
-    "- Quando a ação envolver alteração estrutural, patch, geração de código ou futura integração GitHub, trabalhe no fluxo: analisar -> propor -> pedir aprovação -> só depois aplicar.",
-    "- Se approval.state não for 'approved', não aja como se a alteração estivesse autorizada.",
-    "- Quando faltar aprovação, diga isso explicitamente.",
-    "",
-    "Regra de resposta:",
-    "- Responda sempre em português do Brasil.",
-    "- Se o usuário estiver em modo conversa, responda de forma natural, objetiva e técnica.",
-    "- Se o usuário pedir código, entregue resposta prática.",
-    "- Se o usuário pedir arquivo completo, entregue arquivo completo quando houver base suficiente.",
-    "- Se não houver base suficiente para código seguro, explique exatamente o que falta.",
-    "",
-    "Formato por ação:",
-    "- Se action=factory_diagnosis, analyze-architecture, analyze-logs, summarize-structure ou suggest-improvement, use:",
-    "  1. Fatos confirmados",
-    "  2. Dados ausentes ou mal consolidados",
-    "  3. Inferências prováveis",
-    "  4. Próximo passo mínimo recomendado",
-    "  5. Arquivos mais prováveis de ajuste",
-    "",
-    "- Se action=propose-patch, acrescente:",
-    "  6. Patch mínimo sugerido",
-    "  7. Aprovação necessária",
-    "",
-    "- Se action=generate-code, use:",
-    "  1. Objetivo",
-    "  2. Arquivo alvo",
-    "  3. Risco",
-    "  4. Código sugerido",
-    "  5. Aprovação necessária",
-    "",
-    "- Se action=plan-change, use:",
-    "  1. Objetivo da mudança",
-    "  2. Impacto esperado",
-    "  3. Arquivos mais prováveis",
-    "  4. Ordem segura de execução",
-    "  5. Aprovação necessária",
-    "",
-    "- Se action=approval-check, foque em dizer se já há base técnica e se há aprovação suficiente para seguir.",
-    "",
-    "- Se action=zip-readiness ou ingest-context, foque em como a Factory deve receber contexto via ZIP/PDF/imagem/vídeo/arquivo sem quebrar a arquitetura atual.",
-    "",
-    "- Se action=github-readiness, foque em como preparar integração segura com GitHub, mantendo aprovação humana obrigatória.",
-    "",
-    "- Se action=chat, responda como um chat técnico natural, mas ainda aterrado no contexto enviado."
-  ].join("\n");
-
-  const task = buildTaskText(action);
-
-  return [
-    system,
-    "",
-    "Fonte:",
-    source || "factory-ai",
-    "",
-    "Versão do cliente:",
-    version || "(não informada)",
-    "",
-    "Ação:",
-    action,
-    "",
-    "Aprovação atual:",
-    stringify(approval),
-    "",
-    "Tarefa:",
-    task,
-    "",
-    "Histórico recente:",
-    historyToText(history),
-    "",
-    "Prompt atual do usuário:",
-    prompt || "(nenhum)",
-    "",
-    "Metadados de anexos/contexto adicional:",
-    attachmentsToText(attachments),
-    "",
-    "Payload recebido:",
-    stringify(payload)
-  ].join("\n");
-}
-
-function buildTaskText(action) {
-  if (action === "factory_diagnosis") {
-    return "Analise o snapshot/relatório da RControl Factory e aponte somente fatos confirmados, dados ausentes, inferências prováveis e próximo passo mínimo.";
+    });
   }
 
-  if (action === "analyze-architecture") {
-    return "Analise a arquitetura atual da RControl Factory usando somente o contexto enviado.";
+  function formatBytes(bytes) {
+    const value = Number(bytes || 0);
+    if (!value) return "0 B";
+    if (value < 1024) return value + " B";
+    if (value < 1024 * 1024) return (value / 1024).toFixed(1) + " KB";
+    if (value < 1024 * 1024 * 1024) return (value / (1024 * 1024)).toFixed(1) + " MB";
+    return (value / (1024 * 1024 * 1024)).toFixed(1) + " GB";
   }
 
-  if (action === "analyze-logs") {
-    return "Analise logs recentes da RControl Factory em conjunto com o snapshot enviado.";
+  function addAttachments(items) {
+    if (!Array.isArray(items) || !items.length) return;
+
+    const current = Array.isArray(STATE.attachments) ? STATE.attachments.slice() : [];
+    const merged = current.concat(items).slice(0, 12);
+
+    const dedup = [];
+    const seen = new Set();
+
+    merged.forEach((item) => {
+      const key = `${item.name}::${item.size}::${item.kind}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      dedup.push(item);
+    });
+
+    STATE.attachments = dedup;
+    renderAttachments();
+    setComposerStatus("anexos prontos");
   }
 
-  if (action === "review-module") {
-    return "Revise o módulo informado usando somente os dados enviados.";
+  function removeAttachment(id) {
+    STATE.attachments = (STATE.attachments || []).filter((item) => item.id !== id);
+    renderAttachments();
+    if (!STATE.attachments.length) setComposerStatus("aguardando");
   }
 
-  if (action === "suggest-improvement") {
-    return "Sugira a próxima melhoria mais segura com base apenas no snapshot enviado.";
-  }
+  function clearAttachments() {
+    STATE.attachments = [];
+    renderAttachments();
 
-  if (action === "summarize-structure") {
-    return "Resuma a estrutura atual da RControl Factory com base apenas no snapshot enviado.";
-  }
-
-  if (action === "propose-patch") {
-    return "Proponha um patch mínimo e seguro com base apenas no contexto enviado, sem tratar como aprovado automaticamente.";
-  }
-
-  if (action === "generate-code") {
-    return "Gere código com patch mínimo, sem reescrever a Factory do zero, usando apenas o contexto enviado e deixando clara a necessidade de aprovação.";
-  }
-
-  if (action === "zip-readiness") {
-    return "Explique como a Factory deve estruturar entrada futura de ZIP, PDF, imagem, vídeo e arquivos sem quebrar o fluxo atual.";
-  }
-
-  if (action === "chat") {
-    return "Responda como o chat técnico oficial da Factory, de forma natural, útil, objetiva e aterrada no contexto enviado.";
-  }
-
-  if (action === "plan-change") {
-    return "Monte um plano seguro de mudança para a própria Factory, com ordem de execução e aprovação humana.";
-  }
-
-  if (action === "approval-check") {
-    return "Verifique se há base suficiente e se há aprovação suficiente para seguir com alteração estrutural.";
-  }
-
-  if (action === "ingest-context") {
-    return "Explique como absorver o contexto enviado e como ele deve influenciar a próxima resposta ou ação técnica.";
-  }
-
-  if (action === "github-readiness") {
-    return "Explique como preparar a Factory para integração segura com GitHub, mantendo aprovação humana antes de qualquer escrita.";
-  }
-
-  return "Analise a RControl Factory com base apenas no contexto enviado.";
-}
-
-function historyToText(history) {
-  if (!Array.isArray(history) || !history.length) {
-    return "(sem histórico)";
-  }
-
-  return history
-    .map((item, idx) => `${idx + 1}. [${item.role}] ${item.text}`)
-    .join("\n");
-}
-
-function attachmentsToText(attachments) {
-  if (!Array.isArray(attachments) || !attachments.length) {
-    return "(sem anexos)";
-  }
-
-  return attachments.map((item, idx) => {
-    return [
-      `${idx + 1}. nome=${item.name || "(sem nome)"}`,
-      `tipo=${item.kind || "(sem tipo)"}`,
-      `mime=${item.mime || "(sem mime)"}`,
-      `size=${item.size || 0}`,
-      `summary=${item.summary || "(sem resumo)"}`,
-      `text=${item.extractedText || "(sem texto extraído)"}`,
-      `url=${item.url || "(sem url)"}`
-    ].join(" | ");
-  }).join("\n");
-}
-
-function extractText(data) {
-  if (typeof data?.output_text === "string" && data.output_text.trim()) {
-    return data.output_text.trim();
-  }
-
-  try {
-    const chunks = [];
-    const output = Array.isArray(data?.output) ? data.output : [];
-
-    for (const item of output) {
-      const content = Array.isArray(item?.content) ? item.content : [];
-      for (const c of content) {
-        if (c?.type === "output_text" && typeof c?.text === "string") {
-          chunks.push(c.text);
-        }
+    [
+      "rcfFactoryAIInputImage",
+      "rcfFactoryAIInputPdf",
+      "rcfFactoryAIInputZip",
+      "rcfFactoryAIInputFile",
+      "rcfFactoryAIInputVideo"
+    ].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) {
+        try { el.value = ""; } catch {}
       }
+    });
+  }
+
+  function renderAttachments() {
+    const wrap = document.getElementById("rcfFactoryAIAttachments");
+    if (!wrap) return;
+
+    const list = Array.isArray(STATE.attachments) ? STATE.attachments : [];
+    if (!list.length) {
+      wrap.innerHTML = "";
+      wrap.style.display = "none";
+      return;
     }
 
-    return chunks.join("\n").trim();
-  } catch {
-    return "";
+    wrap.style.display = "flex";
+    wrap.innerHTML = list.map((item) => {
+      const icon =
+        item.kind === "image" ? "🖼️" :
+        item.kind === "pdf" ? "📄" :
+        item.kind === "zip" ? "🗜️" :
+        item.kind === "video" ? "🎬" : "📎";
+
+      return `
+        <div class="rcfAiAttachmentChip">
+          <span>${icon}</span>
+          <span class="rcfAiAttachmentName" title="${esc(item.name)}">${esc(item.name)}</span>
+          <button class="rcfAiAttachmentRemove" type="button" data-rcf-attach-remove="${esc(item.id)}">×</button>
+        </div>
+      `;
+    }).join("");
+
+    qsa("[data-rcf-attach-remove]", wrap).forEach((btn) => {
+      if (btn.__boundRemove) return;
+      btn.__boundRemove = true;
+      btn.addEventListener("click", () => {
+        removeAttachment(btn.getAttribute("data-rcf-attach-remove") || "");
+      }, { passive: true });
+    });
   }
-}
 
-async function safeJson(request) {
-  try {
-    return await request.json();
-  } catch {
-    return null;
+  function toggleAttachMenu() {
+    const menu = document.getElementById("rcfFactoryAIClipMenu");
+    if (!menu) return;
+
+    const isOpen = menu.classList.contains("open");
+    if (isOpen) menu.classList.remove("open");
+    else menu.classList.add("open");
   }
-}
 
-function stringify(value) {
-  if (typeof value === "string") return value;
-
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
+  function closeAttachMenu() {
+    const menu = document.getElementById("rcfFactoryAIClipMenu");
+    if (menu) menu.classList.remove("open");
   }
-}
 
-function json(obj, status = 200) {
-  return new Response(JSON.stringify(obj), {
-    status,
-    headers: {
-      "Content-Type": "application/json",
-      ...corsHeaders()
+  function openFileInput(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    closeAttachMenu();
+    try { el.click(); } catch {}
+  }
+
+  function applyFactoryAITextFix(root = document) {
+    try {
+      const targets = [root, getFactoryAIView(), document.body].filter(Boolean);
+
+      targets.forEach((base) => {
+        const walker = document.createTreeWalker(base, NodeFilter.SHOW_TEXT);
+        const nodes = [];
+
+        while (walker.nextNode()) nodes.push(walker.currentNode);
+
+        nodes.forEach((node) => {
+          try {
+            if (!node || !node.nodeValue) return;
+            let txt = String(node.nodeValue || "");
+            if (!txt.trim()) return;
+
+            txt = txt.replace(/\bFactory IA\b/g, "Factory AI");
+            txt = txt.replace(/\bIA da Factory\b/g, "AI da Factory");
+
+            node.nodeValue = txt;
+          } catch {}
+        });
+      });
+    } catch {}
+  }
+
+  function cleanupFactoryAIHost() {
+    const view = getFactoryAIView();
+    if (!view) return false;
+
+    try {
+      const hero = qs(".rcfUiFactoryHero", view);
+      if (hero) hero.style.display = "none";
+    } catch {}
+
+    try {
+      const actionsBlock = qs('[data-rcf-factory-block="factory-ai-actions"]', view);
+      if (actionsBlock) actionsBlock.style.display = "none";
+    } catch {}
+
+    try {
+      const contextBlock = qs('[data-rcf-factory-block="factory-ai-context"]', view);
+      if (contextBlock) contextBlock.style.display = "none";
+    } catch {}
+
+    try {
+      const blockHead = qs('[data-rcf-factory-block="factory-ai-tools"] .rcfUiFactoryBlockHead', view);
+      if (blockHead) blockHead.style.display = "none";
+    } catch {}
+
+    try {
+      const toolsBlock = qs('[data-rcf-factory-block="factory-ai-tools"]', view);
+      if (toolsBlock) {
+        toolsBlock.style.marginTop = "0";
+        toolsBlock.style.paddingTop = "0";
+      }
+    } catch {}
+
+    try {
+      const wrong = qsa('#rcfFactoryAIQuickActions, #rcfFactoryAIStateMini, [data-rcf-factory-ai-fallback]', view);
+      wrong.forEach((el) => {
+        try { el.remove(); } catch {}
+      });
+    } catch {}
+
+    applyFactoryAITextFix(view);
+    return true;
+  }
+
+  function syncVisibility() {
+    const box = document.getElementById(BOX_ID);
+    const showFactory = isFactoryAIViewVisible();
+    const showAdminFallback = !showFactory && isAdminViewVisible() && /^admin/.test(STATE.mountedIn || "");
+    const visible = !!(showFactory || showAdminFallback);
+
+    try {
+      if (box) {
+        box.style.display = visible ? "" : "none";
+        box.hidden = !visible;
+      }
+    } catch {}
+
+    try { cleanupFactoryAIHost(); } catch {}
+  }
+
+  function bindAttachmentInputs() {
+    const map = [
+      ["rcfFactoryAIInputImage", "image"],
+      ["rcfFactoryAIInputPdf", "pdf"],
+      ["rcfFactoryAIInputZip", "zip"],
+      ["rcfFactoryAIInputFile", "file"],
+      ["rcfFactoryAIInputVideo", "video"]
+    ];
+
+    map.forEach(([id, kind]) => {
+      const input = document.getElementById(id);
+      if (!input || input.__boundFileInput) return;
+
+      input.__boundFileInput = true;
+      input.addEventListener("change", () => {
+        const items = normalizePickedFiles(input.files, kind);
+        addAttachments(items);
+      });
+    });
+  }
+
+  function bindBox() {
+    const sendBtn = document.getElementById("rcfFactoryAISend");
+    const clearBtn = document.getElementById("rcfFactoryAIClear");
+    const promptEl = document.getElementById("rcfFactoryAIPrompt");
+    const clipBtn = document.getElementById("rcfFactoryAIClipBtn");
+
+    if (sendBtn && !sendBtn.__bound) {
+      sendBtn.__bound = true;
+      sendBtn.addEventListener("click", () => {
+        sendPrompt(String(promptEl?.value || "").trim(), "");
+      }, { passive: true });
     }
-  });
-}
 
-function corsHeaders() {
-  return {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type"
+    if (clearBtn && !clearBtn.__bound) {
+      clearBtn.__bound = true;
+      clearBtn.addEventListener("click", () => {
+        clearChat();
+        clearAttachments();
+        closeAttachMenu();
+      }, { passive: true });
+    }
+
+    if (promptEl && !promptEl.__boundEnter) {
+      promptEl.__boundEnter = true;
+      promptEl.addEventListener("keydown", (ev) => {
+        try {
+          if (ev.key === "Enter" && !ev.shiftKey) {
+            ev.preventDefault();
+            sendPrompt(String(promptEl.value || "").trim(), "");
+          }
+        } catch {}
+      });
+    }
+
+    if (clipBtn && !clipBtn.__bound) {
+      clipBtn.__bound = true;
+      clipBtn.addEventListener("click", () => {
+        toggleAttachMenu();
+      }, { passive: true });
+    }
+
+    [
+      ["rcfFactoryAIChooseImage", "rcfFactoryAIInputImage"],
+      ["rcfFactoryAIChoosePdf", "rcfFactoryAIInputPdf"],
+      ["rcfFactoryAIChooseZip", "rcfFactoryAIInputZip"],
+      ["rcfFactoryAIChooseFile", "rcfFactoryAIInputFile"],
+      ["rcfFactoryAIChooseVideo", "rcfFactoryAIInputVideo"]
+    ].forEach(([btnId, inputId]) => {
+      const btn = document.getElementById(btnId);
+      if (!btn || btn.__boundPick) return;
+      btn.__boundPick = true;
+      btn.addEventListener("click", () => {
+        openFileInput(inputId);
+      }, { passive: true });
+    });
+
+    if (!document.__rcfFactoryAIOutsideClick) {
+      document.__rcfFactoryAIOutsideClick = true;
+      document.addEventListener("click", (ev) => {
+        try {
+          const clip = qs(".rcfAiClip");
+          if (!clip) return;
+          if (clip.contains(ev.target)) return;
+          closeAttachMenu();
+        } catch {}
+      }, { passive: true });
+    }
+
+    bindAttachmentInputs();
+    renderAttachments();
+  }
+
+  function buildBoxHtml() {
+    return `
+      <div class="rcfAiWrap">
+        <section class="rcfAiHero">
+          <div class="rcfAiRobot">🤖</div>
+
+          <div class="rcfAiHeroText">
+            <h2 class="rcfAiTitle">Factory AI</h2>
+            <p class="rcfAiSub">
+              Chat central da Factory para conversar, analisar, organizar e evoluir a estrutura.
+            </p>
+          </div>
+
+          <div class="rcfAiPill">OpenAI conectada</div>
+        </section>
+
+        <section class="rcfAiStage">
+          <div id="${CHAT_ID}"></div>
+        </section>
+
+        <section class="rcfAiComposer">
+          <div class="rcfAiPromptWrap">
+            <div class="rcfAiPromptRow">
+              <div class="rcfAiClip">
+                <button
+                  id="rcfFactoryAIClipBtn"
+                  class="rcfAiClipBtn"
+                  type="button"
+                  aria-label="Anexar arquivo"
+                  title="Anexar arquivo"
+                >📎</button>
+
+                <div id="rcfFactoryAIClipMenu" class="rcfAiClipMenu">
+                  <button class="rcfAiClipItem" id="rcfFactoryAIChooseImage" type="button">🖼️ Imagem</button>
+                  <button class="rcfAiClipItem" id="rcfFactoryAIChoosePdf" type="button">📄 PDF</button>
+                  <button class="rcfAiClipItem" id="rcfFactoryAIChooseZip" type="button">🗜️ ZIP</button>
+                  <button class="rcfAiClipItem" id="rcfFactoryAIChooseFile" type="button">📎 Arquivo</button>
+                  <button class="rcfAiClipItem" id="rcfFactoryAIChooseVideo" type="button">🎬 Vídeo</button>
+                </div>
+              </div>
+
+              <textarea
+                id="rcfFactoryAIPrompt"
+                class="rcfAiPrompt"
+                placeholder="Fale com a Factory AI. Ex.: corrige o módulo da view, gera o arquivo completo, analisa os logs, lê esse contexto, organiza essa arquitetura..."
+              ></textarea>
+
+              <button class="rcfAiSend" id="rcfFactoryAISend" type="button">Enviar</button>
+            </div>
+
+            <div id="rcfFactoryAIAttachments" class="rcfAiAttachments" style="display:none"></div>
+
+            <input id="rcfFactoryAIInputImage" class="rcfAiHiddenInput" type="file" accept="image/*" multiple>
+            <input id="rcfFactoryAIInputPdf" class="rcfAiHiddenInput" type="file" accept="application/pdf,.pdf" multiple>
+            <input id="rcfFactoryAIInputZip" class="rcfAiHiddenInput" type="file" accept=".zip,application/zip,application/x-zip-compressed" multiple>
+            <input id="rcfFactoryAIInputFile" class="rcfAiHiddenInput" type="file" multiple>
+            <input id="rcfFactoryAIInputVideo" class="rcfAiHiddenInput" type="file" accept="video/*" multiple>
+          </div>
+
+          <div class="rcfAiComposerBar">
+            <div id="rcfFactoryAIComposerStatus" class="rcfAiStatus">aguardando</div>
+            <div class="rcfAiButtons">
+              <button class="rcfAiBtn" id="rcfFactoryAIClear" type="button">Limpar</button>
+            </div>
+          </div>
+
+          <div class="rcfAiSmall">Em breve: leitura real de imagem, ZIP, PDF, vídeo e arquivos direto no chat.</div>
+        </section>
+
+        <details class="rcfAiDetails">
+          <summary>Contexto técnico</summary>
+          <div style="margin-top:10px;display:grid;gap:10px">
+            <div>
+              <label class="hint">Snapshot Preview enviado</label>
+              <pre class="mono small rcfAiPre" id="rcfFactoryAISnapshot">{"status":"aguardando"}</pre>
+            </div>
+            <div>
+              <label class="hint">Último resultado técnico</label>
+              <pre class="mono small rcfAiPre" id="rcfFactoryAITechResult">Pronto.</pre>
+            </div>
+          </div>
+        </details>
+      </div>
+    `;
+  }
+
+  function ensureMainBox(primarySlot) {
+    let box = document.getElementById(BOX_ID);
+    if (!primarySlot) return null;
+
+    ensureStyle();
+
+    if (!box) {
+      box = document.createElement("div");
+      box.id = BOX_ID;
+      box.className = "card";
+      box.setAttribute("data-rcf-factory-ai", "1");
+      box.innerHTML = buildBoxHtml();
+      primarySlot.appendChild(box);
+    } else if (box.parentNode !== primarySlot) {
+      primarySlot.appendChild(box);
+    }
+
+    bindBox();
+    renderChat();
+    return box;
+  }
+
+  function mount() {
+    const slots = getPreferredSlots();
+    const primary = slots.tools || slots.fallback || null;
+    if (!primary) return false;
+
+    if (slots.tools) STATE.mountedIn = "factoryai.tools";
+    else STATE.mountedIn = "admin.fallback";
+
+    const mainBox = ensureMainBox(primary);
+    if (!mainBox) return false;
+
+    try { cleanupFactoryAIHost(); } catch {}
+    try { applyFactoryAITextFix(); } catch {}
+    try { syncVisibility(); } catch {}
+
+    log("OK", "Factory AI mount ✅ " + VERSION + " @ " + (STATE.mountedIn || "unknown"));
+    return true;
+  }
+
+  function mountLoop() {
+    if (mount()) return true;
+    setTimeout(() => { try { mount(); } catch {} }, 700);
+    setTimeout(() => { try { mount(); } catch {} }, 1600);
+    setTimeout(() => { try { mount(); } catch {} }, 2800);
+    return false;
+  }
+
+  function startSync() {
+    try {
+      if (STATE.syncTimer) clearInterval(STATE.syncTimer);
+    } catch {}
+
+    STATE.syncTimer = setInterval(() => {
+      try { mount(); } catch {}
+      try { syncVisibility(); } catch {}
+      try { applyFactoryAITextFix(); } catch {}
+    }, 900);
+
+    try {
+      document.addEventListener("click", () => {
+        setTimeout(() => { try { mount(); } catch {} }, 60);
+        setTimeout(() => { try { syncVisibility(); } catch {} }, 60);
+        setTimeout(() => { try { applyFactoryAITextFix(); } catch {} }, 60);
+
+        setTimeout(() => { try { mount(); } catch {} }, 250);
+        setTimeout(() => { try { syncVisibility(); } catch {} }, 250);
+        setTimeout(() => { try { applyFactoryAITextFix(); } catch {} }, 250);
+      }, { passive: true });
+    } catch {}
+  }
+
+  window.RCF_FACTORY_AI = {
+    __v34: true,
+    version: VERSION,
+    mount,
+    clearChat,
+    sendPrompt,
+    getHistory() {
+      return Array.isArray(STATE.history) ? STATE.history.slice() : [];
+    },
+    getLastEndpoint() {
+      return STATE.lastEndpoint || "";
+    },
+    getAttachments() {
+      return Array.isArray(STATE.attachments) ? STATE.attachments.slice() : [];
+    }
   };
-}
+
+  window.RCF_ADMIN_AI = Object.assign(window.RCF_ADMIN_AI || {}, {
+    __v34_bridge: true,
+    version: VERSION,
+    mount,
+    clearChat,
+    sendPrompt
+  });
+
+  try {
+    window.addEventListener("RCF:UI_READY", () => {
+      try { mountLoop(); } catch {}
+    }, { passive: true });
+  } catch {}
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", () => {
+      try { mountLoop(); } catch {}
+      try { startSync(); } catch {}
+    }, { once: true });
+  } else {
+    mountLoop();
+    startSync();
+  }
+
+  log("OK", "admin.admin_ai.js -> Factory AI ready ✅ " + VERSION);
+})();
