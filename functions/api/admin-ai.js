@@ -1,3 +1,18 @@
+/* FILE: /functions/api/admin-ai.js
+   RControl Factory — Factory AI API
+   V2.0 CHAT-FIRST BACKEND SAFE
+
+   - mantém CORS e POST atuais
+   - continua usando OPENAI_API_KEY
+   - mantém compatibilidade com actions antigas
+   - adiciona actions novas para Factory AI chat-first
+   - aceita histórico simples de conversa
+   - aceita payload contextual expandido
+   - mantém resposta aterrada no payload
+   - não autoriza invenção de estados da Factory
+   - preparado para futuro suporte a ZIP / PDF / imagem via metadados
+*/
+
 export async function onRequestOptions() {
   return new Response(null, {
     status: 204,
@@ -24,9 +39,12 @@ export async function onRequestPost(context) {
       }, 400);
     }
 
-    const action = String(body.action || "").trim();
+    const action = normalizeAction(body.action);
     const payload = body.payload ?? null;
     const prompt = String(body.prompt || "").trim();
+    const history = normalizeHistory(body.history);
+    const source = String(body.source || "factory-ai").trim();
+    const version = String(body.version || "").trim();
 
     const allowed = new Set([
       "factory_diagnosis",
@@ -36,7 +54,9 @@ export async function onRequestPost(context) {
       "suggest-improvement",
       "summarize-structure",
       "propose-patch",
-      "generate-code"
+      "generate-code",
+      "zip-readiness",
+      "chat"
     ]);
 
     if (!allowed.has(action)) {
@@ -47,7 +67,14 @@ export async function onRequestPost(context) {
       }, 400);
     }
 
-    const input = buildGroundedPrompt({ action, payload, prompt });
+    const input = buildGroundedPrompt({
+      action,
+      payload,
+      prompt,
+      history,
+      source,
+      version
+    });
 
     const upstream = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
@@ -56,7 +83,7 @@ export async function onRequestPost(context) {
         "Authorization": `Bearer ${env.OPENAI_API_KEY}`
       },
       body: JSON.stringify({
-        model: "gpt-4.1-mini",
+        model: env.OPENAI_MODEL || "gpt-4.1-mini",
         input
       })
     });
@@ -77,6 +104,8 @@ export async function onRequestPost(context) {
     return json({
       ok: true,
       action,
+      source,
+      version,
       analysis: text || "(sem texto retornado)",
       raw: data
     });
@@ -88,34 +117,86 @@ export async function onRequestPost(context) {
   }
 }
 
-function buildGroundedPrompt({ action, payload, prompt }) {
+function normalizeAction(value) {
+  const raw = String(value || "").trim().toLowerCase();
+
+  if (!raw) return "chat";
+  if (raw === "analyze-architecture") return "analyze-architecture";
+  if (raw === "analyze-logs") return "analyze-logs";
+  if (raw === "factory_diagnosis") return "factory_diagnosis";
+  if (raw === "review-module") return "review-module";
+  if (raw === "suggest-improvement") return "suggest-improvement";
+  if (raw === "summarize-structure") return "summarize-structure";
+  if (raw === "propose-patch") return "propose-patch";
+  if (raw === "generate-code") return "generate-code";
+  if (raw === "zip-readiness") return "zip-readiness";
+  if (raw === "chat") return "chat";
+
+  return raw;
+}
+
+function normalizeHistory(value) {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .slice(-12)
+    .map(item => {
+      const role = String(item?.role || "user").trim().toLowerCase();
+      const text = String(item?.text || item?.content || "").trim();
+
+      if (!text) return null;
+
+      return {
+        role: role === "assistant" ? "assistant" : "user",
+        text
+      };
+    })
+    .filter(Boolean);
+}
+
+function buildGroundedPrompt({ action, payload, prompt, history, source, version }) {
   const system = [
-    "Você é o Admin AI da RControl Factory.",
-    "Sua função é analisar a própria Factory com base EXCLUSIVAMENTE no payload recebido.",
-    "NÃO invente estados, módulos, falhas, versões ou inconsistências que não estejam explícitas no payload.",
-    "Se um dado estiver ausente, diga 'dado ausente' em vez de supor um valor.",
-    "Se algo parecer contraditório, descreva como 'possível inconsistência do snapshot', não como fato confirmado.",
-    "NÃO peça para recriar a Factory do zero.",
-    "NÃO sugira mexer em boot, MAE, Injector SAFE, Vault ou Bridge sem evidência clara no payload.",
-    "NÃO trate módulo como inativo se o payload só estiver incompleto.",
+    "Você é a Factory AI da RControl Factory.",
+    "Você opera como o chat oficial interno da Factory, usando OpenAI como motor.",
+    "Sua função é responder com base EXCLUSIVAMENTE no payload, no histórico enviado e no prompt atual.",
+    "NÃO invente estados, módulos, falhas, versões, arquivos, árvore, logs ou inconsistências que não estejam explícitos.",
+    "Se um dado estiver ausente, diga claramente: 'dado ausente'.",
+    "Se algo parecer contraditório, diga: 'possível inconsistência do snapshot'.",
+    "NÃO mande recriar a Factory do zero.",
+    "NÃO proponha reescrever toda a plataforma.",
     "Priorize patch mínimo, estabilidade, segurança e evolução em camadas.",
-    "Responda sempre em português.",
+    "Quando o usuário pedir código, entregue resposta prática e direta.",
+    "Quando o usuário pedir arquivo completo, entregue o conteúdo completo do arquivo alvo.",
+    "Quando não houver evidência suficiente para gerar código seguro, explique o que falta.",
+    "Responda sempre em português do Brasil.",
     "",
-    "Formato obrigatório da resposta:",
-    "1. Fatos confirmados pelo snapshot",
+    "Regras adicionais:",
+    "- Não afirme como fato algo que não esteja no payload.",
+    "- Não diga que logger/doctor/módulo está quebrado se o payload só estiver incompleto.",
+    "- Não trate ausência de dado como erro confirmado.",
+    "- Se houver histórico, considere continuidade da conversa.",
+    "- Se o usuário pedir análise estrutural, mantenha saída organizada.",
+    "- Se o usuário pedir conversa normal, responda como chat técnico natural.",
+    "",
+    "Se action=factory_diagnosis, analyze-architecture, analyze-logs, summarize-structure ou suggest-improvement, use este formato:",
+    "1. Fatos confirmados",
     "2. Dados ausentes ou mal consolidados",
-    "3. Inferências prováveis (deixe claro que são inferências)",
+    "3. Inferências prováveis",
     "4. Próximo passo mínimo recomendado",
     "5. Arquivos mais prováveis de ajuste",
     "",
     "Se action=propose-patch, acrescente:",
     "6. Patch mínimo sugerido",
     "",
-    "Se action=generate-code, acrescente:",
-    "6. Arquivo alvo",
-    "7. Código sugerido",
+    "Se action=generate-code, use este formato:",
+    "1. Objetivo",
+    "2. Arquivo alvo",
+    "3. Risco",
+    "4. Código sugerido",
     "",
-    "Nunca afirme como fato algo que não esteja no payload."
+    "Se action=zip-readiness, foque em como a Factory deve receber contexto via ZIP/PDF/imagem/arquivo sem quebrar a arquitetura atual.",
+    "",
+    "Se action=chat, responda como um chat técnico natural, mas ainda aterrando tudo no contexto enviado."
   ].join("\n");
 
   const task = buildTaskText(action);
@@ -123,13 +204,22 @@ function buildGroundedPrompt({ action, payload, prompt }) {
   return [
     system,
     "",
+    "Fonte:",
+    source || "factory-ai",
+    "",
+    "Versão do cliente:",
+    version || "(não informada)",
+    "",
     "Ação:",
     action,
     "",
     "Tarefa:",
     task,
     "",
-    "Prompt adicional do usuário:",
+    "Histórico recente:",
+    historyToText(history),
+    "",
+    "Prompt atual do usuário:",
     prompt || "(nenhum)",
     "",
     "Payload recebido:",
@@ -139,30 +229,58 @@ function buildGroundedPrompt({ action, payload, prompt }) {
 
 function buildTaskText(action) {
   if (action === "factory_diagnosis") {
-    return "Analise este snapshot/relatório da RControl Factory e aponte somente fatos confirmados, dados ausentes e próximo passo mínimo.";
+    return "Analise o snapshot/relatório da RControl Factory e aponte somente fatos confirmados, dados ausentes, inferências prováveis e próximo passo mínimo.";
   }
+
   if (action === "analyze-architecture") {
-    return "Analise a arquitetura atual da RControl Factory usando somente o snapshot enviado.";
+    return "Analise a arquitetura atual da RControl Factory usando somente o contexto enviado.";
   }
+
   if (action === "analyze-logs") {
     return "Analise logs recentes da RControl Factory em conjunto com o snapshot enviado.";
   }
+
   if (action === "review-module") {
     return "Revise o módulo informado usando somente os dados enviados.";
   }
+
   if (action === "suggest-improvement") {
     return "Sugira a próxima melhoria mais segura com base apenas no snapshot enviado.";
   }
+
   if (action === "summarize-structure") {
     return "Resuma a estrutura atual da RControl Factory com base apenas no snapshot enviado.";
   }
+
   if (action === "propose-patch") {
     return "Proponha um patch mínimo e seguro com base apenas no snapshot enviado.";
   }
+
   if (action === "generate-code") {
-    return "Gere código com patch mínimo com base apenas no snapshot enviado.";
+    return "Gere código com patch mínimo, sem reescrever a Factory do zero, usando apenas o contexto enviado.";
   }
-  return "Analise a RControl Factory com base apenas no snapshot enviado.";
+
+  if (action === "zip-readiness") {
+    return "Explique como a Factory deve estruturar entrada futura de ZIP, PDF, imagem, vídeo e arquivos sem quebrar o fluxo atual.";
+  }
+
+  if (action === "chat") {
+    return "Responda como o chat técnico oficial da Factory, de forma natural, objetiva e útil, mantendo tudo aterrado no contexto enviado.";
+  }
+
+  return "Analise a RControl Factory com base apenas no contexto enviado.";
+}
+
+function historyToText(history) {
+  if (!Array.isArray(history) || !history.length) {
+    return "(sem histórico)";
+  }
+
+  return history
+    .map((item, idx) => {
+      return `${idx + 1}. [${item.role}] ${item.text}`;
+    })
+    .join("\n");
 }
 
 function extractText(data) {
@@ -173,6 +291,7 @@ function extractText(data) {
   try {
     const chunks = [];
     const output = Array.isArray(data?.output) ? data.output : [];
+
     for (const item of output) {
       const content = Array.isArray(item?.content) ? item.content : [];
       for (const c of content) {
@@ -181,6 +300,7 @@ function extractText(data) {
         }
       }
     }
+
     return chunks.join("\n").trim();
   } catch {
     return "";
@@ -197,6 +317,7 @@ async function safeJson(request) {
 
 function stringify(value) {
   if (typeof value === "string") return value;
+
   try {
     return JSON.stringify(value, null, 2);
   } catch {
