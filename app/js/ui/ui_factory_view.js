@@ -1,9 +1,10 @@
 /* FILE: /app/js/ui/ui_factory_view.js
    RControl Factory — Factory View Module
-   V2.4 FACTORY-AI OFFICIAL HOST CLOSED
+   V2.5 FACTORY-AI OFFICIAL HOST LOCKED
 
    PATCH FECHADO:
    - Factory AI monta somente na view oficial
+   - ignora target externo errado (ex.: slot antigo no dashboard)
    - não cai mais em Admin
    - cria e preserva slots reais da Factory IA
    - remove blocos errados da Factory geral dentro da tela da IA
@@ -90,6 +91,19 @@
       }
 
       return null;
+    },
+
+    isOfficialFactoryTarget(el) {
+      try {
+        if (!el) return false;
+        if (el.id === "view-factory-ai") return true;
+        if (el.id === "rcfFactoryAIView") return true;
+        if (String(el.getAttribute("data-rcf-view") || "").toLowerCase() === "factory-ai") return true;
+        if (el.hasAttribute("data-rcf-factory-ai-view")) return true;
+        return false;
+      } catch {
+        return false;
+      }
     },
 
     ensureHost(viewEl) {
@@ -221,7 +235,11 @@
         '[data-rcf-factory-block="projects"]',
         '[data-rcf-ui-factory-fallback="gateways"]',
         ".rcfActivityList",
-        ".rcfUiTabs"
+        ".rcfUiTabs",
+        ".rcfUiProjectsList",
+        ".rcfUiProjectItem",
+        ".rcfUiCodePanel",
+        ".rcfUiListGroup"
       ];
 
       wrongSelectors.forEach((sel) => {
@@ -392,24 +410,22 @@
       try {
         if (targetSelector) {
           const el = this.d.$ ? this.d.$(targetSelector) : qs(targetSelector);
-          if (!el) return false;
+          if (el && this.isOfficialFactoryTarget(el)) {
+            const host = this.ensureHost(el);
+            if (!host) return false;
 
-          const alreadyMounted =
-            el.getAttribute("data-rcf-factory-mounted") === "1" &&
-            qs('[data-rcf-ui-factory-view="1"]', el);
+            host.innerHTML = this.buildView();
+            el.setAttribute("data-rcf-ui-factory-mounted", "1");
+            el.setAttribute("data-rcf-ui-factory-ai-ready", "1");
 
-          if (!alreadyMounted) {
-            el.innerHTML = this.buildView();
-            el.setAttribute("data-rcf-factory-mounted", "1");
+            this.ensureFactoryAISlots(host);
+            this.cleanupWrongContent(host);
+            this.ensureVisibleFallbacks();
+            this.refreshChildren();
+
+            this.__mounted = true;
+            return true;
           }
-
-          this.ensureFactoryAISlots(el);
-          this.cleanupWrongContent(el);
-          this.ensureVisibleFallbacks();
-          this.refreshChildren();
-
-          this.__mounted = true;
-          return true;
         }
       } catch {}
 
