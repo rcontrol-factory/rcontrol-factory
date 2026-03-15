@@ -1,9 +1,13 @@
 /* FILE: /app/js/ui/ui_bootstrap.js
    RControl Factory — UI Bootstrap
+   V2.1 FACTORY-AI SCRIPT LOADER + OFFICIAL VIEW MOUNT
    - Orquestra módulos visuais leves
    - Inicializa dependências da nova UI
    - Monta em ordem segura
    - Sem quebrar fluxo antigo
+   - CARREGA ./js/admin.admin_ai.js quando necessário
+   - Factory View monta na view oficial, não no dashboard
+   - Remount curto e seguro para encaixar Factory IA
 */
 (() => {
   "use strict";
@@ -192,26 +196,6 @@
     };
   }
 
-  function ensureFactorySlot() {
-    try {
-      const dashboard = $("#view-dashboard");
-      if (!dashboard) return null;
-
-      let slot = $("#rcfFactoryUiRoot", dashboard);
-      if (slot) return slot;
-
-      slot = document.createElement("div");
-      slot.id = "rcfFactoryUiRoot";
-      slot.setAttribute("data-rcf-ui-slot", "factory-view");
-      slot.style.marginTop = "14px";
-
-      dashboard.appendChild(slot);
-      return slot;
-    } catch {
-      return null;
-    }
-  }
-
   function ensureHeaderRoot() {
     try {
       let root = $("#rcfHeader");
@@ -231,16 +215,76 @@
     }
   }
 
+  function loadScriptOnce(src, marker) {
+    return new Promise(resolve => {
+      try {
+        const hit = document.querySelector(`script[${marker}="1"]`);
+        if (hit) return resolve(true);
+
+        const sc = document.createElement("script");
+        sc.src = src;
+        sc.defer = true;
+        sc.async = false;
+        sc.setAttribute(marker, "1");
+        sc.onload = () => resolve(true);
+        sc.onerror = () => resolve(false);
+
+        (document.head || document.documentElement).appendChild(sc);
+        setTimeout(() => resolve(false), 1800);
+      } catch {
+        resolve(false);
+      }
+    });
+  }
+
+  function getFactoryAIView() {
+    return (
+      $("#view-factory-ai") ||
+      $('[data-rcf-view="factory-ai"]') ||
+      $("#rcfFactoryAIView") ||
+      $("[data-rcf-factory-ai-view]")
+    );
+  }
+
   const API = {
     __deps: null,
     __inited: false,
     __mountCount: 0,
     __remountBusy__: false,
     __bootstrappedOnce__: false,
+    __factoryAIScriptPromise__: null,
 
     getDeps() {
       if (!this.__deps) this.__deps = buildDeps();
       return this.__deps;
+    },
+
+    async ensureFactoryAIScript() {
+      try {
+        if (
+          (window.RCF_FACTORY_AI && typeof window.RCF_FACTORY_AI.mount === "function") ||
+          (window.RCF_ADMIN_AI && typeof window.RCF_ADMIN_AI.mount === "function")
+        ) {
+          return true;
+        }
+
+        if (this.__factoryAIScriptPromise__) {
+          return await this.__factoryAIScriptPromise__;
+        }
+
+        this.__factoryAIScriptPromise__ = loadScriptOnce("./js/admin.admin_ai.js", "data-rcf-factory-ai-script")
+          .then(ok => {
+            try {
+              this.getDeps().Logger.write("factory_ai script:", ok ? "load requested ✅" : "load failed ❌");
+            } catch {}
+            return ok;
+          })
+          .catch(() => false);
+
+        return await this.__factoryAIScriptPromise__;
+      } catch {
+        return false;
+      }
     },
 
     initModules() {
@@ -286,14 +330,41 @@
 
     mountFactoryView() {
       try {
-        const slot = ensureFactorySlot();
-        if (!slot) return false;
+        const view = getFactoryAIView();
 
-        if (window.RCF_UI_FACTORY_VIEW && typeof window.RCF_UI_FACTORY_VIEW.render === "function") {
-          return !!window.RCF_UI_FACTORY_VIEW.render("#rcfFactoryUiRoot");
+        if (window.RCF_UI_FACTORY_VIEW && typeof window.RCF_UI_FACTORY_VIEW.mount === "function") {
+          return !!window.RCF_UI_FACTORY_VIEW.mount(Object.assign({}, this.getDeps(), {
+            root: view || null,
+            viewEl: view || null
+          }));
+        }
+
+        if (window.RCF_UI_FACTORY_VIEW && typeof window.RCF_UI_FACTORY_VIEW.refresh === "function") {
+          return !!window.RCF_UI_FACTORY_VIEW.refresh(Object.assign({}, this.getDeps(), {
+            root: view || null,
+            viewEl: view || null
+          }));
         }
 
         return false;
+      } catch {
+        return false;
+      }
+    },
+
+    mountFactoryAIEngine() {
+      try {
+        let ok = false;
+
+        if (window.RCF_FACTORY_AI && typeof window.RCF_FACTORY_AI.mount === "function") {
+          ok = window.RCF_FACTORY_AI.mount() !== false || ok;
+        }
+
+        if (!ok && window.RCF_ADMIN_AI && typeof window.RCF_ADMIN_AI.mount === "function") {
+          ok = window.RCF_ADMIN_AI.mount() !== false || ok;
+        }
+
+        return ok;
       } catch {
         return false;
       }
@@ -306,10 +377,14 @@
       try { callSafe(window.RCF_UI_RUNTIME, "renderFilesList"); } catch {}
       try { callSafe(window.RCF_UI_RUNTIME, "syncFabStatusText"); } catch {}
       try { callSafe(window.RCF_UI_VIEWS, "mount"); } catch {}
+      try { callSafe(window.RCF_UI_FACTORY_VIEW, "refresh", Object.assign({}, this.getDeps(), {
+        root: getFactoryAIView(),
+        viewEl: getFactoryAIView()
+      })); } catch {}
       return true;
     },
 
-    mount() {
+    async mount() {
       try {
         this.initModules();
 
@@ -317,7 +392,26 @@
         this.mountHeader();
         this.mountLegacyViews();
         this.mountFactoryView();
+
+        await this.ensureFactoryAIScript();
+        this.mountFactoryAIEngine();
+
         this.refreshUi();
+
+        setTimeout(() => {
+          try { this.mountFactoryView(); } catch {}
+          try { this.mountFactoryAIEngine(); } catch {}
+          try { this.refreshUi(); } catch {}
+        }, 120);
+
+        setTimeout(() => {
+          try { this.mountFactoryView(); } catch {}
+          try { this.mountFactoryAIEngine(); } catch {}
+        }, 420);
+
+        setTimeout(() => {
+          try { this.mountFactoryAIEngine(); } catch {}
+        }, 900);
 
         this.__mountCount++;
         this.__bootstrappedOnce__ = true;
@@ -343,7 +437,8 @@
           setTimeout(run, 320);
         }
 
-        setTimeout(() => { this.__remountBusy__ = false; }, 520);
+        setTimeout(run, 760);
+        setTimeout(() => { this.__remountBusy__ = false; }, 980);
       } catch {
         this.__remountBusy__ = false;
       }
