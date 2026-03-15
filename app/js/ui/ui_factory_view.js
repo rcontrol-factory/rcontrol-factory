@@ -1,16 +1,17 @@
 /* FILE: /app/js/ui/ui_factory_view.js
    RControl Factory — Factory View Module
-   V2.5 FACTORY-AI OFFICIAL HOST LOCKED
+   V2.6 FACTORY-AI LEAN OFFICIAL HOST
 
-   PATCH FECHADO:
+   OBJETIVO:
    - Factory AI monta somente na view oficial
-   - ignora target externo errado (ex.: slot antigo no dashboard)
-   - não cai mais em Admin
-   - cria e preserva slots reais da Factory IA
-   - remove blocos errados da Factory geral dentro da tela da IA
-   - evita duplicação visual e botões mortos
-   - chama o módulo de IA com retries curtos e seguros
-   - mostra fallback visível nos slots se a IA ainda não entrar
+   - host visual enxuto, sem duplicação
+   - sem fallback visual pesado duplicando o chat
+   - sem bloco extra de contexto
+   - preserva slots oficiais:
+     - factoryai.actions
+     - factoryai.tools
+   - remove restos errados da Factory geral dentro da tela da IA
+   - chama o módulo da IA com retries curtos e seguros
    - compatível com app.js V8.x
 */
 
@@ -87,6 +88,7 @@
 
         const id = String(el.id || el.getAttribute("data-rcf-view") || "").toLowerCase();
         if (!/factory-ai/.test(id) && !/view-factory-ai/.test(id)) continue;
+
         return el;
       }
 
@@ -125,7 +127,7 @@
       return `
         <section class="rcfUiFactoryHero" data-rcf-factory-block="hero">
           <div class="rcfUiFactoryHeroInner">
-            <div class="rcfUiFactoryHeroEyebrow">Factory IA</div>
+            <div class="rcfUiFactoryHeroEyebrow">Factory AI</div>
             <h2 class="rcfUiFactoryHeroTitle">Núcleo inteligente da Factory</h2>
             <p class="hint">
               Espaço oficial da IA da Factory para leitura de prompt, análise estrutural,
@@ -139,10 +141,6 @@
     buildActionsSlot() {
       return `
         <section class="rcfUiFactoryBlock" data-rcf-factory-block="factory-ai-actions">
-          <div class="rcfUiFactoryBlockHead">
-            <h2>Factory IA</h2>
-            <p class="hint">Estado, contexto e entrada principal</p>
-          </div>
           <div id="rcfFactoryAISlotActions" data-rcf-slot="factoryai.actions"></div>
         </section>
       `;
@@ -151,26 +149,7 @@
     buildToolsSlot() {
       return `
         <section class="rcfUiFactoryBlock" data-rcf-factory-block="factory-ai-tools">
-          <div class="rcfUiFactoryBlockHead">
-            <h2>Chat & Tools</h2>
-            <p class="hint">Chat inteligente, sugestões e análise estrutural</p>
-          </div>
           <div id="rcfFactoryAISlotTools" data-rcf-slot="factoryai.tools"></div>
-        </section>
-      `;
-    },
-
-    buildContextBlock() {
-      return `
-        <section class="rcfUiFactoryBlock" data-rcf-factory-block="factory-ai-context">
-          <div class="rcfUiFactoryBlockHead">
-            <h2>Contexto</h2>
-            <p class="hint">Base oficial para evolução futura da IA da Factory</p>
-          </div>
-          <div class="hint">
-            Esta tela é reservada para a Factory IA. Aqui entram o chat, ações inteligentes,
-            leitura de contexto, análise estrutural e evolução guiada do sistema.
-          </div>
         </section>
       `;
     },
@@ -182,7 +161,6 @@
             ${this.buildHero()}
             ${this.buildActionsSlot()}
             ${this.buildToolsSlot()}
-            ${this.buildContextBlock()}
           </div>
         </section>
       `;
@@ -233,7 +211,10 @@
         '[data-rcf-factory-block="apps-widgets"]',
         '[data-rcf-factory-block="gateways"]',
         '[data-rcf-factory-block="projects"]',
+        '[data-rcf-factory-block="factory-ai-context"]',
         '[data-rcf-ui-factory-fallback="gateways"]',
+        '[data-rcf-factory-ai-fallback="actions"]',
+        '[data-rcf-factory-ai-fallback="tools"]',
         ".rcfActivityList",
         ".rcfUiTabs",
         ".rcfUiProjectsList",
@@ -251,55 +232,20 @@
       return true;
     },
 
-    buildActionsFallback() {
-      return `
-        <div data-rcf-factory-ai-fallback="actions" class="card" style="margin-top:10px">
-          <div style="font-weight:800;margin-bottom:6px">Ações rápidas</div>
-          <div class="hint">A Factory IA ainda está preparando o módulo principal.</div>
-        </div>
-      `;
-    },
-
-    buildToolsFallback() {
-      return `
-        <div data-rcf-factory-ai-fallback="tools" class="card" style="margin-top:10px">
-          <div style="font-weight:800;margin-bottom:6px">Chat em preparação</div>
-          <div class="hint">O host oficial foi montado. Falta encaixar o módulo vivo da Factory IA.</div>
-        </div>
-      `;
-    },
-
-    ensureVisibleFallbacks() {
-      const actions = qs("#rcfFactoryAISlotActions");
-      const tools = qs("#rcfFactoryAISlotTools");
-
-      if (actions && !actions.firstElementChild) {
-        actions.innerHTML = this.buildActionsFallback();
-      }
-
-      if (tools && !tools.firstElementChild) {
-        tools.innerHTML = this.buildToolsFallback();
-      }
-
-      return true;
-    },
-
-    clearFallbacksIfRealContentMounted() {
+    clearSlotNoise() {
       const actions = qs("#rcfFactoryAISlotActions");
       const tools = qs("#rcfFactoryAISlotTools");
 
       if (actions) {
-        const fallback = qs('[data-rcf-factory-ai-fallback="actions"]', actions);
-        if (fallback && actions.children.length > 1) {
-          try { fallback.remove(); } catch {}
-        }
+        qsa('[data-rcf-factory-ai-fallback="actions"]', actions).forEach((el) => {
+          try { el.remove(); } catch {}
+        });
       }
 
       if (tools) {
-        const fallback = qs('[data-rcf-factory-ai-fallback="tools"]', tools);
-        if (fallback && tools.children.length > 1) {
-          try { fallback.remove(); } catch {}
-        }
+        qsa('[data-rcf-factory-ai-fallback="tools"]', tools).forEach((el) => {
+          try { el.remove(); } catch {}
+        });
       }
 
       return true;
@@ -310,12 +256,12 @@
         const tools = qs("#rcfFactoryAISlotTools");
         const actions = qs("#rcfFactoryAISlotActions");
         const mainBox = qs("#rcfFactoryAIBox");
-        const quickBox = qs("#rcfFactoryAIQuickActions");
+        const miniBox = qs("#rcfFactoryAIStateMini");
 
         if (mainBox) return true;
-        if (quickBox) return true;
+        if (miniBox) return true;
         if (tools && tools.querySelector("#rcfFactoryAIBox")) return true;
-        if (actions && actions.querySelector("#rcfFactoryAIQuickActions")) return true;
+        if (actions && actions.querySelector("#rcfFactoryAIStateMini")) return true;
       } catch {}
 
       return false;
@@ -346,7 +292,7 @@
           }
         } catch {}
 
-        try { this.clearFallbacksIfRealContentMounted(); } catch {}
+        try { this.clearSlotNoise(); } catch {}
         return ok;
       };
 
@@ -356,7 +302,7 @@
         const id = setTimeout(() => {
           try {
             tryMount();
-            if (!this.hasRealIAMount()) this.ensureVisibleFallbacks();
+            this.clearSlotNoise();
           } catch {}
         }, ms);
         this.__retryTimers.push(id);
@@ -392,7 +338,7 @@
 
         this.ensureFactoryAISlots(host);
         this.cleanupWrongContent(host);
-        this.ensureVisibleFallbacks();
+        this.clearSlotNoise();
         this.refreshChildren();
 
         this.__mounted = true;
@@ -420,7 +366,7 @@
 
             this.ensureFactoryAISlots(host);
             this.cleanupWrongContent(host);
-            this.ensureVisibleFallbacks();
+            this.clearSlotNoise();
             this.refreshChildren();
 
             this.__mounted = true;
@@ -451,7 +397,7 @@
 
         this.ensureFactoryAISlots(host);
         this.cleanupWrongContent(host);
-        this.ensureVisibleFallbacks();
+        this.clearSlotNoise();
         this.refreshChildren();
 
         return true;
