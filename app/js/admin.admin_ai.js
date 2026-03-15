@@ -1,34 +1,38 @@
 /* FILE: /app/js/admin.admin_ai.js
-   RControl Factory — Admin AI (Fase IA-1)
-   v1.6 ADMIN-FIXED + CHAT-LITE + SNAPSHOT-PREVIEW
+   RControl Factory — Factory AI
+   v2.0 FACTORY-IA CORE + CHAT + SNAPSHOT + SAFE FALLBACK
 
-   - fixo no Admin
+   - evolui Admin AI antigo para Factory AI
+   - tenta montar na view/slot oficial da Factory AI
+   - fallback seguro para Admin se a view nova ainda não estiver pronta
    - histórico visual tipo chat-lite
    - múltiplas perguntas sem reload
    - ações rápidas + doctor + patch + gerar código
-   - usa /api/admin-ai
+   - tenta /api/factory-ai com fallback para /api/admin-ai
    - consome snapshot estrutural refinado
    - mostra preview do snapshot enviado
    - não executa patch automático
+   - pronto para crescer depois para ZIP/contexto maior
 */
-
 (() => {
   "use strict";
 
-  if (window.RCF_ADMIN_AI && window.RCF_ADMIN_AI.__v16) return;
+  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v20) return;
 
-  const VERSION = "v1.6";
-  const BOX_ID = "rcfAdminAIBox";
-  const CHAT_ID = "rcfAdminAIChat";
+  const VERSION = "v2.0";
+  const BOX_ID = "rcfFactoryAIBox";
+  const CHAT_ID = "rcfFactoryAIChat";
 
   const STATE = {
     busy: false,
-    history: []
+    history: [],
+    mountedIn: "",
+    lastEndpoint: ""
   };
 
   function log(level, msg) {
-    try { window.RCF_LOGGER?.push?.(level, "[ADMIN_AI] " + msg); } catch (_) {}
-    try { console.log("[ADMIN_AI]", level, msg); } catch (_) {}
+    try { window.RCF_LOGGER?.push?.(level, "[FACTORY_AI] " + msg); } catch (_) {}
+    try { console.log("[FACTORY_AI]", level, msg); } catch (_) {}
   }
 
   function esc(s) {
@@ -42,11 +46,16 @@
     catch (_) { return String(obj || ""); }
   }
 
-  function isAdminViewVisible() {
+  function normalizeViewId(id) {
+    return String(id || "").trim().toLowerCase();
+  }
+
+  function isFactoryAIViewVisible() {
     try {
       const activeView =
         document.querySelector(".view.active") ||
-        document.querySelector("[data-rcf-view].active");
+        document.querySelector("[data-rcf-view].active") ||
+        document.querySelector('[data-rcf-visible="1"]');
 
       if (!activeView) return false;
 
@@ -55,7 +64,29 @@
         activeView.getAttribute("data-rcf-view") ||
         "";
 
-      return /admin/i.test(id);
+      const norm = normalizeViewId(id);
+      if (/factory-ai/.test(norm)) return true;
+      if (/view-factory-ai/.test(norm)) return true;
+    } catch (_) {}
+
+    return false;
+  }
+
+  function isAdminViewVisible() {
+    try {
+      const activeView =
+        document.querySelector(".view.active") ||
+        document.querySelector("[data-rcf-view].active") ||
+        document.querySelector('[data-rcf-visible="1"]');
+
+      if (!activeView) return false;
+
+      const id =
+        activeView.id ||
+        activeView.getAttribute("data-rcf-view") ||
+        "";
+
+      return /admin/i.test(String(id || ""));
     } catch (_) {}
 
     return false;
@@ -65,24 +96,62 @@
     try {
       const ui = window.RCF_UI;
       if (ui && typeof ui.getSlot === "function") {
-        const slot = ui.getSlot("admin.integrations");
-        if (slot) return slot;
+        const officialFactorySlot =
+          ui.getSlot("factoryai.tools") ||
+          ui.getSlot("factoryai.actions");
+
+        if (officialFactorySlot) {
+          STATE.mountedIn = "factoryai.slot";
+          return officialFactorySlot;
+        }
+
+        const adminFallbackSlot =
+          ui.getSlot("admin.integrations") ||
+          ui.getSlot("admin.top");
+
+        if (adminFallbackSlot) {
+          STATE.mountedIn = "admin.slot";
+          return adminFallbackSlot;
+        }
       }
     } catch (_) {}
 
-    return (
+    const directFactory =
+      document.getElementById("rcfFactoryAISlotTools") ||
+      document.getElementById("rcfFactoryAISlotActions") ||
+      document.querySelector('[data-rcf-slot="factoryai.tools"]') ||
+      document.querySelector('[data-rcf-slot="factoryai.actions"]') ||
+      document.querySelector("#view-factory-ai");
+
+    if (directFactory) {
+      STATE.mountedIn = "factoryai.direct";
+      return directFactory;
+    }
+
+    const adminFallback =
       document.getElementById("rcfAdminSlotIntegrations") ||
       document.querySelector('[data-rcf-slot="admin.integrations"]') ||
       document.querySelector("#view-admin .integrations") ||
       document.querySelector("#view-admin") ||
-      document.querySelector('[data-rcf-view="admin"]')
-    );
+      document.querySelector('[data-rcf-view="admin"]');
+
+    if (adminFallback) {
+      STATE.mountedIn = "admin.direct";
+      return adminFallback;
+    }
+
+    STATE.mountedIn = "";
+    return null;
   }
 
   function syncVisibility() {
     const box = document.getElementById(BOX_ID);
     if (!box) return;
-    box.style.display = isAdminViewVisible() ? "" : "none";
+
+    const showFactory = isFactoryAIViewVisible();
+    const showAdminFallback = !showFactory && isAdminViewVisible() && /^admin/.test(STATE.mountedIn || "");
+
+    box.style.display = (showFactory || showAdminFallback) ? "" : "none";
   }
 
   function collectLogs(limit = 30) {
@@ -116,6 +185,12 @@
 
   function getSnapshotRaw() {
     try {
+      if (window.RCF_FACTORY_IA && typeof window.RCF_FACTORY_IA.getContext === "function") {
+        return { factoryIA: window.RCF_FACTORY_IA.getContext() };
+      }
+    } catch (_) {}
+
+    try {
       if (window.RCF_CONTEXT && typeof window.RCF_CONTEXT.getSnapshot === "function") {
         return window.RCF_CONTEXT.getSnapshot();
       }
@@ -123,6 +198,7 @@
         return window.RCF_CONTEXT.getContext();
       }
     } catch (_) {}
+
     return null;
   }
 
@@ -133,6 +209,7 @@
     const doctor = raw.doctor || {};
     const environment = raw.environment || {};
     const tree = raw.tree || {};
+    const state = window.RCF?.state || {};
 
     return {
       factory: {
@@ -142,7 +219,10 @@
         loggerReady: !!factory.loggerReady,
         doctorReady: !!factory.doctorReady,
         environment: factory.environment || "unknown",
-        lastUpdate: factory.lastUpdate || null
+        lastUpdate: factory.lastUpdate || null,
+        mountedAs: "Factory AI",
+        activeView: state?.active?.view || "",
+        activeAppSlug: state?.active?.appSlug || ""
       },
       doctor: {
         version: doctor.version || "unknown",
@@ -157,6 +237,7 @@
           vault: !!modules.vault,
           bridge: !!modules.bridge,
           adminAI: !!modules.adminAI,
+          factoryAI: true,
           factoryState: !!modules.factoryState,
           moduleRegistry: !!modules.moduleRegistry,
           contextEngine: !!modules.contextEngine
@@ -171,32 +252,32 @@
         hasLogger: !!factory.flags?.hasLogger,
         hasDoctor: !!factory.flags?.hasDoctor,
         hasGitHub: !!factory.flags?.hasGitHub,
-        hasAdminAI: !!factory.flags?.hasAdminAI,
+        hasFactoryAI: true,
         hasFactoryState: !!factory.flags?.hasFactoryState,
         hasModuleRegistry: !!factory.flags?.hasModuleRegistry,
         hasContextEngine: !!factory.flags?.hasContextEngine,
         hasFactoryTree: !!factory.flags?.hasFactoryTree
       },
       environment: {
-        platform: environment.platform || "",
-        language: environment.language || "",
+        platform: environment.platform || navigator.platform || "",
+        language: environment.language || navigator.language || "",
         ts: environment.ts || new Date().toISOString()
       }
     };
   }
 
   function setStatus(txt) {
-    const el = document.getElementById("rcfAdminAIStatus");
+    const el = document.getElementById("rcfFactoryAIStatus");
     if (el) el.textContent = String(txt || "");
   }
 
   function setResult(txt) {
-    const el = document.getElementById("rcfAdminAIResult");
+    const el = document.getElementById("rcfFactoryAIResult");
     if (el) el.textContent = String(txt || "");
   }
 
   function setSnapshotPreview(obj) {
-    const el = document.getElementById("rcfAdminAISnapshot");
+    const el = document.getElementById("rcfFactoryAISnapshot");
     if (!el) return;
     el.textContent = pretty(obj || {});
   }
@@ -205,19 +286,19 @@
     STATE.busy = !!busy;
 
     const ids = [
-      "rcfAdminAIAnalyzeFactory",
-      "rcfAdminAIAnalyzeLogs",
-      "rcfAdminAIAnalyzeDoctor",
-      "rcfAdminAISuggest",
-      "rcfAdminAIProposePatch",
-      "rcfAdminAIGenerateCode",
-      "rcfAdminAISend",
-      "rcfAdminAIClear"
+      "rcfFactoryAIAnalyzeFactory",
+      "rcfFactoryAIAnalyzeLogs",
+      "rcfFactoryAIAnalyzeDoctor",
+      "rcfFactoryAISuggest",
+      "rcfFactoryAIProposePatch",
+      "rcfFactoryAIGenerateCode",
+      "rcfFactoryAISend",
+      "rcfFactoryAIClear"
     ];
 
     ids.forEach(id => {
       const el = document.getElementById(id);
-      if (el) el.disabled = !!busy && id !== "rcfAdminAIClear";
+      if (el) el.disabled = !!busy && id !== "rcfFactoryAIClear";
     });
   }
 
@@ -243,7 +324,7 @@
       const isUser = item.role === "user";
       const bg = isUser ? "rgba(88,166,255,.12)" : "rgba(255,255,255,.05)";
       const border = isUser ? "rgba(88,166,255,.28)" : "rgba(255,255,255,.10)";
-      const tag = isUser ? "Você" : "Admin AI";
+      const tag = isUser ? "Você" : "Factory IA";
 
       return `
         <div style="
@@ -272,7 +353,7 @@
   }
 
   function getMode() {
-    const el = document.getElementById("rcfAdminAIMode");
+    const el = document.getElementById("rcfFactoryAIMode");
     return String(el?.value || "summarize-structure");
   }
 
@@ -298,12 +379,25 @@
     if (mode === "generate-code") {
       return "Gere código com patch mínimo para a RControl Factory, sem reescrever a plataforma do zero.";
     }
+    if (mode === "zip-readiness") {
+      return "Explique como a Factory deve estruturar leitura de ZIP de forma segura e modular sem quebrar a arquitetura atual.";
+    }
 
     return "Resuma a estrutura atual da RControl Factory e explique o próximo passo mais seguro.";
   }
 
-  async function callAdminAI(action, payload, prompt) {
-    const btnSend = document.getElementById("rcfAdminAISend");
+  async function postJSON(url, body) {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json().catch(() => ({}));
+    return { res, data };
+  }
+
+  async function callFactoryAI(action, payload, prompt) {
+    const btnSend = document.getElementById("rcfFactoryAISend");
 
     if (STATE.busy) return;
 
@@ -313,40 +407,59 @@
     setStatus("carregando...");
     setResult("");
 
-    try {
-      const res = await fetch("/api/admin-ai", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action,
-          payload,
-          prompt
-        })
-      });
+    const body = {
+      action,
+      payload,
+      prompt,
+      source: "factory-ai",
+      version: VERSION
+    };
 
-      const data = await res.json().catch(() => ({}));
+    try {
+      let result = null;
+      let endpoint = "";
+
+      try {
+        result = await postJSON("/api/factory-ai", body);
+        endpoint = "/api/factory-ai";
+      } catch (_) {
+        result = null;
+      }
+
+      if (!result || !result.res || (!result.res.ok && !result.data?.ok)) {
+        result = await postJSON("/api/admin-ai", body);
+        endpoint = "/api/admin-ai";
+      }
+
+      STATE.lastEndpoint = endpoint;
+
+      const { res, data } = result;
 
       if (!res.ok || !data.ok) {
-        const msg = JSON.stringify(data, null, 2) || "Erro ao chamar /api/admin-ai";
+        const msg = pretty(data || { error: "Erro ao chamar endpoint IA" });
         setStatus("erro");
         setResult(msg);
         pushChat("assistant", msg);
-        log("ERR", "falha em /api/admin-ai");
+        log("ERR", "falha IA endpoint=" + endpoint);
         return;
       }
 
-      const text = data.analysis || JSON.stringify(data, null, 2);
+      const text =
+        data.analysis ||
+        data.answer ||
+        data.result ||
+        pretty(data);
 
       setStatus("concluído");
       setResult(text);
       pushChat("assistant", text);
-      log("OK", "resposta recebida action=" + action);
+      log("OK", "resposta recebida action=" + action + " endpoint=" + endpoint);
     } catch (e) {
       const msg = String(e?.message || e || "Erro de rede");
       setStatus("erro");
       setResult(msg);
       pushChat("assistant", msg);
-      log("ERR", "erro de rede /api/admin-ai");
+      log("ERR", "erro de rede IA");
     } finally {
       setButtonsBusy(false);
       if (btnSend) btnSend.disabled = false;
@@ -379,6 +492,17 @@
       };
     }
 
+    if (mode === "zip-readiness") {
+      return {
+        snapshot,
+        doctor: collectDoctorReport(),
+        capability: {
+          wantsZipFlow: true,
+          currentPhase: "factory-ia-structure"
+        }
+      };
+    }
+
     return { snapshot };
   }
 
@@ -387,19 +511,19 @@
     const payload = buildPayload(mode);
 
     pushChat("user", prompt);
-    callAdminAI(mode, payload, prompt);
+    callFactoryAI(mode, payload, prompt);
   }
 
   function bindBox() {
-    const btnFactory = document.getElementById("rcfAdminAIAnalyzeFactory");
-    const btnLogs = document.getElementById("rcfAdminAIAnalyzeLogs");
-    const btnDoctor = document.getElementById("rcfAdminAIAnalyzeDoctor");
-    const btnSuggest = document.getElementById("rcfAdminAISuggest");
-    const btnPatch = document.getElementById("rcfAdminAIProposePatch");
-    const btnCode = document.getElementById("rcfAdminAIGenerateCode");
-    const btnSend = document.getElementById("rcfAdminAISend");
-    const btnClear = document.getElementById("rcfAdminAIClear");
-    const promptEl = document.getElementById("rcfAdminAIPrompt");
+    const btnFactory = document.getElementById("rcfFactoryAIAnalyzeFactory");
+    const btnLogs = document.getElementById("rcfFactoryAIAnalyzeLogs");
+    const btnDoctor = document.getElementById("rcfFactoryAIAnalyzeDoctor");
+    const btnSuggest = document.getElementById("rcfFactoryAISuggest");
+    const btnPatch = document.getElementById("rcfFactoryAIProposePatch");
+    const btnCode = document.getElementById("rcfFactoryAIGenerateCode");
+    const btnSend = document.getElementById("rcfFactoryAISend");
+    const btnClear = document.getElementById("rcfFactoryAIClear");
+    const promptEl = document.getElementById("rcfFactoryAIPrompt");
 
     if (btnFactory && !btnFactory.__bound) {
       btnFactory.__bound = true;
@@ -467,26 +591,14 @@
     }
   }
 
-  function mount() {
-    if (document.getElementById(BOX_ID)) {
-      syncVisibility();
-      return true;
-    }
-
-    const slot = getSlot();
-    if (!slot) return false;
-
-    const box = document.createElement("div");
-    box.id = BOX_ID;
-    box.className = "card";
-    box.style.marginTop = "12px";
-    box.innerHTML = `
-      <h2 style="margin-top:0">Admin AI</h2>
-      <div class="hint">IA administrativa da Factory. Analisa, sugere, propõe patch e pode gerar código. Não executa nada automaticamente.</div>
+  function buildBoxHtml() {
+    return `
+      <h2 style="margin-top:0">Factory IA</h2>
+      <div class="hint">IA oficial da Factory. Analisa, sugere, propõe patch e pode gerar código. Não executa nada automaticamente.</div>
 
       <div class="row" style="margin-top:10px;gap:10px;flex-wrap:wrap;align-items:center">
-        <label class="hint" for="rcfAdminAIMode">Modo</label>
-        <select id="rcfAdminAIMode" style="min-width:220px">
+        <label class="hint" for="rcfFactoryAIMode">Modo</label>
+        <select id="rcfFactoryAIMode" style="min-width:220px">
           <option value="summarize-structure">Estrutura</option>
           <option value="analyze-architecture">Arquitetura</option>
           <option value="analyze-logs">Logs</option>
@@ -494,17 +606,18 @@
           <option value="suggest-improvement">Melhoria</option>
           <option value="propose-patch">Propor patch</option>
           <option value="generate-code">Gerar código</option>
+          <option value="zip-readiness">Preparar ZIP</option>
         </select>
-        <button class="btn ghost" id="rcfAdminAIClear" type="button">Limpar conversa</button>
+        <button class="btn ghost" id="rcfFactoryAIClear" type="button">Limpar conversa</button>
       </div>
 
       <div class="row" style="margin-top:10px;gap:10px;flex-wrap:wrap">
-        <button class="btn ghost" id="rcfAdminAIAnalyzeFactory" type="button">Analisar Factory</button>
-        <button class="btn ghost" id="rcfAdminAIAnalyzeLogs" type="button">Analisar Logs</button>
-        <button class="btn ghost" id="rcfAdminAIAnalyzeDoctor" type="button">Analisar Doctor</button>
-        <button class="btn ghost" id="rcfAdminAISuggest" type="button">Sugerir melhoria</button>
-        <button class="btn ghost" id="rcfAdminAIProposePatch" type="button">Propor Patch</button>
-        <button class="btn ghost" id="rcfAdminAIGenerateCode" type="button">Gerar Código</button>
+        <button class="btn ghost" id="rcfFactoryAIAnalyzeFactory" type="button">Analisar Factory</button>
+        <button class="btn ghost" id="rcfFactoryAIAnalyzeLogs" type="button">Analisar Logs</button>
+        <button class="btn ghost" id="rcfFactoryAIAnalyzeDoctor" type="button">Analisar Doctor</button>
+        <button class="btn ghost" id="rcfFactoryAISuggest" type="button">Sugerir melhoria</button>
+        <button class="btn ghost" id="rcfFactoryAIProposePatch" type="button">Propor Patch</button>
+        <button class="btn ghost" id="rcfFactoryAIGenerateCode" type="button">Gerar Código</button>
       </div>
 
       <div id="${CHAT_ID}" style="
@@ -519,30 +632,48 @@
 
       <div style="margin-top:12px">
         <label class="hint">Snapshot Preview enviado</label>
-        <pre class="mono small" id="rcfAdminAISnapshot" style="margin-top:6px;max-height:18vh;overflow:auto">{"status":"aguardando"}</pre>
+        <pre class="mono small" id="rcfFactoryAISnapshot" style="margin-top:6px;max-height:18vh;overflow:auto">{"status":"aguardando"}</pre>
       </div>
 
       <div style="margin-top:12px">
-        <label class="hint" for="rcfAdminAIPrompt">Prompt manual</label>
-        <textarea id="rcfAdminAIPrompt"
+        <label class="hint" for="rcfFactoryAIPrompt">Prompt manual</label>
+        <textarea id="rcfFactoryAIPrompt"
           placeholder="Ex.: proponha um patch mínimo para corrigir X sem quebrar o boot"
           style="width:100%;min-height:100px;margin-top:6px;background:#0c1020;color:#eaf0ff;border:1px solid rgba(255,255,255,.14);border-radius:10px;padding:10px;box-sizing:border-box"></textarea>
       </div>
 
       <div class="row" style="margin-top:10px;gap:10px;align-items:center;flex-wrap:wrap">
-        <button class="btn ok" id="rcfAdminAISend" type="button">Enviar</button>
-        <div class="badge" id="rcfAdminAIStatus">aguardando</div>
+        <button class="btn ok" id="rcfFactoryAISend" type="button">Enviar</button>
+        <div class="badge" id="rcfFactoryAIStatus">aguardando</div>
       </div>
 
-      <pre class="mono small" id="rcfAdminAIResult" style="margin-top:10px;max-height:24vh;overflow:auto">Pronto.</pre>
+      <pre class="mono small" id="rcfFactoryAIResult" style="margin-top:10px;max-height:24vh;overflow:auto">Pronto.</pre>
     `;
+  }
+
+  function mount() {
+    const existing = document.getElementById(BOX_ID);
+    if (existing) {
+      syncVisibility();
+      return true;
+    }
+
+    const slot = getSlot();
+    if (!slot) return false;
+
+    const box = document.createElement("div");
+    box.id = BOX_ID;
+    box.className = "card";
+    box.style.marginTop = "12px";
+    box.setAttribute("data-rcf-factory-ai", "1");
+    box.innerHTML = buildBoxHtml();
 
     slot.appendChild(box);
     bindBox();
     renderChat();
     syncVisibility();
 
-    log("OK", "Admin AI mount ✅ " + VERSION);
+    log("OK", "Factory IA mount ✅ " + VERSION + " @ " + (STATE.mountedIn || "unknown"));
     return true;
   }
 
@@ -550,6 +681,7 @@
     if (mount()) return true;
     setTimeout(() => { try { mount(); } catch (_) {} }, 700);
     setTimeout(() => { try { mount(); } catch (_) {} }, 1600);
+    setTimeout(() => { try { mount(); } catch (_) {} }, 2800);
     return false;
   }
 
@@ -563,18 +695,21 @@
     } catch (_) {}
   }
 
-  window.RCF_ADMIN_AI = {
-    __v1: true,
-    __v11: true,
-    __v12: true,
-    __v13: true,
-    __v14: true,
-    __v15: true,
-    __v16: true,
+  window.RCF_FACTORY_AI = {
+    __v20: true,
+    version: VERSION,
+    mount,
+    clearChat,
+    getHistory() { return Array.isArray(STATE.history) ? STATE.history.slice() : []; },
+    getLastEndpoint() { return STATE.lastEndpoint || ""; }
+  };
+
+  window.RCF_ADMIN_AI = Object.assign(window.RCF_ADMIN_AI || {}, {
+    __v20_bridge: true,
     version: VERSION,
     mount,
     clearChat
-  };
+  });
 
   try {
     window.addEventListener("RCF:UI_READY", () => { try { mountLoop(); } catch (_) {} }, { passive: true });
@@ -590,5 +725,5 @@
     startVisibilitySync();
   }
 
-  log("OK", "admin.admin_ai.js ready ✅ " + VERSION);
+  log("OK", "admin.admin_ai.js -> Factory IA ready ✅ " + VERSION);
 })();
