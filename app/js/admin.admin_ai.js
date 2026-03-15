@@ -1,16 +1,18 @@
 /* FILE: /app/js/admin.admin_ai.js
    RControl Factory — Factory AI
-   v3.5 CHAT CORE + ATTACH MENU LOCKED
+   v3.5 CHAT CORE COMPOSER FIXED
 
    - Factory AI em modo chat-first real
    - nome oficial padronizado: Factory AI
    - mount preferencial no slot oficial factoryai.tools
    - fallback seguro para admin apenas se necessário
-   - visual superior clean preservado
-   - composer final com clipe + menu de anexos
-   - seleção local de imagem / PDF / ZIP / arquivo / vídeo
-   - mostra anexos selecionados no composer
-   - envia histórico + metadados de anexos para a API
+   - remove duplicação visual pesada da tela
+   - visual clean mobile-first
+   - composer redesenhado no padrão chat compacto
+   - botão de anexo compacto
+   - menu de anexos (imagem / PDF / ZIP / arquivo / vídeo)
+   - anexos aparecem em chips no composer
+   - inferência automática de ação por linguagem natural
    - usa actions compatíveis com backend atual
    - tenta /api/factory-ai com fallback para /api/admin-ai
    - contexto técnico discreto em details
@@ -288,12 +290,14 @@
 
     const sendBtn = document.getElementById("rcfFactoryAISend");
     const clearBtn = document.getElementById("rcfFactoryAIClear");
-    const clipBtn = document.getElementById("rcfFactoryAIClipBtn");
+    const attachBtnLeft = document.getElementById("rcfFactoryAIAttachBtnLeft");
+    const attachBtnRight = document.getElementById("rcfFactoryAIAttachBtnRight");
     const input = document.getElementById("rcfFactoryAIPrompt");
 
     if (sendBtn) sendBtn.disabled = !!busy;
     if (clearBtn) clearBtn.disabled = false;
-    if (clipBtn) clipBtn.disabled = !!busy;
+    if (attachBtnLeft) attachBtnLeft.disabled = !!busy;
+    if (attachBtnRight) attachBtnRight.disabled = !!busy;
     if (input) input.disabled = !!busy;
   }
 
@@ -447,43 +451,148 @@
   background:rgba(255,255,255,.82);
 }
 
-#${BOX_ID} .rcfAiInputWrap{
-  display:grid;
-  gap:10px;
+#${BOX_ID} .rcfAiAttachRow{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
 }
 
-#${BOX_ID} .rcfAiPromptRow{
-  display:grid;
-  grid-template-columns:auto 1fr auto;
-  gap:10px;
-  align-items:end;
-}
-
-#${BOX_ID} .rcfAiClip{
-  position:relative;
-}
-
-#${BOX_ID} .rcfAiClipBtn{
-  width:48px;
-  height:48px;
-  min-width:48px;
-  border-radius:14px;
+#${BOX_ID} .rcfAiAttachmentChip{
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  min-height:32px;
+  padding:0 10px;
+  border-radius:999px;
   border:1px solid rgba(31,41,55,.08);
+  background:rgba(245,248,255,.95);
+  color:#22345e;
+  font-size:12px;
+  font-weight:800;
+  max-width:100%;
+}
+
+#${BOX_ID} .rcfAiAttachmentName{
+  max-width:140px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+#${BOX_ID} .rcfAiAttachmentRemove{
+  width:20px;
+  height:20px;
+  border-radius:999px;
+  border:none;
+  background:rgba(112,152,255,.12);
+  color:#26407a;
+  font-weight:900;
+  cursor:pointer;
+}
+
+#${BOX_ID} .rcfAiInputShell{
+  display:flex;
+  align-items:center;
+  gap:10px;
+}
+
+#${BOX_ID} .rcfAiAttachWrap{
+  position:relative;
+  flex:0 0 auto;
+}
+
+#${BOX_ID} .rcfAiMiniBtn{
+  width:46px;
+  height:46px;
+  min-width:46px;
+  border-radius:16px;
+  border:1px solid rgba(31,41,55,.10);
   background:rgba(255,255,255,.96);
   color:#26407a;
-  font-size:20px;
+  font-size:22px;
+  font-weight:900;
+  cursor:pointer;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  -webkit-tap-highlight-color:transparent;
+}
+
+#${BOX_ID} .rcfAiInputCard{
+  flex:1 1 auto;
+  display:flex;
+  align-items:center;
+  gap:8px;
+  min-height:58px;
+  padding:8px 8px 8px 10px;
+  border-radius:20px;
+  border:1px solid rgba(31,41,55,.10);
+  background:#fff;
+  box-shadow:0 1px 0 rgba(255,255,255,.65) inset;
+}
+
+#${BOX_ID} .rcfAiPrompt{
+  flex:1 1 auto;
+  min-height:42px;
+  max-height:110px;
+  resize:none;
+  padding:9px 4px;
+  border:none;
+  outline:none;
+  background:transparent;
+  color:#18233f;
+  font:inherit;
+  line-height:1.4;
+}
+
+#${BOX_ID} .rcfAiPrompt::placeholder{
+  color:rgba(24,35,63,.38);
+}
+
+#${BOX_ID} .rcfAiInlineAttach{
+  position:relative;
+  flex:0 0 auto;
+}
+
+#${BOX_ID} .rcfAiInlineAttachBtn{
+  width:38px;
+  height:38px;
+  min-width:38px;
+  border-radius:12px;
+  border:1px solid rgba(31,41,55,.08);
+  background:rgba(245,248,255,.96);
+  color:#26407a;
+  font-size:18px;
+  font-weight:900;
+  cursor:pointer;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  -webkit-tap-highlight-color:transparent;
+}
+
+#${BOX_ID} .rcfAiSendBtn{
+  flex:0 0 auto;
+  min-width:108px;
+  height:50px;
+  padding:0 16px;
+  border-radius:18px;
+  border:1px solid rgba(112,152,255,.20);
+  background:linear-gradient(180deg, rgba(223,232,255,.98), rgba(212,224,255,.92));
+  color:#26407a;
+  font-size:15px;
   font-weight:900;
   cursor:pointer;
   -webkit-tap-highlight-color:transparent;
 }
 
-#${BOX_ID} .rcfAiClipMenu{
+#${BOX_ID} .rcfAiMenu{
   position:absolute;
   left:0;
   bottom:56px;
-  min-width:196px;
+  min-width:190px;
   display:none;
-  z-index:40;
+  z-index:30;
   padding:8px;
   border-radius:16px;
   border:1px solid rgba(31,41,55,.08);
@@ -491,12 +600,12 @@
   box-shadow:0 12px 26px rgba(15,23,42,.10);
 }
 
-#${BOX_ID} .rcfAiClipMenu.open{
+#${BOX_ID} .rcfAiMenu.open{
   display:grid;
   gap:6px;
 }
 
-#${BOX_ID} .rcfAiClipItem{
+#${BOX_ID} .rcfAiMenuItem{
   display:flex;
   align-items:center;
   gap:8px;
@@ -508,80 +617,6 @@
   color:#22345e;
   font-size:13px;
   font-weight:800;
-  cursor:pointer;
-}
-
-#${BOX_ID} .rcfAiPrompt{
-  width:100%;
-  min-height:92px;
-  max-height:180px;
-  resize:vertical;
-  padding:14px 14px;
-  border-radius:18px;
-  border:1px solid rgba(31,41,55,.10);
-  box-sizing:border-box;
-  background:#fff;
-  color:#18233f;
-  font:inherit;
-  line-height:1.45;
-}
-
-#${BOX_ID} .rcfAiPrompt:focus{
-  outline:none;
-  border-color:rgba(112,152,255,.42);
-  box-shadow:0 0 0 3px rgba(112,152,255,.10);
-}
-
-#${BOX_ID} .rcfAiSend{
-  min-width:116px;
-  min-height:48px;
-  padding:0 16px;
-  border-radius:16px;
-  border:1px solid rgba(112,152,255,.18);
-  background:linear-gradient(180deg, rgba(228,235,255,.96), rgba(217,228,255,.92));
-  color:#26407a;
-  font-size:15px;
-  font-weight:900;
-  cursor:pointer;
-  -webkit-tap-highlight-color:transparent;
-}
-
-#${BOX_ID} .rcfAiAttachments{
-  display:flex;
-  flex-wrap:wrap;
-  gap:8px;
-}
-
-#${BOX_ID} .rcfAiAttachmentChip{
-  display:inline-flex;
-  align-items:center;
-  gap:8px;
-  min-height:36px;
-  padding:0 12px;
-  border-radius:999px;
-  border:1px solid rgba(31,41,55,.08);
-  background:rgba(245,248,255,.95);
-  color:#22345e;
-  font-size:12px;
-  font-weight:800;
-  max-width:100%;
-}
-
-#${BOX_ID} .rcfAiAttachmentName{
-  max-width:180px;
-  overflow:hidden;
-  text-overflow:ellipsis;
-  white-space:nowrap;
-}
-
-#${BOX_ID} .rcfAiAttachmentRemove{
-  width:22px;
-  height:22px;
-  border-radius:999px;
-  border:none;
-  background:rgba(112,152,255,.12);
-  color:#26407a;
-  font-weight:900;
   cursor:pointer;
 }
 
@@ -599,14 +634,10 @@
   color:rgba(32,45,77,.80);
 }
 
-#${BOX_ID} .rcfAiHint{
-  font-size:12px;
-  color:rgba(32,45,77,.64);
-}
-
-#${BOX_ID} .rcfAiButtons{
+#${BOX_ID} .rcfAiRightBottom{
   display:flex;
-  gap:8px;
+  align-items:center;
+  gap:10px;
   flex-wrap:wrap;
 }
 
@@ -614,7 +645,7 @@
   display:inline-flex;
   align-items:center;
   justify-content:center;
-  min-width:108px;
+  min-width:98px;
   min-height:42px;
   padding:10px 14px;
   border-radius:14px;
@@ -625,6 +656,11 @@
   font-weight:900;
   cursor:pointer;
   -webkit-tap-highlight-color:transparent;
+}
+
+#${BOX_ID} .rcfAiHint{
+  font-size:12px;
+  color:rgba(32,45,77,.64);
 }
 
 #${BOX_ID} details.rcfAiDetails{
@@ -662,15 +698,16 @@
   #${BOX_ID} .rcfAiHeadTitle{
     font-size:18px;
   }
-  #${BOX_ID} .rcfAiPromptRow{
-    grid-template-columns:48px 1fr;
+  #${BOX_ID} .rcfAiInputShell{
+    align-items:stretch;
   }
-  #${BOX_ID} .rcfAiSend{
-    grid-column:1 / -1;
-    width:100%;
+  #${BOX_ID} .rcfAiSendBtn{
+    min-width:92px;
+    height:48px;
+    padding:0 14px;
   }
   #${BOX_ID} .rcfAiAttachmentName{
-    max-width:130px;
+    max-width:110px;
   }
 }
     `.trim();
@@ -804,20 +841,10 @@
     return "chat";
   }
 
-  function getAttachmentPayload() {
-    return (STATE.attachments || []).map((item) => ({
-      name: item.name || "",
-      kind: item.kind || "unknown",
-      mime: item.mime || "",
-      size: item.size || 0,
-      summary: item.summary || ""
-    }));
-  }
-
   function buildPayload(action) {
     const snapshot = buildLeanSnapshot();
-    const attachments = getAttachmentPayload();
     setSnapshotPreview(snapshot);
+    const attachments = getAttachmentPayload();
 
     if (action === "analyze-logs") {
       return {
@@ -870,6 +897,16 @@
       snapshot,
       attachments
     };
+  }
+
+  function getAttachmentPayload() {
+    return (STATE.attachments || []).map((item) => ({
+      name: item.name || "",
+      kind: item.kind || "unknown",
+      mime: item.mime || "",
+      size: item.size || 0,
+      summary: item.summary || ""
+    }));
   }
 
   async function postJSON(url, body) {
@@ -952,13 +989,37 @@
     }
   }
 
-  function formatBytes(bytes) {
-    const value = Number(bytes || 0);
-    if (!value) return "0 B";
-    if (value < 1024) return value + " B";
-    if (value < 1024 * 1024) return (value / 1024).toFixed(1) + " KB";
-    if (value < 1024 * 1024 * 1024) return (value / (1024 * 1024)).toFixed(1) + " MB";
-    return (value / (1024 * 1024 * 1024)).toFixed(1) + " GB";
+  function sendPrompt(rawPrompt, forcedAction = "") {
+    const prompt = String(rawPrompt || "").trim();
+
+    if (!prompt && !(STATE.attachments && STATE.attachments.length)) {
+      setComposerStatus("aguardando");
+      setTechResult("Digite uma instrução ou selecione um arquivo primeiro.");
+      return;
+    }
+
+    const finalPrompt = prompt || "Analise os anexos enviados e diga o próximo passo mais seguro.";
+    const action = forcedAction || inferActionFromPrompt(finalPrompt);
+
+    let userText = finalPrompt;
+    if (STATE.attachments && STATE.attachments.length) {
+      const list = STATE.attachments.map((a) => a.name).join(", ");
+      userText += `\n\n[anexos: ${list}]`;
+    }
+
+    pushChat("user", userText);
+    callFactoryAI(action, buildPayload(action), finalPrompt);
+
+    const input = document.getElementById("rcfFactoryAIPrompt");
+    if (input) {
+      try {
+        input.value = "";
+        autoResizePrompt(input);
+      } catch {}
+    }
+
+    clearAttachments();
+    closeAttachMenus();
   }
 
   function normalizePickedFiles(fileList, forcedKind = "") {
@@ -988,6 +1049,15 @@
         summary: `${kind.toUpperCase()} • ${formatBytes(size)}`
       };
     });
+  }
+
+  function formatBytes(bytes) {
+    const value = Number(bytes || 0);
+    if (!value) return "0 B";
+    if (value < 1024) return value + " B";
+    if (value < 1024 * 1024) return (value / 1024).toFixed(1) + " KB";
+    if (value < 1024 * 1024 * 1024) return (value / (1024 * 1024)).toFixed(1) + " MB";
+    return (value / (1024 * 1024 * 1024)).toFixed(1) + " GB";
   }
 
   function addAttachments(items) {
@@ -1072,227 +1142,36 @@
     });
   }
 
-  function toggleAttachMenu() {
-    const menu = document.getElementById("rcfFactoryAIClipMenu");
+  function toggleAttachMenu(menuId) {
+    const menu = document.getElementById(menuId);
     if (!menu) return;
-    menu.classList.toggle("open");
+
+    const isOpen = menu.classList.contains("open");
+    closeAttachMenus();
+    if (!isOpen) menu.classList.add("open");
   }
 
-  function closeAttachMenu() {
-    const menu = document.getElementById("rcfFactoryAIClipMenu");
-    if (menu) menu.classList.remove("open");
+  function closeAttachMenus() {
+    ["rcfFactoryAIClipMenuLeft", "rcfFactoryAIClipMenuRight"].forEach((id) => {
+      const menu = document.getElementById(id);
+      if (menu) menu.classList.remove("open");
+    });
   }
 
   function openFileInput(id) {
     const el = document.getElementById(id);
     if (!el) return;
-    closeAttachMenu();
+    closeAttachMenus();
     try { el.click(); } catch {}
   }
 
-  function sendPrompt(rawPrompt, forcedAction = "") {
-    const prompt = String(rawPrompt || "").trim();
-
-    if (!prompt && !(STATE.attachments && STATE.attachments.length)) {
-      setComposerStatus("aguardando");
-      setTechResult("Digite uma instrução ou selecione um arquivo primeiro.");
-      return;
-    }
-
-    const finalPrompt = prompt || "Analise os anexos enviados e diga o próximo passo mais seguro.";
-    const action = forcedAction || inferActionFromPrompt(finalPrompt);
-
-    let userText = finalPrompt;
-    if (STATE.attachments && STATE.attachments.length) {
-      const list = STATE.attachments.map((a) => a.name).join(", ");
-      userText += `\n\n[anexos: ${list}]`;
-    }
-
-    pushChat("user", userText);
-    callFactoryAI(action, buildPayload(action), finalPrompt);
-
-    const input = document.getElementById("rcfFactoryAIPrompt");
-    if (input) {
-      try { input.value = ""; } catch {}
-    }
-
-    clearAttachments();
-    closeAttachMenu();
-  }
-
-  function bindAttachmentInputs() {
-    const map = [
-      ["rcfFactoryAIInputImage", "image"],
-      ["rcfFactoryAIInputPdf", "pdf"],
-      ["rcfFactoryAIInputZip", "zip"],
-      ["rcfFactoryAIInputFile", "file"],
-      ["rcfFactoryAIInputVideo", "video"]
-    ];
-
-    map.forEach(([id, kind]) => {
-      const input = document.getElementById(id);
-      if (!input || input.__boundFileInput) return;
-
-      input.__boundFileInput = true;
-      input.addEventListener("change", () => {
-        const items = normalizePickedFiles(input.files, kind);
-        addAttachments(items);
-      });
-    });
-  }
-
-  function bindBox() {
-    const sendBtn = document.getElementById("rcfFactoryAISend");
-    const clearBtn = document.getElementById("rcfFactoryAIClear");
-    const promptEl = document.getElementById("rcfFactoryAIPrompt");
-    const clipBtn = document.getElementById("rcfFactoryAIClipBtn");
-
-    if (sendBtn && !sendBtn.__bound) {
-      sendBtn.__bound = true;
-      sendBtn.addEventListener("click", () => {
-        sendPrompt(String(promptEl?.value || "").trim(), "");
-      }, { passive: true });
-    }
-
-    if (clearBtn && !clearBtn.__bound) {
-      clearBtn.__bound = true;
-      clearBtn.addEventListener("click", () => {
-        clearChat();
-        clearAttachments();
-        closeAttachMenu();
-      }, { passive: true });
-    }
-
-    if (promptEl && !promptEl.__boundEnter) {
-      promptEl.__boundEnter = true;
-      promptEl.addEventListener("keydown", (ev) => {
-        try {
-          if (ev.key === "Enter" && !ev.shiftKey) {
-            ev.preventDefault();
-            sendPrompt(String(promptEl.value || "").trim(), "");
-          }
-        } catch {}
-      });
-    }
-
-    if (clipBtn && !clipBtn.__bound) {
-      clipBtn.__bound = true;
-      clipBtn.addEventListener("click", () => {
-        toggleAttachMenu();
-      }, { passive: true });
-    }
-
-    [
-      ["rcfFactoryAIChooseImage", "rcfFactoryAIInputImage"],
-      ["rcfFactoryAIChoosePdf", "rcfFactoryAIInputPdf"],
-      ["rcfFactoryAIChooseZip", "rcfFactoryAIInputZip"],
-      ["rcfFactoryAIChooseFile", "rcfFactoryAIInputFile"],
-      ["rcfFactoryAIChooseVideo", "rcfFactoryAIInputVideo"]
-    ].forEach(([btnId, inputId]) => {
-      const btn = document.getElementById(btnId);
-      if (!btn || btn.__boundPick) return;
-      btn.__boundPick = true;
-      btn.addEventListener("click", () => {
-        openFileInput(inputId);
-      }, { passive: true });
-    });
-
-    if (!document.__rcfFactoryAIOutsideClick) {
-      document.__rcfFactoryAIOutsideClick = true;
-      document.addEventListener("click", (ev) => {
-        try {
-          const clip = qs(".rcfAiClip");
-          if (!clip) return;
-          if (clip.contains(ev.target)) return;
-          closeAttachMenu();
-        } catch {}
-      }, { passive: true });
-    }
-
-    bindAttachmentInputs();
-    renderAttachments();
-  }
-
-  function buildBoxHtml() {
-    return `
-      <div class="rcfAiShell">
-        <section class="rcfAiHead">
-          <div class="rcfAiHeadLeft">
-            <div class="rcfAiAvatar">🤖</div>
-            <div class="rcfAiHeadText">
-              <h2 class="rcfAiHeadTitle">Factory AI</h2>
-              <p class="rcfAiHeadSub">Chat central da Factory para conversar, analisar, organizar e evoluir a estrutura.</p>
-            </div>
-          </div>
-          <div class="rcfAiPill">OpenAI conectada</div>
-        </section>
-
-        <section id="${CHAT_ID}"></section>
-
-        <section class="rcfAiComposer">
-          <div class="rcfAiInputWrap">
-            <div class="rcfAiPromptRow">
-              <div class="rcfAiClip">
-                <button
-                  id="rcfFactoryAIClipBtn"
-                  class="rcfAiClipBtn"
-                  type="button"
-                  aria-label="Anexar arquivo"
-                  title="Anexar arquivo"
-                >📎</button>
-
-                <div id="rcfFactoryAIClipMenu" class="rcfAiClipMenu">
-                  <button class="rcfAiClipItem" id="rcfFactoryAIChooseImage" type="button">🖼️ Imagem</button>
-                  <button class="rcfAiClipItem" id="rcfFactoryAIChoosePdf" type="button">📄 PDF</button>
-                  <button class="rcfAiClipItem" id="rcfFactoryAIChooseZip" type="button">🗜️ ZIP</button>
-                  <button class="rcfAiClipItem" id="rcfFactoryAIChooseFile" type="button">📎 Arquivo</button>
-                  <button class="rcfAiClipItem" id="rcfFactoryAIChooseVideo" type="button">🎬 Vídeo</button>
-                </div>
-              </div>
-
-              <textarea
-                id="rcfFactoryAIPrompt"
-                class="rcfAiPrompt"
-                placeholder="Fale com a Factory AI. Ex.: corrige o módulo da view, gera o arquivo completo, analisa os logs, lê esse contexto, organiza essa arquitetura..."
-              ></textarea>
-
-              <button class="rcfAiSend" id="rcfFactoryAISend" type="button">Enviar</button>
-            </div>
-
-            <div id="rcfFactoryAIAttachments" class="rcfAiAttachments" style="display:none"></div>
-
-            <input id="rcfFactoryAIInputImage" class="rcfAiHiddenInput" type="file" accept="image/*" multiple>
-            <input id="rcfFactoryAIInputPdf" class="rcfAiHiddenInput" type="file" accept="application/pdf,.pdf" multiple>
-            <input id="rcfFactoryAIInputZip" class="rcfAiHiddenInput" type="file" accept=".zip,application/zip,application/x-zip-compressed" multiple>
-            <input id="rcfFactoryAIInputFile" class="rcfAiHiddenInput" type="file" multiple>
-            <input id="rcfFactoryAIInputVideo" class="rcfAiHiddenInput" type="file" accept="video/*" multiple>
-          </div>
-
-          <div class="rcfAiBottom">
-            <div id="rcfFactoryAIComposerStatus" class="rcfAiStatus">aguardando</div>
-            <div class="rcfAiButtons">
-              <button class="rcfAiBtn" id="rcfFactoryAIClear" type="button">Limpar</button>
-            </div>
-          </div>
-
-          <div class="rcfAiHint">Em breve: leitura real de imagem, ZIP, PDF, vídeo e arquivos direto no chat.</div>
-
-          <details class="rcfAiDetails">
-            <summary>Contexto técnico</summary>
-            <div style="margin-top:10px;display:grid;gap:10px">
-              <div>
-                <label class="hint">Snapshot Preview enviado</label>
-                <pre class="mono small rcfAiPre" id="rcfFactoryAISnapshot">{"status":"aguardando"}</pre>
-              </div>
-              <div>
-                <label class="hint">Último resultado técnico</label>
-                <pre class="mono small rcfAiPre" id="rcfFactoryAITechResult">Pronto.</pre>
-              </div>
-            </div>
-          </details>
-        </section>
-      </div>
-    `;
+  function autoResizePrompt(el) {
+    try {
+      if (!el) return;
+      el.style.height = "42px";
+      const next = Math.min(Math.max(el.scrollHeight, 42), 110);
+      el.style.height = next + "px";
+    } catch {}
   }
 
   function cleanupFactoryAIHost() {
@@ -1356,18 +1235,201 @@
     try { cleanupFactoryAIHost(); } catch {}
   }
 
-  function currentBoxIsCompatible(box) {
-    try {
-      if (!box) return false;
-      if (!qs("#rcfFactoryAIClipBtn", box)) return false;
-      if (!qs("#rcfFactoryAIClipMenu", box)) return false;
-      if (!qs("#rcfFactoryAIAttachments", box)) return false;
-      if (!qs("#rcfFactoryAIInputImage", box)) return false;
-      if (!qs("#rcfFactoryAISend", box)) return false;
-      return true;
-    } catch {
-      return false;
+  function bindAttachmentInputs() {
+    const map = [
+      ["rcfFactoryAIInputImage", "image"],
+      ["rcfFactoryAIInputPdf", "pdf"],
+      ["rcfFactoryAIInputZip", "zip"],
+      ["rcfFactoryAIInputFile", "file"],
+      ["rcfFactoryAIInputVideo", "video"]
+    ];
+
+    map.forEach(([id, kind]) => {
+      const input = document.getElementById(id);
+      if (!input || input.__boundFileInput) return;
+
+      input.__boundFileInput = true;
+      input.addEventListener("change", () => {
+        const items = normalizePickedFiles(input.files, kind);
+        addAttachments(items);
+      });
+    });
+  }
+
+  function bindMenuItems(menuId) {
+    [
+      ["rcfFactoryAIChooseImage_" + menuId, "rcfFactoryAIInputImage"],
+      ["rcfFactoryAIChoosePdf_" + menuId, "rcfFactoryAIInputPdf"],
+      ["rcfFactoryAIChooseZip_" + menuId, "rcfFactoryAIInputZip"],
+      ["rcfFactoryAIChooseFile_" + menuId, "rcfFactoryAIInputFile"],
+      ["rcfFactoryAIChooseVideo_" + menuId, "rcfFactoryAIInputVideo"]
+    ].forEach(([btnId, inputId]) => {
+      const btn = document.getElementById(btnId);
+      if (!btn || btn.__boundPick) return;
+      btn.__boundPick = true;
+      btn.addEventListener("click", () => {
+        openFileInput(inputId);
+      }, { passive: true });
+    });
+  }
+
+  function bindBox() {
+    const sendBtn = document.getElementById("rcfFactoryAISend");
+    const clearBtn = document.getElementById("rcfFactoryAIClear");
+    const promptEl = document.getElementById("rcfFactoryAIPrompt");
+    const attachBtnLeft = document.getElementById("rcfFactoryAIAttachBtnLeft");
+    const attachBtnRight = document.getElementById("rcfFactoryAIAttachBtnRight");
+
+    if (sendBtn && !sendBtn.__bound) {
+      sendBtn.__bound = true;
+      sendBtn.addEventListener("click", () => {
+        sendPrompt(String(promptEl?.value || "").trim(), "");
+      }, { passive: true });
     }
+
+    if (clearBtn && !clearBtn.__bound) {
+      clearBtn.__bound = true;
+      clearBtn.addEventListener("click", () => {
+        clearChat();
+        clearAttachments();
+        closeAttachMenus();
+      }, { passive: true });
+    }
+
+    if (promptEl && !promptEl.__boundInput) {
+      promptEl.__boundInput = true;
+      autoResizePrompt(promptEl);
+
+      promptEl.addEventListener("input", () => {
+        autoResizePrompt(promptEl);
+      });
+
+      promptEl.addEventListener("keydown", (ev) => {
+        try {
+          if (ev.key === "Enter" && !ev.shiftKey) {
+            ev.preventDefault();
+            sendPrompt(String(promptEl.value || "").trim(), "");
+          }
+        } catch {}
+      });
+    }
+
+    if (attachBtnLeft && !attachBtnLeft.__bound) {
+      attachBtnLeft.__bound = true;
+      attachBtnLeft.addEventListener("click", () => {
+        toggleAttachMenu("rcfFactoryAIClipMenuLeft");
+      }, { passive: true });
+    }
+
+    if (attachBtnRight && !attachBtnRight.__bound) {
+      attachBtnRight.__bound = true;
+      attachBtnRight.addEventListener("click", () => {
+        toggleAttachMenu("rcfFactoryAIClipMenuRight");
+      }, { passive: true });
+    }
+
+    bindMenuItems("left");
+    bindMenuItems("right");
+    bindAttachmentInputs();
+    renderAttachments();
+
+    if (!document.__rcfFactoryAIOutsideClickV35) {
+      document.__rcfFactoryAIOutsideClickV35 = true;
+      document.addEventListener("click", (ev) => {
+        try {
+          const left = document.getElementById("rcfFactoryAIAttachWrapLeft");
+          const right = document.getElementById("rcfFactoryAIAttachWrapRight");
+          if (left && left.contains(ev.target)) return;
+          if (right && right.contains(ev.target)) return;
+          closeAttachMenus();
+        } catch {}
+      }, { passive: true });
+    }
+  }
+
+  function buildAttachMenu(menuId) {
+    return `
+      <div id="${menuId}" class="rcfAiMenu">
+        <button class="rcfAiMenuItem" id="rcfFactoryAIChooseImage_${menuId.includes("Left") ? "left" : "right"}" type="button">🖼️ Imagem</button>
+        <button class="rcfAiMenuItem" id="rcfFactoryAIChoosePdf_${menuId.includes("Left") ? "left" : "right"}" type="button">📄 PDF</button>
+        <button class="rcfAiMenuItem" id="rcfFactoryAIChooseZip_${menuId.includes("Left") ? "left" : "right"}" type="button">🗜️ ZIP</button>
+        <button class="rcfAiMenuItem" id="rcfFactoryAIChooseFile_${menuId.includes("Left") ? "left" : "right"}" type="button">📎 Arquivo</button>
+        <button class="rcfAiMenuItem" id="rcfFactoryAIChooseVideo_${menuId.includes("Left") ? "left" : "right"}" type="button">🎬 Vídeo</button>
+      </div>
+    `;
+  }
+
+  function buildBoxHtml() {
+    return `
+      <div class="rcfAiShell">
+        <section class="rcfAiHead">
+          <div class="rcfAiHeadLeft">
+            <div class="rcfAiAvatar">🤖</div>
+            <div class="rcfAiHeadText">
+              <h2 class="rcfAiHeadTitle">Factory AI</h2>
+              <p class="rcfAiHeadSub">Chat central da Factory para conversar, analisar, organizar e evoluir a estrutura.</p>
+            </div>
+          </div>
+          <div class="rcfAiPill">OpenAI conectada</div>
+        </section>
+
+        <section id="${CHAT_ID}"></section>
+
+        <section class="rcfAiComposer">
+          <div id="rcfFactoryAIAttachments" class="rcfAiAttachRow" style="display:none"></div>
+
+          <div class="rcfAiInputShell">
+            <div class="rcfAiAttachWrap" id="rcfFactoryAIAttachWrapLeft">
+              <button class="rcfAiMiniBtn" id="rcfFactoryAIAttachBtnLeft" type="button" aria-label="Adicionar arquivo" title="Adicionar arquivo">＋</button>
+              ${buildAttachMenu("rcfFactoryAIClipMenuLeft")}
+            </div>
+
+            <div class="rcfAiInputCard">
+              <textarea
+                id="rcfFactoryAIPrompt"
+                class="rcfAiPrompt"
+                placeholder="Digite sua mensagem..."
+              ></textarea>
+
+              <div class="rcfAiInlineAttach" id="rcfFactoryAIAttachWrapRight">
+                <button class="rcfAiInlineAttachBtn" id="rcfFactoryAIAttachBtnRight" type="button" aria-label="Anexar" title="Anexar">📎</button>
+                ${buildAttachMenu("rcfFactoryAIClipMenuRight")}
+              </div>
+            </div>
+
+            <button class="rcfAiSendBtn" id="rcfFactoryAISend" type="button">Enviar</button>
+          </div>
+
+          <input id="rcfFactoryAIInputImage" class="rcfAiHiddenInput" type="file" accept="image/*" multiple>
+          <input id="rcfFactoryAIInputPdf" class="rcfAiHiddenInput" type="file" accept="application/pdf,.pdf" multiple>
+          <input id="rcfFactoryAIInputZip" class="rcfAiHiddenInput" type="file" accept=".zip,application/zip,application/x-zip-compressed" multiple>
+          <input id="rcfFactoryAIInputFile" class="rcfAiHiddenInput" type="file" multiple>
+          <input id="rcfFactoryAIInputVideo" class="rcfAiHiddenInput" type="file" accept="video/*" multiple>
+
+          <div class="rcfAiBottom">
+            <div id="rcfFactoryAIComposerStatus" class="rcfAiStatus">aguardando</div>
+            <div class="rcfAiRightBottom">
+              <div class="rcfAiHint">Em breve: leitura real de imagem, ZIP, PDF, vídeo e arquivos direto no chat.</div>
+              <button class="rcfAiBtn" id="rcfFactoryAIClear" type="button">Limpar</button>
+            </div>
+          </div>
+
+          <details class="rcfAiDetails">
+            <summary>Contexto técnico</summary>
+            <div style="margin-top:10px;display:grid;gap:10px">
+              <div>
+                <label class="hint">Snapshot Preview enviado</label>
+                <pre class="mono small rcfAiPre" id="rcfFactoryAISnapshot">{"status":"aguardando"}</pre>
+              </div>
+              <div>
+                <label class="hint">Último resultado técnico</label>
+                <pre class="mono small rcfAiPre" id="rcfFactoryAITechResult">Pronto.</pre>
+              </div>
+            </div>
+          </details>
+        </section>
+      </div>
+    `;
   }
 
   function ensureMainBox(primarySlot) {
@@ -1375,11 +1437,6 @@
     if (!primarySlot) return null;
 
     ensureStyle();
-
-    if (box && !currentBoxIsCompatible(box)) {
-      try { box.remove(); } catch {}
-      box = null;
-    }
 
     if (!box) {
       box = document.createElement("div");
@@ -1394,7 +1451,6 @@
 
     bindBox();
     renderChat();
-    renderAttachments();
     return box;
   }
 
