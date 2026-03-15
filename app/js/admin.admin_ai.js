@@ -1,35 +1,34 @@
 /* FILE: /app/js/admin.admin_ai.js
    RControl Factory — Factory AI
-   v2.2 FACTORY-IA HARD MOUNT + VISIBLE CHAT
+   v3.0 CHAT-FIRST OFFICIAL
 
-   - evolui Admin AI antigo para Factory AI
-   - força mount no slot oficial factoryai.tools
-   - move a box automaticamente do fallback para o slot oficial
-   - visibilidade baseada na view real visível, não só em .active
-   - fallback seguro para Admin se a view nova ainda não estiver pronta
-   - histórico visual tipo chat-lite
-   - múltiplas perguntas sem reload
-   - ações rápidas + doctor + patch + gerar código
+   - Factory AI em modo chat-first
+   - remove painel técnico pesado como interface principal
+   - mantém mount oficial em factoryai.tools
+   - mantém fallback seguro para admin se necessário
+   - inferência automática de ação por linguagem natural
    - tenta /api/factory-ai com fallback para /api/admin-ai
-   - consome snapshot estrutural refinado
-   - mostra preview do snapshot enviado
+   - snapshot estrutural continua existindo, mas discreto
+   - histórico visual tipo chat
+   - preparado para crescer depois para imagem / ZIP / PDF / arquivos
    - não executa patch automático
 */
 (() => {
   "use strict";
 
-  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v22) return;
+  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v30) return;
 
-  const VERSION = "v2.2";
+  const VERSION = "v3.0";
   const BOX_ID = "rcfFactoryAIBox";
   const CHAT_ID = "rcfFactoryAIChat";
-  const ACTIONS_ID = "rcfFactoryAIQuickActions";
+  const STATUS_ID = "rcfFactoryAIStateMini";
 
   const STATE = {
     busy: false,
     history: [],
     mountedIn: "",
-    lastEndpoint: ""
+    lastEndpoint: "",
+    bootedAt: new Date().toISOString()
   };
 
   function log(level, msg) {
@@ -39,17 +38,16 @@
 
   function esc(s) {
     return String(s || "").replace(/[&<>"]/g, c => ({
-      "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;"
     }[c]));
   }
 
   function pretty(obj) {
     try { return JSON.stringify(obj, null, 2); }
     catch (_) { return String(obj || ""); }
-  }
-
-  function normalizeViewId(id) {
-    return String(id || "").trim().toLowerCase();
   }
 
   function isElementVisible(el) {
@@ -86,7 +84,6 @@
     try {
       const view = getFactoryAIView();
       if (!view) return false;
-
       if (view.classList.contains("active")) return true;
       if (view.getAttribute("data-rcf-visible") === "1") return true;
       return isElementVisible(view);
@@ -99,7 +96,6 @@
     try {
       const view = getAdminView();
       if (!view) return false;
-
       if (view.classList.contains("active")) return true;
       if (view.getAttribute("data-rcf-visible") === "1") return true;
       return isElementVisible(view);
@@ -154,35 +150,12 @@
     return out;
   }
 
-  function getPrimarySlot() {
-    const slots = getPreferredSlots();
-
-    if (slots.tools) {
-      STATE.mountedIn = "factoryai.tools";
-      return slots.tools;
-    }
-
-    if (slots.actions) {
-      STATE.mountedIn = "factoryai.actions";
-      return slots.actions;
-    }
-
-    if (slots.fallback) {
-      STATE.mountedIn = "admin.fallback";
-      return slots.fallback;
-    }
-
-    STATE.mountedIn = "";
-    return null;
-  }
-
   function syncVisibility() {
     const box = document.getElementById(BOX_ID);
-    const quick = document.getElementById(ACTIONS_ID);
+    const mini = document.getElementById(STATUS_ID);
 
     const showFactory = isFactoryAIViewVisible();
     const showAdminFallback = !showFactory && isAdminViewVisible() && /^admin/.test(STATE.mountedIn || "");
-
     const visible = !!(showFactory || showAdminFallback);
 
     try {
@@ -193,9 +166,9 @@
     } catch (_) {}
 
     try {
-      if (quick) {
-        quick.style.display = visible ? "" : "none";
-        quick.hidden = !visible;
+      if (mini) {
+        mini.style.display = visible ? "" : "none";
+        mini.hidden = !visible;
       }
     } catch (_) {}
   }
@@ -268,7 +241,8 @@
         lastUpdate: factory.lastUpdate || null,
         mountedAs: "Factory AI",
         activeView: state?.active?.view || "",
-        activeAppSlug: state?.active?.appSlug || ""
+        activeAppSlug: state?.active?.appSlug || "",
+        bootedAt: STATE.bootedAt
       },
       doctor: {
         version: doctor.version || "unknown",
@@ -312,13 +286,19 @@
     };
   }
 
-  function setStatus(txt) {
-    const el = document.getElementById("rcfFactoryAIStatus");
+  function setMiniStatus(txt) {
+    const el = document.getElementById("rcfFactoryAIStateText");
     if (el) el.textContent = String(txt || "");
   }
 
+  function setStatus(txt) {
+    const el = document.getElementById("rcfFactoryAIComposerStatus");
+    if (el) el.textContent = String(txt || "");
+    setMiniStatus(txt || "");
+  }
+
   function setResult(txt) {
-    const el = document.getElementById("rcfFactoryAIResult");
+    const el = document.getElementById("rcfFactoryAITechResult");
     if (el) el.textContent = String(txt || "");
   }
 
@@ -328,64 +308,56 @@
     el.textContent = pretty(obj || {});
   }
 
-  function setButtonsBusy(busy) {
-    STATE.busy = !!busy;
-
-    const ids = [
-      "rcfFactoryAIAnalyzeFactory",
-      "rcfFactoryAIAnalyzeLogs",
-      "rcfFactoryAIAnalyzeDoctor",
-      "rcfFactoryAISuggest",
-      "rcfFactoryAIProposePatch",
-      "rcfFactoryAIGenerateCode",
-      "rcfFactoryAISend",
-      "rcfFactoryAIClear",
-      "rcfFactoryAIQuickAnalyze",
-      "rcfFactoryAIQuickPatch",
-      "rcfFactoryAIQuickCode"
-    ];
-
-    ids.forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.disabled = !!busy && !/Clear/.test(id);
-    });
-  }
-
-  function pushChat(role, text) {
+  function pushChat(role, text, meta = {}) {
     STATE.history.push({
       role: String(role || "system"),
       text: String(text || ""),
-      ts: new Date().toISOString()
+      ts: new Date().toISOString(),
+      meta: meta || {}
     });
     renderChat();
+  }
+
+  function ensureSeedMessage() {
+    if (STATE.history.length) return;
+    pushChat(
+      "assistant",
+      "Factory AI online. Pode falar normalmente comigo sobre arquitetura, bugs, patch, código, logs, doctor, layout, design, ZIP, PDF, imagem e contexto da Factory.",
+      { seed: true }
+    );
   }
 
   function renderChat() {
     const box = document.getElementById(CHAT_ID);
     if (!box) return;
 
-    if (!STATE.history.length) {
-      box.innerHTML = `<div class="hint">Conversa vazia. Faça uma pergunta ou use uma ação rápida.</div>`;
-      return;
-    }
+    ensureSeedMessage();
 
     box.innerHTML = STATE.history.map(item => {
       const isUser = item.role === "user";
-      const bg = isUser ? "rgba(88,166,255,.12)" : "rgba(255,255,255,.05)";
-      const border = isUser ? "rgba(88,166,255,.28)" : "rgba(255,255,255,.10)";
-      const tag = isUser ? "Você" : "Factory IA";
+      const align = isUser ? "flex-end" : "flex-start";
+      const bg = isUser ? "rgba(88,166,255,.12)" : "rgba(255,255,255,.74)";
+      const border = isUser ? "rgba(88,166,255,.22)" : "rgba(31,41,55,.08)";
+      const tag = isUser ? "Você" : "Factory AI";
+      const metaLine = item.meta?.actionLabel
+        ? `<div style="margin-top:6px;font-size:11px;opacity:.66">${esc(item.meta.actionLabel)}</div>`
+        : "";
 
       return `
-        <div style="
-          margin-top:10px;
-          padding:10px;
-          border:1px solid ${border};
-          border-radius:10px;
-          background:${bg};
-        ">
-          <div style="font-weight:700;margin-bottom:6px">${esc(tag)}</div>
-          <div style="white-space:pre-wrap;word-break:break-word">${esc(item.text)}</div>
-          <div class="hint" style="margin-top:6px">${esc(item.ts)}</div>
+        <div style="display:flex;justify-content:${align};margin-top:10px">
+          <div style="
+            width:min(100%, 560px);
+            padding:12px;
+            border:1px solid ${border};
+            border-radius:16px;
+            background:${bg};
+            box-shadow:0 2px 10px rgba(15,23,42,.04);
+          ">
+            <div style="font-weight:800;margin-bottom:6px">${esc(tag)}</div>
+            <div style="white-space:pre-wrap;word-break:break-word;line-height:1.45">${esc(item.text)}</div>
+            ${metaLine}
+            <div class="hint" style="margin-top:6px;font-size:11px;opacity:.62">${esc(item.ts)}</div>
+          </div>
         </div>
       `;
     }).join("");
@@ -395,44 +367,86 @@
 
   function clearChat() {
     STATE.history = [];
+    ensureSeedMessage();
     renderChat();
     setStatus("aguardando");
     setResult("Pronto.");
     setSnapshotPreview({});
   }
 
-  function getMode() {
-    const el = document.getElementById("rcfFactoryAIMode");
-    return String(el?.value || "summarize-structure");
-  }
+  function inferActionFromPrompt(prompt) {
+    const p = String(prompt || "").trim().toLowerCase();
 
-  function buildPromptFromMode(mode, prompt) {
-    const p = String(prompt || "").trim();
-    if (p) return p;
+    if (!p) return { action: "summarize-structure", label: "Estrutura" };
 
-    if (mode === "analyze-architecture") {
-      return "Analise a arquitetura atual da RControl Factory e diga o próximo passo mais seguro com patch mínimo.";
-    }
-    if (mode === "analyze-logs") {
-      return "Analise os logs recentes da RControl Factory e identifique riscos estruturais, erros ou instabilidades.";
-    }
-    if (mode === "factory_diagnosis") {
-      return "Analise este relatório do Doctor da RControl Factory e proponha o próximo passo mais seguro.";
-    }
-    if (mode === "suggest-improvement") {
-      return "Sugira a próxima melhoria mais segura para a RControl Factory sem quebrar o boot.";
-    }
-    if (mode === "propose-patch") {
-      return "Proponha um patch mínimo e seguro para a RControl Factory, preservando o que já está estável.";
-    }
-    if (mode === "generate-code") {
-      return "Gere código com patch mínimo para a RControl Factory, sem reescrever a plataforma do zero.";
-    }
-    if (mode === "zip-readiness") {
-      return "Explique como a Factory deve estruturar leitura de ZIP de forma segura e modular sem quebrar a arquitetura atual.";
+    if (
+      p.includes("log") ||
+      p.includes("erro") ||
+      p.includes("error") ||
+      p.includes("falha") ||
+      p.includes("crash")
+    ) {
+      return { action: "analyze-logs", label: "Logs" };
     }
 
-    return "Resuma a estrutura atual da RControl Factory e explique o próximo passo mais seguro.";
+    if (
+      p.includes("doctor") ||
+      p.includes("diagnóstico") ||
+      p.includes("diagnostico") ||
+      p.includes("estabilidade") ||
+      p.includes("stability")
+    ) {
+      return { action: "factory_diagnosis", label: "Doctor" };
+    }
+
+    if (
+      p.includes("patch") ||
+      p.includes("corrig") ||
+      p.includes("fix") ||
+      p.includes("ajust") ||
+      p.includes("consert")
+    ) {
+      return { action: "propose-patch", label: "Patch" };
+    }
+
+    if (
+      p.includes("gerar código") ||
+      p.includes("gerar codigo") ||
+      p.includes("gere código") ||
+      p.includes("gere codigo") ||
+      p.includes("código completo") ||
+      p.includes("codigo completo") ||
+      p.includes("arquivo completo") ||
+      p.includes("code")
+    ) {
+      return { action: "generate-code", label: "Código" };
+    }
+
+    if (
+      p.includes("zip") ||
+      p.includes("pdf") ||
+      p.includes("imagem") ||
+      p.includes("foto") ||
+      p.includes("arquivo") ||
+      p.includes("anexo") ||
+      p.includes("vídeo") ||
+      p.includes("video")
+    ) {
+      return { action: "zip-readiness", label: "Arquivos" };
+    }
+
+    if (
+      p.includes("arquitetura") ||
+      p.includes("estrutura") ||
+      p.includes("módulo") ||
+      p.includes("modulo") ||
+      p.includes("organiza") ||
+      p.includes("orquestra")
+    ) {
+      return { action: "analyze-architecture", label: "Arquitetura" };
+    }
+
+    return { action: "summarize-structure", label: "Estrutura" };
   }
 
   async function postJSON(url, body) {
@@ -445,14 +459,72 @@
     return { res, data };
   }
 
-  async function callFactoryAI(action, payload, prompt) {
-    const btnSend = document.getElementById("rcfFactoryAISend");
+  function buildPayload(action) {
+    const snapshot = buildLeanSnapshot();
+    setSnapshotPreview(snapshot);
 
+    if (action === "analyze-logs") {
+      return {
+        snapshot,
+        logs: collectLogs()
+      };
+    }
+
+    if (action === "factory_diagnosis") {
+      return {
+        snapshot,
+        doctor: collectDoctorReport()
+      };
+    }
+
+    if (action === "propose-patch" || action === "generate-code") {
+      return {
+        snapshot,
+        doctor: collectDoctorReport(),
+        logs: collectLogs(25)
+      };
+    }
+
+    if (action === "zip-readiness") {
+      return {
+        snapshot,
+        doctor: collectDoctorReport(),
+        capability: {
+          wantsZipFlow: true,
+          wantsImageFlow: true,
+          wantsPdfFlow: true,
+          currentPhase: "factory-ai-chat-first"
+        }
+      };
+    }
+
+    return { snapshot };
+  }
+
+  function setButtonsBusy(busy) {
+    STATE.busy = !!busy;
+
+    [
+      "rcfFactoryAISend",
+      "rcfFactoryAIClear",
+      "rcfFactoryAISuggestionArchitecture",
+      "rcfFactoryAISuggestionPatch",
+      "rcfFactoryAISuggestionCode"
+    ].forEach(id => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      if (id === "rcfFactoryAIClear") el.disabled = false;
+      else el.disabled = !!busy;
+    });
+
+    const input = document.getElementById("rcfFactoryAIPrompt");
+    if (input) input.disabled = !!busy;
+  }
+
+  async function callFactoryAI(action, payload, prompt) {
     if (STATE.busy) return;
 
     setButtonsBusy(true);
-    if (btnSend) btnSend.disabled = true;
-
     setStatus("carregando...");
     setResult("");
 
@@ -488,7 +560,7 @@
         const msg = pretty(data || { error: "Erro ao chamar endpoint IA" });
         setStatus("erro");
         setResult(msg);
-        pushChat("assistant", msg);
+        pushChat("assistant", msg, { actionLabel: endpoint || "erro" });
         log("ERR", "falha IA endpoint=" + endpoint);
         return;
       }
@@ -501,235 +573,188 @@
 
       setStatus("concluído");
       setResult(text);
-      pushChat("assistant", text);
+      pushChat("assistant", text, { actionLabel: endpoint || action });
       log("OK", "resposta recebida action=" + action + " endpoint=" + endpoint);
     } catch (e) {
       const msg = String(e?.message || e || "Erro de rede");
       setStatus("erro");
       setResult(msg);
-      pushChat("assistant", msg);
+      pushChat("assistant", msg, { actionLabel: "rede" });
       log("ERR", "erro de rede IA");
     } finally {
       setButtonsBusy(false);
-      if (btnSend) btnSend.disabled = false;
     }
   }
 
-  function buildPayload(mode) {
-    const snapshot = buildLeanSnapshot();
-    setSnapshotPreview(snapshot);
-
-    if (mode === "analyze-logs") {
-      return {
-        snapshot,
-        logs: collectLogs()
-      };
+  function sendPrompt(rawPrompt, forcedAction = "") {
+    const prompt = String(rawPrompt || "").trim();
+    if (!prompt) {
+      setStatus("aguardando");
+      setResult("Digite uma instrução primeiro.");
+      return;
     }
 
-    if (mode === "factory_diagnosis") {
-      return {
-        snapshot,
-        doctor: collectDoctorReport()
-      };
-    }
+    const route = forcedAction
+      ? { action: forcedAction, label: forcedAction }
+      : inferActionFromPrompt(prompt);
 
-    if (mode === "propose-patch" || mode === "generate-code") {
-      return {
-        snapshot,
-        doctor: collectDoctorReport(),
-        logs: collectLogs(25)
-      };
-    }
-
-    if (mode === "zip-readiness") {
-      return {
-        snapshot,
-        doctor: collectDoctorReport(),
-        capability: {
-          wantsZipFlow: true,
-          currentPhase: "factory-ia-structure"
-        }
-      };
-    }
-
-    return { snapshot };
-  }
-
-  function handleModeAction(mode, customPrompt) {
-    const prompt = buildPromptFromMode(mode, customPrompt);
-    const payload = buildPayload(mode);
-
-    pushChat("user", prompt);
-    callFactoryAI(mode, payload, prompt);
+    pushChat("user", prompt, { actionLabel: route.label });
+    callFactoryAI(route.action, buildPayload(route.action), prompt);
   }
 
   function bindBox() {
-    const btnFactory = document.getElementById("rcfFactoryAIAnalyzeFactory");
-    const btnLogs = document.getElementById("rcfFactoryAIAnalyzeLogs");
-    const btnDoctor = document.getElementById("rcfFactoryAIAnalyzeDoctor");
-    const btnSuggest = document.getElementById("rcfFactoryAISuggest");
-    const btnPatch = document.getElementById("rcfFactoryAIProposePatch");
-    const btnCode = document.getElementById("rcfFactoryAIGenerateCode");
-    const btnSend = document.getElementById("rcfFactoryAISend");
-    const btnClear = document.getElementById("rcfFactoryAIClear");
-    const btnQuickAnalyze = document.getElementById("rcfFactoryAIQuickAnalyze");
-    const btnQuickPatch = document.getElementById("rcfFactoryAIQuickPatch");
-    const btnQuickCode = document.getElementById("rcfFactoryAIQuickCode");
+    const sendBtn = document.getElementById("rcfFactoryAISend");
+    const clearBtn = document.getElementById("rcfFactoryAIClear");
     const promptEl = document.getElementById("rcfFactoryAIPrompt");
+    const sugArch = document.getElementById("rcfFactoryAISuggestionArchitecture");
+    const sugPatch = document.getElementById("rcfFactoryAISuggestionPatch");
+    const sugCode = document.getElementById("rcfFactoryAISuggestionCode");
 
-    if (btnFactory && !btnFactory.__bound) {
-      btnFactory.__bound = true;
-      btnFactory.addEventListener("click", () => handleModeAction("analyze-architecture", ""), { passive: true });
-    }
-
-    if (btnLogs && !btnLogs.__bound) {
-      btnLogs.__bound = true;
-      btnLogs.addEventListener("click", () => handleModeAction("analyze-logs", ""), { passive: true });
-    }
-
-    if (btnDoctor && !btnDoctor.__bound) {
-      btnDoctor.__bound = true;
-      btnDoctor.addEventListener("click", () => handleModeAction("factory_diagnosis", ""), { passive: true });
-    }
-
-    if (btnSuggest && !btnSuggest.__bound) {
-      btnSuggest.__bound = true;
-      btnSuggest.addEventListener("click", () => handleModeAction("suggest-improvement", ""), { passive: true });
-    }
-
-    if (btnPatch && !btnPatch.__bound) {
-      btnPatch.__bound = true;
-      btnPatch.addEventListener("click", () => handleModeAction("propose-patch", ""), { passive: true });
-    }
-
-    if (btnCode && !btnCode.__bound) {
-      btnCode.__bound = true;
-      btnCode.addEventListener("click", () => handleModeAction("generate-code", ""), { passive: true });
-    }
-
-    if (btnQuickAnalyze && !btnQuickAnalyze.__bound) {
-      btnQuickAnalyze.__bound = true;
-      btnQuickAnalyze.addEventListener("click", () => handleModeAction("analyze-architecture", ""), { passive: true });
-    }
-
-    if (btnQuickPatch && !btnQuickPatch.__bound) {
-      btnQuickPatch.__bound = true;
-      btnQuickPatch.addEventListener("click", () => handleModeAction("propose-patch", ""), { passive: true });
-    }
-
-    if (btnQuickCode && !btnQuickCode.__bound) {
-      btnQuickCode.__bound = true;
-      btnQuickCode.addEventListener("click", () => handleModeAction("generate-code", ""), { passive: true });
-    }
-
-    if (btnSend && !btnSend.__bound) {
-      btnSend.__bound = true;
-      btnSend.addEventListener("click", () => {
-        const mode = getMode();
-        const prompt = String(promptEl?.value || "").trim();
-
-        if (!prompt) {
-          setStatus("aguardando");
-          setResult("Digite uma instrução primeiro.");
-          return;
-        }
-
-        handleModeAction(mode, prompt);
+    if (sendBtn && !sendBtn.__bound) {
+      sendBtn.__bound = true;
+      sendBtn.addEventListener("click", () => {
+        sendPrompt(String(promptEl?.value || "").trim(), "");
       }, { passive: true });
     }
 
-    if (btnClear && !btnClear.__bound) {
-      btnClear.__bound = true;
-      btnClear.addEventListener("click", () => clearChat(), { passive: true });
+    if (clearBtn && !clearBtn.__bound) {
+      clearBtn.__bound = true;
+      clearBtn.addEventListener("click", () => clearChat(), { passive: true });
+    }
+
+    if (promptEl && !promptEl.__boundEnter) {
+      promptEl.__boundEnter = true;
+      promptEl.addEventListener("keydown", (ev) => {
+        try {
+          if (ev.key === "Enter" && !ev.shiftKey) {
+            ev.preventDefault();
+            sendPrompt(String(promptEl.value || "").trim(), "");
+          }
+        } catch (_) {}
+      });
+    }
+
+    if (sugArch && !sugArch.__bound) {
+      sugArch.__bound = true;
+      sugArch.addEventListener("click", () => {
+        const text = "Analise a arquitetura atual da Factory e me diga o próximo passo mais seguro.";
+        if (promptEl) promptEl.value = text;
+        sendPrompt(text, "analyze-architecture");
+      }, { passive: true });
+    }
+
+    if (sugPatch && !sugPatch.__bound) {
+      sugPatch.__bound = true;
+      sugPatch.addEventListener("click", () => {
+        const text = "Proponha um patch mínimo e seguro para a Factory sem quebrar o boot.";
+        if (promptEl) promptEl.value = text;
+        sendPrompt(text, "propose-patch");
+      }, { passive: true });
+    }
+
+    if (sugCode && !sugCode.__bound) {
+      sugCode.__bound = true;
+      sugCode.addEventListener("click", () => {
+        const text = "Gere código com patch mínimo para a Factory, em arquivo completo.";
+        if (promptEl) promptEl.value = text;
+        sendPrompt(text, "generate-code");
+      }, { passive: true });
     }
   }
 
-  function buildQuickActionsHtml() {
+  function buildMiniStatusHtml() {
     return `
-      <div style="display:grid;gap:10px">
-        <div class="hint">Ações rápidas da Factory IA</div>
-        <div style="display:grid;grid-template-columns:1fr;gap:8px">
-          <button class="btn ghost" id="rcfFactoryAIQuickAnalyze" type="button">Analisar estrutura</button>
-          <button class="btn ghost" id="rcfFactoryAIQuickPatch" type="button">Propor patch</button>
-          <button class="btn ghost" id="rcfFactoryAIQuickCode" type="button">Gerar código</button>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+        <div>
+          <div style="font-weight:800">Factory AI</div>
+          <div class="hint" id="rcfFactoryAIStateText">aguardando</div>
         </div>
+        <div class="hint">${esc(STATE.mountedIn || "factoryai.tools")}</div>
       </div>
     `;
   }
 
   function buildBoxHtml() {
     return `
-      <h2 style="margin-top:0">Factory IA</h2>
-      <div class="hint">IA oficial da Factory. Analisa, sugere, propõe patch e pode gerar código. Não executa nada automaticamente.</div>
+      <div style="display:grid;gap:12px">
+        <div>
+          <h2 style="margin:0">Factory AI</h2>
+          <div class="hint" style="margin-top:4px">
+            Chat oficial da Factory. Fale normalmente sobre arquitetura, bugs, patch, código, layout, logs, doctor, ZIP, PDF, imagens e contexto.
+          </div>
+        </div>
 
-      <div class="row" style="margin-top:10px;gap:10px;flex-wrap:wrap;align-items:center">
-        <label class="hint" for="rcfFactoryAIMode">Modo</label>
-        <select id="rcfFactoryAIMode" style="min-width:220px">
-          <option value="summarize-structure">Estrutura</option>
-          <option value="analyze-architecture">Arquitetura</option>
-          <option value="analyze-logs">Logs</option>
-          <option value="factory_diagnosis">Doctor</option>
-          <option value="suggest-improvement">Melhoria</option>
-          <option value="propose-patch">Propor patch</option>
-          <option value="generate-code">Gerar código</option>
-          <option value="zip-readiness">Preparar ZIP</option>
-        </select>
-        <button class="btn ghost" id="rcfFactoryAIClear" type="button">Limpar conversa</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn ghost" id="rcfFactoryAISuggestionArchitecture" type="button">Analisar arquitetura</button>
+          <button class="btn ghost" id="rcfFactoryAISuggestionPatch" type="button">Propor patch</button>
+          <button class="btn ghost" id="rcfFactoryAISuggestionCode" type="button">Gerar código</button>
+        </div>
+
+        <div id="${CHAT_ID}" style="
+          min-height:180px;
+          max-height:42vh;
+          overflow:auto;
+          padding:10px;
+          border:1px solid rgba(31,41,55,.08);
+          border-radius:18px;
+          background:rgba(255,255,255,.58);
+          backdrop-filter:blur(4px);
+        "></div>
+
+        <div style="
+          display:grid;
+          gap:10px;
+          padding:12px;
+          border:1px solid rgba(31,41,55,.08);
+          border-radius:18px;
+          background:rgba(255,255,255,.72);
+        ">
+          <textarea id="rcfFactoryAIPrompt"
+            placeholder="Fale com a Factory AI. Ex.: corrige o módulo da view, gera o arquivo completo, analisa os logs, lê esse contexto, organiza essa arquitetura..."
+            style="width:100%;min-height:110px;resize:vertical;padding:12px;border-radius:14px;border:1px solid rgba(31,41,55,.10);box-sizing:border-box;background:#fff;color:#18233f;"></textarea>
+
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+            <div id="rcfFactoryAIComposerStatus" class="hint">aguardando</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button class="btn ghost" id="rcfFactoryAIClear" type="button">Limpar</button>
+              <button class="btn ok" id="rcfFactoryAISend" type="button">Enviar</button>
+            </div>
+          </div>
+        </div>
+
+        <details style="border:1px solid rgba(31,41,55,.08);border-radius:16px;background:rgba(255,255,255,.62);padding:10px 12px;">
+          <summary style="cursor:pointer;font-weight:800">Contexto técnico</summary>
+          <div style="margin-top:10px;display:grid;gap:10px">
+            <div>
+              <label class="hint">Snapshot Preview enviado</label>
+              <pre class="mono small" id="rcfFactoryAISnapshot" style="margin-top:6px;max-height:18vh;overflow:auto">{"status":"aguardando"}</pre>
+            </div>
+            <div>
+              <label class="hint">Último resultado técnico</label>
+              <pre class="mono small" id="rcfFactoryAITechResult" style="margin-top:6px;max-height:18vh;overflow:auto">Pronto.</pre>
+            </div>
+          </div>
+        </details>
       </div>
-
-      <div class="row" style="margin-top:10px;gap:10px;flex-wrap:wrap">
-        <button class="btn ghost" id="rcfFactoryAIAnalyzeFactory" type="button">Analisar Factory</button>
-        <button class="btn ghost" id="rcfFactoryAIAnalyzeLogs" type="button">Analisar Logs</button>
-        <button class="btn ghost" id="rcfFactoryAIAnalyzeDoctor" type="button">Analisar Doctor</button>
-        <button class="btn ghost" id="rcfFactoryAISuggest" type="button">Sugerir melhoria</button>
-        <button class="btn ghost" id="rcfFactoryAIProposePatch" type="button">Propor Patch</button>
-        <button class="btn ghost" id="rcfFactoryAIGenerateCode" type="button">Gerar Código</button>
-      </div>
-
-      <div id="${CHAT_ID}" style="
-        margin-top:12px;
-        max-height:30vh;
-        overflow:auto;
-        padding:8px;
-        background:rgba(255,255,255,.03);
-        border:1px solid rgba(255,255,255,.10);
-        border-radius:10px;
-      "></div>
-
-      <div style="margin-top:12px">
-        <label class="hint">Snapshot Preview enviado</label>
-        <pre class="mono small" id="rcfFactoryAISnapshot" style="margin-top:6px;max-height:18vh;overflow:auto">{"status":"aguardando"}</pre>
-      </div>
-
-      <div style="margin-top:12px">
-        <label class="hint" for="rcfFactoryAIPrompt">Prompt manual</label>
-        <textarea id="rcfFactoryAIPrompt"
-          placeholder="Ex.: proponha um patch mínimo para corrigir X sem quebrar o boot"
-          style="width:100%;min-height:100px;margin-top:6px;background:#0c1020;color:#eaf0ff;border:1px solid rgba(255,255,255,.14);border-radius:10px;padding:10px;box-sizing:border-box"></textarea>
-      </div>
-
-      <div class="row" style="margin-top:10px;gap:10px;align-items:center;flex-wrap:wrap">
-        <button class="btn ok" id="rcfFactoryAISend" type="button">Enviar</button>
-        <div class="badge" id="rcfFactoryAIStatus">aguardando</div>
-      </div>
-
-      <pre class="mono small" id="rcfFactoryAIResult" style="margin-top:10px;max-height:24vh;overflow:auto">Pronto.</pre>
     `;
   }
 
-  function ensureQuickActionsBox(actionsSlot) {
+  function ensureMiniStatusBox(actionsSlot) {
     if (!actionsSlot) return null;
 
-    let box = document.getElementById(ACTIONS_ID);
+    let box = document.getElementById(STATUS_ID);
     if (!box) {
       box = document.createElement("div");
-      box.id = ACTIONS_ID;
+      box.id = STATUS_ID;
       box.className = "card";
       box.style.marginTop = "12px";
-      box.innerHTML = buildQuickActionsHtml();
+      box.innerHTML = buildMiniStatusHtml();
       actionsSlot.appendChild(box);
-    } else if (box.parentNode !== actionsSlot) {
-      actionsSlot.appendChild(box);
+    } else {
+      box.innerHTML = buildMiniStatusHtml();
+      if (box.parentNode !== actionsSlot) {
+        actionsSlot.appendChild(box);
+      }
     }
 
     return box;
@@ -771,14 +796,14 @@
     if (!mainBox) return false;
 
     if (slots.actions) {
-      ensureQuickActionsBox(slots.actions);
+      ensureMiniStatusBox(slots.actions);
     }
 
     bindBox();
     renderChat();
     syncVisibility();
 
-    log("OK", "Factory IA mount ✅ " + VERSION + " @ " + (STATE.mountedIn || "unknown"));
+    log("OK", "Factory AI mount ✅ " + VERSION + " @ " + (STATE.mountedIn || "unknown"));
     return true;
   }
 
@@ -807,16 +832,17 @@
   }
 
   window.RCF_FACTORY_AI = {
-    __v22: true,
+    __v30: true,
     version: VERSION,
     mount,
     clearChat,
+    sendPrompt,
     getHistory() { return Array.isArray(STATE.history) ? STATE.history.slice() : []; },
     getLastEndpoint() { return STATE.lastEndpoint || ""; }
   };
 
   window.RCF_ADMIN_AI = Object.assign(window.RCF_ADMIN_AI || {}, {
-    __v22_bridge: true,
+    __v30_bridge: true,
     version: VERSION,
     mount,
     clearChat
@@ -836,5 +862,5 @@
     startVisibilitySync();
   }
 
-  log("OK", "admin.admin_ai.js -> Factory IA ready ✅ " + VERSION);
+  log("OK", "admin.admin_ai.js -> Factory AI ready ✅ " + VERSION);
 })();
