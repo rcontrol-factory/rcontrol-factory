@@ -1,19 +1,20 @@
 /* FILE: /app/js/admin.admin_ai.js
    RControl Factory — Factory AI
-   v3.1 CHAT-ONLY CLEAN
+   v3.1 CHAT-FIRST CLEAN OFFICIAL
 
-   - Factory AI em modo chat-only real
-   - remove cards internos duplicados
-   - remove sugestões visuais e painel técnico da interface principal
-   - mantém inferência automática por linguagem natural
+   - Factory AI em modo chat-first real
+   - nome padronizado: Factory AI
+   - monta preferencialmente no slot oficial factoryai.tools
+   - fallback seguro para admin apenas se a view oficial ainda não existir
+   - remove visual sobrando da tela (actions/context) quando possível
+   - corrige textos visíveis "Factory IA" -> "Factory AI"
+   - inferência automática de ação por linguagem natural
    - tenta /api/factory-ai com fallback para /api/admin-ai
-   - mantém snapshot estrutural interno/discreto
-   - mantém mount oficial em factoryai.tools
-   - fallback seguro para admin se necessário
-   - preparado para crescer depois para ZIP / PDF / imagem / arquivos
+   - snapshot estrutural continua disponível de forma discreta
+   - histórico visual tipo chat
+   - pronto para crescer depois para ZIP / PDF / imagem / arquivos
    - não executa patch automático
 */
-
 (() => {
   "use strict";
 
@@ -29,27 +30,34 @@
     mountedIn: "",
     lastEndpoint: "",
     bootedAt: new Date().toISOString(),
-    lastSnapshot: null,
-    lastTechResult: "Pronto."
+    visibilityTimer: null
   };
 
   function log(level, msg) {
-    try { window.RCF_LOGGER?.push?.(level, "[FACTORY_AI] " + msg); } catch (_) {}
-    try { console.log("[FACTORY_AI]", level, msg); } catch (_) {}
+    try { window.RCF_LOGGER?.push?.(level, "[FACTORY_AI] " + msg); } catch {}
+    try { console.log("[FACTORY_AI]", level, msg); } catch {}
+  }
+
+  function qs(sel, root = document) {
+    try { return root.querySelector(sel); } catch { return null; }
+  }
+
+  function qsa(sel, root = document) {
+    try { return Array.from(root.querySelectorAll(sel)); } catch { return []; }
   }
 
   function esc(s) {
-    return String(s || "").replace(/[&<>"]/g, c => ({
+    return String(s || "").replace(/[&<>"]/g, (c) => ({
       "&": "&amp;",
       "<": "&lt;",
       ">": "&gt;",
-      '"': "&quot;"
+      "\"": "&quot;"
     }[c]));
   }
 
   function pretty(obj) {
     try { return JSON.stringify(obj, null, 2); }
-    catch (_) { return String(obj || ""); }
+    catch { return String(obj || ""); }
   }
 
   function isElementVisible(el) {
@@ -61,7 +69,7 @@
       if (cs.display === "none") return false;
       if (cs.visibility === "hidden") return false;
       return true;
-    } catch (_) {
+    } catch {
       return false;
     }
   }
@@ -89,7 +97,7 @@
       if (view.classList.contains("active")) return true;
       if (view.getAttribute("data-rcf-visible") === "1") return true;
       return isElementVisible(view);
-    } catch (_) {
+    } catch {
       return false;
     }
   }
@@ -101,7 +109,7 @@
       if (view.classList.contains("active")) return true;
       if (view.getAttribute("data-rcf-visible") === "1") return true;
       return isElementVisible(view);
-    } catch (_) {
+    } catch {
       return false;
     }
   }
@@ -121,7 +129,7 @@
           ui.getSlot("admin.top") ||
           null;
       }
-    } catch (_) {}
+    } catch {}
 
     if (!out.tools) {
       out.tools =
@@ -143,27 +151,13 @@
     return out;
   }
 
-  function syncVisibility() {
-    const box = document.getElementById(BOX_ID);
-    if (!box) return;
-
-    const showFactory = isFactoryAIViewVisible();
-    const showAdminFallback = !showFactory && isAdminViewVisible() && /^admin/.test(STATE.mountedIn || "");
-    const visible = !!(showFactory || showAdminFallback);
-
-    try {
-      box.style.display = visible ? "" : "none";
-      box.hidden = !visible;
-    } catch (_) {}
-  }
-
   function collectLogs(limit = 30) {
     try {
       const logger = window.RCF_LOGGER;
       if (logger && Array.isArray(logger.items)) {
         return logger.items.slice(-limit);
       }
-    } catch (_) {}
+    } catch {}
     return [];
   }
 
@@ -172,13 +166,13 @@
       if (window.RCF_FACTORY_STATE?.getState?.().doctorLastRun) {
         return window.RCF_FACTORY_STATE.getState().doctorLastRun;
       }
-    } catch (_) {}
+    } catch {}
 
     try {
       if (window.RCF_DOCTOR_SCAN?.lastReport) {
         return window.RCF_DOCTOR_SCAN.lastReport;
       }
-    } catch (_) {}
+    } catch {}
 
     return {
       note: "Doctor report não encontrado ainda. Rode o Doctor antes.",
@@ -189,9 +183,9 @@
   function getSnapshotRaw() {
     try {
       if (window.RCF_FACTORY_IA && typeof window.RCF_FACTORY_IA.getContext === "function") {
-        return { factoryIA: window.RCF_FACTORY_IA.getContext() };
+        return { factoryAI: window.RCF_FACTORY_IA.getContext() };
       }
-    } catch (_) {}
+    } catch {}
 
     try {
       if (window.RCF_CONTEXT && typeof window.RCF_CONTEXT.getSnapshot === "function") {
@@ -200,7 +194,7 @@
       if (window.RCF_CONTEXT && typeof window.RCF_CONTEXT.getContext === "function") {
         return window.RCF_CONTEXT.getContext();
       }
-    } catch (_) {}
+    } catch {}
 
     return null;
   }
@@ -270,13 +264,36 @@
     };
   }
 
-  function setStatus(txt) {
+  function setComposerStatus(txt) {
     const el = document.getElementById("rcfFactoryAIComposerStatus");
     if (el) el.textContent = String(txt || "");
   }
 
   function setTechResult(txt) {
-    STATE.lastTechResult = String(txt || "");
+    const el = document.getElementById("rcfFactoryAITechResult");
+    if (el) el.textContent = String(txt || "");
+  }
+
+  function setSnapshotPreview(obj) {
+    const el = document.getElementById("rcfFactoryAISnapshot");
+    if (el) el.textContent = pretty(obj || {});
+  }
+
+  function setButtonsBusy(busy) {
+    STATE.busy = !!busy;
+
+    [
+      "rcfFactoryAISend",
+      "rcfFactoryAIClear"
+    ].forEach((id) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      if (id === "rcfFactoryAIClear") el.disabled = false;
+      else el.disabled = !!busy;
+    });
+
+    const input = document.getElementById("rcfFactoryAIPrompt");
+    if (input) input.disabled = !!busy;
   }
 
   function pushChat(role, text, meta = {}) {
@@ -291,6 +308,7 @@
 
   function ensureSeedMessage() {
     if (STATE.history.length) return;
+
     pushChat(
       "assistant",
       "Factory AI online. Pode falar normalmente comigo sobre arquitetura, bugs, patch, código, logs, doctor, layout, design, ZIP, PDF, imagem e contexto da Factory.",
@@ -304,40 +322,40 @@
 
     ensureSeedMessage();
 
-    box.innerHTML = STATE.history.map(item => {
+    box.innerHTML = STATE.history.map((item) => {
       const isUser = item.role === "user";
-      const wrapAlign = isUser ? "justify-content:flex-end;" : "justify-content:flex-start;";
-      const bg = isUser ? "rgba(88,166,255,.12)" : "rgba(255,255,255,.78)";
-      const border = isUser ? "rgba(88,166,255,.18)" : "rgba(31,41,55,.08)";
-      const tag = isUser ? "Você" : "Factory AI";
+      const align = isUser ? "flex-end" : "flex-start";
+      const bg = isUser ? "rgba(88,166,255,.12)" : "rgba(255,255,255,.82)";
+      const border = isUser ? "rgba(88,166,255,.22)" : "rgba(31,41,55,.08)";
 
       return `
-        <div style="display:flex;${wrapAlign}margin-top:10px;">
+        <div style="display:flex;justify-content:${align};margin-top:10px">
           <div style="
-            width:min(100%, 620px);
+            width:min(100%, 720px);
             padding:14px;
             border:1px solid ${border};
             border-radius:18px;
             background:${bg};
             box-shadow:0 2px 10px rgba(15,23,42,.04);
           ">
-            <div style="font-weight:800;margin-bottom:6px">${esc(tag)}</div>
+            <div style="font-weight:800;margin-bottom:6px">${isUser ? "Você" : "Factory AI"}</div>
             <div style="white-space:pre-wrap;word-break:break-word;line-height:1.48">${esc(item.text)}</div>
-            <div style="margin-top:8px;font-size:11px;opacity:.60">${esc(item.ts)}</div>
+            <div class="hint" style="margin-top:8px;font-size:11px;opacity:.62">${esc(item.ts)}</div>
           </div>
         </div>
       `;
     }).join("");
 
-    try { box.scrollTop = box.scrollHeight; } catch (_) {}
+    try { box.scrollTop = box.scrollHeight; } catch {}
   }
 
   function clearChat() {
     STATE.history = [];
     ensureSeedMessage();
     renderChat();
-    setStatus("aguardando");
+    setComposerStatus("aguardando");
     setTechResult("Pronto.");
+    setSnapshotPreview({});
   }
 
   function inferActionFromPrompt(prompt) {
@@ -407,7 +425,9 @@
       p.includes("módulo") ||
       p.includes("modulo") ||
       p.includes("organiza") ||
-      p.includes("orquestra")
+      p.includes("orquestra") ||
+      p.includes("layout") ||
+      p.includes("design")
     ) {
       return { action: "analyze-architecture", label: "Arquitetura" };
     }
@@ -415,19 +435,9 @@
     return { action: "summarize-structure", label: "Estrutura" };
   }
 
-  async function postJSON(url, body) {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body)
-    });
-    const data = await res.json().catch(() => ({}));
-    return { res, data };
-  }
-
   function buildPayload(action) {
     const snapshot = buildLeanSnapshot();
-    STATE.lastSnapshot = snapshot;
+    setSnapshotPreview(snapshot);
 
     if (action === "analyze-logs") {
       return {
@@ -457,10 +467,9 @@
         doctor: collectDoctorReport(),
         capability: {
           wantsZipFlow: true,
-          wantsPdfFlow: true,
           wantsImageFlow: true,
-          wantsFileFlow: true,
-          currentPhase: "factory-ai-chat-only"
+          wantsPdfFlow: true,
+          currentPhase: "factory-ai-chat-first"
         }
       };
     }
@@ -468,28 +477,21 @@
     return { snapshot };
   }
 
-  function setButtonsBusy(busy) {
-    STATE.busy = !!busy;
-
-    [
-      "rcfFactoryAISend",
-      "rcfFactoryAIClear"
-    ].forEach(id => {
-      const el = document.getElementById(id);
-      if (!el) return;
-      if (id === "rcfFactoryAIClear") el.disabled = false;
-      else el.disabled = !!busy;
+  async function postJSON(url, body) {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
     });
-
-    const input = document.getElementById("rcfFactoryAIPrompt");
-    if (input) input.disabled = !!busy;
+    const data = await res.json().catch(() => ({}));
+    return { res, data };
   }
 
   async function callFactoryAI(action, payload, prompt) {
     if (STATE.busy) return;
 
     setButtonsBusy(true);
-    setStatus("carregando...");
+    setComposerStatus("carregando...");
     setTechResult("");
 
     const body = {
@@ -507,7 +509,7 @@
       try {
         result = await postJSON("/api/factory-ai", body);
         endpoint = "/api/factory-ai";
-      } catch (_) {
+      } catch {
         result = null;
       }
 
@@ -522,9 +524,9 @@
 
       if (!res.ok || !data.ok) {
         const msg = pretty(data || { error: "Erro ao chamar endpoint IA" });
-        setStatus("erro");
+        setComposerStatus("erro");
         setTechResult(msg);
-        pushChat("assistant", msg, { actionLabel: endpoint || "erro" });
+        pushChat("assistant", msg);
         log("ERR", "falha IA endpoint=" + endpoint);
         return;
       }
@@ -535,15 +537,15 @@
         data.result ||
         pretty(data);
 
-      setStatus("concluído");
+      setComposerStatus("concluído");
       setTechResult(text);
-      pushChat("assistant", text, { actionLabel: endpoint || action });
+      pushChat("assistant", text);
       log("OK", "resposta recebida action=" + action + " endpoint=" + endpoint);
     } catch (e) {
       const msg = String(e?.message || e || "Erro de rede");
-      setStatus("erro");
+      setComposerStatus("erro");
       setTechResult(msg);
-      pushChat("assistant", msg, { actionLabel: "rede" });
+      pushChat("assistant", msg);
       log("ERR", "erro de rede IA");
     } finally {
       setButtonsBusy(false);
@@ -552,10 +554,8 @@
 
   function sendPrompt(rawPrompt, forcedAction = "") {
     const prompt = String(rawPrompt || "").trim();
-    const input = document.getElementById("rcfFactoryAIPrompt");
-
     if (!prompt) {
-      setStatus("aguardando");
+      setComposerStatus("aguardando");
       setTechResult("Digite uma instrução primeiro.");
       return;
     }
@@ -565,8 +565,12 @@
       : inferActionFromPrompt(prompt);
 
     pushChat("user", prompt, { actionLabel: route.label });
-    if (input) input.value = "";
     callFactoryAI(route.action, buildPayload(route.action), prompt);
+
+    const input = document.getElementById("rcfFactoryAIPrompt");
+    if (input) {
+      try { input.value = ""; } catch {}
+    }
   }
 
   function bindBox() {
@@ -583,7 +587,9 @@
 
     if (clearBtn && !clearBtn.__bound) {
       clearBtn.__bound = true;
-      clearBtn.addEventListener("click", () => clearChat(), { passive: true });
+      clearBtn.addEventListener("click", () => {
+        clearChat();
+      }, { passive: true });
     }
 
     if (promptEl && !promptEl.__boundEnter) {
@@ -594,7 +600,7 @@
             ev.preventDefault();
             sendPrompt(String(promptEl.value || "").trim(), "");
           }
-        } catch (_) {}
+        } catch {}
       });
     }
   }
@@ -610,26 +616,41 @@
         </div>
 
         <div id="${CHAT_ID}" style="
-          min-height:280px;
-          max-height:48vh;
+          min-height:260px;
+          max-height:44vh;
           overflow:auto;
           padding:12px;
           border:1px solid rgba(31,41,55,.08);
-          border-radius:18px;
-          background:rgba(255,255,255,.56);
+          border-radius:20px;
+          background:rgba(255,255,255,.72);
+          box-shadow:inset 0 1px 0 rgba(255,255,255,.55);
         "></div>
 
         <div style="
           display:grid;
           gap:10px;
-          padding:12px;
+          padding:14px;
           border:1px solid rgba(31,41,55,.08);
-          border-radius:18px;
-          background:rgba(255,255,255,.70);
+          border-radius:20px;
+          background:rgba(255,255,255,.84);
         ">
-          <textarea id="rcfFactoryAIPrompt"
+          <textarea
+            id="rcfFactoryAIPrompt"
             placeholder="Fale com a Factory AI. Ex.: corrige o módulo da view, gera o arquivo completo, analisa os logs, lê esse contexto, organiza essa arquitetura..."
-            style="width:100%;min-height:120px;resize:vertical;padding:12px;border-radius:14px;border:1px solid rgba(31,41,55,.10);box-sizing:border-box;background:#fff;color:#18233f;"></textarea>
+            style="
+              width:100%;
+              min-height:120px;
+              resize:vertical;
+              padding:14px;
+              border-radius:16px;
+              border:1px solid rgba(31,41,55,.10);
+              box-sizing:border-box;
+              background:#fff;
+              color:#18233f;
+              font:inherit;
+              line-height:1.45;
+            "
+          ></textarea>
 
           <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
             <div id="rcfFactoryAIComposerStatus" class="hint">aguardando</div>
@@ -638,37 +659,126 @@
               <button class="btn ok" id="rcfFactoryAISend" type="button">Enviar</button>
             </div>
           </div>
-
-          <div class="hint" style="font-size:12px;opacity:.78">
-            Em breve: imagem, ZIP, PDF e arquivos direto no chat.
-          </div>
         </div>
+
+        <details style="
+          border:1px solid rgba(31,41,55,.08);
+          border-radius:16px;
+          background:rgba(255,255,255,.66);
+          padding:10px 12px;
+        ">
+          <summary style="cursor:pointer;font-weight:800">Contexto técnico</summary>
+          <div style="margin-top:10px;display:grid;gap:10px">
+            <div>
+              <label class="hint">Snapshot Preview enviado</label>
+              <pre class="mono small" id="rcfFactoryAISnapshot" style="margin-top:6px;max-height:18vh;overflow:auto">{"status":"aguardando"}</pre>
+            </div>
+            <div>
+              <label class="hint">Último resultado técnico</label>
+              <pre class="mono small" id="rcfFactoryAITechResult" style="margin-top:6px;max-height:18vh;overflow:auto">Pronto.</pre>
+            </div>
+          </div>
+        </details>
       </div>
     `;
   }
 
-  function removeWrongFactoryAICards(slot) {
+  function applyFactoryAITextFix(root = document) {
     try {
-      if (!slot) return;
+      const targets = [
+        root,
+        getFactoryAIView(),
+        document.body
+      ].filter(Boolean);
 
-      [
-        "#rcfFactoryAIStateMini",
-        "#rcfFactoryAIQuickActions",
-        '[data-rcf-factory-ai-fallback="actions"]',
-        '[data-rcf-factory-ai-fallback="tools"]'
-      ].forEach(sel => {
-        slot.querySelectorAll(sel).forEach(el => {
-          try { el.remove(); } catch (_) {}
+      targets.forEach((base) => {
+        const walker = document.createTreeWalker(base, NodeFilter.SHOW_TEXT);
+        const nodes = [];
+        while (walker.nextNode()) nodes.push(walker.currentNode);
+
+        nodes.forEach((node) => {
+          try {
+            if (!node || !node.nodeValue) return;
+            let txt = String(node.nodeValue || "");
+            if (!txt.trim()) return;
+
+            txt = txt.replace(/\bFactory IA\b/g, "Factory AI");
+            txt = txt.replace(/\bIA da Factory\b/g, "AI da Factory");
+
+            node.nodeValue = txt;
+          } catch {}
         });
       });
-    } catch (_) {}
+    } catch {}
+  }
+
+  function cleanupFactoryAIHost() {
+    const view = getFactoryAIView();
+    if (!view) return false;
+
+    try {
+      const actionsBlock = qs('[data-rcf-factory-block="factory-ai-actions"]', view);
+      if (actionsBlock) actionsBlock.style.display = "none";
+    } catch {}
+
+    try {
+      const contextBlock = qs('[data-rcf-factory-block="factory-ai-context"]', view);
+      if (contextBlock) contextBlock.style.display = "none";
+    } catch {}
+
+    try {
+      const fallbacks = qsa('[data-rcf-factory-ai-fallback]', view);
+      fallbacks.forEach((el) => {
+        try { el.remove(); } catch {}
+      });
+    } catch {}
+
+    try {
+      const wrong = qsa("#rcfFactoryAIQuickActions, #rcfFactoryAIStateMini", view);
+      wrong.forEach((el) => {
+        try { el.remove(); } catch {}
+      });
+    } catch {}
+
+    try {
+      const heads = qsa('[data-rcf-factory-block="factory-ai-tools"] .rcfUiFactoryBlockHead h2', view);
+      heads.forEach((el) => {
+        try { el.textContent = "Factory AI"; } catch {}
+      });
+    } catch {}
+
+    try {
+      const hints = qsa('[data-rcf-factory-block="factory-ai-tools"] .rcfUiFactoryBlockHead .hint', view);
+      hints.forEach((el) => {
+        try { el.textContent = "Chat inteligente, sugestões e análise estrutural"; } catch {}
+      });
+    } catch {}
+
+    applyFactoryAITextFix(view);
+    return true;
+  }
+
+  function syncVisibility() {
+    const box = document.getElementById(BOX_ID);
+    const showFactory = isFactoryAIViewVisible();
+    const showAdminFallback = !showFactory && isAdminViewVisible() && /^admin/.test(STATE.mountedIn || "");
+    const visible = !!(showFactory || showAdminFallback);
+
+    try {
+      if (box) {
+        box.style.display = visible ? "" : "none";
+        box.hidden = !visible;
+      }
+    } catch {}
+
+    try {
+      cleanupFactoryAIHost();
+    } catch {}
   }
 
   function ensureMainBox(primarySlot) {
     let box = document.getElementById(BOX_ID);
     if (!primarySlot) return null;
-
-    removeWrongFactoryAICards(primarySlot);
 
     if (!box) {
       box = document.createElement("div");
@@ -677,13 +787,13 @@
       box.style.marginTop = "12px";
       box.setAttribute("data-rcf-factory-ai", "1");
       box.innerHTML = buildBoxHtml();
-      primarySlot.innerHTML = "";
       primarySlot.appendChild(box);
       bindBox();
       renderChat();
-    } else if (box.parentNode !== primarySlot) {
-      primarySlot.innerHTML = "";
-      primarySlot.appendChild(box);
+    } else {
+      if (box.parentNode !== primarySlot) {
+        primarySlot.appendChild(box);
+      }
       bindBox();
       renderChat();
     }
@@ -702,9 +812,9 @@
     const mainBox = ensureMainBox(primary);
     if (!mainBox) return false;
 
-    bindBox();
-    renderChat();
-    syncVisibility();
+    try { cleanupFactoryAIHost(); } catch {}
+    try { applyFactoryAITextFix(); } catch {}
+    try { syncVisibility(); } catch {}
 
     log("OK", "Factory AI mount ✅ " + VERSION + " @ " + (STATE.mountedIn || "unknown"));
     return true;
@@ -712,26 +822,35 @@
 
   function mountLoop() {
     if (mount()) return true;
-    setTimeout(() => { try { mount(); } catch (_) {} }, 700);
-    setTimeout(() => { try { mount(); } catch (_) {} }, 1600);
-    setTimeout(() => { try { mount(); } catch (_) {} }, 2800);
+
+    setTimeout(() => { try { mount(); } catch {} }, 700);
+    setTimeout(() => { try { mount(); } catch {} }, 1600);
+    setTimeout(() => { try { mount(); } catch {} }, 2800);
     return false;
   }
 
   function startVisibilitySync() {
-    setInterval(() => {
-      try { mount(); } catch (_) {}
-      try { syncVisibility(); } catch (_) {}
+    try {
+      if (STATE.visibilityTimer) clearInterval(STATE.visibilityTimer);
+    } catch {}
+
+    STATE.visibilityTimer = setInterval(() => {
+      try { mount(); } catch {}
+      try { syncVisibility(); } catch {}
+      try { applyFactoryAITextFix(); } catch {}
     }, 900);
 
     try {
       document.addEventListener("click", () => {
-        setTimeout(() => { try { mount(); } catch (_) {} }, 50);
-        setTimeout(() => { try { syncVisibility(); } catch (_) {} }, 50);
-        setTimeout(() => { try { mount(); } catch (_) {} }, 250);
-        setTimeout(() => { try { syncVisibility(); } catch (_) {} }, 250);
+        setTimeout(() => { try { mount(); } catch {} }, 60);
+        setTimeout(() => { try { syncVisibility(); } catch {} }, 60);
+        setTimeout(() => { try { applyFactoryAITextFix(); } catch {} }, 60);
+
+        setTimeout(() => { try { mount(); } catch {} }, 250);
+        setTimeout(() => { try { syncVisibility(); } catch {} }, 250);
+        setTimeout(() => { try { applyFactoryAITextFix(); } catch {} }, 250);
       }, { passive: true });
-    } catch (_) {}
+    } catch {}
   }
 
   window.RCF_FACTORY_AI = {
@@ -740,27 +859,32 @@
     mount,
     clearChat,
     sendPrompt,
-    getHistory() { return Array.isArray(STATE.history) ? STATE.history.slice() : []; },
-    getLastEndpoint() { return STATE.lastEndpoint || ""; },
-    getLastSnapshot() { return STATE.lastSnapshot; },
-    getLastTechResult() { return STATE.lastTechResult || ""; }
+    getHistory() {
+      return Array.isArray(STATE.history) ? STATE.history.slice() : [];
+    },
+    getLastEndpoint() {
+      return STATE.lastEndpoint || "";
+    }
   };
 
   window.RCF_ADMIN_AI = Object.assign(window.RCF_ADMIN_AI || {}, {
     __v31_bridge: true,
     version: VERSION,
     mount,
-    clearChat
+    clearChat,
+    sendPrompt
   });
 
   try {
-    window.addEventListener("RCF:UI_READY", () => { try { mountLoop(); } catch (_) {} }, { passive: true });
-  } catch (_) {}
+    window.addEventListener("RCF:UI_READY", () => {
+      try { mountLoop(); } catch {}
+    }, { passive: true });
+  } catch {}
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", () => {
-      try { mountLoop(); } catch (_) {}
-      try { startVisibilitySync(); } catch (_) {}
+      try { mountLoop(); } catch {}
+      try { startVisibilitySync(); } catch {}
     }, { once: true });
   } else {
     mountLoop();
