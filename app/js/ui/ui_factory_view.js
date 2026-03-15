@@ -1,16 +1,16 @@
 /* FILE: /app/js/ui/ui_factory_view.js
    RControl Factory — Factory View Module
-   V2.3 FACTORY-AI CLEAN SCREEN
-   PATCH MÍNIMO:
-   - prioriza Factory AI como view oficial
-   - cria slots reais para Factory IA
+   V2.4 FACTORY-AI OFFICIAL HOST CLOSED
+
+   PATCH FECHADO:
+   - Factory AI monta somente na view oficial
+   - não cai mais em Admin
+   - cria e preserva slots reais da Factory IA
    - remove blocos errados da Factory geral dentro da tela da IA
    - evita duplicação visual e botões mortos
-   - mantém fallback seguro para admin apenas se necessário
-   - adiciona init + mount + refresh compatíveis com app.js V8.x
-   - resolve host/view automaticamente
-   - FIX: não monta mais Apps/Gateways/Projects dentro da Factory AI
-   - FIX: chama apenas o módulo de IA
+   - chama o módulo de IA com retries curtos e seguros
+   - mostra fallback visível nos slots se a IA ainda não entrar
+   - compatível com app.js V8.x
 */
 
 (() => {
@@ -20,10 +20,15 @@
     try { return root.querySelector(sel); } catch { return null; }
   }
 
+  function qsa(sel, root = document) {
+    try { return Array.from(root.querySelectorAll(sel)); } catch { return []; }
+  }
+
   const API = {
     __deps: null,
     __mounted: false,
     __mountCount: 0,
+    __retryTimers: [],
 
     init(deps) {
       this.__deps = Object.assign({}, this.__deps || {}, deps || {});
@@ -72,8 +77,7 @@
         "#view-factory-ai",
         '[data-rcf-view="factory-ai"]',
         "#rcfFactoryAIView",
-        "[data-rcf-factory-ai-view]",
-        "#view-admin"
+        "[data-rcf-factory-ai-view]"
       ];
 
       for (const sel of tries) {
@@ -81,8 +85,7 @@
         if (!el) continue;
 
         const id = String(el.id || el.getAttribute("data-rcf-view") || "").toLowerCase();
-        if (/agent/.test(id)) continue;
-
+        if (!/factory-ai/.test(id) && !/view-factory-ai/.test(id)) continue;
         return el;
       }
 
@@ -171,32 +174,42 @@
       `;
     },
 
-    ensureFactoryAISlots() {
-      const root = qs('[data-rcf-ui-factory-view="1"]') || qs('[data-rcf-ui-factory-root="1"]');
+    ensureFactoryAISlots(hostRoot = null) {
+      const root =
+        hostRoot ||
+        qs('[data-rcf-ui-factory-view="1"]') ||
+        qs('[data-rcf-ui-factory-root="1"]');
+
       if (!root) return false;
 
       let actions = qs("#rcfFactoryAISlotActions", root);
       let tools = qs("#rcfFactoryAISlotTools", root);
 
       if (!actions) {
+        const block = qs('[data-rcf-factory-block="factory-ai-actions"]', root) || root;
         actions = document.createElement("div");
         actions.id = "rcfFactoryAISlotActions";
         actions.setAttribute("data-rcf-slot", "factoryai.actions");
-        root.appendChild(actions);
+        block.appendChild(actions);
       }
 
       if (!tools) {
+        const block = qs('[data-rcf-factory-block="factory-ai-tools"]', root) || root;
         tools = document.createElement("div");
         tools.id = "rcfFactoryAISlotTools";
         tools.setAttribute("data-rcf-slot", "factoryai.tools");
-        root.appendChild(tools);
+        block.appendChild(tools);
       }
 
       return true;
     },
 
-    cleanupWrongContent() {
-      const root = qs('[data-rcf-ui-factory-view="1"]');
+    cleanupWrongContent(hostRoot = null) {
+      const root =
+        hostRoot ||
+        qs('[data-rcf-ui-factory-view="1"]') ||
+        qs('[data-rcf-ui-factory-root="1"]');
+
       if (!root) return false;
 
       const wrongSelectors = [
@@ -212,7 +225,7 @@
       ];
 
       wrongSelectors.forEach((sel) => {
-        root.querySelectorAll(sel).forEach((el) => {
+        qsa(sel, root).forEach((el) => {
           try { el.remove(); } catch {}
         });
       });
@@ -220,9 +233,122 @@
       return true;
     },
 
+    buildActionsFallback() {
+      return `
+        <div data-rcf-factory-ai-fallback="actions" class="card" style="margin-top:10px">
+          <div style="font-weight:800;margin-bottom:6px">Ações rápidas</div>
+          <div class="hint">A Factory IA ainda está preparando o módulo principal.</div>
+        </div>
+      `;
+    },
+
+    buildToolsFallback() {
+      return `
+        <div data-rcf-factory-ai-fallback="tools" class="card" style="margin-top:10px">
+          <div style="font-weight:800;margin-bottom:6px">Chat em preparação</div>
+          <div class="hint">O host oficial foi montado. Falta encaixar o módulo vivo da Factory IA.</div>
+        </div>
+      `;
+    },
+
+    ensureVisibleFallbacks() {
+      const actions = qs("#rcfFactoryAISlotActions");
+      const tools = qs("#rcfFactoryAISlotTools");
+
+      if (actions && !actions.firstElementChild) {
+        actions.innerHTML = this.buildActionsFallback();
+      }
+
+      if (tools && !tools.firstElementChild) {
+        tools.innerHTML = this.buildToolsFallback();
+      }
+
+      return true;
+    },
+
+    clearFallbacksIfRealContentMounted() {
+      const actions = qs("#rcfFactoryAISlotActions");
+      const tools = qs("#rcfFactoryAISlotTools");
+
+      if (actions) {
+        const fallback = qs('[data-rcf-factory-ai-fallback="actions"]', actions);
+        if (fallback && actions.children.length > 1) {
+          try { fallback.remove(); } catch {}
+        }
+      }
+
+      if (tools) {
+        const fallback = qs('[data-rcf-factory-ai-fallback="tools"]', tools);
+        if (fallback && tools.children.length > 1) {
+          try { fallback.remove(); } catch {}
+        }
+      }
+
+      return true;
+    },
+
+    hasRealIAMount() {
+      try {
+        const tools = qs("#rcfFactoryAISlotTools");
+        const actions = qs("#rcfFactoryAISlotActions");
+        const mainBox = qs("#rcfFactoryAIBox");
+        const quickBox = qs("#rcfFactoryAIQuickActions");
+
+        if (mainBox) return true;
+        if (quickBox) return true;
+        if (tools && tools.querySelector("#rcfFactoryAIBox")) return true;
+        if (actions && actions.querySelector("#rcfFactoryAIQuickActions")) return true;
+      } catch {}
+
+      return false;
+    },
+
+    _clearRetryTimers() {
+      try {
+        (this.__retryTimers || []).forEach((t) => clearTimeout(t));
+      } catch {}
+      this.__retryTimers = [];
+    },
+
+    requestIAMountWithRetries() {
+      this._clearRetryTimers();
+
+      const tryMount = () => {
+        let ok = false;
+
+        try {
+          if (window.RCF_FACTORY_AI && typeof window.RCF_FACTORY_AI.mount === "function") {
+            ok = window.RCF_FACTORY_AI.mount() !== false || ok;
+          }
+        } catch {}
+
+        try {
+          if (!ok && window.RCF_ADMIN_AI && typeof window.RCF_ADMIN_AI.mount === "function") {
+            ok = window.RCF_ADMIN_AI.mount() !== false || ok;
+          }
+        } catch {}
+
+        try { this.clearFallbacksIfRealContentMounted(); } catch {}
+        return ok;
+      };
+
+      tryMount();
+
+      [120, 420, 900, 1600].forEach((ms) => {
+        const id = setTimeout(() => {
+          try {
+            tryMount();
+            if (!this.hasRealIAMount()) this.ensureVisibleFallbacks();
+          } catch {}
+        }, ms);
+        this.__retryTimers.push(id);
+      });
+
+      return true;
+    },
+
     refreshChildren() {
-      try { window.RCF_FACTORY_AI?.mount?.(); } catch {}
-      try { window.RCF_ADMIN_AI?.mount?.(); } catch {}
+      try { this.requestIAMountWithRetries(); } catch {}
       return true;
     },
 
@@ -232,7 +358,7 @@
       try {
         const view = this.resolveFactoryView();
         if (!view) {
-          this.log("mount skip: factory-ai/admin view ausente");
+          this.log("mount skip: factory-ai view ausente");
           return false;
         }
 
@@ -246,8 +372,9 @@
         view.setAttribute("data-rcf-ui-factory-mounted", "1");
         view.setAttribute("data-rcf-ui-factory-ai-ready", "1");
 
-        this.ensureFactoryAISlots();
-        this.cleanupWrongContent();
+        this.ensureFactoryAISlots(host);
+        this.cleanupWrongContent(host);
+        this.ensureVisibleFallbacks();
         this.refreshChildren();
 
         this.__mounted = true;
@@ -276,8 +403,9 @@
             el.setAttribute("data-rcf-factory-mounted", "1");
           }
 
-          this.ensureFactoryAISlots();
-          this.cleanupWrongContent();
+          this.ensureFactoryAISlots(el);
+          this.cleanupWrongContent(el);
+          this.ensureVisibleFallbacks();
           this.refreshChildren();
 
           this.__mounted = true;
@@ -305,8 +433,9 @@
           return this.mount(this.__deps || {});
         }
 
-        this.ensureFactoryAISlots();
-        this.cleanupWrongContent();
+        this.ensureFactoryAISlots(host);
+        this.cleanupWrongContent(host);
+        this.ensureVisibleFallbacks();
         this.refreshChildren();
 
         return true;
