@@ -1,15 +1,15 @@
 /* FILE: /app/js/ui/ui_factory_view.js
    RControl Factory — Factory View Module
-   V2.6 FACTORY-AI CHAT HOST ONLY
+   V2.7 FACTORY-AI STABLE CHAT HOST
 
    FECHADO:
    - Factory AI monta somente na view oficial
-   - host da Factory AI fica CHAT-FIRST de verdade
-   - remove hero, actions e context antigos da tela
-   - mantém apenas o slot oficial factoryai.tools
+   - host visual estável para evitar tela branca
+   - mantém apenas a casca mínima necessária
+   - preserva somente slot oficial factoryai.tools
    - não cai em Admin
-   - evita duplicação visual
    - retries curtos e seguros para encaixar o módulo vivo
+   - fallback visível se o chat ainda não entrar
    - compatível com app.js V8.x
 */
 
@@ -99,16 +99,22 @@
       return `
         <section class="rcfUiSection rcfUiFactorySection" data-rcf-ui="factory-view">
           <div
-            class="rcfUiFactoryView rcfUiFactoryViewChatOnly"
+            class="rcfUiFactoryView"
             data-rcf-ui-factory-view="1"
             data-rcf-ui-factory-clean="1"
             data-rcf-ui-factory-chat-only="1"
           >
-            <div
-              id="rcfFactoryAISlotTools"
-              data-rcf-slot="factoryai.tools"
-              data-rcf-factory-slot="tools"
-            ></div>
+            <section class="rcfUiFactoryBlock" data-rcf-factory-block="factory-ai-tools">
+              <div class="rcfUiFactoryBlockHead">
+                <h2>Factory AI</h2>
+                <p class="hint">Chat oficial da Factory</p>
+              </div>
+              <div
+                id="rcfFactoryAISlotTools"
+                data-rcf-slot="factoryai.tools"
+                data-rcf-factory-slot="tools"
+              ></div>
+            </section>
           </div>
         </section>
       `;
@@ -125,11 +131,12 @@
       let tools = qs("#rcfFactoryAISlotTools", root);
 
       if (!tools) {
+        const block = qs('[data-rcf-factory-block="factory-ai-tools"]', root) || root;
         tools = document.createElement("div");
         tools.id = "rcfFactoryAISlotTools";
         tools.setAttribute("data-rcf-slot", "factoryai.tools");
         tools.setAttribute("data-rcf-factory-slot", "tools");
-        root.appendChild(tools);
+        block.appendChild(tools);
       }
 
       return true;
@@ -157,7 +164,7 @@
         '[data-rcf-factory-block="apps-widgets"]',
         '[data-rcf-factory-block="gateways"]',
         '[data-rcf-factory-block="projects"]',
-        '[data-rcf-ui-factory-fallback]',
+        '[data-rcf-ui-factory-fallback="gateways"]',
         ".rcfActivityList",
         ".rcfUiTabs",
         ".rcfUiProjectsList",
@@ -178,21 +185,33 @@
       return true;
     },
 
-    ensureChatOnlyHost(hostRoot = null) {
-      const root =
-        hostRoot ||
-        qs('[data-rcf-ui-factory-view="1"]') ||
-        qs('[data-rcf-ui-factory-root="1"]');
+    buildToolsFallback() {
+      return `
+        <div data-rcf-factory-ai-fallback="tools" class="card" style="margin-top:10px">
+          <div style="font-weight:800;margin-bottom:6px">Factory AI</div>
+          <div class="hint">Preparando chat oficial da Factory...</div>
+        </div>
+      `;
+    },
 
-      if (!root) return false;
-
-      const clean = qs('[data-rcf-ui-factory-chat-only="1"]', root);
-      if (!clean) {
-        root.innerHTML = this.buildView();
+    ensureVisibleFallbacks() {
+      const tools = qs("#rcfFactoryAISlotTools");
+      if (tools && !tools.firstElementChild) {
+        tools.innerHTML = this.buildToolsFallback();
       }
+      return true;
+    },
 
-      this.ensureFactoryAISlots(root);
-      this.cleanupWrongContent(root);
+    clearFallbacksIfRealContentMounted() {
+      const tools = qs("#rcfFactoryAISlotTools");
+      if (!tools) return true;
+
+      const fallback = qs('[data-rcf-factory-ai-fallback="tools"]', tools);
+      const mainBox = qs("#rcfFactoryAIBox", tools);
+
+      if (fallback && mainBox) {
+        try { fallback.remove(); } catch {}
+      }
 
       return true;
     },
@@ -201,12 +220,31 @@
       try {
         const tools = qs("#rcfFactoryAISlotTools");
         const mainBox = qs("#rcfFactoryAIBox");
-
         if (mainBox) return true;
         if (tools && tools.querySelector("#rcfFactoryAIBox")) return true;
       } catch {}
 
       return false;
+    },
+
+    ensureStableHost(hostRoot = null) {
+      const root =
+        hostRoot ||
+        qs('[data-rcf-ui-factory-root="1"]') ||
+        qs('[data-rcf-ui-factory-view="1"]');
+
+      if (!root) return false;
+
+      const cleanRoot = qs('[data-rcf-ui-factory-chat-only="1"]', root);
+      if (!cleanRoot) {
+        root.innerHTML = this.buildView();
+      }
+
+      this.ensureFactoryAISlots(root);
+      this.cleanupWrongContent(root);
+      this.ensureVisibleFallbacks();
+
+      return true;
     },
 
     _clearRetryTimers() {
@@ -222,9 +260,7 @@
       const tryMount = () => {
         let ok = false;
 
-        try {
-          this.ensureChatOnlyHost();
-        } catch {}
+        try { this.ensureStableHost(); } catch {}
 
         try {
           if (window.RCF_FACTORY_AI && typeof window.RCF_FACTORY_AI.mount === "function") {
@@ -232,10 +268,7 @@
           }
         } catch {}
 
-        try {
-          this.cleanupWrongContent();
-        } catch {}
-
+        try { this.clearFallbacksIfRealContentMounted(); } catch {}
         return ok;
       };
 
@@ -245,6 +278,7 @@
         const id = setTimeout(() => {
           try {
             tryMount();
+            if (!this.hasRealIAMount()) this.ensureVisibleFallbacks();
           } catch {}
         }, ms);
         this.__retryTimers.push(id);
@@ -278,7 +312,7 @@
         view.setAttribute("data-rcf-ui-factory-mounted", "1");
         view.setAttribute("data-rcf-ui-factory-ai-ready", "1");
 
-        this.ensureChatOnlyHost(host);
+        this.ensureStableHost(host);
         this.refreshChildren();
 
         this.__mounted = true;
@@ -301,7 +335,7 @@
           el.innerHTML = this.buildView();
           el.setAttribute("data-rcf-factory-mounted", "1");
 
-          this.ensureChatOnlyHost(el);
+          this.ensureStableHost(el);
           this.refreshChildren();
 
           this.__mounted = true;
@@ -324,7 +358,7 @@
           return this.mount(this.__deps || {});
         }
 
-        this.ensureChatOnlyHost(host);
+        this.ensureStableHost(host);
         this.refreshChildren();
 
         return true;
