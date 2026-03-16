@@ -1,6 +1,6 @@
 /* FILE: /functions/api/admin-ai.js
    RControl Factory — Factory AI API
-   V3.3 CHAT COPILOT BACKEND SNAPSHOT SEMANTICS
+   v3.4.0 CHAT COPILOT BACKEND + PLANNER FLOW
 
    - mantém CORS e POST atuais
    - continua usando OPENAI_API_KEY
@@ -8,12 +8,12 @@
    - aceita histórico simples de conversa
    - aceita payload contextual expandido
    - aceita metadados de anexos
-   - aceita alias de actions do front mais novo
-   - melhora o modo chat como copiloto técnico real da Factory
+   - aceita aliases do fluxo novo da Factory AI
+   - melhora modo chat como copiloto técnico real da Factory
    - diferencia dado ausente de falha confirmada
    - diferencia presença x prontidão x ativação
-   - orienta próximo arquivo quando faltar contexto
-   - reconhece intenção de relatório / próximo arquivo / arquivo completo
+   - prioriza evolução da própria Factory AI
+   - entende melhor planner / next file / autonomia / patch supervisionado
    - mantém resposta aterrada no payload
    - não autoriza invenção de estados da Factory
    - preparado para futuro suporte real a ZIP / PDF / imagem / vídeo / arquivos
@@ -108,6 +108,7 @@ export async function onRequestPost(context) {
     }
 
     const text = extractText(data);
+    const derived = deriveResponseHints(text, payload, action);
 
     return json({
       ok: true,
@@ -115,6 +116,7 @@ export async function onRequestPost(context) {
       source,
       version,
       analysis: text || "(sem texto retornado)",
+      hints: derived,
       raw: data
     });
   } catch (err) {
@@ -138,9 +140,28 @@ function normalizeAction(value, promptValue = "") {
     if (raw === "summarize-structure") return "summarize-structure";
     if (raw === "propose-patch") return "propose-patch";
     if (raw === "generate-code") return "generate-code";
-
     if (raw === "ingest-context") return "ingest-context";
     if (raw === "zip-readiness") return "ingest-context";
+
+    if (
+      raw === "plan" ||
+      raw === "plan-runtime" ||
+      raw === "planner" ||
+      raw === "next-file" ||
+      raw === "next_file" ||
+      raw === "autonomy" ||
+      raw === "snapshot" ||
+      raw === "validate-patch" ||
+      raw === "validate_patch" ||
+      raw === "approve-patch" ||
+      raw === "approve_patch" ||
+      raw === "stage-patch" ||
+      raw === "stage_patch" ||
+      raw === "apply-patch" ||
+      raw === "apply_patch"
+    ) {
+      return "chat";
+    }
 
     if (raw === "chat") return "chat";
     return raw;
@@ -261,10 +282,12 @@ function preparePayloadForModel(payload) {
   }
 
   const semantic = buildSnapshotSemanticSummary(base);
-  if (!semantic) return base;
+  const planner = buildPlannerContext(base);
 
   const out = cloneValue(base);
-  out.__snapshot_semantics = semantic;
+  if (semantic) out.__snapshot_semantics = semantic;
+  if (planner) out.__planner_context = planner;
+
   return out;
 }
 
@@ -435,16 +458,50 @@ function buildSnapshotSemanticSummary(payload) {
     };
 
     semantics.interpretationGuide = [
-      "Use this priority when describing the snapshot:",
-      "1) cite presence when a flag/hasX confirms the component exists in the environment",
-      "2) cite ready when a runtime/API boolean confirms it is available now",
-      "3) cite active only when the module status or activeList confirms activation",
-      "4) if presence=true and active=false, describe as 'presente, mas não marcado como ativo no snapshot atual'",
-      "5) if ready=true and active=false, describe as 'disponível/pronto, mas não marcado como ativo no status atual'",
-      "6) never convert that pattern into a confirmed failure unless the payload explicitly says failure/error"
+      "Use esta prioridade ao descrever o snapshot:",
+      "1) cite presence quando a flag/hasX confirmar que o componente existe no ambiente",
+      "2) cite ready quando um boolean/API do runtime confirmar disponibilidade agora",
+      "3) cite active apenas quando o status do módulo ou activeList confirmar ativação",
+      "4) se presence=true e active=false, descreva como 'presente, mas não marcado como ativo no snapshot atual'",
+      "5) se ready=true e active=false, descreva como 'disponível/pronto, mas não marcado como ativo no status atual'",
+      "6) não converta isso automaticamente em falha confirmada"
     ];
 
     return semantics;
+  } catch {
+    return null;
+  }
+}
+
+function buildPlannerContext(payload) {
+  try {
+    if (!payload || typeof payload !== "object") return null;
+
+    const snapshot = safeObj(payload.snapshot || payload);
+    const candidateFiles = Array.isArray(snapshot.candidateFiles) ? snapshot.candidateFiles.slice(0, 24) : [];
+    const tree = safeObj(snapshot.tree);
+    const pathGroups = safeObj(tree.pathGroups || tree.grouped);
+    const activeModules = Array.isArray(snapshot.modules?.active)
+      ? snapshot.modules.active.slice(0, 24)
+      : [];
+
+    return {
+      goalBias: [
+        "priorizar evolução da própria Factory AI antes de outros fluxos",
+        "evitar cair no ciclo genérico doctor/state/registry/tree sem avanço real",
+        "quando possível, indicar próximo arquivo mais estratégico",
+        "dar preferência a planner/bridge/actions/backend/chat supervisionado quando a meta for inteligência da Factory"
+      ],
+      activeModules,
+      candidateFiles,
+      pathGroups: {
+        core: Array.isArray(pathGroups.core) ? pathGroups.core.slice(0, 12) : [],
+        ui: Array.isArray(pathGroups.ui) ? pathGroups.ui.slice(0, 12) : [],
+        admin: Array.isArray(pathGroups.admin) ? pathGroups.admin.slice(0, 12) : [],
+        engine: Array.isArray(pathGroups.engine) ? pathGroups.engine.slice(0, 12) : [],
+        functions: Array.isArray(pathGroups.functions) ? pathGroups.functions.slice(0, 12) : []
+      }
+    };
   } catch {
     return null;
   }
@@ -568,6 +625,8 @@ function buildGroundedPrompt({ action, payload, prompt, history, attachments, so
     "",
     "Sobre a função atual da Factory AI:",
     "- A Factory AI deve primeiro ajudar a estruturar a própria Factory.",
+    "- O foco atual não é voltar sempre para o mesmo ciclo genérico.",
+    "- Priorize evolução cognitiva e orquestração supervisionada quando o contexto apontar para isso.",
     "- Depois ela poderá apoiar criação de módulos, agentes e fluxos de app building.",
     "- Sempre respeite fluxo supervisionado e seguro.",
     "",
@@ -576,7 +635,7 @@ function buildGroundedPrompt({ action, payload, prompt, history, attachments, so
     "- Evite repetir listas genéricas sem avanço real.",
     "- Se o snapshot estiver raso, reconheça isso e foque no próximo arquivo mais útil.",
     "- Não fique repetindo logger/doctor/version unknown como centro da resposta, a menos que isso seja realmente o ponto principal do pedido.",
-    "- Se o objetivo do usuário for evoluir a Factory AI, dê prioridade a isso.",
+    "- Se o objetivo do usuário for evoluir a Factory AI, dê prioridade a planner/bridge/actions/backend/chat supervisionado antes de cair automaticamente em doctor/state/registry/tree.",
     "",
     "Formato de resposta por action:",
     "",
@@ -602,12 +661,13 @@ function buildGroundedPrompt({ action, payload, prompt, history, attachments, so
     "Se action=chat:",
     "- responda como chat técnico natural, conversável, direto e útil.",
     "- se o pedido for claro e houver contexto suficiente, responda direto.",
+    "- se o pedido pedir próximo arquivo, prioridade ou autonomia, dê resposta objetiva e priorizada.",
     "- se o pedido exigir arquivo específico que não foi enviado, diga qual arquivo é o próximo mais útil.",
     "- se houver risco de inferência excessiva, explicite esse limite sem enrolar.",
     "- se o snapshot vier raso, não transforme isso automaticamente em diagnóstico de falha estrutural."
   ].join("\n");
 
-  const task = buildTaskText(action, prompt);
+  const task = buildTaskText(action, prompt, payload);
 
   return [
     system,
@@ -638,8 +698,25 @@ function buildGroundedPrompt({ action, payload, prompt, history, attachments, so
   ].join("\n");
 }
 
-function buildTaskText(action, prompt = "") {
-  const p = String(prompt || "").trim();
+function buildTaskText(action, prompt = "", payload = null) {
+  const p = String(prompt || "").trim().toLowerCase();
+  const hasPlannerContext = !!safeObj(payload).__planner_context;
+  const asksNextFile =
+    p.includes("próximo arquivo") ||
+    p.includes("proximo arquivo") ||
+    p.includes("qual arquivo") ||
+    p.includes("prioridade");
+  const asksAutonomy =
+    p.includes("autonomia") ||
+    p.includes("autônom") ||
+    p.includes("autonom") ||
+    p.includes("sozinha") ||
+    p.includes("sozinho");
+  const asksPlan =
+    p.includes("planejar") ||
+    p.includes("plano") ||
+    p.includes("sequência") ||
+    p.includes("sequencia");
 
   if (action === "factory_diagnosis") {
     return [
@@ -687,12 +764,26 @@ function buildTaskText(action, prompt = "") {
   }
 
   if (action === "chat") {
-    return [
+    const lines = [
       "Responda como o chat técnico oficial da Factory, de forma natural, objetiva e útil, ajudando a estruturar a própria Factory primeiro.",
       "Quando o pedido estiver raso ou o snapshot vier incompleto, foque mais em qual é o próximo arquivo certo do que em repetir diagnóstico genérico.",
-      "Se o payload trouxer nuances entre presence, ready e active, respeite essas diferenças explicitamente.",
-      p ? `Pedido atual: ${p}` : ""
-    ].filter(Boolean).join(" ");
+      "Se o payload trouxer nuances entre presence, ready e active, respeite essas diferenças explicitamente."
+    ];
+
+    if (asksNextFile || asksPlan || asksAutonomy) {
+      lines.push("O usuário está pedindo priorização real. Dê uma resposta objetiva indicando o próximo arquivo mais estratégico e por quê.");
+      lines.push("Evite cair automaticamente no ciclo genérico doctor/state/registry/tree se o contexto atual estiver voltado para evolução da Factory AI.");
+    }
+
+    if (hasPlannerContext) {
+      lines.push("Use o contexto de planner/candidateFiles/pathGroups para priorizar melhor o próximo arquivo.");
+    }
+
+    if (prompt) {
+      lines.push("Pedido atual: " + prompt);
+    }
+
+    return lines.join(" ");
   }
 
   return "Analise a RControl Factory com base apenas no contexto enviado.";
@@ -725,6 +816,47 @@ function attachmentsToText(attachments) {
       ].join(" ");
     })
     .join("\n");
+}
+
+function deriveResponseHints(text, payload, action) {
+  const content = String(text || "");
+  const targetFile = extractFirstFile(content) || extractPayloadNextFile(payload);
+  const risk = extractRisk(content);
+  const mode = action === "generate-code" ? "code" : (action === "propose-patch" ? "patch" : "analysis");
+
+  return {
+    mode,
+    targetFile: targetFile || "",
+    risk: risk || "unknown",
+    hasCodeBlock: /```[\s\S]*?```/.test(content),
+    mentionsPlannerFlow: /planner|plano|prioridade|próximo arquivo|proximo arquivo/i.test(content),
+    nextFileCandidate: targetFile || ""
+  };
+}
+
+function extractFirstFile(text) {
+  const src = String(text || "");
+  const m = src.match(/(\/(?:app|functions)\/[A-Za-z0-9_./-]+\.[A-Za-z0-9_-]+)/);
+  return m ? String(m[1] || "").trim() : "";
+}
+
+function extractPayloadNextFile(payload) {
+  try {
+    const planner = safeObj(payload).__planner_context;
+    const files = Array.isArray(planner.candidateFiles) ? planner.candidateFiles : [];
+    return files.length ? String(files[0] || "") : "";
+  } catch {
+    return "";
+  }
+}
+
+function extractRisk(text) {
+  const raw = String(text || "").toLowerCase();
+  if (!raw) return "unknown";
+  if (raw.includes("baixo") || raw.includes("low") || raw.includes("seguro") || raw.includes("safe")) return "low";
+  if (raw.includes("médio") || raw.includes("medio") || raw.includes("medium")) return "medium";
+  if (raw.includes("alto") || raw.includes("high") || raw.includes("crítico") || raw.includes("critico")) return "high";
+  return "unknown";
 }
 
 function extractText(data) {
