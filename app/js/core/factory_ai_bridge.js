@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/factory_ai_bridge.js
    RControl Factory — Factory AI Bridge
-   v1.0.0 SUPERVISED ACTION BRIDGE
+   v1.1.0 SUPERVISED ACTION BRIDGE + ACTIONS COMPAT
 
    Objetivo:
    - criar a ponte supervisionada entre resposta da Factory AI e ações futuras da Factory
@@ -8,17 +8,19 @@
    - separar análise, sugestão, patch proposto, arquivo alvo, risco e necessidade de aprovação
    - NÃO aplicar patch automaticamente
    - preparar base para patch_supervisor / factory_ai_actions
+   - alinhar compatibilidade com approveLastPlan / rejectLastPlan
    - funcionar como script clássico
 */
 
 ;(function (global) {
   "use strict";
 
-  if (global.RCF_FACTORY_AI_BRIDGE && global.RCF_FACTORY_AI_BRIDGE.__v100) return;
+  if (global.RCF_FACTORY_AI_BRIDGE && global.RCF_FACTORY_AI_BRIDGE.__v110) return;
 
-  var VERSION = "v1.0.0";
+  var VERSION = "v1.1.0";
   var STORAGE_KEY = "rcf:factory_ai_bridge";
   var LAST_PLAN_KEY = "rcf:factory_ai_bridge_last_plan";
+  var MAX_HISTORY = 40;
 
   var state = {
     version: VERSION,
@@ -50,11 +52,6 @@
     }
   }
 
-  function safeParse(raw, fallback) {
-    try { return raw ? JSON.parse(raw) : fallback; }
-    catch (_) { return fallback; }
-  }
-
   function trimText(v) {
     return String(v == null ? "" : v).trim();
   }
@@ -79,41 +76,6 @@
     return out;
   }
 
-  function pushLog(level, msg, extra) {
-    try {
-      if (extra !== undefined) {
-        global.RCF_LOGGER?.push?.(level, "[FACTORY_AI_BRIDGE] " + msg + " " + JSON.stringify(extra));
-      } else {
-        global.RCF_LOGGER?.push?.(level, "[FACTORY_AI_BRIDGE] " + msg);
-      }
-    } catch (_) {}
-
-    try { console.log("[FACTORY_AI_BRIDGE]", level, msg, extra || ""); } catch (_) {}
-  }
-
-  function persist() {
-    try {
-      state.lastUpdate = nowISO();
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-      return true;
-    } catch (_) {
-      return false;
-    }
-  }
-
-  function load() {
-    try {
-      var raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return false;
-      var parsed = JSON.parse(raw);
-      if (!parsed || typeof parsed !== "object") return false;
-      state = merge(clone(state), parsed);
-      return true;
-    } catch (_) {
-      return false;
-    }
-  }
-
   function merge(base, patch) {
     if (!patch || typeof patch !== "object") return base;
 
@@ -136,6 +98,50 @@
 
   function buildPlanId() {
     return "fab_" + Math.random().toString(36).slice(2, 10) + "_" + Date.now();
+  }
+
+  function pushLog(level, msg, extra) {
+    try {
+      if (extra !== undefined) {
+        global.RCF_LOGGER?.push?.(level, "[FACTORY_AI_BRIDGE] " + msg + " " + JSON.stringify(extra));
+      } else {
+        global.RCF_LOGGER?.push?.(level, "[FACTORY_AI_BRIDGE] " + msg);
+      }
+    } catch (_) {}
+
+    try { console.log("[FACTORY_AI_BRIDGE]", level, msg, extra || ""); } catch (_) {}
+  }
+
+  function persist() {
+    try {
+      state.lastUpdate = nowISO();
+      state.version = VERSION;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function load() {
+    try {
+      var raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return false;
+      var parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object") return false;
+      state = merge(clone(state), parsed);
+      state.version = VERSION;
+      if (!Array.isArray(state.history)) state.history = [];
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function emit(name, detail) {
+    try {
+      global.dispatchEvent(new CustomEvent(name, { detail: detail || {} }));
+    } catch (_) {}
   }
 
   function looksLikeRisk(text) {
@@ -222,7 +228,21 @@
 
     for (i = start; i < lines.length; i++) {
       var ln = trimText(lines[i]).toLowerCase();
-      if (/^\d+\.\s+/.test(ln) || /^[-=]{2,}$/.test(ln) || /^objetivo:?$/.test(ln) || /^arquivo alvo:?$/.test(ln) || /^risco:?$/.test(ln) || /^código sugerido:?$/.test(ln) || /^codigo sugerido:?$/.test(ln) || /^patch mínimo sugerido:?$/.test(ln) || /^patch minimo sugerido:?$/.test(ln) || /^próximo passo mínimo recomendado:?$/.test(ln) || /^proximo passo minimo recomendado:?$/.test(ln) || /^arquivos mais prováveis de ajuste:?$/.test(ln) || /^arquivos mais provaveis de ajuste:?$/.test(ln)) {
+      if (
+        /^\d+\.\s+/.test(ln) ||
+        /^[-=]{2,}$/.test(ln) ||
+        /^objetivo:?$/.test(ln) ||
+        /^arquivo alvo:?$/.test(ln) ||
+        /^risco:?$/.test(ln) ||
+        /^código sugerido:?$/.test(ln) ||
+        /^codigo sugerido:?$/.test(ln) ||
+        /^patch mínimo sugerido:?$/.test(ln) ||
+        /^patch minimo sugerido:?$/.test(ln) ||
+        /^próximo passo mínimo recomendado:?$/.test(ln) ||
+        /^proximo passo minimo recomendado:?$/.test(ln) ||
+        /^arquivos mais prováveis de ajuste:?$/.test(ln) ||
+        /^arquivos mais provaveis de ajuste:?$/.test(ln)
+      ) {
         end = i;
         break;
       }
@@ -287,7 +307,6 @@
 
     var proposedCode = codeBlocks.length ? codeBlocks[0].code : "";
     var proposedLang = codeBlocks.length ? codeBlocks[0].lang : "";
-
     var wantsApproval = !!(proposedCode || patchSummary || targetFile);
 
     return {
@@ -348,8 +367,8 @@
       approvalRequired: !!plan.approvalRequired
     });
 
-    if (state.history.length > 40) {
-      state.history = state.history.slice(-40);
+    if (state.history.length > MAX_HISTORY) {
+      state.history = state.history.slice(-MAX_HISTORY);
     }
 
     try {
@@ -359,12 +378,6 @@
     persist();
     emit("RCF:FACTORY_AI_PLAN", { plan: clone(plan), summary: summarizePlan(plan) });
     return true;
-  }
-
-  function emit(name, detail) {
-    try {
-      global.dispatchEvent(new CustomEvent(name, { detail: detail || {} }));
-    } catch (_) {}
   }
 
   function syncFactoryState() {
@@ -403,6 +416,13 @@
     return summarizePlan(state.lastPlan || {});
   }
 
+  function getPendingPlan() {
+    var p = state.lastPlan;
+    if (!p || typeof p !== "object") return null;
+    if (p.approvalStatus === "approved" || p.approvalStatus === "consumed") return null;
+    return clone(p);
+  }
+
   function getLastApprovedPlanId() {
     return String(state.approvedPlanId || "");
   }
@@ -439,6 +459,12 @@
     return { ok: true, planId: want, summary: summarizePlan(last) };
   }
 
+  function approveLastPlan(meta) {
+    var last = state.lastPlan;
+    var planId = trimText(safe(function () { return meta && meta.planId; }, "") || safe(function () { return last.id; }, ""));
+    return approvePlan(planId);
+  }
+
   function rejectPlan(planId, reason) {
     var last = state.lastPlan;
     if (!last || typeof last !== "object") return { ok: false, msg: "sem plano pendente" };
@@ -461,6 +487,13 @@
     });
 
     return { ok: true, planId: want, summary: summarizePlan(last) };
+  }
+
+  function rejectLastPlan(meta) {
+    var last = state.lastPlan;
+    var planId = trimText(safe(function () { return meta && meta.planId; }, "") || safe(function () { return last.id; }, ""));
+    var reason = trimText(safe(function () { return meta && meta.reason; }, ""));
+    return rejectPlan(planId, reason);
   }
 
   function canApplyApprovedPlan(planId) {
@@ -522,6 +555,12 @@
     return ingestResponse(raw);
   }
 
+  function stringifyLines(arr) {
+    return (Array.isArray(arr) ? arr : []).map(function (x) {
+      return "- " + String(x || "");
+    }).join("\n");
+  }
+
   function proposeFromCurrentFactory() {
     var summary = safe(function () {
       return global.RCF_CONTEXT?.summary?.() || {};
@@ -549,17 +588,6 @@
     });
   }
 
-  function stringifyLines(arr) {
-    return (Array.isArray(arr) ? arr : []).map(function (x) { return "- " + String(x || ""); }).join("\n");
-  }
-
-  function getPendingPlan() {
-    var p = state.lastPlan;
-    if (!p || typeof p !== "object") return null;
-    if (p.approvalStatus === "approved" || p.approvalStatus === "consumed") return null;
-    return clone(p);
-  }
-
   function status() {
     var p = state.lastPlan || {};
     return {
@@ -580,6 +608,9 @@
 
   function bindEvents() {
     try {
+      if (global.__RCF_FACTORY_AI_BRIDGE_EVENTS_V110) return;
+      global.__RCF_FACTORY_AI_BRIDGE_EVENTS_V110 = true;
+
       global.addEventListener("RCF:FACTORY_AI_RESPONSE", function (ev) {
         try {
           var detail = ev && ev.detail ? ev.detail : {};
@@ -605,6 +636,7 @@
 
   global.RCF_FACTORY_AI_BRIDGE = {
     __v100: true,
+    __v110: true,
     version: VERSION,
     init: init,
     status: status,
@@ -618,7 +650,9 @@
     fromText: fromText,
     proposeFromCurrentFactory: proposeFromCurrentFactory,
     approvePlan: approvePlan,
+    approveLastPlan: approveLastPlan,
     rejectPlan: rejectPlan,
+    rejectLastPlan: rejectLastPlan,
     clearApproval: clearApproval,
     canApplyApprovedPlan: canApplyApprovedPlan,
     consumeApprovedPlan: consumeApprovedPlan
