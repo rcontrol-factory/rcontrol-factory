@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/factory_ai_planner.js
    RControl Factory — Factory AI Planner
-   v1.0.0 SUPERVISED EVOLUTION PLANNER
+   v1.0.1 SUPERVISED EVOLUTION PLANNER
 
    Objetivo:
    - transformar snapshot/contexto em plano operacional supervisionado
@@ -15,9 +15,9 @@
 ;(function (global) {
   "use strict";
 
-  if (global.RCF_FACTORY_AI_PLANNER && global.RCF_FACTORY_AI_PLANNER.__v100) return;
+  if (global.RCF_FACTORY_AI_PLANNER && global.RCF_FACTORY_AI_PLANNER.__v101) return;
 
-  var VERSION = "v1.0.0";
+  var VERSION = "v1.0.1";
   var STORAGE_KEY = "rcf:factory_ai_planner";
   var MAX_HISTORY = 80;
 
@@ -234,6 +234,14 @@
     return asArray(list).indexOf(String(file || "")) >= 0;
   }
 
+  function normalizePath(path) {
+    var p = trimText(path || "").replace(/\\/g, "/");
+    if (!p) return "";
+    if (p.charAt(0) !== "/") p = "/" + p;
+    p = p.replace(/\/{2,}/g, "/");
+    return p;
+  }
+
   function collectKnownFiles(snapshot, tree) {
     var out = [];
     var candidateFiles = safe(function () { return snapshot.candidateFiles; }, []);
@@ -253,14 +261,15 @@
       .concat(asArray(treeSamples.admin))
       .concat(asArray(treeSamples.engine));
 
-    return uniq(out);
+    return uniq(out.map(normalizePath).filter(Boolean));
   }
 
   function detectGoal(input) {
     var rawGoal = trimText(
       safe(function () { return input.goal; }, "") ||
       safe(function () { return input.prompt; }, "") ||
-      safe(function () { return input.userGoal; }, "")
+      safe(function () { return input.userGoal; }, "") ||
+      safe(function () { return input.reason; }, "")
     );
 
     var text = lower(rawGoal);
@@ -518,83 +527,6 @@
     return reasons.join("; ");
   }
 
-  function buildPlan(input) {
-    var snapshot = getContextSnapshot();
-    var factoryState = getFactoryState();
-    var moduleSummary = getModuleSummary();
-    var treeSummary = getTreeSummary();
-    var bridge = getBridgeStatus();
-    var actions = getActionsStatus();
-    var patchSupervisor = getPatchSupervisorStatus();
-    var doctor = getDoctorState();
-    var goal = detectGoal(input || {});
-    var knownFiles = collectKnownFiles(snapshot, treeSummary);
-
-    var ctx = {
-      input: clone(input || {}),
-      snapshot: clone(snapshot || {}),
-      factoryState: clone(factoryState || {}),
-      moduleSummary: clone(moduleSummary || {}),
-      treeSummary: clone(treeSummary || {}),
-      bridge: clone(bridge || {}),
-      actions: clone(actions || {}),
-      patchSupervisor: clone(patchSupervisor || {}),
-      doctor: clone(doctor || {}),
-      goal: clone(goal || {}),
-      knownFiles: clone(knownFiles || [])
-    };
-
-    var choice = chooseNextFile(ctx);
-    var top = choice.ranking[0] || { file: STRATEGIC_FILES.planner, score: 0, reasons: [] };
-    var executionLine = buildExecutionLine(top.file, ctx);
-
-    var plan = {
-      id: "planner_" + Math.random().toString(36).slice(2, 10) + "_" + Date.now(),
-      version: VERSION,
-      createdAt: nowISO(),
-      goal: goal,
-      priority: buildPriorityLabel(top.score),
-      nextFile: top.file,
-      reason: buildReasonText(top),
-      executionLine: executionLine,
-      ranking: choice.ranking.slice(0, 8),
-      notes: buildNotes(ctx, top.file),
-      runtime: {
-        bootStatus: trimText(safe(function () { return factoryState.bootStatus; }, "")),
-        activeView: trimText(safe(function () { return factoryState.activeView; }, "")),
-        engineVersion: trimText(safe(function () { return factoryState.engineVersion; }, "")),
-        pathsCount: Number(safe(function () { return snapshot.tree.pathsCount; }, 0) || 0),
-        activeModules: asArray(safe(function () { return moduleSummary.active; }, []))
-      }
-    };
-
-    state.lastGoal = goal.label || "";
-    state.lastPriority = plan.priority;
-    state.lastPlan = clone(plan);
-    persist();
-
-    pushHistory({
-      type: "plan",
-      id: plan.id,
-      goal: goal.id,
-      nextFile: plan.nextFile,
-      priority: plan.priority,
-      ts: plan.createdAt
-    });
-
-    emit("RCF:FACTORY_AI_PLAN_READY", {
-      plan: clone(plan)
-    });
-
-    pushLog("OK", "plan built ✅", {
-      goal: goal.id,
-      nextFile: plan.nextFile,
-      priority: plan.priority
-    });
-
-    return clone(plan);
-  }
-
   function buildNotes(ctx, nextFile) {
     var notes = [];
     var goalId = safe(function () { return ctx.goal.id; }, "");
@@ -605,7 +537,7 @@
     var activeModules = asArray(safe(function () { return ctx.moduleSummary.active; }, []));
 
     if (goalId === "evolve-factory-ai") {
-      notes.push("A fase atual pede evolução cognitiva da Factory AI, não retorno ao ciclo genérico de doctor/state/registry.");
+      notes.push("A fase atual pede evolução cognitiva da Factory AI, não retorno ao ciclo genérico de doctor/state/registry/tree.");
       notes.push("O próximo arquivo deve aumentar capacidade de planejamento, decisão e sequência supervisionada.");
     }
 
@@ -636,6 +568,125 @@
     return uniq(notes);
   }
 
+  function buildObjective(goal, nextFile) {
+    var label = trimText(safe(function () { return goal.label; }, ""));
+    if (!label) label = "Evoluir a Factory com supervisão";
+    return label + " focando em " + nextFile;
+  }
+
+  function buildNextStep(nextFile, executionLine) {
+    var line = asArray(executionLine).slice(0, 4);
+    return "Consolidar " + nextFile + " e manter a sequência supervisionada: " + line.join(" -> ");
+  }
+
+  function buildPatchSummary(nextFile, reason, notes) {
+    var parts = [];
+    if (reason) parts.push("Priorizar " + nextFile + " porque " + reason + ".");
+    if (asArray(notes).length) parts.push(asArray(notes).slice(0, 2).join(" "));
+    return parts.join(" ").trim();
+  }
+
+  function buildPlan(input) {
+    var snapshot = getContextSnapshot();
+    var factoryState = getFactoryState();
+    var moduleSummary = getModuleSummary();
+    var treeSummary = getTreeSummary();
+    var bridge = getBridgeStatus();
+    var actions = getActionsStatus();
+    var patchSupervisor = getPatchSupervisorStatus();
+    var doctor = getDoctorState();
+    var goal = detectGoal(input || {});
+    var knownFiles = collectKnownFiles(snapshot, treeSummary);
+
+    var ctx = {
+      input: clone(input || {}),
+      snapshot: clone(snapshot || {}),
+      factoryState: clone(factoryState || {}),
+      moduleSummary: clone(moduleSummary || {}),
+      treeSummary: clone(treeSummary || {}),
+      bridge: clone(bridge || {}),
+      actions: clone(actions || {}),
+      patchSupervisor: clone(patchSupervisor || {}),
+      doctor: clone(doctor || {}),
+      goal: clone(goal || {}),
+      knownFiles: clone(knownFiles || [])
+    };
+
+    var choice = chooseNextFile(ctx);
+    var top = choice.ranking[0] || { file: STRATEGIC_FILES.planner, score: 0, reasons: [] };
+    var executionLine = buildExecutionLine(top.file, ctx);
+    var notes = buildNotes(ctx, top.file);
+    var reason = buildReasonText(top);
+
+    var plan = {
+      id: "planner_" + Math.random().toString(36).slice(2, 10) + "_" + Date.now(),
+      version: VERSION,
+      createdAt: nowISO(),
+
+      goal: goal,
+      priority: buildPriorityLabel(top.score),
+
+      targetFile: normalizePath(top.file),
+      nextFile: normalizePath(top.file),
+
+      mode: "patch",
+      risk: top.score >= 90 ? "medium" : "low",
+      approvalRequired: true,
+      approvalStatus: "pending",
+
+      objective: buildObjective(goal, top.file),
+      reason: reason,
+      nextStep: buildNextStep(top.file, executionLine),
+      patchSummary: buildPatchSummary(top.file, reason, notes),
+      suggestedFiles: executionLine.slice(0, 8),
+
+      executionLine: executionLine,
+      ranking: choice.ranking.slice(0, 8),
+      notes: notes,
+
+      proposedCode: "",
+      proposedLang: "",
+
+      runtime: {
+        bootStatus: trimText(safe(function () { return factoryState.bootStatus; }, "")),
+        activeView: trimText(safe(function () { return factoryState.activeView; }, "")),
+        engineVersion: trimText(safe(function () { return factoryState.engineVersion; }, "")),
+        pathsCount: Number(safe(function () { return snapshot.tree.pathsCount; }, 0) || 0),
+        activeModules: asArray(safe(function () { return moduleSummary.active; }, []))
+      }
+    };
+
+    state.lastGoal = goal.label || "";
+    state.lastPriority = plan.priority;
+    state.lastPlan = clone(plan);
+    persist();
+
+    pushHistory({
+      type: "plan",
+      id: plan.id,
+      goal: goal.id,
+      nextFile: plan.targetFile,
+      priority: plan.priority,
+      ts: plan.createdAt
+    });
+
+    emit("RCF:FACTORY_AI_PLAN_READY", {
+      plan: clone(plan)
+    });
+
+    pushLog("OK", "plan built ✅", {
+      goal: goal.id,
+      targetFile: plan.targetFile,
+      priority: plan.priority
+    });
+
+    return clone(plan);
+  }
+
+  function planFromRuntime(input) {
+    return buildPlan(input || {});
+  }
+
   function explainLastPlan() {
     var plan = clone(state.lastPlan || null);
     if (!plan) {
@@ -650,7 +701,7 @@
       plan: plan,
       text: [
         "Objetivo: " + trimText(safe(function () { return plan.goal.label; }, "")),
-        "Próximo arquivo: " + trimText(plan.nextFile || ""),
+        "Próximo arquivo: " + trimText(plan.targetFile || plan.nextFile || ""),
         "Prioridade: " + trimText(plan.priority || ""),
         "Razão: " + trimText(plan.reason || ""),
         "Linha de execução: " + asArray(plan.executionLine).join(" -> ")
@@ -674,7 +725,7 @@
       lastGoal: state.lastGoal || "",
       lastPriority: state.lastPriority || "",
       hasPlan: !!state.lastPlan,
-      lastNextFile: safe(function () { return state.lastPlan.nextFile; }, ""),
+      lastNextFile: safe(function () { return state.lastPlan.targetFile || state.lastPlan.nextFile; }, ""),
       historyCount: Array.isArray(state.history) ? state.history.length : 0
     };
   }
@@ -708,13 +759,15 @@
 
   global.RCF_FACTORY_AI_PLANNER = {
     __v100: true,
+    __v101: true,
     version: VERSION,
     init: init,
     status: status,
     getState: getState,
     getLastPlan: getLastPlan,
     explainLastPlan: explainLastPlan,
-    buildPlan: buildPlan
+    buildPlan: buildPlan,
+    planFromRuntime: planFromRuntime
   };
 
   try { init(); } catch (_) {}
