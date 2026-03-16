@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/module_registry.js
    RControl Factory — Module Registry
-   v1.3 STABLE / PATCH MÍNIMO
+   v1.4 STABLE / PATCH MÍNIMO
 
    Objetivo:
    - detectar automaticamente módulos globais já carregados
@@ -8,14 +8,15 @@
    - sincronizar com RCF_FACTORY_STATE
    - expor snapshot mais confiável para o Context Engine
    - ampliar visibilidade da Factory AI sem reescrever a estrutura
+   - melhorar estabilidade no Safari / PWA / pageshow / restore
 */
 
 (function (global) {
   "use strict";
 
-  if (global.RCF_MODULE_REGISTRY && global.RCF_MODULE_REGISTRY.__v13) return;
+  if (global.RCF_MODULE_REGISTRY && global.RCF_MODULE_REGISTRY.__v14) return;
 
-  var VERSION = "v1.3";
+  var VERSION = "v1.4";
 
   var modules = {
     logger: false,
@@ -35,6 +36,8 @@
     runtime: false
   };
 
+  var lastSummaryTs = null;
+
   function clone(obj) {
     try { return JSON.parse(JSON.stringify(obj)); }
     catch (_) { return obj || {}; }
@@ -46,6 +49,27 @@
       return (v === undefined ? fallback : v);
     } catch (_) {
       return fallback;
+    }
+  }
+
+  function nowISO() {
+    try { return new Date().toISOString(); }
+    catch (_) { return ""; }
+  }
+
+  function sameModules(a, b) {
+    try {
+      var ak = Object.keys(a || {}).sort();
+      var bk = Object.keys(b || {}).sort();
+      if (ak.length !== bk.length) return false;
+
+      for (var i = 0; i < ak.length; i++) {
+        if (ak[i] !== bk[i]) return false;
+        if (!!a[ak[i]] !== !!b[bk[i]]) return false;
+      }
+      return true;
+    } catch (_) {
+      return false;
     }
   }
 
@@ -67,9 +91,17 @@
         global.RCF_FACTORY_STATE.setDoctorReady(!!modules.doctor);
       }
     } catch (_) {}
+
+    try {
+      if (global.RCF_FACTORY_STATE && typeof global.RCF_FACTORY_STATE.refreshRuntime === "function") {
+        global.RCF_FACTORY_STATE.refreshRuntime();
+      }
+    } catch (_) {}
   }
 
   function detectModules() {
+    var before = clone(modules);
+
     try { modules.logger = !!global.RCF_LOGGER; } catch (_) {}
     try { modules.doctor = !!global.RCF_DOCTOR_SCAN; } catch (_) {}
     try { modules.github = !!global.RCF_GH_SYNC; } catch (_) {}
@@ -82,7 +114,7 @@
     try { modules.factoryTree = !!global.RCF_FACTORY_TREE; } catch (_) {}
     try { modules.diagnostics = !!global.RCF_DIAGNOSTICS; } catch (_) {}
     try { modules.injector = !!global.RCF_INJECTOR || !!global.RCF_AGENT_INJECTOR || !!global.RCF_PREVIEW_INJECTOR; } catch (_) {}
-    try { modules.ui = !!global.RCF_UI; } catch (_) {}
+    try { modules.ui = !!global.RCF_UI || !!global.RCF_UI_RUNTIME || !!global.RCF_UI_BOOTSTRAP || !!global.RCF_UI_VIEWS; } catch (_) {}
     try {
       modules.runtime =
         !!global.__RCF_VFS_RUNTIME ||
@@ -91,12 +123,23 @@
     } catch (_) {}
 
     syncToFactoryState();
+
+    try {
+      if (!sameModules(before, modules)) {
+        lastSummaryTs = nowISO();
+        if (global.RCF_LOGGER && typeof global.RCF_LOGGER.push === "function") {
+          global.RCF_LOGGER.push("INFO", "[MODULE_REGISTRY] refresh -> " + JSON.stringify(modules));
+        }
+      }
+    } catch (_) {}
+
     return modules;
   }
 
   function register(name) {
     if (!name) return false;
     modules[String(name)] = true;
+    lastSummaryTs = nowISO();
     syncToFactoryState();
     return true;
   }
@@ -106,6 +149,7 @@
     if (name === "moduleRegistry") return false;
     if (!Object.prototype.hasOwnProperty.call(modules, String(name))) return false;
     modules[String(name)] = false;
+    lastSummaryTs = nowISO();
     syncToFactoryState();
     return true;
   }
@@ -167,7 +211,8 @@
       ui: !!current.ui,
       runtime: !!current.runtime,
 
-      ts: new Date().toISOString()
+      lastRefresh: lastSummaryTs || nowISO(),
+      ts: nowISO()
     };
   }
 
@@ -176,6 +221,7 @@
     __v11: true,
     __v12: true,
     __v13: true,
+    __v14: true,
     version: VERSION,
     register: register,
     unregister: unregister,
@@ -199,6 +245,32 @@
   } catch (_) {}
 
   try {
+    global.addEventListener("DOMContentLoaded", function () {
+      try { detectModules(); } catch (_) {}
+    }, { once: true });
+  } catch (_) {}
+
+  try {
+    global.addEventListener("pageshow", function () {
+      try { detectModules(); } catch (_) {}
+    }, { passive: true });
+  } catch (_) {}
+
+  try {
+    global.addEventListener("visibilitychange", function () {
+      try {
+        if (document.visibilityState === "visible") detectModules();
+      } catch (_) {}
+    }, { passive: true });
+  } catch (_) {}
+
+  try {
+    global.addEventListener("focus", function () {
+      try { detectModules(); } catch (_) {}
+    }, { passive: true });
+  } catch (_) {}
+
+  try {
     global.addEventListener("RCF:UI_READY", function () {
       try { detectModules(); } catch (_) {}
     }, { passive: true });
@@ -216,6 +288,10 @@
     setTimeout(function () {
       try { detectModules(); } catch (_) {}
     }, 1800);
+
+    setTimeout(function () {
+      try { detectModules(); } catch (_) {}
+    }, 3200);
   } catch (_) {}
 
 })(window);
