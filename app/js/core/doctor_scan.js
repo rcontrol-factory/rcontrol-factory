@@ -1,32 +1,86 @@
 /* FILE: app/js/core/doctor_scan.js
-   RControl Factory — DOCTOR SCAN — v1.5 (ADMIN SLOT REMOVED + FAB/TOOLS READY)
-   - ✅ NÃO injeta botão sozinho (evita “botão solto”)
-   - ✅ Expõe API: window.RCF_DOCTOR_SCAN.open()
-   - ✅ Modal com rolagem iOS: overflow:auto + -webkit-overflow-scrolling + touch-action
-   - ✅ Botões: Scan / Copy / Close
+   RControl Factory — DOCTOR SCAN — v1.6 (LASTRUN + STATE SYNC + SAFE)
+   - mantém modal leve e iOS-safe
+   - NÃO injeta botão sozinho
+   - Expõe API: window.RCF_DOCTOR_SCAN.open()
+   - Botões: Scan / Copy / Close
+   - PATCH: salva lastReport / lastRun
+   - PATCH: sincroniza com RCF_FACTORY_STATE.markDoctorRun(...)
+   - PATCH: tenta refresh em RCF_FACTORY_STATE e RCF_MODULE_REGISTRY
 */
 
 (() => {
   "use strict";
 
-  const VERSION = "v1.5";
+  const VERSION = "v1.6";
 
   // evita double init
   if (window.__RCF_DOCTOR_SCAN_BOOTED__) return;
   window.__RCF_DOCTOR_SCAN_BOOTED__ = true;
 
-  const log = (...a) => {
-    try { console.log("[DOCTOR]", ...a); } catch {}
-    try { window.__RCF_LOGS__?.push?.({ t: Date.now(), tag: "DOCTOR", msg: a.join(" ") }); } catch {}
+  const API = {
+    version: VERSION,
+    lastReport: null,
+    lastRun: null,
+    open,
+    scan: runScan,
+    buildReport
   };
 
-  const $ = (sel, root = document) => root.querySelector(sel);
+  function log(...a) {
+    try { console.log("[DOCTOR]", ...a); } catch {}
+    try { window.__RCF_LOGS__?.push?.({ t: Date.now(), tag: "DOCTOR", msg: a.join(" ") }); } catch {}
+    try { window.RCF_LOGGER?.push?.("INFO", "[DOCTOR] " + a.join(" ")); } catch {}
+  }
+
+  const $ = (sel, root = document) => {
+    try { return root.querySelector(sel); } catch { return null; }
+  };
+
+  function nowISO() {
+    try { return new Date().toISOString(); } catch { return String(Date.now()); }
+  }
+
+  function safeJsonParse(s) {
+    try { return JSON.parse(s); } catch { return null; }
+  }
+
+  function safeClone(obj) {
+    try { return JSON.parse(JSON.stringify(obj)); } catch { return obj || {}; }
+  }
+
+  function syncDoctorState(meta) {
+    try {
+      if (window.RCF_FACTORY_STATE?.markDoctorRun) {
+        window.RCF_FACTORY_STATE.markDoctorRun(meta || {});
+      }
+    } catch {}
+
+    try {
+      if (window.RCF_FACTORY_STATE?.setDoctorReady) {
+        window.RCF_FACTORY_STATE.setDoctorReady(true);
+      }
+    } catch {}
+
+    try {
+      if (window.RCF_FACTORY_STATE?.refreshRuntime) {
+        window.RCF_FACTORY_STATE.refreshRuntime();
+      }
+    } catch {}
+
+    try {
+      if (window.RCF_MODULE_REGISTRY?.refresh) {
+        window.RCF_MODULE_REGISTRY.refresh();
+      }
+    } catch {}
+  }
 
   // =========================================================
   // Modal (iOS-safe scroll)
   // =========================================================
   function ensureStyles() {
     if ($("#__rcfDoctorStyle")) return;
+
     const s = document.createElement("style");
     s.id = "__rcfDoctorStyle";
     s.textContent = `
@@ -40,11 +94,11 @@
       }
       .rcfDoctorModal{
         width:min(920px, 100%);
-        max-height: min(78vh, 720px);
+        max-height:min(78vh, 720px);
         background:rgba(10,14,28,.98);
         border:1px solid rgba(255,255,255,.14);
         border-radius:18px;
-        box-shadow: 0 14px 60px rgba(0,0,0,.65);
+        box-shadow:0 14px 60px rgba(0,0,0,.65);
         display:flex; flex-direction:column;
         overflow:hidden;
       }
@@ -83,7 +137,7 @@
         border-radius:12px;
         border:1px solid rgba(255,255,255,.10);
         min-height:180px;
-        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
         font-size:12px;
         line-height:1.45;
       }
@@ -154,12 +208,10 @@
       try { prevActive?.focus?.(); } catch {}
     }
 
-    // clicar fora fecha
     overlay.addEventListener("click", (e) => {
       if (e.target === overlay) close();
     });
 
-    // ESC fecha (desktop)
     window.addEventListener("keydown", function onKey(e) {
       if (e.key === "Escape") {
         window.removeEventListener("keydown", onKey);
@@ -176,7 +228,6 @@
         btnCopy.textContent = "Copied ✅";
         setTimeout(() => (btnCopy.textContent = "Copy"), 900);
       } catch {
-        // fallback: select
         try {
           const r = document.createRange();
           r.selectNodeContents(pre);
@@ -198,7 +249,7 @@
       btnScan.textContent = "Scanning…";
       btnScan.disabled = true;
       try {
-        const rep = await buildReport();
+        const rep = await runScan();
         pre.textContent = rep;
         try { pre.scrollTop = 0; } catch {}
       } catch (e) {
@@ -209,12 +260,8 @@
       }
     };
 
-    // trava scroll do body mas deixa scroll dentro do modal
     try { document.body.classList.add("rcfDoctorNoScroll"); } catch {}
-
     document.body.appendChild(overlay);
-
-    // garante foco
     try { btnScan.focus(); } catch {}
 
     return { overlay, pre, close };
@@ -223,10 +270,6 @@
   // =========================================================
   // Scan core
   // =========================================================
-  function nowISO() {
-    try { return new Date().toISOString(); } catch { return String(Date.now()); }
-  }
-
   function countLocalStorageKeys(prefix) {
     let total = 0, pref = 0;
     try {
@@ -237,10 +280,6 @@
       }
     } catch {}
     return { total, pref };
-  }
-
-  function safeJsonParse(s) {
-    try { return JSON.parse(s); } catch { return null; }
   }
 
   async function listSW() {
@@ -299,12 +338,37 @@
     return out;
   }
 
+  function getModuleSnapshot() {
+    try {
+      if (window.RCF_MODULE_REGISTRY?.summary) {
+        return safeClone(window.RCF_MODULE_REGISTRY.summary() || {});
+      }
+    } catch {}
+    return {};
+  }
+
+  function getFactoryStateSnapshot() {
+    try {
+      if (window.RCF_FACTORY_STATE?.status) {
+        return safeClone(window.RCF_FACTORY_STATE.status() || {});
+      }
+    } catch {}
+    try {
+      if (window.RCF_FACTORY_STATE?.getState) {
+        return safeClone(window.RCF_FACTORY_STATE.getState() || {});
+      }
+    } catch {}
+    return {};
+  }
+
   async function buildReport() {
     const sw = await listSW();
     const ca = await listCaches();
     const ls = countLocalStorageKeys("rcf:");
     const mb = readMotherBundleLocal();
     const rs = resourcesSummary();
+    const mods = getModuleSnapshot();
+    const st = getFactoryStateSnapshot();
 
     const hints = [];
     if (sw.supported && sw.controller && sw.registrations === 0) {
@@ -316,30 +380,61 @@
     if (!mb.present) {
       hints.push("- mother_bundle_local não encontrado: se o app não estiver puxando o bundle, confira GitHub pull e MAE update.");
     }
+    if (!mods.activeCount && Array.isArray(mods.active) && mods.active.length === 0) {
+      hints.push("- Module Registry sem ativos relevantes no snapshot. Vale revisar factory_state/module_registry/context_engine em conjunto.");
+    }
+    if (!st.doctorLastRun) {
+      hints.push("- Este scan ainda não estava consolidado no state antes. Agora deve aparecer em doctorLastRun após executar.");
+    }
 
     const lines = [];
     lines.push(`[${nowISO()}] RCF DOCTOR REPORT ${VERSION}`);
     lines.push("");
+
+    lines.push("== Factory State ==");
+    lines.push(`factoryVersion: ${st.factoryVersion || "unknown"}`);
+    lines.push(`engineVersion: ${st.engineVersion || "unknown"}`);
+    lines.push(`bootStatus: ${st.bootStatus || "unknown"}`);
+    lines.push(`runtimeVFS: ${st.runtimeVFS || "unknown"}`);
+    lines.push(`environment: ${st.environment || "unknown"}`);
+    lines.push(`activeView: ${st.activeView || ""}`);
+    lines.push(`activeAppSlug: ${st.activeAppSlug || ""}`);
+    lines.push("");
+
+    lines.push("== Module Registry ==");
+    lines.push(`version: ${mods.version || "unknown"}`);
+    lines.push(`activeCount: ${Number(mods.activeCount || 0)}`);
+    if (Array.isArray(mods.active) && mods.active.length) {
+      lines.push(`active: ${mods.active.join(" | ")}`);
+    } else {
+      lines.push(`active: (vazio)`);
+    }
+    lines.push("");
+
     lines.push("== Service Worker ==");
     lines.push(`supported: ${!!sw.supported}`);
     lines.push(`controller: ${!!sw.controller}`);
     lines.push(`registrations: ${sw.registrations}`);
     if (sw.scopes.length) lines.push(`scopes: ${sw.scopes.slice(0, 8).join(" | ")}`);
     lines.push("");
+
     lines.push("== Cache API ==");
     lines.push(`supported: ${!!ca.supported}`);
     lines.push(`keys: ${ca.keys}`);
     lines.push("");
+
     lines.push("== localStorage ==");
     lines.push(`total keys: ${ls.total}`);
     lines.push(`rcf:* keys: ${ls.pref}`);
     lines.push("");
+
     lines.push("== mother_bundle_local ==");
     lines.push(`present: ${!!mb.present}`);
     lines.push(`key: ${mb.key}`);
     lines.push(`size: ${mb.size}`);
     lines.push(`filesCount: ${mb.filesCount}`);
     lines.push("");
+
     lines.push("== Resources ==");
     lines.push(`total: ${rs.total}`);
     lines.push(`unique: ${rs.unique}`);
@@ -354,21 +449,46 @@
     return lines.join("\n");
   }
 
+  async function runScan() {
+    const reportText = await buildReport();
+    const ts = nowISO();
+
+    API.lastReport = reportText;
+    API.lastRun = {
+      ts,
+      version: VERSION,
+      summary: {
+        reportLength: String(reportText || "").length
+      }
+    };
+
+    syncDoctorState({
+      source: "RCF_DOCTOR_SCAN",
+      version: VERSION,
+      ts,
+      reportLength: String(reportText || "").length
+    });
+
+    try {
+      window.RCF_DOCTOR_SCAN.lastReport = API.lastReport;
+      window.RCF_DOCTOR_SCAN.lastRun = safeClone(API.lastRun);
+    } catch {}
+
+    log("scan concluído ✅", "ts=" + ts);
+    return reportText;
+  }
+
   // =========================================================
   // Public API
   // =========================================================
   async function open() {
-    const rep = await buildReport().catch(e => "Doctor error: " + ((e && e.message) ? e.message : String(e)));
+    const rep = await runScan().catch(e => "Doctor error: " + ((e && e.message) ? e.message : String(e)));
     const modal = openModal(rep);
     try { modal.pre.scrollTop = 0; } catch {}
     return modal;
   }
 
-  window.RCF_DOCTOR_SCAN = {
-    version: VERSION,
-    open,
-    scan: buildReport
-  };
+  window.RCF_DOCTOR_SCAN = API;
 
   log("doctor_scan.js ready ✅ (" + VERSION + ") API=window.RCF_DOCTOR_SCAN.open()");
 })();
