@@ -1,15 +1,17 @@
 /* FILE: app/app.js
-   RControl Factory - /app/app.js - V8.0.7 LEAN ORCHESTRATOR
+   RControl Factory - /app/app.js - V8.0.8 LEAN ORCHESTRATOR
    - Arquivo completo (1 peca) pra copiar/colar
    - Objetivo: app.js como ORQUESTRADOR LEVE REAL
    - Mantém: boot lock, state, storage, logger, watchdog, diagnostics, SW, VFS, injector safe, agent CLI
    - Prioriza: ui_shell / ui_runtime / ui_state / ui_views / ui_router / ui_events / módulos UI
+   - ADD: carga leve e segura de factory_state / factory_tree / module_registry / context_engine
+   - ADD: consolidação mínima do contexto antes do UI_READY
    - Fallback: ultra mínimo de sobrevivência
 */
 (() => {
   "use strict";
 
-  try { console.info("[RCF] /app/app.js BUILD=V8.0.7_LEAN_ORCHESTRATOR"); } catch {}
+  try { console.info("[RCF] /app/app.js BUILD=V8.0.8_LEAN_ORCHESTRATOR"); } catch {}
 
   // =========================================================
   // GLOBAL LOG ALIAS
@@ -39,7 +41,7 @@
     if (st.booted === true) return;
     if (st.booting === true && (now - (st.ts || 0)) < 8000) return;
 
-    window[__BOOT_KEY] = { booting: true, booted: false, ts: now, ver: "v8.0.7" };
+    window[__BOOT_KEY] = { booting: true, booted: false, ts: now, ver: "v8.0.8" };
   } catch {
     if (window.__RCF_BOOTED__) return;
     window.__RCF_BOOTED__ = true;
@@ -320,6 +322,8 @@
   window.RCF.normalizeViewName = normalizeViewName;
 
   let __uiRuntimePromise = null, __uiCoreBridgePromise = null, __uiVisualModulesPromise = null;
+  let __factoryCoreModulesPromise = null;
+
   const getUiRuntime = () => { try { return (window.RCF_UI_RUNTIME && typeof window.RCF_UI_RUNTIME === 'object') ? window.RCF_UI_RUNTIME : null; } catch { return null; } };
   const getUiStateApi = () => { try { return (window.RCF_UI_STATE && typeof window.RCF_UI_STATE === 'object') ? window.RCF_UI_STATE : null; } catch { return null; } };
   const getUiRouterApi = () => { try { return (window.RCF_UI_ROUTER && typeof window.RCF_UI_ROUTER === 'object') ? window.RCF_UI_ROUTER : null; } catch { return null; } };
@@ -348,11 +352,13 @@
     __uiRuntimePromise = loadScriptOnce('./js/core/ui_runtime.js', 'data-rcf-ui-runtime').then(() => getUiRuntime()).catch(() => null);
     return __uiRuntimePromise;
   }
+
   async function initUiRuntime(ctx = {}) {
     const rt = await loadUiRuntimeOnce();
     if (rt && typeof rt.init === 'function') { try { rt.init(ctx); } catch (e) { Logger.write('ui_runtime init err:', e?.message || e); } }
     return rt || null;
   }
+
   async function loadUiCoreBridgeOnce() {
     if (getUiStateApi() && getUiRouterApi() && getUiEventsApi()) return { state:getUiStateApi(), router:getUiRouterApi(), events:getUiEventsApi() };
     if (__uiCoreBridgePromise) return __uiCoreBridgePromise;
@@ -364,6 +370,7 @@
     })();
     return __uiCoreBridgePromise;
   }
+
   async function loadUiVisualModulesOnce() {
     if (__uiVisualModulesPromise) return __uiVisualModulesPromise;
     __uiVisualModulesPromise = (async () => {
@@ -380,6 +387,65 @@
     return __uiVisualModulesPromise;
   }
 
+  async function loadFactoryCoreModulesOnce() {
+    if (__factoryCoreModulesPromise) return __factoryCoreModulesPromise;
+    __factoryCoreModulesPromise = (async () => {
+      await loadScriptOnce('./js/core/factory_state.js', 'data-rcf-factory-state');
+      await loadScriptOnce('./js/core/factory_tree.js', 'data-rcf-factory-tree');
+      await loadScriptOnce('./js/core/module_registry.js', 'data-rcf-module-registry');
+      await loadScriptOnce('./js/core/context_engine.js', 'data-rcf-context-engine');
+      return {
+        factoryState: window.RCF_FACTORY_STATE || null,
+        factoryTree: window.RCF_FACTORY_TREE || null,
+        moduleRegistry: window.RCF_MODULE_REGISTRY || null,
+        contextEngine: window.RCF_CONTEXT || null
+      };
+    })();
+    return __factoryCoreModulesPromise;
+  }
+
+  function syncFactoryCoreModules(reason = "sync") {
+    try {
+      window.RCF_FACTORY_STATE?.init?.({
+        factoryVersion: window.RCF_VERSION || "1.0.0",
+        runtimeVFS: (window.__RCF_VFS_RUNTIME || window.RCF_RUNTIME || "browser"),
+        environment: (
+          (() => {
+            try {
+              const standalone =
+                !!(window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) ||
+                !!(window.navigator && window.navigator.standalone);
+              return standalone ? "PWA" : "Browser";
+            } catch { return "Browser"; }
+          })()
+        )
+      });
+    } catch (e) {
+      Logger.write("factory_state init err:", e?.message || e);
+    }
+
+    try { window.RCF_FACTORY_TREE?.refresh?.(); } catch (e) { Logger.write("factory_tree refresh err:", e?.message || e); }
+    try { window.RCF_MODULE_REGISTRY?.refresh?.(); } catch (e) { Logger.write("module_registry refresh err:", e?.message || e); }
+    try { window.RCF_FACTORY_STATE?.setModules?.(window.RCF_MODULE_REGISTRY?.getModules?.() || {}); } catch (e) { Logger.write("factory_state setModules err:", e?.message || e); }
+    try { window.RCF_FACTORY_STATE?.setLoggerReady?.(!!window.RCF_LOGGER); } catch (e) { Logger.write("factory_state setLoggerReady err:", e?.message || e); }
+    try { window.RCF_FACTORY_STATE?.setDoctorReady?.(!!window.RCF_DOCTOR_SCAN); } catch (e) { Logger.write("factory_state setDoctorReady err:", e?.message || e); }
+    try { window.RCF_FACTORY_STATE?.refreshRuntime?.(); } catch (e) { Logger.write("factory_state refreshRuntime err:", e?.message || e); }
+
+    try {
+      const active = window.RCF_MODULE_REGISTRY?.getActiveModules?.() || [];
+      Logger.write("factory_core sync:", reason, "active=" + active.join(","));
+    } catch {}
+
+    try {
+      const summary = window.RCF_CONTEXT?.summary?.();
+      if (summary) Logger.write("context_engine summary:", safeJsonStringify(summary));
+    } catch (e) {
+      Logger.write("context_engine summary err:", e?.message || e);
+    }
+
+    return true;
+  }
+
   function buildFactoryIAContext() {
     return {
       get state() { return State; },
@@ -392,9 +458,16 @@
       logger: Logger
     };
   }
+
   function installFactoryIAAliases() {
-    try { window.RCF_FACTORY_IA = window.RCF_FACTORY_IA || {}; window.RCF_FACTORY_IA.getContext = () => buildFactoryIAContext(); window.RCF_FACTORY_IA.getMode = () => 'supervised'; window.RCF_FACTORY_IA.canApply = () => false; } catch {}
+    try {
+      window.RCF_FACTORY_IA = window.RCF_FACTORY_IA || {};
+      window.RCF_FACTORY_IA.getContext = () => buildFactoryIAContext();
+      window.RCF_FACTORY_IA.getMode = () => 'supervised';
+      window.RCF_FACTORY_IA.canApply = () => false;
+    } catch {}
   }
+
   function syncUiCoreBridge(reason = 'sync') {
     try {
       const api = getUiStateApi(); if (!api) return false;
@@ -408,7 +481,9 @@
   function injectCompactCSSOnce() {
     try {
       if (document.getElementById('rcfCompactCss')) return;
-      const st = document.createElement('style'); st.id = 'rcfCompactCss'; st.textContent = `#rcfRoot [hidden]{display:none !important;}#rcfRoot .rcf-collapsed{max-height:0 !important;padding-top:0 !important;padding-bottom:0 !important;border:0 !important;overflow:hidden !important;}`;
+      const st = document.createElement('style');
+      st.id = 'rcfCompactCss';
+      st.textContent = `#rcfRoot [hidden]{display:none !important;}#rcfRoot .rcf-collapsed{max-height:0 !important;padding-top:0 !important;padding-bottom:0 !important;border:0 !important;overflow:hidden !important;}`;
       document.head.appendChild(st);
       try { window.RCF_LOGGER?.push?.('OK', 'ui_compat_css: injected ✅'); } catch {}
     } catch {}
@@ -416,7 +491,8 @@
 
   const OverridesVFS = (() => {
     const KEY = 'RCF_OVERRIDES_MAP';
-    const getMap = () => Storage.get(KEY, {}); const setMap = (m) => Storage.set(KEY, m || {});
+    const getMap = () => Storage.get(KEY, {});
+    const setMap = (m) => Storage.set(KEY, m || {});
     const norm = (p) => { let x = String(p || '').trim(); if (!x) return ''; x = x.split('#')[0].split('?')[0].trim(); if (!x.startsWith('/')) x = '/' + x; return x.replace(/\/{2,}/g, '/'); };
     return {
       listFiles: async () => Object.keys(getMap() || {}).sort(),
@@ -493,6 +569,7 @@
     if (open) { d.hidden = false; d.style.display = ''; d.classList.add('open'); }
     else { d.classList.remove('open'); d.hidden = true; d.style.display = 'none'; }
   }
+
   function openFabPanel(open) { const p = $('#rcfFabPanel'); if (!p) return; if (open) { p.hidden = false; p.style.display = ''; p.classList.add('open'); } else { p.classList.remove('open'); p.hidden = true; p.style.display = 'none'; } }
   function toggleFabPanel() { const p = $('#rcfFabPanel'); if (!p) return; openFabPanel(p.hidden || !p.classList.contains('open')); }
   function syncFabStatusText() { try { const st = $('#statusText')?.textContent || ''; const fab = $('#fabStatus'); if (fab) fab.textContent = String(st || 'OK ✅'); } catch {} }
@@ -516,7 +593,6 @@
       if (prev === 'generator' && normalized !== 'generator') teardownPreviewHard();
     } catch {}
 
-    // 1) PRIORIDADE: ui_views (controlador visual principal)
     try {
       const views = getUiViewsApi();
       if (views && typeof views.setView === 'function') {
@@ -543,7 +619,6 @@
       try { Logger.write('ui_views setView err:', e?.message || e); } catch {}
     }
 
-    // 2) FALLBACK: ui_router
     try {
       const router = getUiRouterApi();
       if (router && typeof router.setView === 'function') {
@@ -570,7 +645,6 @@
       try { Logger.write('router setView err:', e?.message || e); } catch {}
     }
 
-    // 3) FALLBACK LOCAL
     State.active.view = normalized;
     saveAll('local.setView');
     syncViewVisibility(normalized);
@@ -715,10 +789,17 @@
 
       await loadUiCoreBridgeOnce();
       await loadUiRuntimeOnce();
+
+      // =====================================================
+      // NOVO: carregar cores de contexto antes da IA/UI pronta
+      // =====================================================
+      await loadFactoryCoreModulesOnce();
+      syncFactoryCoreModules('safeInit.pre-ui');
+
       await loadUiVisualModulesOnce();
 
       renderShell();
-      if ($('#rcfRoot') && !isOfficialShell($('#rcfRoot'))) strengthenShellStructure();
+      if ($('#rcfRoot') && !isOfficialShell($('#rcfRoot))) strengthenShellStructure();
 
       await initUiRuntime({ $, $$, State, Storage, Logger, uiMsg, textContentSafe, bindTap, saveAll, safeSetStatus, setView, normalizeViewName });
 
@@ -742,16 +823,40 @@
         }
       } catch (e) { Logger.write('ui_views err:', e?.message || e); }
 
-      try { notifyUIReady(); } catch {}
-
       bindUI();
       hydrateUIFromState();
       syncUiCoreBridge('safeInit.hydrate');
+
+      // =====================================================
+      // NOVO: consolidar depois da UI também
+      // =====================================================
+      syncFactoryCoreModules('safeInit.post-ui');
 
       try {
         window.RCF_ENGINE?.init?.({ State, Storage, Logger });
         Logger.write('engine:', 'init ok ✅');
       } catch (e) { Logger.write('engine init err:', e?.message || e); }
+
+      try {
+        window.RCF_FACTORY_STATE?.markBoot?.('ready');
+        window.RCF_FACTORY_STATE?.refreshRuntime?.();
+        window.RCF_MODULE_REGISTRY?.refresh?.();
+        window.RCF_FACTORY_TREE?.refresh?.();
+      } catch (e) {
+        Logger.write('factory_core final sync err:', e?.message || e);
+      }
+
+      try { notifyUIReady(); } catch {}
+
+      // reforço leve após UI_READY
+      try {
+        setTimeout(() => {
+          try { syncFactoryCoreModules('after-ui-ready-600ms'); } catch {}
+        }, 600);
+        setTimeout(() => {
+          try { syncFactoryCoreModules('after-ui-ready-1800ms'); } catch {}
+        }, 1800);
+      } catch {}
 
       Logger.write('RCF V8 init ok — mode:', State.cfg.mode);
 
