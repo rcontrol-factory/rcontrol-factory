@@ -1,6 +1,6 @@
 /* FILE: /app/js/admin.admin_ai.js
    RControl Factory — Factory AI
-   v4.1 CHAT CORE COPY + CODE BLOCKS + SNAPSHOT FIX
+   v4.1.1 CHAT CORE COPY + CODE BLOCKS + SNAPSHOT FIX
 
    - mantém visual chat-first aprovado
    - mantém botão + fora da cápsula
@@ -14,18 +14,19 @@
    - FIX: prioriza RCF_CONTEXT/RCF_FACTORY_STATE/RCF_MODULE_REGISTRY/RCF_FACTORY_TREE
    - FIX: evita usar contexto conversável da Factory IA como snapshot principal
    - FIX: coleta logs com fallback quando logger não usa .items
+   - FIX: melhora fallback de activeView/activeAppSlug/modules ativos/doctor
    - não executa patch automático
 */
 
 (() => {
   "use strict";
 
-  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v41) return;
+  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v411) return;
 
-  const VERSION = "v4.1";
+  const VERSION = "v4.1.1";
   const BOX_ID = "rcfFactoryAIBox";
   const CHAT_ID = "rcfFactoryAIChat";
-  const STYLE_ID = "rcfFactoryAIStyleV41";
+  const STYLE_ID = "rcfFactoryAIStyleV411";
 
   const SpeechRecognitionCtor =
     window.SpeechRecognition ||
@@ -175,6 +176,15 @@
         return logger.items.slice(-limit);
       }
 
+      if (logger && Array.isArray(logger.lines)) {
+        return logger.lines.slice(-limit);
+      }
+
+      if (logger && typeof logger.getAll === "function") {
+        const arr = logger.getAll();
+        if (Array.isArray(arr)) return arr.slice(-limit);
+      }
+
       if (logger && typeof logger.getText === "function") {
         const text = String(logger.getText() || "").trim();
         if (text) return text.split("\n").slice(-limit);
@@ -210,10 +220,36 @@
       }
     } catch {}
 
+    try {
+      if (window.RCF_DOCTOR?.lastReport) {
+        return window.RCF_DOCTOR.lastReport;
+      }
+    } catch {}
+
+    try {
+      if (window.RCF_DOCTOR?.lastRun) {
+        return window.RCF_DOCTOR.lastRun;
+      }
+    } catch {}
+
     return {
       note: "Doctor report não encontrado ainda. Rode o Doctor antes.",
       ts: new Date().toISOString()
     };
+  }
+
+  function buildActiveModuleFallback(moduleSummary) {
+    try {
+      if (Array.isArray(moduleSummary?.active) && moduleSummary.active.length) {
+        return clone(moduleSummary.active);
+      }
+
+      const map = moduleSummary?.modules || {};
+      const active = Object.keys(map).filter((k) => !!map[k]);
+      return active;
+    } catch {
+      return [];
+    }
   }
 
   function buildRawFromCoreModules() {
@@ -262,9 +298,14 @@
       return {};
     })();
 
+    const doctorApi = window.RCF_DOCTOR_SCAN || window.RCF_DOCTOR || null;
+
     const doctorReport = (() => {
       try {
-        if (window.RCF_DOCTOR_SCAN?.lastReport) return clone(window.RCF_DOCTOR_SCAN.lastReport);
+        if (doctorApi?.lastReport) return clone(doctorApi.lastReport);
+      } catch {}
+      try {
+        if (doctorApi?.lastRun) return clone(doctorApi.lastRun);
       } catch {}
       return null;
     })();
@@ -282,12 +323,14 @@
         runtimeVFS: factoryState.runtimeVFS || "unknown",
         environment: factoryState.environment || "unknown",
         userAgent: factoryState.userAgent || navigator.userAgent || "",
+        activeView: factoryState.activeView || "",
+        activeAppSlug: factoryState.activeAppSlug || "",
         loggerReady: !!factoryState.loggerReady || !!moduleSummary.logger || !!window.RCF_LOGGER,
-        doctorReady: !!factoryState.doctorReady || !!moduleSummary.doctor || !!window.RCF_DOCTOR_SCAN,
+        doctorReady: !!factoryState.doctorReady || !!moduleSummary.doctor || !!doctorApi,
         modules: clone(factoryState.modules || {}),
         flags: {
           hasLogger: !!window.RCF_LOGGER,
-          hasDoctor: !!window.RCF_DOCTOR_SCAN,
+          hasDoctor: !!doctorApi,
           hasGitHub: !!window.RCF_GH_SYNC,
           hasVault: !!window.RCF_ZIP_VAULT,
           hasBridge: !!window.RCF_AGENT_ZIP_BRIDGE,
@@ -296,24 +339,25 @@
           hasModuleRegistry: !!window.RCF_MODULE_REGISTRY,
           hasContextEngine: !!window.RCF_CONTEXT,
           hasFactoryTree: !!window.RCF_FACTORY_TREE,
-          hasFactoryAI: true
+          hasFactoryAI: !!window.RCF_FACTORY_AI || !!window.RCF_FACTORY_IA
         }
       },
       doctor: {
-        ready: !!window.RCF_DOCTOR_SCAN,
-        version: window.RCF_DOCTOR_SCAN?.version || "unknown",
+        ready: !!doctorApi,
+        version: doctorApi?.version || "unknown",
         lastRun: factoryState.doctorLastRun || doctorReport || null
       },
       modules: {
         version: moduleSummary.version || "unknown",
         total: Number(moduleSummary.total || 0),
-        active: Array.isArray(moduleSummary.active) ? clone(moduleSummary.active) : [],
+        active: buildActiveModuleFallback(moduleSummary),
         logger: !!moduleSummary.logger,
         doctor: !!moduleSummary.doctor,
         github: !!moduleSummary.github,
         vault: !!moduleSummary.vault,
         bridge: !!moduleSummary.bridge,
         adminAI: !!moduleSummary.adminAI,
+        factoryAI: !!moduleSummary.factoryAI,
         factoryState: !!moduleSummary.factoryState,
         moduleRegistry: !!moduleSummary.moduleRegistry,
         contextEngine: !!moduleSummary.contextEngine,
@@ -383,6 +427,16 @@
     const tree = raw.tree || {};
     const state = window.RCF?.state || {};
 
+    const activeModules = (() => {
+      try {
+        if (Array.isArray(modules.active) && modules.active.length) return modules.active;
+        const map = modules.modules || {};
+        return Object.keys(map).filter((k) => !!map[k]);
+      } catch {
+        return [];
+      }
+    })();
+
     return {
       factory: {
         version: factory.version || "unknown",
@@ -395,8 +449,8 @@
         environment: factory.environment || "unknown",
         lastUpdate: factory.lastUpdate || null,
         mountedAs: "Factory AI",
-        activeView: state?.active?.view || "",
-        activeAppSlug: state?.active?.appSlug || "",
+        activeView: state?.active?.view || factory.activeView || "",
+        activeAppSlug: state?.active?.appSlug || factory.activeAppSlug || "",
         bootedAt: STATE.bootedAt
       },
       doctor: {
@@ -404,7 +458,7 @@
         lastRun: doctor.lastRun || null
       },
       modules: {
-        active: Array.isArray(modules.active) ? modules.active : [],
+        active: activeModules,
         status: {
           logger: !!modules.logger,
           doctor: !!modules.doctor,
@@ -412,7 +466,7 @@
           vault: !!modules.vault,
           bridge: !!modules.bridge,
           adminAI: !!modules.adminAI,
-          factoryAI: true,
+          factoryAI: !!modules.factoryAI || true,
           factoryState: !!modules.factoryState,
           moduleRegistry: !!modules.moduleRegistry,
           contextEngine: !!modules.contextEngine,
@@ -430,7 +484,7 @@
         hasLogger: !!factory.flags?.hasLogger,
         hasDoctor: !!factory.flags?.hasDoctor,
         hasGitHub: !!factory.flags?.hasGitHub,
-        hasFactoryAI: true,
+        hasFactoryAI: !!factory.flags?.hasFactoryAI || true,
         hasFactoryState: !!factory.flags?.hasFactoryState,
         hasModuleRegistry: !!factory.flags?.hasModuleRegistry,
         hasContextEngine: !!factory.flags?.hasContextEngine,
@@ -1829,8 +1883,8 @@
     renderAttachments();
     setVoiceBtnState();
 
-    if (!document.__rcfFactoryAIOutsideClickV41) {
-      document.__rcfFactoryAIOutsideClickV41 = true;
+    if (!document.__rcfFactoryAIOutsideClickV411) {
+      document.__rcfFactoryAIOutsideClickV411 = true;
       document.addEventListener("click", (ev) => {
         try {
           const wrap = document.getElementById("rcfFactoryAIAttachWrap");
@@ -2011,6 +2065,7 @@
 
   window.RCF_FACTORY_AI = {
     __v41: true,
+    __v411: true,
     version: VERSION,
     mount,
     clearChat,
@@ -2030,6 +2085,7 @@
 
   window.RCF_ADMIN_AI = Object.assign(window.RCF_ADMIN_AI || {}, {
     __v41_bridge: true,
+    __v411_bridge: true,
     version: VERSION,
     mount,
     clearChat,
