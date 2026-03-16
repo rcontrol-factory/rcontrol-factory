@@ -1,20 +1,21 @@
 /* FILE: /app/js/core/module_registry.js
    RControl Factory — Module Registry
-   v1.2 STABLE / PATCH MÍNIMO
+   v1.3 STABLE / PATCH MÍNIMO
 
    Objetivo:
    - detectar automaticamente módulos globais já carregados
    - registrar módulos ativos reais
    - sincronizar com RCF_FACTORY_STATE
    - expor snapshot mais confiável para o Context Engine
+   - ampliar visibilidade da Factory AI sem reescrever a estrutura
 */
 
 (function (global) {
   "use strict";
 
-  if (global.RCF_MODULE_REGISTRY && global.RCF_MODULE_REGISTRY.__v12) return;
+  if (global.RCF_MODULE_REGISTRY && global.RCF_MODULE_REGISTRY.__v13) return;
 
-  var VERSION = "v1.2";
+  var VERSION = "v1.3";
 
   var modules = {
     logger: false,
@@ -23,10 +24,15 @@
     vault: false,
     bridge: false,
     adminAI: false,
+    factoryAI: false,
     factoryState: false,
     moduleRegistry: true,
     contextEngine: false,
-    factoryTree: false
+    factoryTree: false,
+    diagnostics: false,
+    injector: false,
+    ui: false,
+    runtime: false
   };
 
   function clone(obj) {
@@ -34,10 +40,31 @@
     catch (_) { return obj || {}; }
   }
 
+  function safe(fn, fallback) {
+    try {
+      var v = fn();
+      return (v === undefined ? fallback : v);
+    } catch (_) {
+      return fallback;
+    }
+  }
+
   function syncToFactoryState() {
     try {
       if (global.RCF_FACTORY_STATE && typeof global.RCF_FACTORY_STATE.setModules === "function") {
-        global.RCF_FACTORY_STATE.setModules(modules);
+        global.RCF_FACTORY_STATE.setModules(clone(modules));
+      }
+    } catch (_) {}
+
+    try {
+      if (global.RCF_FACTORY_STATE && typeof global.RCF_FACTORY_STATE.setLoggerReady === "function") {
+        global.RCF_FACTORY_STATE.setLoggerReady(!!modules.logger);
+      }
+    } catch (_) {}
+
+    try {
+      if (global.RCF_FACTORY_STATE && typeof global.RCF_FACTORY_STATE.setDoctorReady === "function") {
+        global.RCF_FACTORY_STATE.setDoctorReady(!!modules.doctor);
       }
     } catch (_) {}
   }
@@ -49,27 +76,36 @@
     try { modules.vault = !!global.RCF_ZIP_VAULT; } catch (_) {}
     try { modules.bridge = !!global.RCF_AGENT_ZIP_BRIDGE; } catch (_) {}
     try { modules.adminAI = !!global.RCF_ADMIN_AI; } catch (_) {}
+    try { modules.factoryAI = !!global.RCF_FACTORY_AI || !!global.RCF_FACTORY_IA; } catch (_) {}
     try { modules.factoryState = !!global.RCF_FACTORY_STATE; } catch (_) {}
     try { modules.contextEngine = !!global.RCF_CONTEXT; } catch (_) {}
     try { modules.factoryTree = !!global.RCF_FACTORY_TREE; } catch (_) {}
-
-    syncToFactoryState();
-
+    try { modules.diagnostics = !!global.RCF_DIAGNOSTICS; } catch (_) {}
+    try { modules.injector = !!global.RCF_INJECTOR || !!global.RCF_AGENT_INJECTOR || !!global.RCF_PREVIEW_INJECTOR; } catch (_) {}
+    try { modules.ui = !!global.RCF_UI; } catch (_) {}
     try {
-      if (global.RCF_FACTORY_STATE && typeof global.RCF_FACTORY_STATE.setLoggerReady === "function") {
-        global.RCF_FACTORY_STATE.setLoggerReady(!!modules.logger);
-      }
-      if (global.RCF_FACTORY_STATE && typeof global.RCF_FACTORY_STATE.setDoctorReady === "function") {
-        global.RCF_FACTORY_STATE.setDoctorReady(!!modules.doctor);
-      }
+      modules.runtime =
+        !!global.__RCF_VFS_RUNTIME ||
+        !!global.RCF_RUNTIME ||
+        !!safe(function () { return global.RCF && global.RCF.runtime; }, null);
     } catch (_) {}
 
+    syncToFactoryState();
     return modules;
   }
 
   function register(name) {
     if (!name) return false;
     modules[String(name)] = true;
+    syncToFactoryState();
+    return true;
+  }
+
+  function unregister(name) {
+    if (!name) return false;
+    if (name === "moduleRegistry") return false;
+    if (!Object.prototype.hasOwnProperty.call(modules, String(name))) return false;
+    modules[String(name)] = false;
     syncToFactoryState();
     return true;
   }
@@ -88,6 +124,16 @@
     return getActiveModules();
   }
 
+  function counts() {
+    var keys = Object.keys(modules);
+    var active = getActiveModules();
+    return {
+      total: keys.length,
+      active: active.length,
+      inactive: keys.length - active.length
+    };
+  }
+
   function refresh() {
     detectModules();
     return getModules();
@@ -95,22 +141,32 @@
 
   function summary() {
     var current = refresh();
+    var c = counts();
 
     return {
       version: VERSION,
-      total: Object.keys(current).length,
+      total: c.total,
+      activeCount: c.active,
+      inactiveCount: c.inactive,
       active: getActiveModules(),
       modules: clone(current),
+
       logger: !!current.logger,
       doctor: !!current.doctor,
       github: !!current.github,
       vault: !!current.vault,
       bridge: !!current.bridge,
       adminAI: !!current.adminAI,
+      factoryAI: !!current.factoryAI,
       factoryState: !!current.factoryState,
       moduleRegistry: !!current.moduleRegistry,
       contextEngine: !!current.contextEngine,
       factoryTree: !!current.factoryTree,
+      diagnostics: !!current.diagnostics,
+      injector: !!current.injector,
+      ui: !!current.ui,
+      runtime: !!current.runtime,
+
       ts: new Date().toISOString()
     };
   }
@@ -119,12 +175,15 @@
     __v1: true,
     __v11: true,
     __v12: true,
+    __v13: true,
     version: VERSION,
     register: register,
+    unregister: unregister,
     refresh: refresh,
     getModules: getModules,
     getActiveModules: getActiveModules,
     getActiveModuleNames: getActiveModuleNames,
+    counts: counts,
     summary: summary
   };
 
@@ -148,7 +207,12 @@
   try {
     setTimeout(function () {
       try { detectModules(); } catch (_) {}
-    }, 600);
+    }, 300);
+
+    setTimeout(function () {
+      try { detectModules(); } catch (_) {}
+    }, 900);
+
     setTimeout(function () {
       try { detectModules(); } catch (_) {}
     }, 1800);
