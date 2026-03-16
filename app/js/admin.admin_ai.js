@@ -1,6 +1,6 @@
 /* FILE: /app/js/admin.admin_ai.js
    RControl Factory — Factory AI
-   v4.1.1 CHAT CORE COPY + CODE BLOCKS + SNAPSHOT FIX
+   v4.2 CHAT SCROLL FIX + HISTORY PERSIST
 
    - mantém visual chat-first aprovado
    - mantém botão + fora da cápsula
@@ -15,18 +15,23 @@
    - FIX: evita usar contexto conversável da Factory IA como snapshot principal
    - FIX: coleta logs com fallback quando logger não usa .items
    - FIX: melhora fallback de activeView/activeAppSlug/modules ativos/doctor
+   - FIX CRÍTICO: não força scroll para o final quando o usuário sobe o chat
+   - ADD: histórico persistido em localStorage
+   - ADD: botão limpar histórico
    - não executa patch automático
 */
 
 (() => {
   "use strict";
 
-  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v411) return;
+  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v42) return;
 
-  const VERSION = "v4.1.1";
+  const VERSION = "v4.2";
   const BOX_ID = "rcfFactoryAIBox";
   const CHAT_ID = "rcfFactoryAIChat";
-  const STYLE_ID = "rcfFactoryAIStyleV411";
+  const STYLE_ID = "rcfFactoryAIStyleV42";
+  const HISTORY_KEY = "rcf:factory_ai_history_v42";
+  const HISTORY_MAX = 80;
 
   const SpeechRecognitionCtor =
     window.SpeechRecognition ||
@@ -42,7 +47,11 @@
     syncTimer: null,
     attachments: [],
     isListening: false,
-    currentUtterance: null
+    currentUtterance: null,
+    chatBound: false,
+    pinnedToBottom: true,
+    lastRenderSignature: "",
+    renderedOnce: false
   };
 
   function log(level, msg) {
@@ -75,6 +84,88 @@
   function clone(obj) {
     try { return JSON.parse(JSON.stringify(obj)); }
     catch { return obj || {}; }
+  }
+
+  function safeHistoryItem(item) {
+    if (!item || typeof item !== "object") return null;
+    const role = item.role === "assistant" ? "assistant" : "user";
+    const text = String(item.text || "").trim();
+    const ts = String(item.ts || new Date().toISOString());
+    if (!text) return null;
+    return { role, text, ts };
+  }
+
+  function loadHistory() {
+    try {
+      const raw = localStorage.getItem(HISTORY_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.map(safeHistoryItem).filter(Boolean).slice(-HISTORY_MAX);
+    } catch {
+      return [];
+    }
+  }
+
+  function persistHistory() {
+    try {
+      const data = Array.isArray(STATE.history) ? STATE.history.slice(-HISTORY_MAX) : [];
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(data));
+    } catch {}
+  }
+
+  function pushHistory(item) {
+    const safe = safeHistoryItem(item);
+    if (!safe) return false;
+    if (!Array.isArray(STATE.history)) STATE.history = [];
+    STATE.history.push(safe);
+    if (STATE.history.length > HISTORY_MAX) {
+      STATE.history = STATE.history.slice(-HISTORY_MAX);
+    }
+    persistHistory();
+    return true;
+  }
+
+  function getChatEl() {
+    return document.getElementById(CHAT_ID);
+  }
+
+  function isNearBottom(el, threshold = 56) {
+    try {
+      if (!el) return true;
+      const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+      return distance <= threshold;
+    } catch {
+      return true;
+    }
+  }
+
+  function bindChatScroll() {
+    const chat = getChatEl();
+    if (!chat || chat.__rcfBoundScrollV42) return;
+
+    chat.__rcfBoundScrollV42 = true;
+    STATE.pinnedToBottom = true;
+
+    chat.addEventListener("scroll", () => {
+      STATE.pinnedToBottom = isNearBottom(chat, 56);
+    }, { passive: true });
+
+    chat.addEventListener("touchmove", () => {
+      STATE.pinnedToBottom = isNearBottom(chat, 56);
+    }, { passive: true });
+  }
+
+  function scrollChatToBottom(force = false) {
+    const chat = getChatEl();
+    if (!chat) return;
+
+    if (!force && !STATE.pinnedToBottom) return;
+
+    try {
+      chat.scrollTop = chat.scrollHeight;
+      STATE.pinnedToBottom = true;
+    } catch {}
   }
 
   function isElementVisible(el) {
@@ -570,6 +661,13 @@
   gap:12px;
 }
 
+#${BOX_ID} .rcfAiHeadActions{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  flex-wrap:wrap;
+}
+
 #${BOX_ID} .rcfAiAvatar{
   width:44px;
   height:44px;
@@ -616,12 +714,27 @@
   white-space:nowrap;
 }
 
+#${BOX_ID} .rcfAiHeadBtn{
+  min-height:32px;
+  padding:0 12px;
+  border-radius:999px;
+  border:1px solid rgba(31,41,55,.08);
+  background:rgba(255,255,255,.94);
+  color:#5a6b98;
+  font-size:12px;
+  font-weight:800;
+  cursor:pointer;
+}
+
 #${CHAT_ID}{
   min-height:320px;
   max-height:52vh;
   overflow:auto;
   padding:16px;
   background:linear-gradient(180deg,rgba(246,248,252,.72),rgba(250,251,255,.62));
+  overscroll-behavior:contain;
+  -webkit-overflow-scrolling:touch;
+  touch-action:pan-y;
 }
 
 #${BOX_ID} .rcfAiEmpty{
@@ -988,12 +1101,17 @@
   }
   #${BOX_ID} .rcfAiHead{
     padding:16px 16px 12px;
+    align-items:flex-start;
   }
   #${BOX_ID} .rcfAiHeadTitle{
     font-size:18px;
   }
   #${BOX_ID} .rcfAiAttachmentName{
     max-width:110px;
+  }
+  #${BOX_ID} .rcfAiHeadActions{
+    width:100%;
+    justify-content:flex-end;
   }
 }
     `.trim();
@@ -1123,18 +1241,42 @@
     });
   }
 
-  function renderChat() {
+  function getHistorySignature() {
+    try {
+      const last = STATE.history.slice(-6);
+      return JSON.stringify(last);
+    } catch {
+      return String((STATE.history || []).length);
+    }
+  }
+
+  function renderChat(options = {}) {
     const box = document.getElementById(CHAT_ID);
     if (!box) return;
 
+    const forceBottom = !!options.forceBottom;
+    const signature = getHistorySignature();
+
+    bindChatScroll();
+
     if (!Array.isArray(STATE.history) || !STATE.history.length) {
-      box.innerHTML = `
-        <div class="rcfAiEmpty">
-          Converse com a Factory AI para analisar arquitetura, corrigir módulos, revisar contexto e estruturar a própria Factory.
-        </div>
-      `;
+      if (STATE.lastRenderSignature !== "__empty__") {
+        box.innerHTML = `
+          <div class="rcfAiEmpty">
+            Converse com a Factory AI para analisar arquitetura, corrigir módulos, revisar contexto e estruturar a própria Factory.
+          </div>
+        `;
+        STATE.lastRenderSignature = "__empty__";
+      }
+      if (forceBottom) scrollChatToBottom(true);
       return;
     }
+
+    const shouldReuse = STATE.renderedOnce && STATE.lastRenderSignature === signature && !forceBottom;
+    if (shouldReuse) return;
+
+    const wasNearBottom = isNearBottom(box, 56);
+    if (wasNearBottom) STATE.pinnedToBottom = true;
 
     box.innerHTML = STATE.history.map((item, idx) => {
       const isUser = item.role === "user";
@@ -1169,11 +1311,19 @@
 
     bindCopyButtons(box);
 
-    try { box.scrollTop = box.scrollHeight; } catch {}
+    STATE.lastRenderSignature = signature;
+    STATE.renderedOnce = true;
+
+    if (forceBottom || STATE.pinnedToBottom || wasNearBottom) {
+      scrollChatToBottom(true);
+    }
   }
 
   function clearChat() {
     STATE.history = [];
+    persistHistory();
+    STATE.lastRenderSignature = "";
+    STATE.renderedOnce = false;
     renderChat();
     setComposerStatus("aguardando");
     setTechResult("Pronto.");
@@ -1371,12 +1521,12 @@
         const msg = pretty(data || { error: "Erro ao chamar endpoint IA" });
         setComposerStatus("erro");
         setTechResult(msg);
-        STATE.history.push({
+        pushHistory({
           role: "assistant",
           text: msg,
           ts: new Date().toISOString()
         });
-        renderChat();
+        renderChat({ forceBottom: true });
         log("ERR", "falha IA endpoint=" + endpoint);
         return;
       }
@@ -1389,23 +1539,23 @@
 
       setComposerStatus("concluído");
       setTechResult(text);
-      STATE.history.push({
+      pushHistory({
         role: "assistant",
         text,
         ts: new Date().toISOString()
       });
-      renderChat();
+      renderChat({ forceBottom: true });
       log("OK", "resposta recebida action=" + action + " endpoint=" + endpoint);
     } catch (e) {
       const msg = String(e?.message || e || "Erro de rede");
       setComposerStatus("erro");
       setTechResult(msg);
-      STATE.history.push({
+      pushHistory({
         role: "assistant",
         text: msg,
         ts: new Date().toISOString()
       });
-      renderChat();
+      renderChat({ forceBottom: true });
       log("ERR", "erro de rede IA");
     } finally {
       setButtonsBusy(false);
@@ -1430,12 +1580,12 @@
       userText += `\n\n[anexos: ${list}]`;
     }
 
-    STATE.history.push({
+    pushHistory({
       role: "user",
       text: userText,
       ts: new Date().toISOString()
     });
-    renderChat();
+    renderChat({ forceBottom: true });
 
     callFactoryAI(action, buildPayload(action), finalPrompt);
 
@@ -1833,6 +1983,20 @@
     });
   }
 
+  function bindHeaderButtons() {
+    const btnClear = document.getElementById("rcfFactoryAIClearHistory");
+    if (btnClear && !btnClear.__boundClearV42) {
+      btnClear.__boundClearV42 = true;
+      btnClear.addEventListener("click", () => {
+        try {
+          const ok = window.confirm("Limpar histórico desta conversa da Factory AI?");
+          if (!ok) return;
+        } catch {}
+        clearChat();
+      });
+    }
+  }
+
   function bindBox() {
     const sendBtn = document.getElementById("rcfFactoryAISend");
     const promptEl = document.getElementById("rcfFactoryAIPrompt");
@@ -1880,11 +2044,13 @@
 
     bindMenuItems();
     bindAttachmentInputs();
+    bindHeaderButtons();
+    bindChatScroll();
     renderAttachments();
     setVoiceBtnState();
 
-    if (!document.__rcfFactoryAIOutsideClickV411) {
-      document.__rcfFactoryAIOutsideClickV411 = true;
+    if (!document.__rcfFactoryAIOutsideClickV42) {
+      document.__rcfFactoryAIOutsideClickV42 = true;
       document.addEventListener("click", (ev) => {
         try {
           const wrap = document.getElementById("rcfFactoryAIAttachWrap");
@@ -1919,7 +2085,10 @@
               <p class="rcfAiHeadSub">Chat central da Factory para conversar, analisar, organizar e evoluir a estrutura.</p>
             </div>
           </div>
-          <div class="rcfAiPill">OpenAI conectada</div>
+          <div class="rcfAiHeadActions">
+            <div class="rcfAiPill">OpenAI conectada</div>
+            <button class="rcfAiHeadBtn" id="rcfFactoryAIClearHistory" type="button">Limpar</button>
+          </div>
         </section>
 
         <section id="${CHAT_ID}"></section>
@@ -1993,6 +2162,8 @@
 
     ensureStyle();
 
+    let needsFreshRender = false;
+
     if (!box) {
       box = document.createElement("div");
       box.id = BOX_ID;
@@ -2001,11 +2172,13 @@
       box.setAttribute("data-rcf-build", VERSION);
       box.innerHTML = buildBoxHtml();
       primarySlot.appendChild(box);
+      needsFreshRender = true;
     } else {
       const currentBuild = String(box.getAttribute("data-rcf-build") || "");
       if (currentBuild !== VERSION) {
         box.setAttribute("data-rcf-build", VERSION);
         box.innerHTML = buildBoxHtml();
+        needsFreshRender = true;
       }
       if (box.parentNode !== primarySlot) {
         primarySlot.appendChild(box);
@@ -2013,7 +2186,11 @@
     }
 
     bindBox();
-    renderChat();
+
+    if (needsFreshRender) {
+      renderChat();
+    }
+
     return box;
   }
 
@@ -2063,9 +2240,12 @@
     } catch {}
   }
 
+  STATE.history = loadHistory();
+
   window.RCF_FACTORY_AI = {
     __v41: true,
     __v411: true,
+    __v42: true,
     version: VERSION,
     mount,
     clearChat,
@@ -2086,6 +2266,7 @@
   window.RCF_ADMIN_AI = Object.assign(window.RCF_ADMIN_AI || {}, {
     __v41_bridge: true,
     __v411_bridge: true,
+    __v42_bridge: true,
     version: VERSION,
     mount,
     clearChat,
