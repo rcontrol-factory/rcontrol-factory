@@ -1,6 +1,6 @@
 /* FILE: /app/js/admin.admin_ai.js
    RControl Factory — Factory AI
-   v4.2 CHAT SCROLL FIX + HISTORY PERSIST
+   v4.2.1 MOUNT GUARD + CHAT SCROLL FIX + HISTORY PERSIST
 
    - mantém visual chat-first aprovado
    - mantém botão + fora da cápsula
@@ -18,20 +18,25 @@
    - FIX CRÍTICO: não força scroll para o final quando o usuário sobe o chat
    - ADD: histórico persistido em localStorage
    - ADD: botão limpar histórico
+   - FIX NOVO: corta loop de mount/log repetido
+   - FIX NOVO: reduz sync agressivo
    - não executa patch automático
 */
 
 (() => {
   "use strict";
 
-  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v42) return;
+  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v421) return;
 
-  const VERSION = "v4.2";
+  const VERSION = "v4.2.1";
   const BOX_ID = "rcfFactoryAIBox";
   const CHAT_ID = "rcfFactoryAIChat";
-  const STYLE_ID = "rcfFactoryAIStyleV42";
+  const STYLE_ID = "rcfFactoryAIStyleV421";
   const HISTORY_KEY = "rcf:factory_ai_history_v42";
   const HISTORY_MAX = 80;
+
+  const SYNC_INTERVAL_MS = 2200;
+  const MOUNT_LOG_THROTTLE_MS = 4000;
 
   const SpeechRecognitionCtor =
     window.SpeechRecognition ||
@@ -51,12 +56,31 @@
     chatBound: false,
     pinnedToBottom: true,
     lastRenderSignature: "",
-    renderedOnce: false
+    renderedOnce: false,
+    lastMountSignature: "",
+    lastMountLoggedAt: 0,
+    mounted: false,
+    visibilityBound: false,
+    syncStarted: false
   };
+
+  function nowMs() {
+    try { return Date.now(); } catch { return 0; }
+  }
 
   function log(level, msg) {
     try { window.RCF_LOGGER?.push?.(level, "[FACTORY_AI] " + msg); } catch {}
     try { console.log("[FACTORY_AI]", level, msg); } catch {}
+  }
+
+  function logMountOnce(signature, force = false) {
+    const now = nowMs();
+    if (!force && STATE.lastMountSignature === signature && (now - STATE.lastMountLoggedAt) < MOUNT_LOG_THROTTLE_MS) {
+      return;
+    }
+    STATE.lastMountSignature = signature;
+    STATE.lastMountLoggedAt = now;
+    log("OK", "Factory AI mount ✅ " + VERSION + " @ " + signature);
   }
 
   function qs(sel, root = document) {
@@ -142,9 +166,9 @@
 
   function bindChatScroll() {
     const chat = getChatEl();
-    if (!chat || chat.__rcfBoundScrollV42) return;
+    if (!chat || chat.__rcfBoundScrollV421) return;
 
-    chat.__rcfBoundScrollV42 = true;
+    chat.__rcfBoundScrollV421 = true;
     STATE.pinnedToBottom = true;
 
     chat.addEventListener("scroll", () => {
@@ -1537,6 +1561,17 @@
         data.result ||
         pretty(data);
 
+      try {
+        window.dispatchEvent(new CustomEvent("RCF:FACTORY_AI_RESPONSE", {
+          detail: {
+            action,
+            source: endpoint,
+            analysis: text,
+            raw: data
+          }
+        }));
+      } catch {}
+
       setComposerStatus("concluído");
       setTechResult(text);
       pushHistory({
@@ -1985,8 +2020,8 @@
 
   function bindHeaderButtons() {
     const btnClear = document.getElementById("rcfFactoryAIClearHistory");
-    if (btnClear && !btnClear.__boundClearV42) {
-      btnClear.__boundClearV42 = true;
+    if (btnClear && !btnClear.__boundClearV421) {
+      btnClear.__boundClearV421 = true;
       btnClear.addEventListener("click", () => {
         try {
           const ok = window.confirm("Limpar histórico desta conversa da Factory AI?");
@@ -2003,15 +2038,15 @@
     const attachBtn = document.getElementById("rcfFactoryAIAttachBtn");
     const voiceBtn = document.getElementById("rcfFactoryAIVoiceBtn");
 
-    if (sendBtn && !sendBtn.__bound) {
-      sendBtn.__bound = true;
+    if (sendBtn && !sendBtn.__boundV421) {
+      sendBtn.__boundV421 = true;
       sendBtn.addEventListener("click", () => {
         sendPrompt(String(promptEl?.value || "").trim(), "");
       }, { passive: true });
     }
 
-    if (promptEl && !promptEl.__boundInput) {
-      promptEl.__boundInput = true;
+    if (promptEl && !promptEl.__boundInputV421) {
+      promptEl.__boundInputV421 = true;
       autoResizePrompt(promptEl);
 
       promptEl.addEventListener("input", () => {
@@ -2028,15 +2063,15 @@
       });
     }
 
-    if (attachBtn && !attachBtn.__bound) {
-      attachBtn.__bound = true;
+    if (attachBtn && !attachBtn.__boundV421) {
+      attachBtn.__boundV421 = true;
       attachBtn.addEventListener("click", () => {
         toggleAttachMenu("rcfFactoryAIClipMenuMain");
       }, { passive: true });
     }
 
-    if (voiceBtn && !voiceBtn.__bound) {
-      voiceBtn.__bound = true;
+    if (voiceBtn && !voiceBtn.__boundV421) {
+      voiceBtn.__boundV421 = true;
       voiceBtn.addEventListener("click", () => {
         toggleListening();
       }, { passive: true });
@@ -2049,8 +2084,8 @@
     renderAttachments();
     setVoiceBtnState();
 
-    if (!document.__rcfFactoryAIOutsideClickV42) {
-      document.__rcfFactoryAIOutsideClickV42 = true;
+    if (!document.__rcfFactoryAIOutsideClickV421) {
+      document.__rcfFactoryAIOutsideClickV421 = true;
       document.addEventListener("click", (ev) => {
         try {
           const wrap = document.getElementById("rcfFactoryAIAttachWrap");
@@ -2163,6 +2198,7 @@
     ensureStyle();
 
     let needsFreshRender = false;
+    let moved = false;
 
     if (!box) {
       box = document.createElement("div");
@@ -2173,6 +2209,7 @@
       box.innerHTML = buildBoxHtml();
       primarySlot.appendChild(box);
       needsFreshRender = true;
+      moved = true;
     } else {
       const currentBuild = String(box.getAttribute("data-rcf-build") || "");
       if (currentBuild !== VERSION) {
@@ -2182,6 +2219,7 @@
       }
       if (box.parentNode !== primarySlot) {
         primarySlot.appendChild(box);
+        moved = true;
       }
     }
 
@@ -2191,7 +2229,7 @@
       renderChat();
     }
 
-    return box;
+    return { box, needsFreshRender, moved };
   }
 
   function mount() {
@@ -2199,16 +2237,26 @@
     const primary = slots.tools || slots.fallback || null;
     if (!primary) return false;
 
-    if (slots.tools) STATE.mountedIn = "factoryai.tools";
-    else STATE.mountedIn = "admin.fallback";
+    const nextMountedIn = slots.tools ? "factoryai.tools" : "admin.fallback";
+    const prevMountedIn = STATE.mountedIn || "";
+    STATE.mountedIn = nextMountedIn;
 
-    const mainBox = ensureMainBox(primary);
-    if (!mainBox) return false;
+    const ensured = ensureMainBox(primary);
+    if (!ensured || !ensured.box) return false;
 
     try { cleanupFactoryAIHost(); } catch {}
     try { syncVisibility(); } catch {}
 
-    log("OK", "Factory AI mount ✅ " + VERSION + " @ " + (STATE.mountedIn || "unknown"));
+    const signature = `${STATE.mountedIn || "unknown"}|build=${VERSION}|slot=${primary.id || primary.getAttribute("data-rcf-slot") || primary.className || "unknown"}`;
+    const firstMount = !STATE.mounted;
+    const changedMount = prevMountedIn !== STATE.mountedIn || !!ensured.needsFreshRender || !!ensured.moved;
+
+    STATE.mounted = true;
+
+    if (firstMount || changedMount) {
+      logMountOnce(signature, true);
+    }
+
     return true;
   }
 
@@ -2220,7 +2268,41 @@
     return false;
   }
 
+  function bindVisibilityHooksOnce() {
+    if (STATE.visibilityBound) return;
+    STATE.visibilityBound = true;
+
+    try {
+      document.addEventListener("visibilitychange", () => {
+        try {
+          if (document.visibilityState === "visible") {
+            mount();
+            syncVisibility();
+          }
+        } catch {}
+      }, { passive: true });
+    } catch {}
+
+    try {
+      window.addEventListener("pageshow", () => {
+        try {
+          mount();
+          syncVisibility();
+        } catch {}
+      }, { passive: true });
+    } catch {}
+
+    try {
+      window.addEventListener("resize", () => {
+        try { syncVisibility(); } catch {}
+      }, { passive: true });
+    } catch {}
+  }
+
   function startSync() {
+    if (STATE.syncStarted) return;
+    STATE.syncStarted = true;
+
     try {
       if (STATE.syncTimer) clearInterval(STATE.syncTimer);
     } catch {}
@@ -2228,15 +2310,19 @@
     STATE.syncTimer = setInterval(() => {
       try { mount(); } catch {}
       try { syncVisibility(); } catch {}
-    }, 1200);
+    }, SYNC_INTERVAL_MS);
+
+    bindVisibilityHooksOnce();
 
     try {
-      document.addEventListener("click", () => {
-        setTimeout(() => { try { mount(); } catch {} }, 60);
-        setTimeout(() => { try { syncVisibility(); } catch {} }, 60);
-        setTimeout(() => { try { mount(); } catch {} }, 260);
-        setTimeout(() => { try { syncVisibility(); } catch {} }, 260);
-      }, { passive: true });
+      if (!document.__rcfFactoryAIClickSyncV421) {
+        document.__rcfFactoryAIClickSyncV421 = true;
+        document.addEventListener("click", () => {
+          setTimeout(() => {
+            try { syncVisibility(); } catch {}
+          }, 80);
+        }, { passive: true });
+      }
     } catch {}
   }
 
@@ -2246,6 +2332,7 @@
     __v41: true,
     __v411: true,
     __v42: true,
+    __v421: true,
     version: VERSION,
     mount,
     clearChat,
@@ -2267,6 +2354,7 @@
     __v41_bridge: true,
     __v411_bridge: true,
     __v42_bridge: true,
+    __v421_bridge: true,
     version: VERSION,
     mount,
     clearChat,
