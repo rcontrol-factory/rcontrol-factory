@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/context_engine.js
    RControl Factory — Context Engine
-   v1.5 SNAPSHOT EXPANDED / PATCH MÍNIMO
+   v1.6 SNAPSHOT CONSOLIDATED / PATCH MÍNIMO
 
    Objetivo:
    - consolidar snapshot estrutural mais confiável
@@ -14,9 +14,9 @@
 (function (global) {
   "use strict";
 
-  if (global.RCF_CONTEXT && global.RCF_CONTEXT.__v15) return;
+  if (global.RCF_CONTEXT && global.RCF_CONTEXT.__v16) return;
 
-  var VERSION = "v1.5";
+  var VERSION = "v1.6";
 
   function safe(fn, fallback) {
     try {
@@ -85,13 +85,18 @@
       return global.RCF_FACTORY_STATE.getState().doctorLastRun;
     }, null);
 
+    var doctorApi =
+      global.RCF_DOCTOR_SCAN ||
+      global.RCF_DOCTOR ||
+      null;
+
     var lastFromDoctor = safe(function () {
-      return global.RCF_DOCTOR_SCAN.lastReport;
+      return doctorApi && (doctorApi.lastReport || doctorApi.lastRun || null);
     }, null);
 
     return {
-      ready: !!global.RCF_DOCTOR_SCAN,
-      version: safe(function () { return global.RCF_DOCTOR_SCAN.version; }, "unknown"),
+      ready: !!doctorApi,
+      version: safe(function () { return doctorApi && doctorApi.version; }, "unknown"),
       lastRun: lastFromState || lastFromDoctor || null
     };
   }
@@ -116,12 +121,12 @@
   function getFlags() {
     return {
       hasLogger: !!global.RCF_LOGGER,
-      hasDoctor: !!global.RCF_DOCTOR_SCAN,
+      hasDoctor: !!global.RCF_DOCTOR_SCAN || !!global.RCF_DOCTOR,
       hasGitHub: !!global.RCF_GH_SYNC,
       hasVault: !!global.RCF_ZIP_VAULT,
       hasBridge: !!global.RCF_AGENT_ZIP_BRIDGE,
       hasAdminAI: !!global.RCF_ADMIN_AI,
-      hasFactoryAI: !!global.RCF_FACTORY_AI,
+      hasFactoryAI: !!global.RCF_FACTORY_AI || !!global.RCF_FACTORY_IA,
       hasFactoryState: !!global.RCF_FACTORY_STATE,
       hasModuleRegistry: !!global.RCF_MODULE_REGISTRY,
       hasContextEngine: true,
@@ -145,23 +150,40 @@
 
   function getLoggerInfo() {
     var items = safe(function () {
-      return asArray(global.RCF_LOGGER.items);
+      if (!global.RCF_LOGGER) return [];
+      if (Array.isArray(global.RCF_LOGGER.items)) return global.RCF_LOGGER.items;
+      if (Array.isArray(global.RCF_LOGGER.lines)) return global.RCF_LOGGER.lines;
+      if (typeof global.RCF_LOGGER.getAll === "function") return global.RCF_LOGGER.getAll();
+      if (typeof global.RCF_LOGGER.dump === "function") {
+        var raw = String(global.RCF_LOGGER.dump() || "");
+        return raw ? raw.split("\n") : [];
+      }
+      if (typeof global.RCF_LOGGER.getText === "function") {
+        var txt = String(global.RCF_LOGGER.getText() || "");
+        return txt ? txt.split("\n") : [];
+      }
+      return [];
     }, []);
 
     return {
       ready: !!global.RCF_LOGGER,
-      itemsCount: items.length,
-      tail: items.slice(-20)
+      itemsCount: asArray(items).length,
+      tail: asArray(items).slice(-20)
     };
   }
 
   function getGitHubInfo() {
+    var rawCfg = safe(function () {
+      return global.localStorage.getItem("rcf:ghcfg");
+    }, null);
+
     return {
       ready: !!global.RCF_GH_SYNC,
       version: safe(function () { return global.RCF_GH_SYNC.version; }, "unknown"),
       repo: safe(function () { return global.RCF_GH_SYNC.repo; }, ""),
       branch: safe(function () { return global.RCF_GH_SYNC.branch; }, ""),
-      cfg: clone(safe(function () { return global.localStorage.getItem("rcf:ghcfg"); }, null) || null)
+      cfgRaw: rawCfg || "",
+      cfg: safe(function () { return rawCfg ? JSON.parse(rawCfg) : null; }, null)
     };
   }
 
@@ -174,14 +196,18 @@
   }
 
   function getFactoryAIInfo() {
+    var api = global.RCF_FACTORY_AI || global.RCF_FACTORY_IA || null;
+
     return {
-      ready: !!global.RCF_FACTORY_AI,
-      version: safe(function () { return global.RCF_FACTORY_AI.version; }, "unknown"),
-      mounted: !!safe(function () { return global.RCF_FACTORY_AI.mount; }, false),
-      lastEndpoint: safe(function () { return global.RCF_FACTORY_AI.getLastEndpoint(); }, ""),
+      ready: !!api,
+      version: safe(function () { return api.version; }, "unknown"),
+      mounted: !!safe(function () { return api.mount; }, false),
+      lastEndpoint: safe(function () {
+        return api && typeof api.getLastEndpoint === "function" ? api.getLastEndpoint() : "";
+      }, ""),
       historyCount: safe(function () {
-        if (!global.RCF_FACTORY_AI || typeof global.RCF_FACTORY_AI.getHistory !== "function") return 0;
-        return asArray(global.RCF_FACTORY_AI.getHistory()).length;
+        if (!api || typeof api.getHistory !== "function") return 0;
+        return asArray(api.getHistory()).length;
       }, 0)
     };
   }
@@ -241,6 +267,8 @@
       js: [],
       core: [],
       ui: [],
+      admin: [],
+      engine: [],
       assets: [],
       functions: [],
       other: []
@@ -258,6 +286,14 @@
         grouped.app.push(path);
       } else if (path.indexOf("/app/js/ui/") === 0 || path.indexOf("app/js/ui/") === 0) {
         grouped.ui.push(path);
+        grouped.js.push(path);
+        grouped.app.push(path);
+      } else if (path.indexOf("/app/js/admin/") === 0 || path.indexOf("app/js/admin/") === 0) {
+        grouped.admin.push(path);
+        grouped.js.push(path);
+        grouped.app.push(path);
+      } else if (path.indexOf("/app/js/engine/") === 0 || path.indexOf("app/js/engine/") === 0) {
+        grouped.engine.push(path);
         grouped.js.push(path);
         grouped.app.push(path);
       } else if (path.indexOf("/app/js/") === 0 || path.indexOf("app/js/") === 0) {
@@ -292,28 +328,37 @@
     push("/app/app.js");
     push("/app/index.html");
     push("/app/js/core/context_engine.js");
+    push("/app/js/core/factory_state.js");
+    push("/app/js/core/module_registry.js");
+    push("/app/js/core/factory_tree.js");
+    push("/app/js/core/logger.js");
+    push("/app/js/core/doctor_scan.js");
     push("/app/js/core/ui_runtime.js");
     push("/app/js/core/ui_shell.js");
     push("/app/js/ui/ui_bootstrap.js");
     push("/app/js/ui/ui_views.js");
-    push("/app/js/admin.admin_ai.js");
+    push("/app/js/admin/admin.admin_ai.js");
     push("/functions/api/admin-ai.js");
 
-    if (active.indexOf("factory_state") >= 0 || active.indexOf("factoryState") >= 0) {
+    if (active.indexOf("factoryState") >= 0 || active.indexOf("factory_state") >= 0) {
       push("/app/js/core/factory_state.js");
     }
-    if (active.indexOf("module_registry") >= 0 || active.indexOf("moduleRegistry") >= 0) {
+    if (active.indexOf("moduleRegistry") >= 0 || active.indexOf("module_registry") >= 0) {
       push("/app/js/core/module_registry.js");
     }
-    if (active.indexOf("factory_tree") >= 0 || active.indexOf("factoryTree") >= 0) {
+    if (active.indexOf("factoryTree") >= 0 || active.indexOf("factory_tree") >= 0) {
       push("/app/js/core/factory_tree.js");
     }
     if (active.indexOf("github") >= 0) {
       push("/app/js/core/github_sync.js");
-      push("/app/js/admin.github.js");
+      push("/app/js/admin/admin.github.js");
     }
-    if (active.indexOf("doctor") >= 0) {
+    if (active.indexOf("doctor") >= 0 || snapshot.doctor.ready) {
+      push("/app/js/core/doctor_scan.js");
       push("/app/js/core/diagnostics.js");
+    }
+    if (active.indexOf("logger") >= 0 || snapshot.logger.ready) {
+      push("/app/js/core/logger.js");
     }
 
     var grouped = safe(function () {
@@ -322,6 +367,8 @@
 
     asArray(grouped.core).slice(0, 12).forEach(push);
     asArray(grouped.ui).slice(0, 10).forEach(push);
+    asArray(grouped.admin).slice(0, 8).forEach(push);
+    asArray(grouped.engine).slice(0, 8).forEach(push);
     asArray(grouped.functions).slice(0, 6).forEach(push);
 
     return uniq(out).slice(0, 40);
@@ -332,6 +379,7 @@
     var env = getEnvironment();
     var flags = getFlags();
     var mods = getModuleSummary();
+    var appState = safe(function () { return global.RCF && global.RCF.state; }, {}) || {};
 
     var activeModules = asArray(mods.active);
     var bootStatus = fs.bootStatus || "unknown";
@@ -356,8 +404,14 @@
       loggerReady: !!fs.loggerReady || !!mods.logger,
       doctorReady: !!fs.doctorReady || !!mods.doctor,
       modules: clone(fs.modules || {}),
-      activeView: safe(function () { return fs.active.view; }, "") || "",
-      activeAppSlug: safe(function () { return fs.active.appSlug; }, "") || "",
+      activeView:
+        safe(function () { return fs.active.view; }, "") ||
+        safe(function () { return appState.active.view; }, "") ||
+        "",
+      activeAppSlug:
+        safe(function () { return fs.active.appSlug; }, "") ||
+        safe(function () { return appState.active.appSlug; }, "") ||
+        "",
       ts: env.ts,
       flags: flags
     };
@@ -393,7 +447,7 @@
         vault: !!modules.vault,
         bridge: !!modules.bridge,
         adminAI: !!modules.adminAI,
-        factoryAI: !!global.RCF_FACTORY_AI,
+        factoryAI: !!global.RCF_FACTORY_AI || !!global.RCF_FACTORY_IA,
         factoryState: !!modules.factoryState,
         moduleRegistry: !!modules.moduleRegistry,
         contextEngine: true,
@@ -416,6 +470,7 @@
       environment: environment
     };
 
+    snapshot.flagsTruthy = pickTruthy(snapshot.factory.flags || {});
     snapshot.candidateFiles = buildCandidateFiles(snapshot);
 
     return snapshot;
@@ -446,7 +501,10 @@
       injectorReady: !!safe(function () { return ctx.injector.ready; }, false),
       injectorTargetMapCount: Number(safe(function () { return ctx.injector.targetMapCount; }, 0) || 0),
       loggerReady: !!safe(function () { return ctx.logger.ready; }, false),
+      loggerItemsCount: Number(safe(function () { return ctx.logger.itemsCount; }, 0) || 0),
       githubReady: !!safe(function () { return ctx.github.ready; }, false),
+      factoryAIReady: !!safe(function () { return ctx.factoryAI.ready; }, false),
+      factoryAIHistoryCount: Number(safe(function () { return ctx.factoryAI.historyCount; }, 0) || 0),
       flags: ctx.factory.flags,
       ts: ctx.environment.ts
     };
@@ -459,6 +517,7 @@
     __v13: true,
     __v14: true,
     __v15: true,
+    __v16: true,
     version: VERSION,
     getContext: getContext,
     getSnapshot: getSnapshot,
