@@ -1,6 +1,6 @@
 /* FILE: /functions/api/admin-ai.js
    RControl Factory — Factory AI API
-   V3.2 CHAT COPILOT BACKEND REFINED
+   V3.3 CHAT COPILOT BACKEND SNAPSHOT SEMANTICS
 
    - mantém CORS e POST atuais
    - continua usando OPENAI_API_KEY
@@ -11,6 +11,7 @@
    - aceita alias de actions do front mais novo
    - melhora o modo chat como copiloto técnico real da Factory
    - diferencia dado ausente de falha confirmada
+   - diferencia presença x prontidão x ativação
    - orienta próximo arquivo quando faltar contexto
    - reconhece intenção de relatório / próximo arquivo / arquivo completo
    - mantém resposta aterrada no payload
@@ -45,12 +46,12 @@ export async function onRequestPost(context) {
     }
 
     const action = normalizeAction(body.action, body.prompt);
-    const payload = body.payload ?? null;
     const prompt = String(body.prompt || "").trim();
     const history = normalizeHistory(body.history);
     const attachments = normalizeAttachments(body.attachments);
     const source = String(body.source || "factory-ai").trim();
     const version = String(body.version || "").trim();
+    const payload = preparePayloadForModel(body.payload ?? null);
 
     const allowed = new Set([
       "factory_diagnosis",
@@ -138,7 +139,6 @@ function normalizeAction(value, promptValue = "") {
     if (raw === "propose-patch") return "propose-patch";
     if (raw === "generate-code") return "generate-code";
 
-    // compatibilidade entre versões do front
     if (raw === "ingest-context") return "ingest-context";
     if (raw === "zip-readiness") return "ingest-context";
 
@@ -253,6 +253,279 @@ function normalizeAttachments(value) {
     .filter(Boolean);
 }
 
+function preparePayloadForModel(payload) {
+  const base = cloneValue(payload);
+
+  if (!base || typeof base !== "object") {
+    return base;
+  }
+
+  const semantic = buildSnapshotSemanticSummary(base);
+  if (!semantic) return base;
+
+  const out = cloneValue(base);
+  out.__snapshot_semantics = semantic;
+  return out;
+}
+
+function buildSnapshotSemanticSummary(payload) {
+  try {
+    if (!payload || typeof payload !== "object") return null;
+
+    const snapshot =
+      payload.snapshot && typeof payload.snapshot === "object"
+        ? payload.snapshot
+        : payload;
+
+    if (!snapshot || typeof snapshot !== "object") return null;
+
+    const factory = safeObj(snapshot.factory);
+    const modules = safeObj(snapshot.modules);
+    const flags = safeObj(snapshot.flags || factory.flags);
+    const logger = safeObj(snapshot.logger);
+    const doctor = safeObj(snapshot.doctor);
+    const github = safeObj(snapshot.github);
+    const factoryAI = safeObj(snapshot.factoryAI);
+    const admin = safeObj(snapshot.admin);
+    const injector = safeObj(snapshot.injector);
+
+    const activeList = Array.isArray(modules.active) ? modules.active.map(String) : [];
+    const moduleStatus = safeObj(modules.status || modules.modules || modules);
+
+    const semantics = {
+      note: [
+        "IMPORTANTE:",
+        "- presence = componente detectado no ambiente/flags",
+        "- ready = API/componente disponível para uso no runtime",
+        "- active = componente marcado como ativo no status/registry/snapshot atual",
+        "- activeList = lista explícita de módulos ativos",
+        "- presence, ready e active NÃO são sinônimos",
+        "- não conclua 'módulo desativado' só porque active=false quando presence=true ou ready=true"
+      ].join(" "),
+      activeList,
+      modules: {
+        logger: buildModuleSemantic("logger", {
+          presence: boolFrom(flagValue(flags, ["hasLogger"])),
+          ready: boolFrom(firstDefined(
+            factory.loggerReady,
+            logger.ready,
+            moduleStatus.loggerReady
+          )),
+          active: boolFrom(moduleStatus.logger),
+          extra: {
+            loggerItemsCount: numberOrNull(logger.itemsCount)
+          }
+        }),
+        doctor: buildModuleSemantic("doctor", {
+          presence: boolFrom(flagValue(flags, ["hasDoctor"])),
+          ready: boolFrom(firstDefined(
+            factory.doctorReady,
+            doctor.ready,
+            moduleStatus.doctorReady
+          )),
+          active: boolFrom(moduleStatus.doctor),
+          extra: {
+            lastRun: doctor.lastRun ?? null
+          }
+        }),
+        github: buildModuleSemantic("github", {
+          presence: boolFrom(flagValue(flags, ["hasGitHub"])),
+          ready: boolFrom(firstDefined(
+            github.ready,
+            moduleStatus.githubReady
+          )),
+          active: boolFrom(moduleStatus.github)
+        }),
+        vault: buildModuleSemantic("vault", {
+          presence: boolFrom(flagValue(flags, ["hasVault"])),
+          ready: boolFrom(firstDefined(
+            moduleStatus.vaultReady
+          )),
+          active: boolFrom(moduleStatus.vault)
+        }),
+        bridge: buildModuleSemantic("bridge", {
+          presence: boolFrom(flagValue(flags, ["hasBridge"])),
+          ready: boolFrom(firstDefined(
+            moduleStatus.bridgeReady
+          )),
+          active: boolFrom(moduleStatus.bridge)
+        }),
+        adminAI: buildModuleSemantic("adminAI", {
+          presence: boolFrom(flagValue(flags, ["hasAdminAI"])),
+          ready: boolFrom(firstDefined(
+            admin.ready,
+            admin.mounted
+          )),
+          active: boolFrom(moduleStatus.adminAI)
+        }),
+        factoryAI: buildModuleSemantic("factoryAI", {
+          presence: boolFrom(firstDefined(
+            flagValue(flags, ["hasFactoryAI"]),
+            true
+          )),
+          ready: boolFrom(firstDefined(
+            factoryAI.ready,
+            factory.mountedAs === "Factory AI"
+          )),
+          active: boolFrom(firstDefined(
+            moduleStatus.factoryAI,
+            true
+          )),
+          extra: {
+            historyCount: numberOrNull(factoryAI.historyCount),
+            lastEndpoint: stringOrEmpty(factoryAI.lastEndpoint)
+          }
+        }),
+        factoryState: buildModuleSemantic("factoryState", {
+          presence: boolFrom(flagValue(flags, ["hasFactoryState"])),
+          ready: boolFrom(firstDefined(
+            moduleStatus.factoryStateReady
+          )),
+          active: boolFrom(moduleStatus.factoryState)
+        }),
+        moduleRegistry: buildModuleSemantic("moduleRegistry", {
+          presence: boolFrom(flagValue(flags, ["hasModuleRegistry"])),
+          ready: boolFrom(firstDefined(
+            moduleStatus.moduleRegistryReady
+          )),
+          active: boolFrom(moduleStatus.moduleRegistry)
+        }),
+        contextEngine: buildModuleSemantic("contextEngine", {
+          presence: boolFrom(flagValue(flags, ["hasContextEngine"])),
+          ready: boolFrom(firstDefined(
+            snapshot.contextEngineReady,
+            factoryAI.ready,
+            true
+          )),
+          active: boolFrom(moduleStatus.contextEngine)
+        }),
+        factoryTree: buildModuleSemantic("factoryTree", {
+          presence: boolFrom(flagValue(flags, ["hasFactoryTree"])),
+          ready: boolFrom(firstDefined(
+            snapshot.tree && typeof snapshot.tree.pathsCount === "number"
+              ? snapshot.tree.pathsCount >= 0
+              : undefined
+          )),
+          active: boolFrom(firstDefined(
+            moduleStatus.factoryTree,
+            moduleStatus.tree
+          )),
+          extra: {
+            pathsCount: numberOrNull(snapshot.tree && snapshot.tree.pathsCount)
+          }
+        }),
+        diagnostics: buildModuleSemantic("diagnostics", {
+          presence: boolFrom(flagValue(flags, ["hasDiagnostics"])),
+          ready: boolFrom(firstDefined(
+            moduleStatus.diagnosticsReady
+          )),
+          active: boolFrom(moduleStatus.diagnostics)
+        }),
+        injector: buildModuleSemantic("injector", {
+          presence: boolFrom(flagValue(flags, ["hasInjectorSafe"])),
+          ready: boolFrom(firstDefined(
+            injector.ready
+          )),
+          active: boolFrom(firstDefined(
+            moduleStatus.injector,
+            injector.ready
+          ))
+        })
+      }
+    };
+
+    semantics.interpretationGuide = [
+      "Use this priority when describing the snapshot:",
+      "1) cite presence when a flag/hasX confirms the component exists in the environment",
+      "2) cite ready when a runtime/API boolean confirms it is available now",
+      "3) cite active only when the module status or activeList confirms activation",
+      "4) if presence=true and active=false, describe as 'presente, mas não marcado como ativo no snapshot atual'",
+      "5) if ready=true and active=false, describe as 'disponível/pronto, mas não marcado como ativo no status atual'",
+      "6) never convert that pattern into a confirmed failure unless the payload explicitly says failure/error"
+    ];
+
+    return semantics;
+  } catch {
+    return null;
+  }
+}
+
+function buildModuleSemantic(name, info) {
+  const presence = info && typeof info.presence === "boolean" ? info.presence : false;
+  const ready = info && typeof info.ready === "boolean" ? info.ready : false;
+  const active = info && typeof info.active === "boolean" ? info.active : false;
+  const extra = info && info.extra && typeof info.extra === "object" ? info.extra : {};
+
+  let interpretation = "dado ausente";
+  if (presence && ready && active) {
+    interpretation = "presente, pronto e ativo";
+  } else if (presence && ready && !active) {
+    interpretation = "presente e pronto, mas não marcado como ativo no snapshot atual";
+  } else if (presence && !ready && active) {
+    interpretation = "presente e marcado como ativo, mas sem prontidão clara no snapshot";
+  } else if (presence && !ready && !active) {
+    interpretation = "presente, mas sem prontidão clara e sem ativação confirmada no snapshot";
+  } else if (!presence && ready) {
+    interpretation = "possível inconsistência do snapshot: pronto sem presença explícita";
+  } else if (!presence && active) {
+    interpretation = "possível inconsistência do snapshot: ativo sem presença explícita";
+  } else if (!presence && !ready && !active) {
+    interpretation = "sem evidência de presença, prontidão ou ativação";
+  }
+
+  return {
+    name,
+    presence,
+    ready,
+    active,
+    interpretation,
+    ...extra
+  };
+}
+
+function flagValue(flags, keys) {
+  const obj = safeObj(flags);
+  for (const key of Array.isArray(keys) ? keys : [keys]) {
+    if (Object.prototype.hasOwnProperty.call(obj, key)) {
+      return obj[key];
+    }
+  }
+  return undefined;
+}
+
+function safeObj(value) {
+  return value && typeof value === "object" ? value : {};
+}
+
+function firstDefined(...values) {
+  for (const value of values) {
+    if (value !== undefined && value !== null) return value;
+  }
+  return undefined;
+}
+
+function boolFrom(value) {
+  return typeof value === "boolean" ? value : false;
+}
+
+function numberOrNull(value) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function stringOrEmpty(value) {
+  return typeof value === "string" ? value : "";
+}
+
+function cloneValue(value) {
+  if (value === null || value === undefined) return value;
+  if (typeof value === "string") return value;
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return value;
+  }
+}
+
 function buildGroundedPrompt({ action, payload, prompt, history, attachments, source, version }) {
   const system = [
     "Você é a Factory AI da RControl Factory.",
@@ -279,6 +552,15 @@ function buildGroundedPrompt({ action, payload, prompt, history, attachments, so
     "12. Quando houver contexto suficiente e o usuário pedir arquivo completo, entregue o arquivo completo.",
     "13. Quando o usuário estiver só conversando, responda como chat técnico natural, útil e direto.",
     "14. Responda sempre em português do Brasil.",
+    "",
+    "Regra crítica de leitura do snapshot:",
+    "- NÃO confunda presença, prontidão e ativação.",
+    "- presence/presente = componente detectado no ambiente ou nas flags.",
+    "- ready/pronto = componente/API disponível para uso no runtime atual.",
+    "- active/ativo = módulo marcado como ativo no status/registry/lista active.",
+    "- Se presence=true e active=false, descreva como 'presente, mas não marcado como ativo no snapshot atual'.",
+    "- Se ready=true e active=false, descreva como 'pronto/disponível, mas não marcado como ativo no status atual'.",
+    "- Isso NÃO é falha confirmada por si só.",
     "",
     "Sobre anexos:",
     "- Trate anexos apenas como metadados/contexto descrito, não como conteúdo binário já lido.",
@@ -360,11 +642,17 @@ function buildTaskText(action, prompt = "") {
   const p = String(prompt || "").trim();
 
   if (action === "factory_diagnosis") {
-    return "Analise o snapshot/relatório da RControl Factory e aponte somente fatos confirmados, dados ausentes, inferências prováveis e próximo passo mínimo.";
+    return [
+      "Analise o snapshot/relatório da RControl Factory e aponte somente fatos confirmados, dados ausentes, inferências prováveis e próximo passo mínimo.",
+      "Ao descrever módulos, separe explicitamente presença, prontidão e ativação."
+    ].join(" ");
   }
 
   if (action === "analyze-architecture") {
-    return "Analise a arquitetura atual da RControl Factory usando somente o contexto enviado, evitando confundir snapshot parcial com falha confirmada.";
+    return [
+      "Analise a arquitetura atual da RControl Factory usando somente o contexto enviado, evitando confundir snapshot parcial com falha confirmada.",
+      "Ao descrever módulos, separe explicitamente presença, prontidão e ativação."
+    ].join(" ");
   }
 
   if (action === "analyze-logs") {
@@ -376,7 +664,10 @@ function buildTaskText(action, prompt = "") {
   }
 
   if (action === "suggest-improvement") {
-    return "Sugira a próxima melhoria mais segura com base apenas no snapshot enviado, priorizando a evolução da própria Factory AI.";
+    return [
+      "Sugira a próxima melhoria mais segura com base apenas no snapshot enviado, priorizando a evolução da própria Factory AI.",
+      "Se houver diferença entre presence, ready e active, trate isso como nuance do snapshot, não como falha automática."
+    ].join(" ");
   }
 
   if (action === "summarize-structure") {
@@ -399,6 +690,7 @@ function buildTaskText(action, prompt = "") {
     return [
       "Responda como o chat técnico oficial da Factory, de forma natural, objetiva e útil, ajudando a estruturar a própria Factory primeiro.",
       "Quando o pedido estiver raso ou o snapshot vier incompleto, foque mais em qual é o próximo arquivo certo do que em repetir diagnóstico genérico.",
+      "Se o payload trouxer nuances entre presence, ready e active, respeite essas diferenças explicitamente.",
       p ? `Pedido atual: ${p}` : ""
     ].filter(Boolean).join(" ");
   }
