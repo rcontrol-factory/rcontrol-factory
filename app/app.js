@@ -1,17 +1,15 @@
 /* FILE: app/app.js
-   RControl Factory - /app/app.js - V8.0.8 LEAN ORCHESTRATOR
+   RControl Factory - /app/app.js - V8.0.7 LEAN ORCHESTRATOR
    - Arquivo completo (1 peca) pra copiar/colar
    - Objetivo: app.js como ORQUESTRADOR LEVE REAL
    - Mantém: boot lock, state, storage, logger, watchdog, diagnostics, SW, VFS, injector safe, agent CLI
    - Prioriza: ui_shell / ui_runtime / ui_state / ui_views / ui_router / ui_events / módulos UI
-   - ADD: carga leve e segura de factory_state / factory_tree / module_registry / context_engine
-   - ADD: consolidação mínima do contexto antes do UI_READY
    - Fallback: ultra mínimo de sobrevivência
 */
 (() => {
   "use strict";
 
-  try { console.info("[RCF] /app/app.js BUILD=V8.0.8_LEAN_ORCHESTRATOR"); } catch {}
+  try { console.info("[RCF] /app/app.js BUILD=V8.0.7_LEAN_ORCHESTRATOR"); } catch {}
 
   // =========================================================
   // GLOBAL LOG ALIAS
@@ -41,7 +39,7 @@
     if (st.booted === true) return;
     if (st.booting === true && (now - (st.ts || 0)) < 8000) return;
 
-    window[__BOOT_KEY] = { booting: true, booted: false, ts: now, ver: "v8.0.8" };
+    window[__BOOT_KEY] = { booting: true, booted: false, ts: now, ver: "v8.0.7" };
   } catch {
     if (window.__RCF_BOOTED__) return;
     window.__RCF_BOOTED__ = true;
@@ -259,8 +257,12 @@
     write(...args) {
       const msg = args.map(a => (typeof a === "string" ? a : safeJsonStringify(a))).join(" ");
       const line = `[${new Date().toLocaleString()}] ${msg}`;
-      const logs = Storage.get(this.bufKey, []); logs.push(line); while (logs.length > this.max) logs.shift();
-      Storage.set(this.bufKey, logs); this._mirrorUI(logs); try { console.log("[RCF]", ...args); } catch {}
+      const logs = Storage.get(this.bufKey, []);
+      logs.push(line);
+      while (logs.length > this.max) logs.shift();
+      Storage.set(this.bufKey, logs);
+      this._mirrorUI(logs);
+      try { console.log("[RCF]", ...args); } catch {}
     },
     clear() { Storage.set(this.bufKey, []); this._mirrorUI([]); },
     getAll() { return Storage.get(this.bufKey, []); }
@@ -278,14 +280,16 @@
     let installed = false;
     function showErrorScreen(title, details) {
       try {
-        const root = $("#app"); if (!root) return;
+        const root = $("#app");
+        if (!root) return;
         root.innerHTML = `<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:18px;background:#070b12;color:#fff;font-family:system-ui"><div style="max-width:780px;width:100%;border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:16px;background:rgba(255,255,255,.04)"><div style="font-weight:900;font-size:18px;margin-bottom:8px">${escapeHtml(title || "Erro")}</div><pre style="white-space:pre-wrap;word-break:break-word;padding:12px;border-radius:10px;background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.12);max-height:45vh;overflow:auto">${escapeHtml(String(details || ""))}</pre></div></div>`;
       } catch {}
     }
     function install() {
-      if (installed) return; installed = true;
-      window.addEventListener("error", ev => { try { Logger.write("ERR:", ev?.message || 'window.error'); } catch {} });
-      window.addEventListener("unhandledrejection", ev => { try { Logger.write("UNHANDLED:", ev?.reason?.message || ev?.reason || 'promise'); } catch {} });
+      if (installed) return;
+      installed = true;
+      window.addEventListener("error", ev => { try { Logger.write("ERR:", ev?.message || "window.error"); } catch {} });
+      window.addEventListener("unhandledrejection", ev => { try { Logger.write("UNHANDLED:", ev?.reason?.message || ev?.reason || "promise"); } catch {} });
       Logger.write("stability:", "ErrorGuard installed ✅");
     }
     return { install, showErrorScreen };
@@ -296,13 +300,21 @@
     el.__rcf_bound__ = true;
     let last = 0;
     const handler = (ev) => {
-      const t = Date.now(); if ((t - last) < 280) return; last = t;
+      const t = Date.now();
+      if ((t - last) < 280) return;
+      last = t;
       try { if (ev && ev.cancelable) ev.preventDefault(); } catch {}
       try { fn(ev); } catch (e) { Logger.write("tap err:", e?.message || e); }
     };
-    try { el.style.pointerEvents = "auto"; el.style.touchAction = "manipulation"; } catch {}
+    try {
+      el.style.pointerEvents = "auto";
+      el.style.touchAction = "manipulation";
+    } catch {}
     if (window.PointerEvent) el.addEventListener("pointerup", handler, { passive: false });
-    else { el.addEventListener("touchend", handler, { passive: false }); el.addEventListener("click", handler, { passive: false }); }
+    else {
+      el.addEventListener("touchend", handler, { passive: false });
+      el.addEventListener("click", handler, { passive: false });
+    }
   }
 
   const State = {
@@ -311,8 +323,12 @@
     active: Storage.get("active", { appSlug: null, file: null, view: "dashboard" }),
     pending: Storage.get("pending", { patch: null, source: null })
   };
+
   function saveAll(reason = "save") {
-    Storage.set("cfg", State.cfg); Storage.set("apps", State.apps); Storage.set("active", State.active); Storage.set("pending", State.pending);
+    Storage.set("cfg", State.cfg);
+    Storage.set("apps", State.apps);
+    Storage.set("active", State.active);
+    Storage.set("pending", State.pending);
     try { syncUiCoreBridge(reason); } catch {}
   }
 
@@ -321,52 +337,65 @@
   window.RCF.log = (...a) => Logger.write(...a);
   window.RCF.normalizeViewName = normalizeViewName;
 
-  let __uiRuntimePromise = null, __uiCoreBridgePromise = null, __uiVisualModulesPromise = null;
-  let __factoryCoreModulesPromise = null;
+  let __uiRuntimePromise = null;
+  let __uiCoreBridgePromise = null;
+  let __uiVisualModulesPromise = null;
 
-  const getUiRuntime = () => { try { return (window.RCF_UI_RUNTIME && typeof window.RCF_UI_RUNTIME === 'object') ? window.RCF_UI_RUNTIME : null; } catch { return null; } };
-  const getUiStateApi = () => { try { return (window.RCF_UI_STATE && typeof window.RCF_UI_STATE === 'object') ? window.RCF_UI_STATE : null; } catch { return null; } };
-  const getUiRouterApi = () => { try { return (window.RCF_UI_ROUTER && typeof window.RCF_UI_ROUTER === 'object') ? window.RCF_UI_ROUTER : null; } catch { return null; } };
-  const getUiEventsApi = () => { try { return (window.RCF_UI_EVENTS && typeof window.RCF_UI_EVENTS === 'object') ? window.RCF_UI_EVENTS : null; } catch { return null; } };
-  const getUiBootstrapApi = () => { try { return (window.RCF_UI_BOOTSTRAP && typeof window.RCF_UI_BOOTSTRAP === 'object') ? window.RCF_UI_BOOTSTRAP : null; } catch { return null; } };
-  const getUiViewsApi = () => { try { return (window.RCF_UI_VIEWS && typeof window.RCF_UI_VIEWS === 'object') ? window.RCF_UI_VIEWS : null; } catch { return null; } };
-  const getUiDashboardApi = () => { try { return (window.RCF_UI_DASHBOARD && typeof window.RCF_UI_DASHBOARD === 'object') ? window.RCF_UI_DASHBOARD : null; } catch { return null; } };
+  const getUiRuntime = () => { try { return (window.RCF_UI_RUNTIME && typeof window.RCF_UI_RUNTIME === "object") ? window.RCF_UI_RUNTIME : null; } catch { return null; } };
+  const getUiStateApi = () => { try { return (window.RCF_UI_STATE && typeof window.RCF_UI_STATE === "object") ? window.RCF_UI_STATE : null; } catch { return null; } };
+  const getUiRouterApi = () => { try { return (window.RCF_UI_ROUTER && typeof window.RCF_UI_ROUTER === "object") ? window.RCF_UI_ROUTER : null; } catch { return null; } };
+  const getUiEventsApi = () => { try { return (window.RCF_UI_EVENTS && typeof window.RCF_UI_EVENTS === "object") ? window.RCF_UI_EVENTS : null; } catch { return null; } };
+  const getUiBootstrapApi = () => { try { return (window.RCF_UI_BOOTSTRAP && typeof window.RCF_UI_BOOTSTRAP === "object") ? window.RCF_UI_BOOTSTRAP : null; } catch { return null; } };
+  const getUiViewsApi = () => { try { return (window.RCF_UI_VIEWS && typeof window.RCF_UI_VIEWS === "object") ? window.RCF_UI_VIEWS : null; } catch { return null; } };
+  const getUiDashboardApi = () => { try { return (window.RCF_UI_DASHBOARD && typeof window.RCF_UI_DASHBOARD === "object") ? window.RCF_UI_DASHBOARD : null; } catch { return null; } };
 
   function loadScriptOnce(src, marker) {
     return new Promise(resolve => {
       try {
         const hit = document.querySelector(`script[${marker}="1"]`);
         if (hit) return resolve(true);
-        const sc = document.createElement('script');
-        sc.src = src; sc.defer = true; sc.async = false; sc.setAttribute(marker, '1');
-        sc.onload = () => resolve(true); sc.onerror = () => resolve(false);
+
+        const sc = document.createElement("script");
+        sc.src = src;
+        sc.defer = true;
+        sc.async = false;
+        sc.setAttribute(marker, "1");
+        sc.onload = () => resolve(true);
+        sc.onerror = () => resolve(false);
         (document.head || document.documentElement).appendChild(sc);
+
         setTimeout(() => resolve(false), 1400);
-      } catch { resolve(false); }
+      } catch {
+        resolve(false);
+      }
     });
   }
 
   function loadUiRuntimeOnce() {
     if (getUiRuntime()) return Promise.resolve(getUiRuntime());
     if (__uiRuntimePromise) return __uiRuntimePromise;
-    __uiRuntimePromise = loadScriptOnce('./js/core/ui_runtime.js', 'data-rcf-ui-runtime').then(() => getUiRuntime()).catch(() => null);
+    __uiRuntimePromise = loadScriptOnce("./js/core/ui_runtime.js", "data-rcf-ui-runtime").then(() => getUiRuntime()).catch(() => null);
     return __uiRuntimePromise;
   }
 
   async function initUiRuntime(ctx = {}) {
     const rt = await loadUiRuntimeOnce();
-    if (rt && typeof rt.init === 'function') { try { rt.init(ctx); } catch (e) { Logger.write('ui_runtime init err:', e?.message || e); } }
+    if (rt && typeof rt.init === "function") {
+      try { rt.init(ctx); } catch (e) { Logger.write("ui_runtime init err:", e?.message || e); }
+    }
     return rt || null;
   }
 
   async function loadUiCoreBridgeOnce() {
-    if (getUiStateApi() && getUiRouterApi() && getUiEventsApi()) return { state:getUiStateApi(), router:getUiRouterApi(), events:getUiEventsApi() };
+    if (getUiStateApi() && getUiRouterApi() && getUiEventsApi()) {
+      return { state: getUiStateApi(), router: getUiRouterApi(), events: getUiEventsApi() };
+    }
     if (__uiCoreBridgePromise) return __uiCoreBridgePromise;
     __uiCoreBridgePromise = (async () => {
-      await loadScriptOnce('./js/core/ui_state.js', 'data-rcf-ui-state');
-      await loadScriptOnce('./js/core/ui_router.js', 'data-rcf-ui-router');
-      await loadScriptOnce('./js/core/ui_events.js', 'data-rcf-ui-events');
-      return { state:getUiStateApi(), router:getUiRouterApi(), events:getUiEventsApi() };
+      await loadScriptOnce("./js/core/ui_state.js", "data-rcf-ui-state");
+      await loadScriptOnce("./js/core/ui_router.js", "data-rcf-ui-router");
+      await loadScriptOnce("./js/core/ui_events.js", "data-rcf-ui-events");
+      return { state: getUiStateApi(), router: getUiRouterApi(), events: getUiEventsApi() };
     })();
     return __uiCoreBridgePromise;
   }
@@ -374,76 +403,21 @@
   async function loadUiVisualModulesOnce() {
     if (__uiVisualModulesPromise) return __uiVisualModulesPromise;
     __uiVisualModulesPromise = (async () => {
-      await loadScriptOnce('./js/ui/ui_bootstrap.js', 'data-rcf-ui-bootstrap');
-      await loadScriptOnce('./js/ui/ui_views.js', 'data-rcf-ui-views');
-      await loadScriptOnce('./js/ui/ui_header.js', 'data-rcf-ui-header');
-      await loadScriptOnce('./js/ui/ui_dashboard.js', 'data-rcf-ui-dashboard');
-      await loadScriptOnce('./js/ui/ui_cards.js', 'data-rcf-ui-cards');
-      await loadScriptOnce('./js/ui/ui_apps_widgets.js', 'data-rcf-ui-apps-widgets');
-      await loadScriptOnce('./js/ui/ui_projects.js', 'data-rcf-ui-projects');
-      await loadScriptOnce('./js/ui/ui_factory_view.js', 'data-rcf-ui-factory-view');
-      return { bootstrap:getUiBootstrapApi(), views:getUiViewsApi(), dashboard:getUiDashboardApi() };
-    })();
-    return __uiVisualModulesPromise;
-  }
-
-  async function loadFactoryCoreModulesOnce() {
-    if (__factoryCoreModulesPromise) return __factoryCoreModulesPromise;
-    __factoryCoreModulesPromise = (async () => {
-      await loadScriptOnce('./js/core/factory_state.js', 'data-rcf-factory-state');
-      await loadScriptOnce('./js/core/factory_tree.js', 'data-rcf-factory-tree');
-      await loadScriptOnce('./js/core/module_registry.js', 'data-rcf-module-registry');
-      await loadScriptOnce('./js/core/context_engine.js', 'data-rcf-context-engine');
+      await loadScriptOnce("./js/ui/ui_bootstrap.js", "data-rcf-ui-bootstrap");
+      await loadScriptOnce("./js/ui/ui_views.js", "data-rcf-ui-views");
+      await loadScriptOnce("./js/ui/ui_header.js", "data-rcf-ui-header");
+      await loadScriptOnce("./js/ui/ui_dashboard.js", "data-rcf-ui-dashboard");
+      await loadScriptOnce("./js/ui/ui_cards.js", "data-rcf-ui-cards");
+      await loadScriptOnce("./js/ui/ui_apps_widgets.js", "data-rcf-ui-apps-widgets");
+      await loadScriptOnce("./js/ui/ui_projects.js", "data-rcf-ui-projects");
+      await loadScriptOnce("./js/ui/ui_factory_view.js", "data-rcf-ui-factory-view");
       return {
-        factoryState: window.RCF_FACTORY_STATE || null,
-        factoryTree: window.RCF_FACTORY_TREE || null,
-        moduleRegistry: window.RCF_MODULE_REGISTRY || null,
-        contextEngine: window.RCF_CONTEXT || null
+        bootstrap: getUiBootstrapApi(),
+        views: getUiViewsApi(),
+        dashboard: getUiDashboardApi()
       };
     })();
-    return __factoryCoreModulesPromise;
-  }
-
-  function syncFactoryCoreModules(reason = "sync") {
-    try {
-      window.RCF_FACTORY_STATE?.init?.({
-        factoryVersion: window.RCF_VERSION || "1.0.0",
-        runtimeVFS: (window.__RCF_VFS_RUNTIME || window.RCF_RUNTIME || "browser"),
-        environment: (
-          (() => {
-            try {
-              const standalone =
-                !!(window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) ||
-                !!(window.navigator && window.navigator.standalone);
-              return standalone ? "PWA" : "Browser";
-            } catch { return "Browser"; }
-          })()
-        )
-      });
-    } catch (e) {
-      Logger.write("factory_state init err:", e?.message || e);
-    }
-
-    try { window.RCF_FACTORY_TREE?.refresh?.(); } catch (e) { Logger.write("factory_tree refresh err:", e?.message || e); }
-    try { window.RCF_MODULE_REGISTRY?.refresh?.(); } catch (e) { Logger.write("module_registry refresh err:", e?.message || e); }
-    try { window.RCF_FACTORY_STATE?.setModules?.(window.RCF_MODULE_REGISTRY?.getModules?.() || {}); } catch (e) { Logger.write("factory_state setModules err:", e?.message || e); }
-    try { window.RCF_FACTORY_STATE?.setLoggerReady?.(!!window.RCF_LOGGER); } catch (e) { Logger.write("factory_state setLoggerReady err:", e?.message || e); }
-    try { window.RCF_FACTORY_STATE?.setDoctorReady?.(!!window.RCF_DOCTOR_SCAN); } catch (e) { Logger.write("factory_state setDoctorReady err:", e?.message || e); }
-    try { window.RCF_FACTORY_STATE?.refreshRuntime?.(); } catch (e) { Logger.write("factory_state refreshRuntime err:", e?.message || e); }
-
-    try {
-      const active = window.RCF_MODULE_REGISTRY?.getActiveModules?.() || [];
-      Logger.write("factory_core sync:", reason, "active=" + active.join(","));
-    } catch {}
-
-    try {
-      const summary = window.RCF_CONTEXT?.summary?.();
-      if (summary) Logger.write("context_engine summary:", safeJsonStringify(summary));
-    } catch (e) {
-      Logger.write("context_engine summary err:", e?.message || e);
-    }
-
-    return true;
+    return __uiVisualModulesPromise;
   }
 
   function buildFactoryIAContext() {
@@ -463,42 +437,70 @@
     try {
       window.RCF_FACTORY_IA = window.RCF_FACTORY_IA || {};
       window.RCF_FACTORY_IA.getContext = () => buildFactoryIAContext();
-      window.RCF_FACTORY_IA.getMode = () => 'supervised';
+      window.RCF_FACTORY_IA.getMode = () => "supervised";
       window.RCF_FACTORY_IA.canApply = () => false;
     } catch {}
   }
 
-  function syncUiCoreBridge(reason = 'sync') {
+  function syncUiCoreBridge(reason = "sync") {
     try {
-      const api = getUiStateApi(); if (!api) return false;
-      if (typeof api.hydrateFromAppState === 'function') return api.hydrateFromAppState(State, { reason }) || true;
-      if (typeof api.syncFromAppState === 'function') return api.syncFromAppState(State, { reason }) || true;
-      if (typeof api.setSnapshot === 'function') return api.setSnapshot({ cfg:State.cfg, apps:State.apps, active:State.active, pending:State.pending, reason }) || true;
-    } catch (e) { Logger.write('ui_core_bridge sync err:', e?.message || e); }
+      const api = getUiStateApi();
+      if (!api) return false;
+      if (typeof api.hydrateFromAppState === "function") return api.hydrateFromAppState(State, { reason }) || true;
+      if (typeof api.syncFromAppState === "function") return api.syncFromAppState(State, { reason }) || true;
+      if (typeof api.setSnapshot === "function") return api.setSnapshot({ cfg: State.cfg, apps: State.apps, active: State.active, pending: State.pending, reason }) || true;
+    } catch (e) {
+      Logger.write("ui_core_bridge sync err:", e?.message || e);
+    }
     return false;
   }
 
   function injectCompactCSSOnce() {
     try {
-      if (document.getElementById('rcfCompactCss')) return;
-      const st = document.createElement('style');
-      st.id = 'rcfCompactCss';
+      if (document.getElementById("rcfCompactCss")) return;
+      const st = document.createElement("style");
+      st.id = "rcfCompactCss";
       st.textContent = `#rcfRoot [hidden]{display:none !important;}#rcfRoot .rcf-collapsed{max-height:0 !important;padding-top:0 !important;padding-bottom:0 !important;border:0 !important;overflow:hidden !important;}`;
       document.head.appendChild(st);
-      try { window.RCF_LOGGER?.push?.('OK', 'ui_compat_css: injected ✅'); } catch {}
+      try { window.RCF_LOGGER?.push?.("OK", "ui_compat_css: injected ✅"); } catch {}
     } catch {}
   }
 
   const OverridesVFS = (() => {
-    const KEY = 'RCF_OVERRIDES_MAP';
+    const KEY = "RCF_OVERRIDES_MAP";
     const getMap = () => Storage.get(KEY, {});
     const setMap = (m) => Storage.set(KEY, m || {});
-    const norm = (p) => { let x = String(p || '').trim(); if (!x) return ''; x = x.split('#')[0].split('?')[0].trim(); if (!x.startsWith('/')) x = '/' + x; return x.replace(/\/{2,}/g, '/'); };
+    const norm = (p) => {
+      let x = String(p || "").trim();
+      if (!x) return "";
+      x = x.split("#")[0].split("?")[0].trim();
+      if (!x.startsWith("/")) x = "/" + x;
+      return x.replace(/\/{2,}/g, "/");
+    };
     return {
       listFiles: async () => Object.keys(getMap() || {}).sort(),
-      readFile: async (p) => { const pp = norm(p); const m = getMap(); return (m && pp in m) ? String(m[pp] ?? '') : null; },
-      writeFile: async (p, c) => { const pp = norm(p); const m = getMap(); m[pp] = String(c ?? ''); setMap(m); return true; },
-      deleteFile: async (p) => { const pp = norm(p); const m = getMap(); if (m && pp in m) { delete m[pp]; setMap(m); return true; } return false; },
+      readFile: async (p) => {
+        const pp = norm(p);
+        const m = getMap();
+        return (m && pp in m) ? String(m[pp] ?? "") : null;
+      },
+      writeFile: async (p, c) => {
+        const pp = norm(p);
+        const m = getMap();
+        m[pp] = String(c ?? "");
+        setMap(m);
+        return true;
+      },
+      deleteFile: async (p) => {
+        const pp = norm(p);
+        const m = getMap();
+        if (m && pp in m) {
+          delete m[pp];
+          setMap(m);
+          return true;
+        }
+        return false;
+      },
       _raw: { norm }
     };
   })();
@@ -507,78 +509,197 @@
   function isOfficialShell(root) {
     try {
       if (!root) return false;
-      if (root.getAttribute('data-rcf-shell-version')) return true;
-      if ($('#views', root) && $('.rcfBottomNav', root) && $('#view-dashboard', root)) return true;
+      if (root.getAttribute("data-rcf-shell-version")) return true;
+      if ($("#views", root) && $(".rcfBottomNav", root) && $("#view-dashboard", root)) return true;
     } catch {}
     return false;
   }
 
   function strengthenShellStructure() {
     try {
-      const root = $('#rcfRoot'); if (!root) return false;
+      const root = $("#rcfRoot");
+      if (!root) return false;
       if (isOfficialShell(root)) return true;
-      if (!$('#views', root)) { const views = document.createElement('main'); views.id = 'views'; views.className = 'views'; root.appendChild(views); }
-      if (!$('#view-dashboard', root)) { const v = document.createElement('section'); v.id = 'view-dashboard'; v.className = 'view active'; v.setAttribute('data-rcf-view', 'dashboard'); v.innerHTML = '<div class="hint">Factory fallback ativo.</div>'; $('#views', root)?.appendChild(v); }
-      if (!$('#toolsDrawer', root)) { const d = document.createElement('div'); d.id = 'toolsDrawer'; d.className = 'tools'; d.hidden = true; d.style.display = 'none'; d.innerHTML = '<div id="statusText" data-rcf="status.text">OK ✅</div><pre class="mono small" id="logsBox">Pronto.</pre><button class="btn small" id="btnCloseTools" type="button">Fechar</button>'; root.appendChild(d); }
-      if (!$('#rcfFab', root)) { const fab = document.createElement('button'); fab.id = 'rcfFab'; fab.type = 'button'; fab.textContent = '⚡'; root.appendChild(fab); }
-      if (!$('#rcfFabPanel', root)) { const p = document.createElement('div'); p.id = 'rcfFabPanel'; p.hidden = true; p.style.display = 'none'; p.innerHTML = '<div class="fab-status" id="fabStatus">OK ✅</div>'; root.appendChild(p); }
-      if (!$('#btnOpenTools', root)) { const b = document.createElement('button'); b.id = 'btnOpenTools'; b.type = 'button'; b.className = 'btn small'; b.textContent = 'Tools'; root.insertBefore(b, root.firstChild || null); }
+
+      if (!$("#views", root)) {
+        const views = document.createElement("main");
+        views.id = "views";
+        views.className = "views";
+        root.appendChild(views);
+      }
+
+      if (!$("#view-dashboard", root)) {
+        const v = document.createElement("section");
+        v.id = "view-dashboard";
+        v.className = "view active";
+        v.setAttribute("data-rcf-view", "dashboard");
+        v.innerHTML = '<div class="hint">Factory fallback ativo.</div>';
+        $("#views", root)?.appendChild(v);
+      }
+
+      if (!$("#toolsDrawer", root)) {
+        const d = document.createElement("div");
+        d.id = "toolsDrawer";
+        d.className = "tools";
+        d.hidden = true;
+        d.style.display = "none";
+        d.innerHTML = '<div id="statusText" data-rcf="status.text">OK ✅</div><pre class="mono small" id="logsBox">Pronto.</pre><button class="btn small" id="btnCloseTools" type="button">Fechar</button>';
+        root.appendChild(d);
+      }
+
+      if (!$("#rcfFab", root)) {
+        const fab = document.createElement("button");
+        fab.id = "rcfFab";
+        fab.type = "button";
+        fab.textContent = "⚡";
+        root.appendChild(fab);
+      }
+
+      if (!$("#rcfFabPanel", root)) {
+        const p = document.createElement("div");
+        p.id = "rcfFabPanel";
+        p.hidden = true;
+        p.style.display = "none";
+        p.innerHTML = '<div class="fab-status" id="fabStatus">OK ✅</div>';
+        root.appendChild(p);
+      }
+
+      if (!$("#btnOpenTools", root)) {
+        const b = document.createElement("button");
+        b.id = "btnOpenTools";
+        b.type = "button";
+        b.className = "btn small";
+        b.textContent = "Tools";
+        root.insertBefore(b, root.firstChild || null);
+      }
+
       return true;
-    } catch (e) { try { Logger.write('strengthenShellStructure err:', e?.message || e); } catch {} return false; }
+    } catch (e) {
+      try { Logger.write("strengthenShellStructure err:", e?.message || e); } catch {}
+      return false;
+    }
   }
 
   function renderShell() {
-    let root = $('#app');
-    if (!root) { try { root = document.createElement('div'); root.id = 'app'; (document.body || document.documentElement).appendChild(root); } catch { return; } }
-    const existing = $('#rcfRoot');
-    if (existing) { if (!isOfficialShell(existing)) strengthenShellStructure(); return; }
+    let root = $("#app");
+    if (!root) {
+      try {
+        root = document.createElement("div");
+        root.id = "app";
+        (document.body || document.documentElement).appendChild(root);
+      } catch {
+        return;
+      }
+    }
+
+    const existing = $("#rcfRoot");
+    if (existing) {
+      if (!isOfficialShell(existing)) strengthenShellStructure();
+      return;
+    }
+
     try {
       const shell = window.RCF_UI_SHELL;
-      if (shell && typeof shell.mount === 'function') {
+      if (shell && typeof shell.mount === "function") {
         const ok = shell.mount({ root, state: State, logger: Logger, setView, normalizeViewName });
-        if (ok !== false && $('#rcfRoot')) {
-          try { Logger.write('shell:', 'external ui_shell mount ✅'); } catch {}
+        if (ok !== false && $("#rcfRoot")) {
+          try { Logger.write("shell:", "external ui_shell mount ✅"); } catch {}
           return;
         }
       }
-    } catch (e) { try { Logger.write('shell mount err:', e?.message || e); } catch {} }
+    } catch (e) {
+      try { Logger.write("shell mount err:", e?.message || e); } catch {}
+    }
+
     root.innerHTML = `<div id="rcfRoot" data-rcf-app="rcf.factory" data-rcf-shell-version="fallback"><button id="btnOpenTools" class="btn small" type="button">Tools</button><main id="views" class="views"><section id="view-dashboard" class="view active" data-rcf-view="dashboard"><div class="hint">Factory fallback ativo.</div></section></main><div id="toolsDrawer" class="tools" hidden style="display:none"><div id="statusText" data-rcf="status.text">OK ✅</div><pre class="mono small" id="logsBox">Pronto.</pre><button id="btnCloseTools" class="btn small" type="button">Fechar</button></div><button id="rcfFab" type="button">⚡</button><div id="rcfFabPanel" hidden style="display:none"><div class="fab-status" id="fabStatus">OK ✅</div></div></div>`;
-    try { Logger.write('shell:', 'fallback ultra-minimal shell ✅'); } catch {}
+    try { Logger.write("shell:", "fallback ultra-minimal shell ✅"); } catch {}
   }
 
   function refreshLogsViews() {
     Logger._mirrorUI(Logger.getAll());
-    try { const dash = getUiDashboardApi(); if (dash && typeof dash.refresh === 'function') dash.refresh({ State, Logger, root: document }); } catch {}
+    try {
+      const dash = getUiDashboardApi();
+      if (dash && typeof dash.refresh === "function") dash.refresh({ State, Logger, root: document });
+    } catch {}
   }
 
   function teardownPreviewHard() {
     try { window.RCF_PREVIEW?.teardown?.(); } catch {}
     try {
-      document.documentElement.style.overflow = '';
-      document.body.style.overflow = '';
-      document.body.style.pointerEvents = '';
+      document.documentElement.style.overflow = "";
+      document.body.style.overflow = "";
+      document.body.style.pointerEvents = "";
     } catch {}
   }
 
   function openTools(open) {
     try {
       const router = getUiRouterApi();
-      if (router && typeof router.openTools === 'function') return router.openTools(open, { root: document });
+      if (router && typeof router.openTools === "function") return router.openTools(open, { root: document });
     } catch {}
-    const d = $('#toolsDrawer'); if (!d) return;
-    if (open) { d.hidden = false; d.style.display = ''; d.classList.add('open'); }
-    else { d.classList.remove('open'); d.hidden = true; d.style.display = 'none'; }
+    const d = $("#toolsDrawer");
+    if (!d) return;
+    if (open) {
+      d.hidden = false;
+      d.style.display = "";
+      d.classList.add("open");
+    } else {
+      d.classList.remove("open");
+      d.hidden = true;
+      d.style.display = "none";
+    }
   }
 
-  function openFabPanel(open) { const p = $('#rcfFabPanel'); if (!p) return; if (open) { p.hidden = false; p.style.display = ''; p.classList.add('open'); } else { p.classList.remove('open'); p.hidden = true; p.style.display = 'none'; } }
-  function toggleFabPanel() { const p = $('#rcfFabPanel'); if (!p) return; openFabPanel(p.hidden || !p.classList.contains('open')); }
-  function syncFabStatusText() { try { const st = $('#statusText')?.textContent || ''; const fab = $('#fabStatus'); if (fab) fab.textContent = String(st || 'OK ✅'); } catch {} }
-  function setInjectorLogCollapsed(collapsed) { try { const pre = $('#injLog'); const btn = $('#btnToggleInjectorLog'); if (!pre || !btn) return; const c = !!collapsed; pre.classList.toggle('rcf-collapsed', c); btn.textContent = c ? 'Mostrar log' : 'Esconder log'; } catch {} }
-  function toggleInjectorLogCollapsed() { try { const pre = $('#injLog'); if (!pre) return; setInjectorLogCollapsed(!pre.classList.contains('rcf-collapsed')); } catch {} }
+  function openFabPanel(open) {
+    const p = $("#rcfFabPanel");
+    if (!p) return;
+    if (open) {
+      p.hidden = false;
+      p.style.display = "";
+      p.classList.add("open");
+    } else {
+      p.classList.remove("open");
+      p.hidden = true;
+      p.style.display = "none";
+    }
+  }
+
+  function toggleFabPanel() {
+    const p = $("#rcfFabPanel");
+    if (!p) return;
+    openFabPanel(p.hidden || !p.classList.contains("open"));
+  }
+
+  function syncFabStatusText() {
+    try {
+      const st = $("#statusText")?.textContent || "";
+      const fab = $("#fabStatus");
+      if (fab) fab.textContent = String(st || "OK ✅");
+    } catch {}
+  }
+
+  function setInjectorLogCollapsed(collapsed) {
+    try {
+      const pre = $("#injLog");
+      const btn = $("#btnToggleInjectorLog");
+      if (!pre || !btn) return;
+      const c = !!collapsed;
+      pre.classList.toggle("rcf-collapsed", c);
+      btn.textContent = c ? "Mostrar log" : "Esconder log";
+    } catch {}
+  }
+
+  function toggleInjectorLogCollapsed() {
+    try {
+      const pre = $("#injLog");
+      if (!pre) return;
+      setInjectorLogCollapsed(!pre.classList.contains("rcf-collapsed"));
+    } catch {}
+  }
 
   function maybeRefreshSpecialView(normalized) {
     try {
-      if (['logs', 'settings', 'admin', 'github', 'updates', 'deploy'].includes(normalized)) {
+      if (["logs", "settings", "admin", "github", "updates", "deploy"].includes(normalized)) {
         refreshLogsViews();
       }
     } catch {}
@@ -590,12 +711,12 @@
 
     try {
       const prev = normalizeViewName(State.active.view);
-      if (prev === 'generator' && normalized !== 'generator') teardownPreviewHard();
+      if (prev === "generator" && normalized !== "generator") teardownPreviewHard();
     } catch {}
 
     try {
       const views = getUiViewsApi();
-      if (views && typeof views.setView === 'function') {
+      if (views && typeof views.setView === "function") {
         const ok = views.setView(normalized, {
           State,
           saveAll,
@@ -604,24 +725,24 @@
           logger: Logger,
           normalizeViewName,
           syncViewVisibility,
-          root: $('#rcfRoot') || document,
+          root: $("#rcfRoot") || document,
           force: !!opts.force
         });
         if (ok !== false) {
           State.active.view = normalized;
-          saveAll('ui_views.setView');
+          saveAll("ui_views.setView");
           maybeRefreshSpecialView(normalized);
-          try { Logger.write('view(ui_views):', normalized); } catch {}
+          try { Logger.write("view(ui_views):", normalized); } catch {}
           return true;
         }
       }
     } catch (e) {
-      try { Logger.write('ui_views setView err:', e?.message || e); } catch {}
+      try { Logger.write("ui_views setView err:", e?.message || e); } catch {}
     }
 
     try {
       const router = getUiRouterApi();
-      if (router && typeof router.setView === 'function') {
+      if (router && typeof router.setView === "function") {
         const ok = router.setView(normalized, {
           State,
           saveAll,
@@ -635,105 +756,350 @@
         });
         if (ok !== false) {
           State.active.view = normalized;
-          saveAll('router.setView');
+          saveAll("router.setView");
           maybeRefreshSpecialView(normalized);
-          try { Logger.write('view(router):', normalized); } catch {}
+          try { Logger.write("view(router):", normalized); } catch {}
           return true;
         }
       }
     } catch (e) {
-      try { Logger.write('router setView err:', e?.message || e); } catch {}
+      try { Logger.write("router setView err:", e?.message || e); } catch {}
     }
 
     State.active.view = normalized;
-    saveAll('local.setView');
+    saveAll("local.setView");
     syncViewVisibility(normalized);
     maybeRefreshSpecialView(normalized);
-    Logger.write('view(local):', normalized);
+    Logger.write("view(local):", normalized);
     return true;
   }
   window.RCF.setView = (name, opts) => setView(name, opts);
 
-  function getActiveApp() { return State.active.appSlug ? (State.apps.find(a => a.slug === State.active.appSlug) || null) : null; }
-  function ensureAppFiles(app) { if (!app.files || typeof app.files !== 'object') app.files = {}; }
+  function getActiveApp() {
+    return State.active.appSlug ? (State.apps.find(a => a.slug === State.active.appSlug) || null) : null;
+  }
+
+  function ensureAppFiles(app) {
+    if (!app.files || typeof app.files !== "object") app.files = {};
+  }
+
   function renderAppsList() {
-    const box = $('#appsList'); if (!box) return;
-    if (!State.apps.length) { box.innerHTML = '<div class="hint">Nenhum app salvo ainda.</div>'; return; }
-    box.innerHTML = '';
+    const box = $("#appsList");
+    if (!box) return;
+    if (!State.apps.length) {
+      box.innerHTML = '<div class="hint">Nenhum app salvo ainda.</div>';
+      return;
+    }
+    box.innerHTML = "";
     State.apps.forEach(app => {
-      const row = document.createElement('div'); row.className = 'app-item';
+      const row = document.createElement("div");
+      row.className = "app-item";
       row.innerHTML = `<div class="app-meta"><div class="app-name" style="font-weight:800">${escapeHtml(app.name)}</div><div class="app-slug hint">${escapeHtml(app.slug)}</div></div><div class="app-actions"><button class="btn small" data-act="select" data-slug="${escapeAttr(app.slug)}" type="button">Selecionar</button><button class="btn small" data-act="edit" data-slug="${escapeAttr(app.slug)}" type="button">Editor</button><button class="btn small danger" data-act="delete" data-slug="${escapeAttr(app.slug)}" type="button">Apagar</button></div>`;
       box.appendChild(row);
     });
-    $$('[data-act="select"]', box).forEach(btn => bindTap(btn, () => setActiveApp(btn.getAttribute('data-slug'))));
-    $$('[data-act="edit"]', box).forEach(btn => bindTap(btn, () => { setActiveApp(btn.getAttribute('data-slug')); setView('editor'); }));
-    $$('[data-act="delete"]', box).forEach(btn => bindTap(btn, () => deleteApp(btn.getAttribute('data-slug'))));
+    $$('[data-act="select"]', box).forEach(btn => bindTap(btn, () => setActiveApp(btn.getAttribute("data-slug"))));
+    $$('[data-act="edit"]', box).forEach(btn => bindTap(btn, () => { setActiveApp(btn.getAttribute("data-slug")); setView("editor"); }));
+    $$('[data-act="delete"]', box).forEach(btn => bindTap(btn, () => deleteApp(btn.getAttribute("data-slug"))));
   }
+
   function renderFilesList() {
-    const box = $('#filesList'); if (!box) return; const app = getActiveApp();
-    if (!app) { box.innerHTML = '<div class="hint">Selecione um app para ver arquivos.</div>'; return; }
-    ensureAppFiles(app); const files = Object.keys(app.files); if (!files.length) { box.innerHTML = '<div class="hint">App sem arquivos.</div>'; return; }
-    box.innerHTML = ''; files.forEach(fname => { const item = document.createElement('div'); item.className = 'file-item' + (State.active.file === fname ? ' active' : ''); item.textContent = fname; bindTap(item, () => openFile(fname)); box.appendChild(item); });
+    const box = $("#filesList");
+    if (!box) return;
+    const app = getActiveApp();
+    if (!app) {
+      box.innerHTML = '<div class="hint">Selecione um app para ver arquivos.</div>';
+      return;
+    }
+    ensureAppFiles(app);
+    const files = Object.keys(app.files);
+    if (!files.length) {
+      box.innerHTML = '<div class="hint">App sem arquivos.</div>';
+      return;
+    }
+    box.innerHTML = "";
+    files.forEach(fname => {
+      const item = document.createElement("div");
+      item.className = "file-item" + (State.active.file === fname ? " active" : "");
+      item.textContent = fname;
+      bindTap(item, () => openFile(fname));
+      box.appendChild(item);
+    });
   }
-  function openFile(fname) { const app = getActiveApp(); if (!app) return false; ensureAppFiles(app); if (!(fname in app.files)) return false; State.active.file = fname; saveAll('file.open'); const head = $('#editorHead'); if (head) head.textContent = `Arquivo atual: ${fname}`; const ta = $('#fileContent'); if (ta) ta.value = String(app.files[fname] ?? ''); renderFilesList(); return true; }
-  function setActiveApp(slug) { const app = State.apps.find(a => a.slug === slug); if (!app) return false; ensureAppFiles(app); State.active.appSlug = slug; State.active.file = State.active.file || Object.keys(app.files || {})[0] || null; saveAll('app.select'); const text = $('#activeAppText'); if (text) textContentSafe(text, `App ativo: ${app.name} (${app.slug}) ✅`); renderAppsList(); renderFilesList(); if (State.active.file) openFile(State.active.file); Logger.write('app selected:', slug); return true; }
-  function deleteApp(slug) { const s = slugify(slug); if (!s) return false; const app = State.apps.find(a => a.slug === s); if (!app) return false; if (!confirm(`Apagar o app "${app.name}" (${app.slug})?\n\nIsso não tem volta.`)) return false; State.apps = State.apps.filter(a => a.slug !== s); if (State.active.appSlug === s) { State.active.appSlug = null; State.active.file = null; const text = $('#activeAppText'); if (text) textContentSafe(text, 'Sem app ativo ✅'); } saveAll('app.delete'); renderAppsList(); renderFilesList(); uiMsg('#editorOut', '✅ App apagado.'); Logger.write('app deleted:', s); safeSetStatus('Apagado ✅'); syncFabStatusText(); return true; }
-  function createApp(name, slugMaybe) { const nameClean = String(name || '').trim(); if (!nameClean) return { ok:false, msg:'Nome inválido' }; let slug = slugify(slugMaybe || nameClean); if (!slug) return { ok:false, msg:'Slug inválido' }; if (State.apps.some(a => a.slug === slug)) return { ok:false, msg:'Slug já existe' }; const app = { name:nameClean, slug, createdAt:nowISO(), files:{ 'index.html':`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${nameClean}</title></head><body><h1>${nameClean}</h1><script src="app.js"></script></body></html>`, 'styles.css':'body{font-family:system-ui;margin:0;padding:24px;background:#0b1220;color:#fff}', 'app.js':`console.log("${nameClean}");` } }; State.apps.push(app); saveAll('app.create'); renderAppsList(); setActiveApp(slug); return { ok:true, msg:`✅ App criado: ${nameClean} (${slug})` }; }
-  function saveFile() { const app = getActiveApp(); if (!app) return uiMsg('#editorOut', '⚠️ Sem app ativo.'); const fname = State.active.file; if (!fname) return uiMsg('#editorOut', '⚠️ Sem arquivo ativo.'); const ta = $('#fileContent'); ensureAppFiles(app); app.files[fname] = ta ? String(ta.value || '') : ''; saveAll('file.save'); uiMsg('#editorOut', '✅ Arquivo salvo.'); Logger.write('file saved:', app.slug, fname); }
 
-  const Pin = { key:'admin_pin', get(){ return Storage.get(this.key, ''); }, set(pin){ Storage.set(this.key, String(pin || '')); }, clear(){ Storage.del(this.key); } };
-  async function swRegister() { try { if (!("serviceWorker" in navigator)) return { ok:false, msg:'SW não suportado' }; const reg = await navigator.serviceWorker.register('./sw.js', { scope:'./' }); Logger.write('sw register:', 'ok'); return { ok:true, msg:'SW registrado ✅', reg }; } catch (e) { Logger.write('sw register fail:', e?.message || e); return { ok:false, msg:'Falhou registrar SW: ' + (e?.message || e) }; } }
-  async function swUnregisterAll() { try { if (!("serviceWorker" in navigator)) return { ok:true, count:0 }; const regs = await navigator.serviceWorker.getRegistrations(); let n = 0; for (const r of regs) { try { if (await r.unregister()) n++; } catch {} } Logger.write('sw unregister:', n, 'ok'); return { ok:true, count:n }; } catch (e) { Logger.write('sw unregister err:', e?.message || e); return { ok:false, count:0, err:e?.message || e }; } }
-  async function swClearCaches() { try { const keys = await caches.keys(); await Promise.all(keys.map(k => caches.delete(k))); Logger.write('cache clear:', keys.length, 'caches'); return { ok:true, count:keys.length }; } catch (e) { Logger.write('cache clear err:', e?.message || e); return { ok:false, count:0, err:e?.message || e }; } }
-  async function swCheckAutoFix() { return { ok:false, status:'missing', detail:'sw.js não registrou (pode ser path/scope/privacidade).', attempts:0, err:'' }; }
+  function openFile(fname) {
+    const app = getActiveApp();
+    if (!app) return false;
+    ensureAppFiles(app);
+    if (!(fname in app.files)) return false;
+    State.active.file = fname;
+    saveAll("file.open");
+    const head = $("#editorHead");
+    if (head) head.textContent = `Arquivo atual: ${fname}`;
+    const ta = $("#fileContent");
+    if (ta) ta.value = String(app.files[fname] ?? "");
+    renderFilesList();
+    return true;
+  }
 
-  function scanOverlays() { return { ok:true, suspects:[] }; }
-  function runMicroTests() { const results = []; const push=(n,p,i='')=>results.push({name:n,pass:!!p,info:String(i||'')}); push('TEST_RENDER', !!$('#rcfRoot') && !!$('#views'), $('#rcfRoot') ? 'UI root ok' : 'UI root missing'); push('TEST_IMPORTS', !!window.RCF_LOGGER && !!window.RCF && !!window.RCF.state, 'globals'); push('TEST_STATE_INIT', !!State && Array.isArray(State.apps) && !!State.active && typeof State.cfg === 'object', 'state'); push('TEST_UI_REGISTRY', !!window.RCF_UI && typeof window.RCF_UI.getSlot === 'function', 'RCF_UI'); const pass = results.filter(r=>r.pass).length; return { ok: pass === results.length, pass, total: results.length, results }; }
-  async function runV8StabilityCheck() { const mt = runMicroTests(); uiMsg('#diagOut', `RCF — V8 STABILITY CHECK\nPASS=${mt.pass}/${mt.total}`); Logger.write('V8 check:', mt.ok ? 'PASS ✅' : 'FAIL ❌', `${mt.pass}/${mt.total}`); return { stable:mt.ok, pass:mt.pass, fail:mt.total-mt.pass, report:'', overlay:{ok:true,suspects:[]}, microtests:mt, css:{ok:true,token:'n/a'}, sw:{ok:false,status:'missing'} }; }
+  function setActiveApp(slug) {
+    const app = State.apps.find(a => a.slug === slug);
+    if (!app) return false;
+    ensureAppFiles(app);
+    State.active.appSlug = slug;
+    State.active.file = State.active.file || Object.keys(app.files || {})[0] || null;
+    saveAll("app.select");
+    const text = $("#activeAppText");
+    if (text) textContentSafe(text, `App ativo: ${app.name} (${app.slug}) ✅`);
+    renderAppsList();
+    renderFilesList();
+    if (State.active.file) openFile(State.active.file);
+    Logger.write("app selected:", slug);
+    return true;
+  }
+
+  function deleteApp(slug) {
+    const s = slugify(slug);
+    if (!s) return false;
+    const app = State.apps.find(a => a.slug === s);
+    if (!app) return false;
+    if (!confirm(`Apagar o app "${app.name}" (${app.slug})?\n\nIsso não tem volta.`)) return false;
+    State.apps = State.apps.filter(a => a.slug !== s);
+    if (State.active.appSlug === s) {
+      State.active.appSlug = null;
+      State.active.file = null;
+      const text = $("#activeAppText");
+      if (text) textContentSafe(text, "Sem app ativo ✅");
+    }
+    saveAll("app.delete");
+    renderAppsList();
+    renderFilesList();
+    uiMsg("#editorOut", "✅ App apagado.");
+    Logger.write("app deleted:", s);
+    safeSetStatus("Apagado ✅");
+    syncFabStatusText();
+    return true;
+  }
+
+  function createApp(name, slugMaybe) {
+    const nameClean = String(name || "").trim();
+    if (!nameClean) return { ok: false, msg: "Nome inválido" };
+    let slug = slugify(slugMaybe || nameClean);
+    if (!slug) return { ok: false, msg: "Slug inválido" };
+    if (State.apps.some(a => a.slug === slug)) return { ok: false, msg: "Slug já existe" };
+
+    const app = {
+      name: nameClean,
+      slug,
+      createdAt: nowISO(),
+      files: {
+        "index.html": `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${nameClean}</title></head><body><h1>${nameClean}</h1><script src="app.js"></script></body></html>`,
+        "styles.css": "body{font-family:system-ui;margin:0;padding:24px;background:#0b1220;color:#fff}",
+        "app.js": `console.log("${nameClean}");`
+      }
+    };
+
+    State.apps.push(app);
+    saveAll("app.create");
+    renderAppsList();
+    setActiveApp(slug);
+    return { ok: true, msg: `✅ App criado: ${nameClean} (${slug})` };
+  }
+
+  function saveFile() {
+    const app = getActiveApp();
+    if (!app) return uiMsg("#editorOut", "⚠️ Sem app ativo.");
+    const fname = State.active.file;
+    if (!fname) return uiMsg("#editorOut", "⚠️ Sem arquivo ativo.");
+    const ta = $("#fileContent");
+    ensureAppFiles(app);
+    app.files[fname] = ta ? String(ta.value || "") : "";
+    saveAll("file.save");
+    uiMsg("#editorOut", "✅ Arquivo salvo.");
+    Logger.write("file saved:", app.slug, fname);
+  }
+
+  const Pin = {
+    key: "admin_pin",
+    get() { return Storage.get(this.key, ""); },
+    set(pin) { Storage.set(this.key, String(pin || "")); },
+    clear() { Storage.del(this.key); }
+  };
+
+  async function swRegister() {
+    try {
+      if (!("serviceWorker" in navigator)) return { ok: false, msg: "SW não suportado" };
+      const reg = await navigator.serviceWorker.register("./sw.js", { scope: "./" });
+      Logger.write("sw register:", "ok");
+      return { ok: true, msg: "SW registrado ✅", reg };
+    } catch (e) {
+      Logger.write("sw register fail:", e?.message || e);
+      return { ok: false, msg: "Falhou registrar SW: " + (e?.message || e) };
+    }
+  }
+
+  async function swUnregisterAll() {
+    try {
+      if (!("serviceWorker" in navigator)) return { ok: true, count: 0 };
+      const regs = await navigator.serviceWorker.getRegistrations();
+      let n = 0;
+      for (const r of regs) {
+        try { if (await r.unregister()) n++; } catch {}
+      }
+      Logger.write("sw unregister:", n, "ok");
+      return { ok: true, count: n };
+    } catch (e) {
+      Logger.write("sw unregister err:", e?.message || e);
+      return { ok: false, count: 0, err: e?.message || e };
+    }
+  }
+
+  async function swClearCaches() {
+    try {
+      const keys = await caches.keys();
+      await Promise.all(keys.map(k => caches.delete(k)));
+      Logger.write("cache clear:", keys.length, "caches");
+      return { ok: true, count: keys.length };
+    } catch (e) {
+      Logger.write("cache clear err:", e?.message || e);
+      return { ok: false, count: 0, err: e?.message || e };
+    }
+  }
+
+  async function swCheckAutoFix() {
+    return { ok: false, status: "missing", detail: "sw.js não registrou (pode ser path/scope/privacidade).", attempts: 0, err: "" };
+  }
+
+  function scanOverlays() { return { ok: true, suspects: [] }; }
+
+  function runMicroTests() {
+    const results = [];
+    const push = (n, p, i = "") => results.push({ name: n, pass: !!p, info: String(i || "") });
+    push("TEST_RENDER", !!$("#rcfRoot") && !!$("#views"), $("#rcfRoot") ? "UI root ok" : "UI root missing");
+    push("TEST_IMPORTS", !!window.RCF_LOGGER && !!window.RCF && !!window.RCF.state, "globals");
+    push("TEST_STATE_INIT", !!State && Array.isArray(State.apps) && !!State.active && typeof State.cfg === "object", "state");
+    push("TEST_UI_REGISTRY", !!window.RCF_UI && typeof window.RCF_UI.getSlot === "function", "RCF_UI");
+    const pass = results.filter(r => r.pass).length;
+    return { ok: pass === results.length, pass, total: results.length, results };
+  }
+
+  async function runV8StabilityCheck() {
+    const mt = runMicroTests();
+    uiMsg("#diagOut", `RCF — V8 STABILITY CHECK\nPASS=${mt.pass}/${mt.total}`);
+    Logger.write("V8 check:", mt.ok ? "PASS ✅" : "FAIL ❌", `${mt.pass}/${mt.total}`);
+    return {
+      stable: mt.ok,
+      pass: mt.pass,
+      fail: mt.total - mt.pass,
+      report: "",
+      overlay: { ok: true, suspects: [] },
+      microtests: mt,
+      css: { ok: true, token: "n/a" },
+      sw: { ok: false, status: "missing" }
+    };
+  }
 
   function populateTargetsDropdown() {}
-  async function scanFactoryFiles() { const index = { meta:{ scannedAt:nowISO(), source:'C:dom_anchors_only', count:1 }, files:[{ path:'/runtime/document.html', type:'html', size:(document.documentElement?.outerHTML||'').length, hash:'00000000', markers:[], anchors:[] }] }; Storage.set('RCF_FILE_INDEX', index); Logger.write('scan:', index.meta.source, 'files=' + index.meta.count); return index; }
-  function generateTargetMap(fileIndex) { const out = { meta:{ createdAt:nowISO(), count:2, source:(fileIndex?.meta?.source || '') }, targets:[{ targetId:'/index.html::HEAD_END', path:'/index.html', kind:'ANCHOR', offset:0, anchorId:'HEAD_END', supportedModes:['INSERT','REPLACE','DELETE'], defaultRisk:'low', note:'FORCED_FALLBACK_HEAD_END' }, { targetId:'/index.html::BODY_END', path:'/index.html', kind:'ANCHOR', offset:0, anchorId:'BODY_END', supportedModes:['INSERT','REPLACE','DELETE'], defaultRisk:'medium', note:'FORCED_FALLBACK_BODY_END' }] }; Storage.set('RCF_TARGET_MAP', out); Logger.write('targets:', 'count=' + out.meta.count, 'source=' + out.meta.source); return { ok:true, map:out }; }
-  async function injectorPreview() { uiMsg('#diffOut', '(sem mudanças)'); return { ok:true, oldText:'', newText:'', t:{ path:'/index.html', targetId:'/index.html::BODY_END' }, mode:'INSERT' }; }
-  async function injectorApplySafe() { uiMsg('#diffOut', '✅ Aplicado com sucesso (SAFE).'); return { ok:true }; }
-  async function injectorRollback() { uiMsg('#diffOut', '✅ Rollback aplicado.'); return { ok:true }; }
+
+  async function scanFactoryFiles() {
+    const index = {
+      meta: { scannedAt: nowISO(), source: "C:dom_anchors_only", count: 1 },
+      files: [{
+        path: "/runtime/document.html",
+        type: "html",
+        size: (document.documentElement?.outerHTML || "").length,
+        hash: "00000000",
+        markers: [],
+        anchors: []
+      }]
+    };
+    Storage.set("RCF_FILE_INDEX", index);
+    Logger.write("scan:", index.meta.source, "files=" + index.meta.count);
+    return index;
+  }
+
+  function generateTargetMap(fileIndex) {
+    const out = {
+      meta: { createdAt: nowISO(), count: 2, source: (fileIndex?.meta?.source || "") },
+      targets: [
+        { targetId: "/index.html::HEAD_END", path: "/index.html", kind: "ANCHOR", offset: 0, anchorId: "HEAD_END", supportedModes: ["INSERT","REPLACE","DELETE"], defaultRisk: "low", note: "FORCED_FALLBACK_HEAD_END" },
+        { targetId: "/index.html::BODY_END", path: "/index.html", kind: "ANCHOR", offset: 0, anchorId: "BODY_END", supportedModes: ["INSERT","REPLACE","DELETE"], defaultRisk: "medium", note: "FORCED_FALLBACK_BODY_END" }
+      ]
+    };
+    Storage.set("RCF_TARGET_MAP", out);
+    Logger.write("targets:", "count=" + out.meta.count, "source=" + out.meta.source);
+    return { ok: true, map: out };
+  }
+
+  async function injectorPreview() {
+    uiMsg("#diffOut", "(sem mudanças)");
+    return { ok: true, oldText: "", newText: "", t: { path: "/index.html", targetId: "/index.html::BODY_END" }, mode: "INSERT" };
+  }
+
+  async function injectorApplySafe() {
+    uiMsg("#diffOut", "✅ Aplicado com sucesso (SAFE).");
+    return { ok: true };
+  }
+
+  async function injectorRollback() {
+    uiMsg("#diffOut", "✅ Rollback aplicado.");
+    return { ok: true };
+  }
 
   const Agent = {
-    _mem:{ inj:{ mode:'INSERT', targetId:'', payload:'' } },
-    _out(text){ const out = $('#agentOut'); if (out) out.textContent = String(text ?? ''); },
-    help(){ return 'AGENT HELP (V8)'; },
-    async route(cmdRaw){
-      const cmd = String(cmdRaw || '').trim();
+    _mem: { inj: { mode: "INSERT", targetId: "", payload: "" } },
+    _out(text) { const out = $("#agentOut"); if (out) out.textContent = String(text ?? ""); },
+    help() { return "AGENT HELP (V8)"; },
+    async route(cmdRaw) {
+      const cmd = String(cmdRaw || "").trim();
       const lower = cmd.toLowerCase();
-      if (!cmd) return this._out('Comando vazio. Use: help');
-      if (lower === 'help') return this._out(this.help());
-      if (lower.startsWith('open ')) {
-        const v = normalizeViewName(cmd.replace(/^open\s+/i, '').trim());
+      if (!cmd) return this._out("Comando vazio. Use: help");
+      if (lower === "help") return this._out(this.help());
+      if (lower.startsWith("open ")) {
+        const v = normalizeViewName(cmd.replace(/^open\s+/i, "").trim());
         setView(v);
         return this._out(`OK. view=${v}`);
       }
-      if (lower.startsWith('create ')) {
-        const rest = cmd.replace(/^create\s+/i, '').trim();
+      if (lower.startsWith("create ")) {
+        const rest = cmd.replace(/^create\s+/i, "").trim();
         const qm = rest.match(/^"([^"]+)"\s*([a-z0-9-]+)?/i);
-        let name = '', slug = '';
+        let name = "";
+        let slug = "";
         if (qm) {
           name = qm[1].trim();
-          slug = (qm[2] || '').trim();
-        } else name = rest;
+          slug = (qm[2] || "").trim();
+        } else {
+          name = rest;
+        }
         const r = createApp(name, slug);
         return this._out(r.msg);
       }
-      return this._out('Comando não reconhecido. Use: help');
+      return this._out("Comando não reconhecido. Use: help");
     }
   };
 
-  function runDoctor() { if (runDoctor.__running__) return; runDoctor.__running__ = true; try { Logger.write('doctor: start'); setView('logs'); Logger.write('doctor: done (fallback)'); } finally { Logger.write('doctor: end'); runDoctor.__running__ = false; } }
-  try { window.RCF_DOCTOR = window.RCF_DOCTOR || {}; window.RCF_DOCTOR.run = runDoctor; window.RCF_DOCTOR.open = () => runDoctor(); } catch {}
+  function runDoctor() {
+    if (runDoctor.__running__) return;
+    runDoctor.__running__ = true;
+    try {
+      Logger.write("doctor: start");
+      setView("logs");
+      Logger.write("doctor: done (fallback)");
+    } finally {
+      Logger.write("doctor: end");
+      runDoctor.__running__ = false;
+    }
+  }
+
+  try {
+    window.RCF_DOCTOR = window.RCF_DOCTOR || {};
+    window.RCF_DOCTOR.run = runDoctor;
+    window.RCF_DOCTOR.open = () => runDoctor();
+  } catch {}
 
   function bindUI() {
     try {
       const ev = window.RCF_UI_EVENTS;
-      if (ev && typeof ev.bind === 'function') {
+      if (ev && typeof ev.bind === "function") {
         const ok = ev.bind({
           $, $$, bindTap, State, Logger, Storage, setView, openTools, openFabPanel, toggleFabPanel,
           syncFabStatusText, toggleInjectorLogCollapsed, renderAppsList, renderFilesList, openFile,
@@ -741,14 +1107,20 @@
           swRegister, swUnregisterAll, swClearCaches, runV8StabilityCheck, scanOverlays, runMicroTests,
           Pin, saveAll, scanFactoryFiles, generateTargetMap, populateTargetsDropdown, injectorPreview,
           injectorApplySafe, injectorRollback, textContentSafe, slugify, ensureAppFiles, getActiveApp,
-          LoggerWrite:(...a)=>Logger.write(...a), normalizeViewName, syncViewVisibility
+          LoggerWrite: (...a) => Logger.write(...a), normalizeViewName, syncViewVisibility
         });
-        if (ok !== false) { try { Logger.write('events:', 'external ui_events bind ✅'); } catch {} return; }
+        if (ok !== false) {
+          try { Logger.write("events:", "external ui_events bind ✅"); } catch {}
+          return;
+        }
       }
-    } catch (e) { try { Logger.write('events bind err:', e?.message || e); } catch {} }
-    bindTap($('#btnOpenTools'), () => { openTools(true); openFabPanel(false); });
-    bindTap($('#btnCloseTools'), () => openTools(false));
-    bindTap($('#rcfFab'), () => { toggleFabPanel(); syncFabStatusText(); });
+    } catch (e) {
+      try { Logger.write("events bind err:", e?.message || e); } catch {}
+    }
+
+    bindTap($("#btnOpenTools"), () => { openTools(true); openFabPanel(false); });
+    bindTap($("#btnCloseTools"), () => openTools(false));
+    bindTap($("#rcfFab"), () => { toggleFabPanel(); syncFabStatusText(); });
   }
 
   function hydrateUIFromState() {
@@ -761,25 +1133,28 @@
         try { openFile(State.active.file); } catch {}
       }
     } else {
-      const text = $('#activeAppText');
-      if (text) textContentSafe(text, 'Sem app ativo ✅');
+      const text = $("#activeAppText");
+      if (text) textContentSafe(text, "Sem app ativo ✅");
     }
 
-    const normalizedView = normalizeViewName(State.active.view || 'dashboard');
+    const normalizedView = normalizeViewName(State.active.view || "dashboard");
     const changed = State.active.view !== normalizedView;
     State.active.view = normalizedView;
-    if (changed) saveAll('hydrate.normalizeView');
+    if (changed) saveAll("hydrate.normalizeView");
 
     setView(normalizedView, { force: true });
 
     const pin = Pin.get();
-    if (pin) uiMsg('#pinOut', 'PIN definido ✅');
+    if (pin) uiMsg("#pinOut", "PIN definido ✅");
 
     try { populateTargetsDropdown(true); } catch {}
     try { setInjectorLogCollapsed(true); } catch {}
     try { syncFabStatusText(); } catch {}
     try { window.RCF_UI?.refresh?.(); } catch {}
-    try { const dash = getUiDashboardApi(); if (dash && typeof dash.refresh === 'function') dash.refresh({ State, Logger, root: document }); } catch {}
+    try {
+      const dash = getUiDashboardApi();
+      if (dash && typeof dash.refresh === "function") dash.refresh({ State, Logger, root: document });
+    } catch {}
   }
 
   async function safeInit() {
@@ -789,76 +1164,51 @@
 
       await loadUiCoreBridgeOnce();
       await loadUiRuntimeOnce();
-
-      // =====================================================
-      // NOVO: carregar cores de contexto antes da IA/UI pronta
-      // =====================================================
-      await loadFactoryCoreModulesOnce();
-      syncFactoryCoreModules('safeInit.pre-ui');
-
       await loadUiVisualModulesOnce();
 
       renderShell();
-      if ($('#rcfRoot') && !isOfficialShell($('#rcfRoot))) strengthenShellStructure();
+      if ($("#rcfRoot") && !isOfficialShell($("#rcfRoot"))) strengthenShellStructure();
 
       await initUiRuntime({ $, $$, State, Storage, Logger, uiMsg, textContentSafe, bindTap, saveAll, safeSetStatus, setView, normalizeViewName });
 
       installRCFUIRegistry();
       installFactoryIAAliases();
-      syncUiCoreBridge('safeInit.registry');
+      syncUiCoreBridge("safeInit.registry");
 
       try {
         const boot = getUiBootstrapApi();
         if (boot) {
-          if (typeof boot.mount === 'function') boot.mount({ root: $('#rcfRoot'), State, Logger, Storage, setView, normalizeViewName, ui: window.RCF_UI });
-          else if (typeof boot.remountSoft === 'function') boot.remountSoft({ root: $('#rcfRoot'), State, Logger, Storage, setView, normalizeViewName, ui: window.RCF_UI });
+          if (typeof boot.mount === "function") boot.mount({ root: $("#rcfRoot"), State, Logger, Storage, setView, normalizeViewName, ui: window.RCF_UI });
+          else if (typeof boot.remountSoft === "function") boot.remountSoft({ root: $("#rcfRoot"), State, Logger, Storage, setView, normalizeViewName, ui: window.RCF_UI });
         }
-      } catch (e) { Logger.write('ui_bootstrap err:', e?.message || e); }
+      } catch (e) {
+        Logger.write("ui_bootstrap err:", e?.message || e);
+      }
 
       try {
         const views = getUiViewsApi();
         if (views) {
-          if (typeof views.mount === 'function') views.mount({ root: $('#rcfRoot'), State, Logger, setView, normalizeViewName, ui: window.RCF_UI, bindTap });
-          else if (typeof views.remountSoft === 'function') views.remountSoft({ root: $('#rcfRoot'), State, Logger, setView, normalizeViewName, ui: window.RCF_UI, bindTap });
+          if (typeof views.mount === "function") views.mount({ root: $("#rcfRoot"), State, Logger, setView, normalizeViewName, ui: window.RCF_UI, bindTap });
+          else if (typeof views.remountSoft === "function") views.remountSoft({ root: $("#rcfRoot"), State, Logger, setView, normalizeViewName, ui: window.RCF_UI, bindTap });
         }
-      } catch (e) { Logger.write('ui_views err:', e?.message || e); }
-
-      bindUI();
-      hydrateUIFromState();
-      syncUiCoreBridge('safeInit.hydrate');
-
-      // =====================================================
-      // NOVO: consolidar depois da UI também
-      // =====================================================
-      syncFactoryCoreModules('safeInit.post-ui');
-
-      try {
-        window.RCF_ENGINE?.init?.({ State, Storage, Logger });
-        Logger.write('engine:', 'init ok ✅');
-      } catch (e) { Logger.write('engine init err:', e?.message || e); }
-
-      try {
-        window.RCF_FACTORY_STATE?.markBoot?.('ready');
-        window.RCF_FACTORY_STATE?.refreshRuntime?.();
-        window.RCF_MODULE_REGISTRY?.refresh?.();
-        window.RCF_FACTORY_TREE?.refresh?.();
       } catch (e) {
-        Logger.write('factory_core final sync err:', e?.message || e);
+        Logger.write("ui_views err:", e?.message || e);
       }
 
       try { notifyUIReady(); } catch {}
 
-      // reforço leve após UI_READY
-      try {
-        setTimeout(() => {
-          try { syncFactoryCoreModules('after-ui-ready-600ms'); } catch {}
-        }, 600);
-        setTimeout(() => {
-          try { syncFactoryCoreModules('after-ui-ready-1800ms'); } catch {}
-        }, 1800);
-      } catch {}
+      bindUI();
+      hydrateUIFromState();
+      syncUiCoreBridge("safeInit.hydrate");
 
-      Logger.write('RCF V8 init ok — mode:', State.cfg.mode);
+      try {
+        window.RCF_ENGINE?.init?.({ State, Storage, Logger });
+        Logger.write("engine:", "init ok ✅");
+      } catch (e) {
+        Logger.write("engine init err:", e?.message || e);
+      }
+
+      Logger.write("RCF V8 init ok — mode:", State.cfg.mode);
 
       try {
         window.__RCF_BOOTED__ = true;
@@ -869,11 +1219,11 @@
         window[__BOOT_KEY] = st;
       } catch {}
 
-      safeSetStatus('OK ✅');
+      safeSetStatus("OK ✅");
       syncFabStatusText();
     } catch (e) {
       const msg = e?.message || e;
-      Logger.write('FATAL init:', msg);
+      Logger.write("FATAL init:", msg);
       try {
         const st = window[__BOOT_KEY] || {};
         st.booting = false;
@@ -882,12 +1232,12 @@
         window[__BOOT_KEY] = st;
         window.__RCF_BOOTED__ = false;
       } catch {}
-      Stability.showErrorScreen('Falha ao iniciar (safeInit)', String(msg));
+      Stability.showErrorScreen("Falha ao iniciar (safeInit)", String(msg));
     }
   }
 
-    if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", () => {
       safeInit();
     }, { passive: true });
   } else {
