@@ -1,6 +1,6 @@
 /* FILE: /app/js/admin.admin_ai.js
    RControl Factory — Factory AI
-   v4.0 CHAT CORE COPY + CODE BLOCKS
+   v4.1 CHAT CORE COPY + CODE BLOCKS + SNAPSHOT FIX
 
    - mantém visual chat-first aprovado
    - mantém botão + fora da cápsula
@@ -11,18 +11,21 @@
    - renderiza blocos ```code``` de forma legível
    - mantém leitura por voz da resposta
    - evita reaproveitar HTML antigo ao trocar de versão
+   - FIX: prioriza RCF_CONTEXT/RCF_FACTORY_STATE/RCF_MODULE_REGISTRY/RCF_FACTORY_TREE
+   - FIX: evita usar contexto conversável da Factory IA como snapshot principal
+   - FIX: coleta logs com fallback quando logger não usa .items
    - não executa patch automático
 */
 
 (() => {
   "use strict";
 
-  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v40) return;
+  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v41) return;
 
-  const VERSION = "v4.0";
+  const VERSION = "v4.1";
   const BOX_ID = "rcfFactoryAIBox";
   const CHAT_ID = "rcfFactoryAIChat";
-  const STYLE_ID = "rcfFactoryAIStyleV40";
+  const STYLE_ID = "rcfFactoryAIStyleV41";
 
   const SpeechRecognitionCtor =
     window.SpeechRecognition ||
@@ -66,6 +69,11 @@
   function pretty(obj) {
     try { return JSON.stringify(obj, null, 2); }
     catch { return String(obj || ""); }
+  }
+
+  function clone(obj) {
+    try { return JSON.parse(JSON.stringify(obj)); }
+    catch { return obj || {}; }
   }
 
   function isElementVisible(el) {
@@ -162,10 +170,30 @@
   function collectLogs(limit = 30) {
     try {
       const logger = window.RCF_LOGGER;
+
       if (logger && Array.isArray(logger.items)) {
         return logger.items.slice(-limit);
       }
+
+      if (logger && typeof logger.getText === "function") {
+        const text = String(logger.getText() || "").trim();
+        if (text) return text.split("\n").slice(-limit);
+      }
+
+      if (logger && typeof logger.dump === "function") {
+        const text = String(logger.dump() || "").trim();
+        if (text) return text.split("\n").slice(-limit);
+      }
     } catch {}
+
+    try {
+      const raw = localStorage.getItem("rcf:logs");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) return parsed.slice(-limit);
+      }
+    } catch {}
+
     return [];
   }
 
@@ -188,19 +216,158 @@
     };
   }
 
+  function buildRawFromCoreModules() {
+    const factoryState = (() => {
+      try {
+        if (window.RCF_FACTORY_STATE && typeof window.RCF_FACTORY_STATE.getState === "function") {
+          return clone(window.RCF_FACTORY_STATE.getState() || {});
+        }
+      } catch {}
+      return {};
+    })();
+
+    const moduleSummary = (() => {
+      try {
+        if (window.RCF_MODULE_REGISTRY && typeof window.RCF_MODULE_REGISTRY.summary === "function") {
+          return clone(window.RCF_MODULE_REGISTRY.summary() || {});
+        }
+      } catch {}
+      return {};
+    })();
+
+    const treeSummary = (() => {
+      try {
+        if (window.RCF_FACTORY_TREE && typeof window.RCF_FACTORY_TREE.summary === "function") {
+          return clone(window.RCF_FACTORY_TREE.summary() || {});
+        }
+      } catch {}
+      return {};
+    })();
+
+    const treeAllPaths = (() => {
+      try {
+        if (window.RCF_FACTORY_TREE && typeof window.RCF_FACTORY_TREE.getAllPaths === "function") {
+          return clone(window.RCF_FACTORY_TREE.getAllPaths() || []);
+        }
+      } catch {}
+      return [];
+    })();
+
+    const treeGrouped = (() => {
+      try {
+        if (window.RCF_FACTORY_TREE && typeof window.RCF_FACTORY_TREE.getTree === "function") {
+          return clone(window.RCF_FACTORY_TREE.getTree() || {});
+        }
+      } catch {}
+      return {};
+    })();
+
+    const doctorReport = (() => {
+      try {
+        if (window.RCF_DOCTOR_SCAN?.lastReport) return clone(window.RCF_DOCTOR_SCAN.lastReport);
+      } catch {}
+      return null;
+    })();
+
+    return {
+      factory: {
+        version:
+          factoryState.factoryVersion ||
+          window.RCF_VERSION ||
+          "unknown",
+        engineVersion: factoryState.engineVersion || "unknown",
+        bootStatus: factoryState.bootStatus || "unknown",
+        bootTime: factoryState.bootTime || null,
+        lastUpdate: factoryState.lastUpdate || null,
+        runtimeVFS: factoryState.runtimeVFS || "unknown",
+        environment: factoryState.environment || "unknown",
+        userAgent: factoryState.userAgent || navigator.userAgent || "",
+        loggerReady: !!factoryState.loggerReady || !!moduleSummary.logger || !!window.RCF_LOGGER,
+        doctorReady: !!factoryState.doctorReady || !!moduleSummary.doctor || !!window.RCF_DOCTOR_SCAN,
+        modules: clone(factoryState.modules || {}),
+        flags: {
+          hasLogger: !!window.RCF_LOGGER,
+          hasDoctor: !!window.RCF_DOCTOR_SCAN,
+          hasGitHub: !!window.RCF_GH_SYNC,
+          hasVault: !!window.RCF_ZIP_VAULT,
+          hasBridge: !!window.RCF_AGENT_ZIP_BRIDGE,
+          hasAdminAI: !!window.RCF_ADMIN_AI,
+          hasFactoryState: !!window.RCF_FACTORY_STATE,
+          hasModuleRegistry: !!window.RCF_MODULE_REGISTRY,
+          hasContextEngine: !!window.RCF_CONTEXT,
+          hasFactoryTree: !!window.RCF_FACTORY_TREE,
+          hasFactoryAI: true
+        }
+      },
+      doctor: {
+        ready: !!window.RCF_DOCTOR_SCAN,
+        version: window.RCF_DOCTOR_SCAN?.version || "unknown",
+        lastRun: factoryState.doctorLastRun || doctorReport || null
+      },
+      modules: {
+        version: moduleSummary.version || "unknown",
+        total: Number(moduleSummary.total || 0),
+        active: Array.isArray(moduleSummary.active) ? clone(moduleSummary.active) : [],
+        logger: !!moduleSummary.logger,
+        doctor: !!moduleSummary.doctor,
+        github: !!moduleSummary.github,
+        vault: !!moduleSummary.vault,
+        bridge: !!moduleSummary.bridge,
+        adminAI: !!moduleSummary.adminAI,
+        factoryState: !!moduleSummary.factoryState,
+        moduleRegistry: !!moduleSummary.moduleRegistry,
+        contextEngine: !!moduleSummary.contextEngine,
+        factoryTree: !!moduleSummary.factoryTree,
+        modules: clone(moduleSummary.modules || {})
+      },
+      tree: {
+        summary: clone(treeSummary.counts || treeSummary.summary || {}),
+        pathsCount: Array.isArray(treeAllPaths) ? treeAllPaths.length : 0,
+        samples: Array.isArray(treeAllPaths) ? treeAllPaths.slice(0, 20) : [],
+        grouped: clone(treeGrouped || {})
+      },
+      environment: {
+        href: location.href,
+        userAgent: navigator.userAgent || "",
+        platform: navigator.platform || "",
+        language: navigator.language || "",
+        ts: new Date().toISOString()
+      }
+    };
+  }
+
   function getSnapshotRaw() {
     try {
-      if (window.RCF_FACTORY_IA && typeof window.RCF_FACTORY_IA.getContext === "function") {
-        return { factoryAI: window.RCF_FACTORY_IA.getContext() };
+      if (window.RCF_CONTEXT && typeof window.RCF_CONTEXT.getSnapshot === "function") {
+        const ctx = window.RCF_CONTEXT.getSnapshot();
+        if (ctx && typeof ctx === "object" && (ctx.factory || ctx.modules || ctx.tree)) {
+          return ctx;
+        }
       }
     } catch {}
 
     try {
-      if (window.RCF_CONTEXT && typeof window.RCF_CONTEXT.getSnapshot === "function") {
-        return window.RCF_CONTEXT.getSnapshot();
-      }
       if (window.RCF_CONTEXT && typeof window.RCF_CONTEXT.getContext === "function") {
-        return window.RCF_CONTEXT.getContext();
+        const ctx = window.RCF_CONTEXT.getContext();
+        if (ctx && typeof ctx === "object" && (ctx.factory || ctx.modules || ctx.tree)) {
+          return ctx;
+        }
+      }
+    } catch {}
+
+    try {
+      const raw = buildRawFromCoreModules();
+      if (raw && (raw.factory || raw.modules || raw.tree)) {
+        return raw;
+      }
+    } catch {}
+
+    try {
+      if (window.RCF_FACTORY_IA && typeof window.RCF_FACTORY_IA.getContext === "function") {
+        const ctx = window.RCF_FACTORY_IA.getContext();
+        if (ctx && typeof ctx === "object" && (ctx.factory || ctx.modules || ctx.tree)) {
+          return ctx;
+        }
       }
     } catch {}
 
@@ -219,7 +386,9 @@
     return {
       factory: {
         version: factory.version || "unknown",
+        engineVersion: factory.engineVersion || "unknown",
         bootStatus: factory.bootStatus || "unknown",
+        bootTime: factory.bootTime || null,
         runtimeVFS: factory.runtimeVFS || "unknown",
         loggerReady: !!factory.loggerReady,
         doctorReady: !!factory.doctorReady,
@@ -246,13 +415,16 @@
           factoryAI: true,
           factoryState: !!modules.factoryState,
           moduleRegistry: !!modules.moduleRegistry,
-          contextEngine: !!modules.contextEngine
-        }
+          contextEngine: !!modules.contextEngine,
+          factoryTree: !!modules.factoryTree
+        },
+        total: Number(modules.total || 0)
       },
       tree: {
         pathsCount: Number(tree.pathsCount || 0),
         summary: tree.summary || {},
-        samples: Array.isArray(tree.samples) ? tree.samples.slice(0, 12) : []
+        samples: Array.isArray(tree.samples) ? tree.samples.slice(0, 12) : [],
+        grouped: tree.grouped || {}
       },
       flags: {
         hasLogger: !!factory.flags?.hasLogger,
@@ -262,11 +434,15 @@
         hasFactoryState: !!factory.flags?.hasFactoryState,
         hasModuleRegistry: !!factory.flags?.hasModuleRegistry,
         hasContextEngine: !!factory.flags?.hasContextEngine,
-        hasFactoryTree: !!factory.flags?.hasFactoryTree
+        hasFactoryTree: !!factory.flags?.hasFactoryTree,
+        hasAdminAI: !!factory.flags?.hasAdminAI,
+        hasVault: !!factory.flags?.hasVault,
+        hasBridge: !!factory.flags?.hasBridge
       },
       environment: {
         platform: environment.platform || navigator.platform || "",
         language: environment.language || navigator.language || "",
+        href: environment.href || location.href || "",
         ts: environment.ts || new Date().toISOString()
       }
     };
@@ -1653,8 +1829,8 @@
     renderAttachments();
     setVoiceBtnState();
 
-    if (!document.__rcfFactoryAIOutsideClickV40) {
-      document.__rcfFactoryAIOutsideClickV40 = true;
+    if (!document.__rcfFactoryAIOutsideClickV41) {
+      document.__rcfFactoryAIOutsideClickV41 = true;
       document.addEventListener("click", (ev) => {
         try {
           const wrap = document.getElementById("rcfFactoryAIAttachWrap");
@@ -1834,7 +2010,7 @@
   }
 
   window.RCF_FACTORY_AI = {
-    __v40: true,
+    __v41: true,
     version: VERSION,
     mount,
     clearChat,
@@ -1853,7 +2029,7 @@
   };
 
   window.RCF_ADMIN_AI = Object.assign(window.RCF_ADMIN_AI || {}, {
-    __v40_bridge: true,
+    __v41_bridge: true,
     version: VERSION,
     mount,
     clearChat,
