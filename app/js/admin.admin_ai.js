@@ -1,36 +1,28 @@
 /* FILE: /app/js/admin.admin_ai.js
    RControl Factory — Factory AI
-   v3.9 CHAT CORE AUDIO READY
+   v4.0 CHAT CORE COPY + CODE BLOCKS
 
-   - Factory AI em modo chat-first real
-   - nome oficial padronizado: Factory AI
-   - mount preferencial no slot oficial factoryai.tools
-   - fallback seguro para admin apenas se necessário
-   - remove duplicação visual pesada da tela
-   - visual clean mobile-first
-   - composer refinado no estilo de chat moderno
-   - botão "+" fora da cápsula do input
-   - botão enviar compacto
-   - textarea com auto-grow leve
-   - suporte visual a anexos
-   - leitura em voz (speechSynthesis) pronta
-   - captura por voz preparada com fallback seguro
-   - inferência automática de ação por linguagem natural
-   - usa actions compatíveis com backend atual
-   - tenta /api/factory-ai com fallback para /api/admin-ai
-   - contexto técnico discreto em details
+   - mantém visual chat-first aprovado
+   - mantém botão + fora da cápsula
+   - mantém anexos e voz local com fallback seguro
+   - melhora renderização das respostas
+   - adiciona copiar resposta
+   - adiciona copiar bloco de código
+   - renderiza blocos ```code``` de forma legível
+   - mantém leitura por voz da resposta
+   - evita reaproveitar HTML antigo ao trocar de versão
    - não executa patch automático
 */
 
 (() => {
   "use strict";
 
-  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v39) return;
+  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v40) return;
 
-  const VERSION = "v3.9";
+  const VERSION = "v4.0";
   const BOX_ID = "rcfFactoryAIBox";
   const CHAT_ID = "rcfFactoryAIChat";
-  const STYLE_ID = "rcfFactoryAIStyleV39";
+  const STYLE_ID = "rcfFactoryAIStyleV40";
 
   const SpeechRecognitionCtor =
     window.SpeechRecognition ||
@@ -427,7 +419,7 @@
 }
 
 #${BOX_ID} .rcfAiBubble{
-  width:min(100%, 690px);
+  width:min(100%, 720px);
   padding:14px 16px;
   border-radius:20px;
   border:1px solid rgba(31,41,55,.08);
@@ -450,11 +442,61 @@
 }
 
 #${BOX_ID} .rcfAiMsgText{
-  white-space:pre-wrap;
-  word-break:break-word;
   line-height:1.54;
   color:#202d4d;
   font-size:15px;
+}
+
+#${BOX_ID} .rcfAiParagraph{
+  white-space:pre-wrap;
+  word-break:break-word;
+  margin:0 0 10px 0;
+}
+
+#${BOX_ID} .rcfAiParagraph:last-child{
+  margin-bottom:0;
+}
+
+#${BOX_ID} .rcfAiCodeWrap{
+  margin:10px 0;
+  border:1px solid rgba(31,41,55,.08);
+  border-radius:16px;
+  overflow:hidden;
+  background:#0f172a;
+}
+
+#${BOX_ID} .rcfAiCodeHead{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  padding:8px 10px;
+  background:rgba(255,255,255,.06);
+  color:#dbe7ff;
+  font-size:12px;
+  font-weight:800;
+}
+
+#${BOX_ID} .rcfAiCodeBtn{
+  min-width:70px;
+  height:28px;
+  border-radius:10px;
+  border:1px solid rgba(255,255,255,.12);
+  background:rgba(255,255,255,.08);
+  color:#eef4ff;
+  font-size:12px;
+  font-weight:800;
+  cursor:pointer;
+}
+
+#${BOX_ID} .rcfAiCodePre{
+  margin:0;
+  padding:12px;
+  overflow:auto;
+  font-size:12px;
+  line-height:1.5;
+  color:#eef4ff;
+  white-space:pre;
 }
 
 #${BOX_ID} .rcfAiMsgTime{
@@ -468,6 +510,7 @@
   justify-content:flex-end;
   gap:8px;
   margin-top:8px;
+  flex-wrap:wrap;
 }
 
 #${BOX_ID} .rcfAiMiniBtn{
@@ -482,6 +525,8 @@
   display:inline-flex;
   align-items:center;
   justify-content:center;
+  padding:0 10px;
+  font-weight:800;
 }
 
 #${BOX_ID} .rcfAiComposer{
@@ -726,6 +771,128 @@
     document.head.appendChild(st);
   }
 
+  function parseMessageToBlocks(text) {
+    const src = String(text || "");
+    const regex = /```([\w-]*)\n?([\s\S]*?)```/g;
+    const blocks = [];
+    let lastIndex = 0;
+    let match;
+
+    while ((match = regex.exec(src))) {
+      const before = src.slice(lastIndex, match.index);
+      if (before) {
+        blocks.push({ type: "text", value: before });
+      }
+
+      blocks.push({
+        type: "code",
+        lang: String(match[1] || "").trim(),
+        value: String(match[2] || "")
+      });
+
+      lastIndex = regex.lastIndex;
+    }
+
+    const tail = src.slice(lastIndex);
+    if (tail) {
+      blocks.push({ type: "text", value: tail });
+    }
+
+    if (!blocks.length) {
+      blocks.push({ type: "text", value: src });
+    }
+
+    return blocks;
+  }
+
+  function renderTextBlock(text) {
+    const parts = String(text || "").split(/\n{2,}/);
+    return parts.map(part => {
+      return `<p class="rcfAiParagraph">${esc(part)}</p>`;
+    }).join("");
+  }
+
+  function renderCodeBlock(code, lang, idx, codeIdx) {
+    const safeLang = esc(lang || "code");
+    const safeCode = esc(code || "");
+    const codeId = `rcfFactoryAICode_${idx}_${codeIdx}`;
+    return `
+      <div class="rcfAiCodeWrap">
+        <div class="rcfAiCodeHead">
+          <span>${safeLang || "code"}</span>
+          <button class="rcfAiCodeBtn" type="button" data-rcf-copy-code="${codeId}">Copiar</button>
+        </div>
+        <pre class="rcfAiCodePre" id="${codeId}"><code>${safeCode}</code></pre>
+      </div>
+    `;
+  }
+
+  function renderMessageText(text, idx) {
+    const blocks = parseMessageToBlocks(text);
+    let codeIdx = 0;
+
+    return blocks.map((block) => {
+      if (block.type === "code") {
+        const html = renderCodeBlock(block.value, block.lang, idx, codeIdx);
+        codeIdx += 1;
+        return html;
+      }
+      return renderTextBlock(block.value);
+    }).join("");
+  }
+
+  async function copyText(text) {
+    const value = String(text || "");
+    try {
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+        await navigator.clipboard.writeText(value);
+        setComposerStatus("copiado");
+        return true;
+      }
+    } catch {}
+
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = value;
+      ta.setAttribute("readonly", "readonly");
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      ta.remove();
+      setComposerStatus("copiado");
+      return true;
+    } catch {}
+
+    setComposerStatus("falha ao copiar");
+    return false;
+  }
+
+  function bindCopyButtons(root) {
+    qsa("[data-rcf-copy-msg]", root).forEach((btn) => {
+      if (btn.__boundCopyMsg) return;
+      btn.__boundCopyMsg = true;
+      btn.addEventListener("click", async () => {
+        const idx = Number(btn.getAttribute("data-rcf-copy-msg"));
+        const item = Array.isArray(STATE.history) ? STATE.history[idx] : null;
+        if (item && item.text) await copyText(item.text);
+      });
+    });
+
+    qsa("[data-rcf-copy-code]", root).forEach((btn) => {
+      if (btn.__boundCopyCode) return;
+      btn.__boundCopyCode = true;
+      btn.addEventListener("click", async () => {
+        const targetId = btn.getAttribute("data-rcf-copy-code");
+        const el = targetId ? document.getElementById(targetId) : null;
+        const txt = el ? String(el.textContent || "") : "";
+        await copyText(txt);
+      });
+    });
+  }
+
   function renderChat() {
     const box = document.getElementById(CHAT_ID);
     if (!box) return;
@@ -742,15 +909,17 @@
     box.innerHTML = STATE.history.map((item, idx) => {
       const isUser = item.role === "user";
       const canSpeak = !isUser;
+      const canCopy = !isUser;
       return `
         <div class="rcfAiMsgRow ${isUser ? "user" : "assistant"}">
           <div class="rcfAiBubble ${isUser ? "userBubble" : ""}">
             <div class="rcfAiMsgLabel">${isUser ? "Você" : "Factory AI"}</div>
-            <div class="rcfAiMsgText">${esc(item.text)}</div>
+            <div class="rcfAiMsgText">${renderMessageText(item.text, idx)}</div>
             <div class="rcfAiMsgTime">${esc(item.ts)}</div>
-            ${canSpeak ? `
+            ${!isUser ? `
               <div class="rcfAiMsgTools">
-                <button class="rcfAiMiniBtn" type="button" data-rcf-speak-idx="${idx}" title="Ler resposta">🔊</button>
+                ${canCopy ? `<button class="rcfAiMiniBtn" type="button" data-rcf-copy-msg="${idx}" title="Copiar resposta">Copiar</button>` : ``}
+                ${canSpeak ? `<button class="rcfAiMiniBtn" type="button" data-rcf-speak-idx="${idx}" title="Ler resposta">🔊</button>` : ``}
               </div>
             ` : ``}
           </div>
@@ -767,6 +936,8 @@
         if (item && item.text) speakText(item.text);
       }, { passive: true });
     });
+
+    bindCopyButtons(box);
 
     try { box.scrollTop = box.scrollHeight; } catch {}
   }
@@ -841,7 +1012,9 @@
       p.includes("foto") ||
       p.includes("arquivo") ||
       p.includes("vídeo") ||
-      p.includes("video")
+      p.includes("video") ||
+      p.includes("áudio") ||
+      p.includes("audio")
     ) return "zip-readiness";
 
     if (
@@ -1224,6 +1397,7 @@
       utter.pitch = 1;
       utter.onend = () => {
         STATE.currentUtterance = null;
+        setComposerStatus("aguardando");
       };
       STATE.currentUtterance = utter;
       window.speechSynthesis.speak(utter);
@@ -1479,8 +1653,8 @@
     renderAttachments();
     setVoiceBtnState();
 
-    if (!document.__rcfFactoryAIOutsideClickV39) {
-      document.__rcfFactoryAIOutsideClickV39 = true;
+    if (!document.__rcfFactoryAIOutsideClickV40) {
+      document.__rcfFactoryAIOutsideClickV40 = true;
       document.addEventListener("click", (ev) => {
         try {
           const wrap = document.getElementById("rcfFactoryAIAttachWrap");
@@ -1594,10 +1768,18 @@
       box.id = BOX_ID;
       box.className = "card";
       box.setAttribute("data-rcf-factory-ai", "1");
+      box.setAttribute("data-rcf-build", VERSION);
       box.innerHTML = buildBoxHtml();
       primarySlot.appendChild(box);
-    } else if (box.parentNode !== primarySlot) {
-      primarySlot.appendChild(box);
+    } else {
+      const currentBuild = String(box.getAttribute("data-rcf-build") || "");
+      if (currentBuild !== VERSION) {
+        box.setAttribute("data-rcf-build", VERSION);
+        box.innerHTML = buildBoxHtml();
+      }
+      if (box.parentNode !== primarySlot) {
+        primarySlot.appendChild(box);
+      }
     }
 
     bindBox();
@@ -1652,7 +1834,7 @@
   }
 
   window.RCF_FACTORY_AI = {
-    __v39: true,
+    __v40: true,
     version: VERSION,
     mount,
     clearChat,
@@ -1671,7 +1853,7 @@
   };
 
   window.RCF_ADMIN_AI = Object.assign(window.RCF_ADMIN_AI || {}, {
-    __v39_bridge: true,
+    __v40_bridge: true,
     version: VERSION,
     mount,
     clearChat,
