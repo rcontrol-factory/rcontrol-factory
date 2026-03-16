@@ -1,15 +1,16 @@
 /* FILE: app/app.js
-   RControl Factory - /app/app.js - V8.0.7 LEAN ORCHESTRATOR
+   RControl Factory - /app/app.js - V8.0.8 LEAN ORCHESTRATOR
    - Arquivo completo (1 peca) pra copiar/colar
    - Objetivo: app.js como ORQUESTRADOR LEVE REAL
    - Mantém: boot lock, state, storage, logger, watchdog, diagnostics, SW, VFS, injector safe, agent CLI
    - Prioriza: ui_shell / ui_runtime / ui_state / ui_views / ui_router / ui_events / módulos UI
    - Fallback: ultra mínimo de sobrevivência
+   - PATCH: Doctor real priorizado (RCF_DOCTOR_SCAN / RCF_DOCTOR)
 */
 (() => {
   "use strict";
 
-  try { console.info("[RCF] /app/app.js BUILD=V8.0.7_LEAN_ORCHESTRATOR"); } catch {}
+  try { console.info("[RCF] /app/app.js BUILD=V8.0.8_LEAN_ORCHESTRATOR"); } catch {}
 
   // =========================================================
   // GLOBAL LOG ALIAS
@@ -39,7 +40,7 @@
     if (st.booted === true) return;
     if (st.booting === true && (now - (st.ts || 0)) < 8000) return;
 
-    window[__BOOT_KEY] = { booting: true, booted: false, ts: now, ver: "v8.0.7" };
+    window[__BOOT_KEY] = { booting: true, booted: false, ts: now, ver: "v8.0.8" };
   } catch {
     if (window.__RCF_BOOTED__) return;
     window.__RCF_BOOTED__ = true;
@@ -1077,23 +1078,103 @@
     }
   };
 
-  function runDoctor() {
-    if (runDoctor.__running__) return;
+  async function runDoctor() {
+    if (runDoctor.__running__) return { ok: false, msg: "doctor busy" };
     runDoctor.__running__ = true;
+
     try {
-      Logger.write("doctor: start");
+      Logger.write("doctor:", "start");
+
+      const doctorScan = window.RCF_DOCTOR_SCAN || null;
+      const doctorReal =
+        (!doctorScan && window.RCF_DOCTOR && window.RCF_DOCTOR !== DoctorBridge && typeof window.RCF_DOCTOR.open === "function")
+          ? window.RCF_DOCTOR
+          : null;
+
+      if (doctorScan && typeof doctorScan.open === "function") {
+        try {
+          await doctorScan.open();
+          Logger.write("doctor:", "RCF_DOCTOR_SCAN.open ✅");
+          safeSetStatus("Doctor ✅");
+          syncFabStatusText();
+          return { ok: true, mode: "doctor_scan.open" };
+        } catch (e) {
+          Logger.write("doctor open err:", e?.message || e);
+        }
+      }
+
+      if (doctorScan && typeof doctorScan.scan === "function") {
+        try {
+          const report = await doctorScan.scan();
+          const txt = String(report || "Doctor sem relatório.");
+          uiMsg("#diagOut", txt);
+          uiMsg("#logsOut", txt);
+          Logger.write("doctor:", "RCF_DOCTOR_SCAN.scan ✅");
+          safeSetStatus("Doctor ✅");
+          syncFabStatusText();
+
+          try {
+            setView("diagnostics");
+          } catch {}
+
+          return { ok: true, mode: "doctor_scan.scan", report: txt };
+        } catch (e) {
+          Logger.write("doctor scan err:", e?.message || e);
+        }
+      }
+
+      if (doctorReal && typeof doctorReal.open === "function") {
+        try {
+          await doctorReal.open();
+          Logger.write("doctor:", "RCF_DOCTOR.open ✅");
+          safeSetStatus("Doctor ✅");
+          syncFabStatusText();
+          return { ok: true, mode: "doctor.open" };
+        } catch (e) {
+          Logger.write("doctor real open err:", e?.message || e);
+        }
+      }
+
+      if (doctorReal && typeof doctorReal.run === "function") {
+        try {
+          const rep = await doctorReal.run();
+          Logger.write("doctor:", "RCF_DOCTOR.run ✅");
+          safeSetStatus("Doctor ✅");
+          syncFabStatusText();
+          return { ok: true, mode: "doctor.run", result: rep };
+        } catch (e) {
+          Logger.write("doctor real run err:", e?.message || e);
+        }
+      }
+
+      Logger.write("doctor:", "fallback");
       setView("logs");
-      Logger.write("doctor: done (fallback)");
+      uiMsg("#logsOut", "Doctor real não disponível. Fallback de logs aberto.");
+      safeSetStatus("Doctor fallback");
+      syncFabStatusText();
+      return { ok: true, mode: "fallback" };
     } finally {
-      Logger.write("doctor: end");
+      Logger.write("doctor:", "end");
       runDoctor.__running__ = false;
     }
   }
 
+  const DoctorBridge = {
+    version: "bridge.v1",
+    run: () => runDoctor(),
+    open: () => runDoctor()
+  };
+
   try {
-    window.RCF_DOCTOR = window.RCF_DOCTOR || {};
-    window.RCF_DOCTOR.run = runDoctor;
-    window.RCF_DOCTOR.open = () => runDoctor();
+    const existingDoctor = window.RCF_DOCTOR;
+    if (!existingDoctor || existingDoctor === DoctorBridge || typeof existingDoctor.open !== "function") {
+      window.RCF_DOCTOR = DoctorBridge;
+    } else {
+      window.RCF_DOCTOR.run = () => runDoctor();
+      if (typeof window.RCF_DOCTOR.open !== "function") {
+        window.RCF_DOCTOR.open = () => runDoctor();
+      }
+    }
   } catch {}
 
   function bindUI() {
