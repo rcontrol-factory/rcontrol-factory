@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/context_engine.js
    RControl Factory — Context Engine
-   v1.6 SNAPSHOT CONSOLIDATED / PATCH MÍNIMO
+   v1.6.1 SNAPSHOT CONSOLIDATED / PATCH MÍNIMO
 
    Objetivo:
    - consolidar snapshot estrutural mais confiável
@@ -8,15 +8,16 @@
    - expor contexto mais útil para Factory AI decidir próximo arquivo
    - incluir bloco de injector/admin sem criar dependência rígida
    - reduzir respostas genéricas da Admin AI / Factory AI
+   - separar melhor presença / prontidão / ativação
    - funcionar como script clássico
 */
 
 (function (global) {
   "use strict";
 
-  if (global.RCF_CONTEXT && global.RCF_CONTEXT.__v16) return;
+  if (global.RCF_CONTEXT && global.RCF_CONTEXT.__v161) return;
 
-  var VERSION = "v1.6";
+  var VERSION = "v1.6.1";
 
   function safe(fn, fallback) {
     try {
@@ -59,6 +60,26 @@
       if (obj[k]) out[k] = obj[k];
     });
     return out;
+  }
+
+  function firstDefined() {
+    for (var i = 0; i < arguments.length; i++) {
+      var v = arguments[i];
+      if (v !== undefined && v !== null) return v;
+    }
+    return undefined;
+  }
+
+  function boolFrom(v) {
+    return typeof v === "boolean" ? v : false;
+  }
+
+  function numberOrNull(v) {
+    return (typeof v === "number" && isFinite(v)) ? v : null;
+  }
+
+  function safeObj(v) {
+    return (v && typeof v === "object") ? v : {};
   }
 
   function getFactoryState() {
@@ -288,7 +309,12 @@
         grouped.ui.push(path);
         grouped.js.push(path);
         grouped.app.push(path);
-      } else if (path.indexOf("/app/js/admin/") === 0 || path.indexOf("app/js/admin/") === 0) {
+      } else if (
+        path.indexOf("/app/js/admin/") === 0 ||
+        path.indexOf("app/js/admin/") === 0 ||
+        path.indexOf("/app/js/admin.") === 0 ||
+        path.indexOf("app/js/admin.") === 0
+      ) {
         grouped.admin.push(path);
         grouped.js.push(path);
         grouped.app.push(path);
@@ -316,6 +342,140 @@
     return grouped;
   }
 
+  function buildModuleSemantic(name, info) {
+    var presence = !!(info && info.presence);
+    var ready = !!(info && info.ready);
+    var active = !!(info && info.active);
+    var extra = (info && info.extra && typeof info.extra === "object") ? info.extra : {};
+
+    var interpretation = "dado ausente";
+
+    if (presence && ready && active) {
+      interpretation = "presente, pronto e ativo";
+    } else if (presence && ready && !active) {
+      interpretation = "presente e pronto, mas não marcado como ativo no snapshot atual";
+    } else if (presence && !ready && active) {
+      interpretation = "presente e marcado como ativo, mas sem prontidão clara no snapshot";
+    } else if (presence && !ready && !active) {
+      interpretation = "presente, mas sem prontidão clara e sem ativação confirmada no snapshot";
+    } else if (!presence && ready) {
+      interpretation = "possível inconsistência do snapshot: pronto sem presença explícita";
+    } else if (!presence && active) {
+      interpretation = "possível inconsistência do snapshot: ativo sem presença explícita";
+    } else if (!presence && !ready && !active) {
+      interpretation = "sem evidência de presença, prontidão ou ativação";
+    }
+
+    return {
+      name: name,
+      presence: presence,
+      ready: ready,
+      active: active,
+      interpretation: interpretation,
+      extra: clone(extra || {})
+    };
+  }
+
+  function buildSemantics(snapshot) {
+    var factory = safeObj(snapshot && snapshot.factory);
+    var flags = safeObj(factory.flags);
+    var modules = safeObj(snapshot && snapshot.modules);
+    var logger = safeObj(snapshot && snapshot.logger);
+    var doctor = safeObj(snapshot && snapshot.doctor);
+    var github = safeObj(snapshot && snapshot.github);
+    var admin = safeObj(snapshot && snapshot.admin);
+    var factoryAI = safeObj(snapshot && snapshot.factoryAI);
+    var injector = safeObj(snapshot && snapshot.injector);
+    var activeList = asArray(modules.active);
+
+    var moduleMap = safeObj(modules.modules);
+
+    return {
+      note: "presence=detectado no ambiente/flags; ready=API disponível no runtime; active=marcado como ativo no status/registry atual. Presence, ready e active não são sinônimos.",
+      activeList: clone(activeList),
+      modules: {
+        logger: buildModuleSemantic("logger", {
+          presence: !!flags.hasLogger,
+          ready: !!firstDefined(factory.loggerReady, logger.ready),
+          active: !!firstDefined(modules.logger, moduleMap.logger),
+          extra: {
+            itemsCount: numberOrNull(logger.itemsCount)
+          }
+        }),
+        doctor: buildModuleSemantic("doctor", {
+          presence: !!flags.hasDoctor,
+          ready: !!firstDefined(factory.doctorReady, doctor.ready),
+          active: !!firstDefined(modules.doctor, moduleMap.doctor),
+          extra: {
+            lastRun: doctor.lastRun || null
+          }
+        }),
+        github: buildModuleSemantic("github", {
+          presence: !!flags.hasGitHub,
+          ready: !!github.ready,
+          active: !!firstDefined(modules.github, moduleMap.github)
+        }),
+        vault: buildModuleSemantic("vault", {
+          presence: !!flags.hasVault,
+          ready: !!firstDefined(moduleMap.vaultReady, false),
+          active: !!firstDefined(modules.vault, moduleMap.vault)
+        }),
+        bridge: buildModuleSemantic("bridge", {
+          presence: !!flags.hasBridge,
+          ready: !!firstDefined(moduleMap.bridgeReady, false),
+          active: !!firstDefined(modules.bridge, moduleMap.bridge)
+        }),
+        adminAI: buildModuleSemantic("adminAI", {
+          presence: !!flags.hasAdminAI,
+          ready: !!firstDefined(admin.ready, admin.mounted),
+          active: !!firstDefined(modules.adminAI, moduleMap.adminAI)
+        }),
+        factoryAI: buildModuleSemantic("factoryAI", {
+          presence: !!flags.hasFactoryAI,
+          ready: !!firstDefined(factoryAI.ready, factoryAI.mounted),
+          active: !!firstDefined(modules.factoryAI, moduleMap.factoryAI, true),
+          extra: {
+            historyCount: numberOrNull(factoryAI.historyCount),
+            lastEndpoint: factoryAI.lastEndpoint || ""
+          }
+        }),
+        factoryState: buildModuleSemantic("factoryState", {
+          presence: !!flags.hasFactoryState,
+          ready: !!firstDefined(moduleMap.factoryStateReady, false),
+          active: !!firstDefined(modules.factoryState, moduleMap.factoryState)
+        }),
+        moduleRegistry: buildModuleSemantic("moduleRegistry", {
+          presence: !!flags.hasModuleRegistry,
+          ready: !!firstDefined(moduleMap.moduleRegistryReady, false),
+          active: !!firstDefined(modules.moduleRegistry, moduleMap.moduleRegistry)
+        }),
+        contextEngine: buildModuleSemantic("contextEngine", {
+          presence: !!flags.hasContextEngine,
+          ready: true,
+          active: true
+        }),
+        factoryTree: buildModuleSemantic("factoryTree", {
+          presence: !!flags.hasFactoryTree,
+          ready: numberOrNull(snapshot && snapshot.tree && snapshot.tree.pathsCount) !== null,
+          active: !!firstDefined(modules.factoryTree, moduleMap.factoryTree),
+          extra: {
+            pathsCount: numberOrNull(snapshot && snapshot.tree && snapshot.tree.pathsCount)
+          }
+        }),
+        diagnostics: buildModuleSemantic("diagnostics", {
+          presence: !!flags.hasDiagnostics,
+          ready: !!firstDefined(moduleMap.diagnosticsReady, false),
+          active: !!firstDefined(modules.diagnostics, moduleMap.diagnostics)
+        }),
+        injector: buildModuleSemantic("injector", {
+          presence: !!flags.hasInjectorSafe,
+          ready: !!injector.ready,
+          active: !!firstDefined(moduleMap.injector, injector.ready)
+        })
+      }
+    };
+  }
+
   function buildCandidateFiles(snapshot) {
     var out = [];
     var push = function (v) {
@@ -337,7 +497,7 @@
     push("/app/js/core/ui_shell.js");
     push("/app/js/ui/ui_bootstrap.js");
     push("/app/js/ui/ui_views.js");
-    push("/app/js/admin/admin.admin_ai.js");
+    push("/app/js/admin.admin_ai.js");
     push("/functions/api/admin-ai.js");
 
     if (active.indexOf("factoryState") >= 0 || active.indexOf("factory_state") >= 0) {
@@ -405,10 +565,12 @@
       doctorReady: !!fs.doctorReady || !!mods.doctor,
       modules: clone(fs.modules || {}),
       activeView:
+        fs.activeView ||
         safe(function () { return fs.active.view; }, "") ||
         safe(function () { return appState.active.view; }, "") ||
         "",
       activeAppSlug:
+        fs.activeAppSlug ||
         safe(function () { return fs.active.appSlug; }, "") ||
         safe(function () { return appState.active.appSlug; }, "") ||
         "",
@@ -471,6 +633,7 @@
     };
 
     snapshot.flagsTruthy = pickTruthy(snapshot.factory.flags || {});
+    snapshot.semantics = buildSemantics(snapshot);
     snapshot.candidateFiles = buildCandidateFiles(snapshot);
 
     return snapshot;
@@ -518,6 +681,7 @@
     __v14: true,
     __v15: true,
     __v16: true,
+    __v161: true,
     version: VERSION,
     getContext: getContext,
     getSnapshot: getSnapshot,
