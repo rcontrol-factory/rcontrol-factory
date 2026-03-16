@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/factory_state.js
    RControl Factory — Factory State Engine
-   v1.4 STABLE / PATCH MÍNIMO
+   v1.4.1 STABLE / PATCH MÍNIMO
 
    Objetivo:
    - registrar estado operacional mínimo da Factory
@@ -15,10 +15,10 @@
 ;(function (global) {
   "use strict";
 
-  if (global.RCF_FACTORY_STATE && global.RCF_FACTORY_STATE.__v14) return;
+  if (global.RCF_FACTORY_STATE && global.RCF_FACTORY_STATE.__v141) return;
 
   var STORAGE_KEY = "rcf:factory_state";
-  var VERSION = "v1.4";
+  var VERSION = "v1.4.1";
 
   var state = {
     factoryVersion: "1.0.0",
@@ -98,12 +98,12 @@
     };
 
     try { out.logger = !!global.RCF_LOGGER; } catch (_) {}
-    try { out.doctor = !!global.RCF_DOCTOR_SCAN; } catch (_) {}
+    try { out.doctor = !!global.RCF_DOCTOR_SCAN || !!global.RCF_DOCTOR; } catch (_) {}
     try { out.github = !!global.RCF_GH_SYNC; } catch (_) {}
     try { out.vault = !!global.RCF_ZIP_VAULT; } catch (_) {}
     try { out.bridge = !!global.RCF_AGENT_ZIP_BRIDGE; } catch (_) {}
     try { out.adminAI = !!global.RCF_ADMIN_AI; } catch (_) {}
-    try { out.factoryAI = !!global.RCF_FACTORY_AI; } catch (_) {}
+    try { out.factoryAI = !!global.RCF_FACTORY_AI || !!global.RCF_FACTORY_IA; } catch (_) {}
     try { out.moduleRegistry = !!global.RCF_MODULE_REGISTRY; } catch (_) {}
     try { out.contextEngine = !!global.RCF_CONTEXT; } catch (_) {}
     try { out.factoryTree = !!global.RCF_FACTORY_TREE; } catch (_) {}
@@ -239,6 +239,7 @@
 
     state = safeMerge(clone(state), base);
     state = safeMerge(clone(state), initConfig || {});
+    state.modules = state.modules || {};
     state.modules.factoryState = true;
     state.lastUpdate = nowISO();
 
@@ -331,9 +332,12 @@
   }
 
   function markDoctorRun(meta) {
-    state.doctorReady = !!global.RCF_DOCTOR_SCAN;
+    var doctorReady = false;
+    try { doctorReady = !!global.RCF_DOCTOR_SCAN || !!global.RCF_DOCTOR; } catch (_) {}
+
+    state.doctorReady = doctorReady;
     state.modules = state.modules || {};
-    state.modules.doctor = state.doctorReady;
+    state.modules.doctor = doctorReady;
     state.modules.factoryState = true;
     state.doctorLastRun = {
       ts: nowISO(),
@@ -359,6 +363,7 @@
     state.activeAppSlug = activeCtx.activeAppSlug;
     state.modules = safeMerge(clone(state.modules || {}), knownModules);
     state.modules.factoryState = true;
+    state.health = state.health || {};
     state.health.lastRefresh = nowISO();
 
     if (state.bootStatus === "booting" || state.bootStatus === "unknown") {
@@ -409,6 +414,7 @@
     __v12: true,
     __v13: true,
     __v14: true,
+    __v141: true,
     version: VERSION,
     init: init,
     getState: getState,
@@ -432,7 +438,7 @@
     init();
     registerModule("factoryState");
     setLoggerReady(!!global.RCF_LOGGER);
-    setDoctorReady(!!global.RCF_DOCTOR_SCAN);
+    setDoctorReady(!!global.RCF_DOCTOR_SCAN || !!global.RCF_DOCTOR);
     refreshRuntime();
   } catch (_) {}
 
@@ -458,13 +464,15 @@
   } catch (_) {}
 
   try {
-    global.addEventListener("visibilitychange", function () {
-      try {
-        if (!global.document || global.document.visibilityState === "visible") {
-          refreshRuntime();
-        }
-      } catch (_) {}
-    }, { passive: true });
+    if (global.document && global.document.addEventListener) {
+      global.document.addEventListener("visibilitychange", function () {
+        try {
+          if (global.document.visibilityState === "visible") {
+            refreshRuntime();
+          }
+        } catch (_) {}
+      }, { passive: true });
+    }
   } catch (_) {}
 
   try {
