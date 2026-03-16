@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/context_engine.js
    RControl Factory — Context Engine
-   v1.6.1 SNAPSHOT CONSOLIDATED / PATCH MÍNIMO
+   v1.6.2 SNAPSHOT CONSOLIDATED / PATCH MÍNIMO
 
    Objetivo:
    - consolidar snapshot estrutural mais confiável
@@ -15,9 +15,9 @@
 (function (global) {
   "use strict";
 
-  if (global.RCF_CONTEXT && global.RCF_CONTEXT.__v161) return;
+  if (global.RCF_CONTEXT && global.RCF_CONTEXT.__v162) return;
 
-  var VERSION = "v1.6.1";
+  var VERSION = "v1.6.2";
 
   function safe(fn, fallback) {
     try {
@@ -70,16 +70,17 @@
     return undefined;
   }
 
-  function boolFrom(v) {
-    return typeof v === "boolean" ? v : false;
-  }
-
   function numberOrNull(v) {
     return (typeof v === "number" && isFinite(v)) ? v : null;
   }
 
   function safeObj(v) {
     return (v && typeof v === "object") ? v : {};
+  }
+
+  function hasFn(obj, name) {
+    try { return !!obj && typeof obj[name] === "function"; }
+    catch (_) { return false; }
   }
 
   function getFactoryState() {
@@ -198,13 +199,17 @@
       return global.localStorage.getItem("rcf:ghcfg");
     }, null);
 
+    var cfg = safe(function () {
+      return rawCfg ? JSON.parse(rawCfg) : null;
+    }, null);
+
     return {
       ready: !!global.RCF_GH_SYNC,
       version: safe(function () { return global.RCF_GH_SYNC.version; }, "unknown"),
-      repo: safe(function () { return global.RCF_GH_SYNC.repo; }, ""),
-      branch: safe(function () { return global.RCF_GH_SYNC.branch; }, ""),
+      repo: safe(function () { return (cfg && cfg.repo) || global.RCF_GH_SYNC.repo || ""; }, ""),
+      branch: safe(function () { return (cfg && cfg.branch) || global.RCF_GH_SYNC.branch || ""; }, ""),
       cfgRaw: rawCfg || "",
-      cfg: safe(function () { return rawCfg ? JSON.parse(rawCfg) : null; }, null)
+      cfg: cfg
     };
   }
 
@@ -387,7 +392,6 @@
     var factoryAI = safeObj(snapshot && snapshot.factoryAI);
     var injector = safeObj(snapshot && snapshot.injector);
     var activeList = asArray(modules.active);
-
     var moduleMap = safeObj(modules.modules);
 
     return {
@@ -417,12 +421,12 @@
         }),
         vault: buildModuleSemantic("vault", {
           presence: !!flags.hasVault,
-          ready: !!firstDefined(moduleMap.vaultReady, false),
+          ready: !!flags.hasVault,
           active: !!firstDefined(modules.vault, moduleMap.vault)
         }),
         bridge: buildModuleSemantic("bridge", {
           presence: !!flags.hasBridge,
-          ready: !!firstDefined(moduleMap.bridgeReady, false),
+          ready: !!flags.hasBridge,
           active: !!firstDefined(modules.bridge, moduleMap.bridge)
         }),
         adminAI: buildModuleSemantic("adminAI", {
@@ -441,13 +445,19 @@
         }),
         factoryState: buildModuleSemantic("factoryState", {
           presence: !!flags.hasFactoryState,
-          ready: !!firstDefined(moduleMap.factoryStateReady, false),
-          active: !!firstDefined(modules.factoryState, moduleMap.factoryState)
+          ready: !!flags.hasFactoryState,
+          active: !!firstDefined(modules.factoryState, moduleMap.factoryState),
+          extra: {
+            bootStatus: factory.bootStatus || ""
+          }
         }),
         moduleRegistry: buildModuleSemantic("moduleRegistry", {
           presence: !!flags.hasModuleRegistry,
-          ready: !!firstDefined(moduleMap.moduleRegistryReady, false),
-          active: !!firstDefined(modules.moduleRegistry, moduleMap.moduleRegistry)
+          ready: !!flags.hasModuleRegistry,
+          active: !!firstDefined(modules.moduleRegistry, moduleMap.moduleRegistry),
+          extra: {
+            activeCount: numberOrNull(modules.activeCount)
+          }
         }),
         contextEngine: buildModuleSemantic("contextEngine", {
           presence: !!flags.hasContextEngine,
@@ -456,7 +466,7 @@
         }),
         factoryTree: buildModuleSemantic("factoryTree", {
           presence: !!flags.hasFactoryTree,
-          ready: numberOrNull(snapshot && snapshot.tree && snapshot.tree.pathsCount) !== null,
+          ready: !!flags.hasFactoryTree || numberOrNull(snapshot && snapshot.tree && snapshot.tree.pathsCount) !== null,
           active: !!firstDefined(modules.factoryTree, moduleMap.factoryTree),
           extra: {
             pathsCount: numberOrNull(snapshot && snapshot.tree && snapshot.tree.pathsCount)
@@ -464,7 +474,7 @@
         }),
         diagnostics: buildModuleSemantic("diagnostics", {
           presence: !!flags.hasDiagnostics,
-          ready: !!firstDefined(moduleMap.diagnosticsReady, false),
+          ready: !!flags.hasDiagnostics,
           active: !!firstDefined(modules.diagnostics, moduleMap.diagnostics)
         }),
         injector: buildModuleSemantic("injector", {
@@ -511,7 +521,7 @@
     }
     if (active.indexOf("github") >= 0) {
       push("/app/js/core/github_sync.js");
-      push("/app/js/admin/admin.github.js");
+      push("/app/js/admin.github.js");
     }
     if (active.indexOf("doctor") >= 0 || snapshot.doctor.ready) {
       push("/app/js/core/doctor_scan.js");
@@ -602,6 +612,8 @@
       modules: {
         version: modules.version || "unknown",
         total: Number(modules.total || 0),
+        activeCount: Number(modules.activeCount || 0),
+        inactiveCount: Number(modules.inactiveCount || 0),
         active: Array.isArray(modules.active) ? clone(modules.active) : [],
         logger: !!modules.logger,
         doctor: !!modules.doctor,
@@ -682,6 +694,7 @@
     __v15: true,
     __v16: true,
     __v161: true,
+    __v162: true,
     version: VERSION,
     getContext: getContext,
     getSnapshot: getSnapshot,
