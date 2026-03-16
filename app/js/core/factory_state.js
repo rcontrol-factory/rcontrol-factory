@@ -1,24 +1,24 @@
 /* FILE: /app/js/core/factory_state.js
    RControl Factory — Factory State Engine
-   v1.5.0 STABLE / REBUILD COMPLETO
+   v1.4.2 SAFE ROLLBACK / PATCH MÍNIMO
 
    Objetivo:
-   - registrar estado operacional real da Factory
-   - consolidar runtimeVFS / environment / boot
-   - sincronizar melhor com module_registry / doctor / logger / tree
-   - refletir activeView / activeAppSlug / módulos ativos
-   - expor API global estável via window.RCF_FACTORY_STATE
+   - registrar estado operacional mínimo da Factory
+   - refletir melhor o boot real
+   - consolidar runtimeVFS
+   - registrar módulos detectados sem travar a UI
+   - expor API global via window.RCF_FACTORY_STATE
    - funcionar como script clássico
-   - melhorar snapshot para Factory AI / Context Engine
+   - manter compatibilidade máxima com Safari / PWA
 */
 
 ;(function (global) {
   "use strict";
 
-  if (global.RCF_FACTORY_STATE && global.RCF_FACTORY_STATE.__v150) return;
+  if (global.RCF_FACTORY_STATE && global.RCF_FACTORY_STATE.__v142) return;
 
   var STORAGE_KEY = "rcf:factory_state";
-  var VERSION = "v1.5.0";
+  var VERSION = "v1.4.2";
 
   var state = {
     factoryVersion: "1.0.0",
@@ -30,28 +30,13 @@
     loggerReady: false,
     doctorReady: false,
     doctorLastRun: null,
-    userAgent: "",
+    userAgent: null,
     environment: "Browser",
     activeView: "",
     activeAppSlug: "",
     activeModules: [],
     modules: {
       factoryState: true
-    },
-    flags: {
-      hasLogger: false,
-      hasDoctor: false,
-      hasGitHub: false,
-      hasVault: false,
-      hasBridge: false,
-      hasAdminAI: false,
-      hasFactoryAI: false,
-      hasFactoryState: true,
-      hasModuleRegistry: false,
-      hasContextEngine: false,
-      hasFactoryTree: false,
-      hasDiagnostics: false,
-      hasInjectorSafe: false
     },
     health: {
       lastRefresh: null
@@ -84,20 +69,6 @@
     return out;
   }
 
-  function safe(fn, fallback) {
-    try {
-      var v = fn();
-      return (v === undefined ? fallback : v);
-    } catch (_) {
-      return fallback;
-    }
-  }
-
-  function log(level, msg) {
-    try { global.RCF_LOGGER?.push?.(level, "[FACTORY_STATE] " + msg); } catch (_) {}
-    try { console.log("[FACTORY_STATE]", level, msg); } catch (_) {}
-  }
-
   function safeMerge(target, patch) {
     if (!patch || typeof patch !== "object") return target;
 
@@ -121,6 +92,15 @@
     return target;
   }
 
+  function log(level, msg) {
+    try {
+      if (global.RCF_LOGGER && typeof global.RCF_LOGGER.push === "function") {
+        global.RCF_LOGGER.push(level, "[FACTORY_STATE] " + msg);
+      }
+    } catch (_) {}
+    try { console.log("[FACTORY_STATE]", level, msg); } catch (_) {}
+  }
+
   function detectEnvironment() {
     try {
       var standalone = false;
@@ -131,7 +111,8 @@
           !!(global.navigator && global.navigator.standalone);
       } catch (_) {}
 
-      return standalone ? "PWA" : "Browser";
+      if (standalone) return "PWA";
+      return "Browser";
     } catch (_) {
       return "unknown";
     }
@@ -146,51 +127,62 @@
       if (global.RCF_RUNTIME) return String(global.RCF_RUNTIME);
     } catch (_) {}
 
-    try {
-      if (global.RCF && global.RCF.runtime) return String(global.RCF.runtime);
-    } catch (_) {}
-
     return "browser";
   }
 
-  function detectFlags() {
-    return {
-      hasLogger: !!safe(function () { return global.RCF_LOGGER; }, null),
-      hasDoctor: !!safe(function () { return global.RCF_DOCTOR_SCAN || global.RCF_DOCTOR; }, null),
-      hasGitHub: !!safe(function () { return global.RCF_GH_SYNC; }, null),
-      hasVault: !!safe(function () { return global.RCF_ZIP_VAULT; }, null),
-      hasBridge: !!safe(function () { return global.RCF_AGENT_ZIP_BRIDGE; }, null),
-      hasAdminAI: !!safe(function () { return global.RCF_ADMIN_AI; }, null),
-      hasFactoryAI: !!safe(function () { return global.RCF_FACTORY_AI || global.RCF_FACTORY_IA; }, null),
-      hasFactoryState: true,
-      hasModuleRegistry: !!safe(function () { return global.RCF_MODULE_REGISTRY; }, null),
-      hasContextEngine: !!safe(function () { return global.RCF_CONTEXT; }, null),
-      hasFactoryTree: !!safe(function () { return global.RCF_FACTORY_TREE; }, null),
-      hasDiagnostics: !!safe(function () { return global.RCF_DIAGNOSTICS; }, null),
-      hasInjectorSafe: !!safe(function () {
-        return global.RCF_INJECTOR_SAFE || global.RCF_INJECTOR || global.RCF_AGENT_INJECTOR || global.RCF_PREVIEW_INJECTOR;
-      }, null)
+  function detectKnownModules() {
+    var out = {
+      logger: false,
+      doctor: false,
+      github: false,
+      vault: false,
+      bridge: false,
+      adminAI: false,
+      factoryAI: false,
+      factoryState: true,
+      moduleRegistry: false,
+      contextEngine: false,
+      factoryTree: false,
+      diagnostics: false
     };
+
+    try { out.logger = !!global.RCF_LOGGER; } catch (_) {}
+    try { out.doctor = !!global.RCF_DOCTOR_SCAN || !!global.RCF_DOCTOR; } catch (_) {}
+    try { out.github = !!global.RCF_GH_SYNC; } catch (_) {}
+    try { out.vault = !!global.RCF_ZIP_VAULT; } catch (_) {}
+    try { out.bridge = !!global.RCF_AGENT_ZIP_BRIDGE; } catch (_) {}
+    try { out.adminAI = !!global.RCF_ADMIN_AI; } catch (_) {}
+    try { out.factoryAI = !!global.RCF_FACTORY_AI || !!global.RCF_FACTORY_IA; } catch (_) {}
+    try { out.moduleRegistry = !!global.RCF_MODULE_REGISTRY; } catch (_) {}
+    try { out.contextEngine = !!global.RCF_CONTEXT; } catch (_) {}
+    try { out.factoryTree = !!global.RCF_FACTORY_TREE; } catch (_) {}
+    try { out.diagnostics = !!global.RCF_DIAGNOSTICS; } catch (_) {}
+
+    return out;
   }
 
-  function detectKnownModulesFromGlobals() {
-    var flags = detectFlags();
+  function detectRegistryActiveModules() {
+    try {
+      if (!global.RCF_MODULE_REGISTRY || typeof global.RCF_MODULE_REGISTRY.summary !== "function") {
+        return [];
+      }
 
-    return {
-      logger: !!flags.hasLogger,
-      doctor: !!flags.hasDoctor,
-      github: !!flags.hasGitHub,
-      vault: !!flags.hasVault,
-      bridge: !!flags.hasBridge,
-      adminAI: !!flags.hasAdminAI,
-      factoryAI: !!flags.hasFactoryAI,
-      factoryState: true,
-      moduleRegistry: !!flags.hasModuleRegistry,
-      contextEngine: !!flags.hasContextEngine,
-      factoryTree: !!flags.hasFactoryTree,
-      diagnostics: !!flags.hasDiagnostics,
-      injector: !!flags.hasInjectorSafe
-    };
+      var summary = global.RCF_MODULE_REGISTRY.summary() || {};
+
+      if (Array.isArray(summary.active)) {
+        return uniq(summary.active);
+      }
+
+      if (summary.modules && typeof summary.modules === "object") {
+        var active = [];
+        Object.keys(summary.modules).forEach(function (k) {
+          if (summary.modules[k]) active.push(k);
+        });
+        return uniq(active);
+      }
+    } catch (_) {}
+
+    return [];
   }
 
   function detectActiveContext() {
@@ -210,79 +202,22 @@
     return out;
   }
 
-  function getRegistrySummary() {
-    return safe(function () {
-      if (!global.RCF_MODULE_REGISTRY || typeof global.RCF_MODULE_REGISTRY.summary !== "function") {
-        return {};
-      }
-      return global.RCF_MODULE_REGISTRY.summary() || {};
-    }, {});
-  }
-
-  function getRegistryModules() {
-    var summary = getRegistrySummary();
-    if (summary && summary.modules && typeof summary.modules === "object") {
-      return clone(summary.modules);
-    }
-    return {};
-  }
-
-  function getRegistryActiveList() {
-    var summary = getRegistrySummary();
-
-    if (Array.isArray(summary.active) && summary.active.length) {
-      return uniq(summary.active);
-    }
-
-    var map = summary.modules || {};
-    var active = [];
-
-    Object.keys(map || {}).forEach(function (k) {
-      if (map[k]) active.push(k);
-    });
-
-    return uniq(active);
-  }
-
-  function getDoctorLastRun() {
-    var existing = safe(function () { return state.doctorLastRun; }, null);
-    if (existing) return clone(existing);
-
-    var fromScan = safe(function () { return global.RCF_DOCTOR_SCAN && global.RCF_DOCTOR_SCAN.lastRun; }, null);
-    if (fromScan) return clone(fromScan);
-
-    var fromDoctor = safe(function () { return global.RCF_DOCTOR && global.RCF_DOCTOR.lastRun; }, null);
-    if (fromDoctor) return clone(fromDoctor);
-
-    var fromScanReport = safe(function () { return global.RCF_DOCTOR_SCAN && global.RCF_DOCTOR_SCAN.lastReport; }, null);
-    if (fromScanReport) {
-      return {
-        ts: nowISO(),
-        source: "RCF_DOCTOR_SCAN.lastReport",
-        report: fromScanReport
-      };
-    }
-
-    return null;
-  }
-
   function detectBootStatus() {
     try {
       var current = String(state.bootStatus || "").trim().toLowerCase();
-      var active = getRegistryActiveList();
-      var mods = detectKnownModulesFromGlobals();
+      var mods = detectKnownModules();
+      var active = detectRegistryActiveModules();
 
       if (current === "error") return "error";
       if (current === "ready") return "ready";
 
       if (
-        active.length ||
-        mods.factoryAI ||
-        mods.contextEngine ||
-        mods.moduleRegistry ||
+        active.length > 0 ||
         mods.logger ||
         mods.doctor ||
-        mods.factoryTree
+        mods.contextEngine ||
+        mods.factoryTree ||
+        mods.factoryAI
       ) {
         return "ready";
       }
@@ -324,55 +259,38 @@
     }
   }
 
-  function buildRuntimePatch(initConfig) {
+  function init(initConfig) {
+    load();
+
     var activeCtx = detectActiveContext();
-    var globalsModules = detectKnownModulesFromGlobals();
-    var registrySummary = getRegistrySummary();
-    var registryModules = getRegistryModules();
-    var activeModules = getRegistryActiveList();
-    var flags = detectFlags();
+    var knownModules = detectKnownModules();
+    var activeModules = detectRegistryActiveModules();
 
-    var mergedModules = safeMerge(clone(globalsModules), registryModules || {});
-    mergedModules.factoryState = true;
-
-    return safeMerge({
+    var base = {
       factoryVersion: global.RCF_VERSION || state.factoryVersion || "1.0.0",
       engineVersion: VERSION,
       bootStatus: detectBootStatus(),
       bootTime: state.bootTime || nowISO(),
       runtimeVFS: detectRuntimeVFS(),
-      loggerReady: !!mergedModules.logger || !!flags.hasLogger,
-      doctorReady: !!mergedModules.doctor || !!flags.hasDoctor,
-      doctorLastRun: getDoctorLastRun(),
-      userAgent: safe(function () { return global.navigator.userAgent; }, "") || "",
+      loggerReady: !!knownModules.logger,
+      doctorReady: !!knownModules.doctor,
+      userAgent: (global.navigator && global.navigator.userAgent) ? global.navigator.userAgent : null,
       environment: detectEnvironment(),
       activeView: activeCtx.activeView,
       activeAppSlug: activeCtx.activeAppSlug,
       activeModules: activeModules,
-      modules: mergedModules,
-      flags: flags,
+      modules: knownModules,
       health: {
-        lastRefresh: nowISO(),
-        registryVersion: safe(function () { return registrySummary.version; }, "") || "",
-        activeCount: activeModules.length
+        lastRefresh: nowISO()
       }
-    }, initConfig || {});
-  }
+    };
 
-  function init(initConfig) {
-    load();
-
-    state = safeMerge(clone(state), buildRuntimePatch(initConfig));
+    state = safeMerge(clone(state), base);
+    state = safeMerge(clone(state), initConfig || {});
     state.modules = state.modules || {};
     state.modules.factoryState = true;
-    state.flags = safeMerge(clone(state.flags || {}), detectFlags());
     state.activeModules = uniq(state.activeModules || []);
     state.lastUpdate = nowISO();
-
-    if (!state.bootTime) state.bootTime = nowISO();
-    if (state.bootStatus === "unknown" || state.bootStatus === "booting") {
-      state.bootStatus = detectBootStatus();
-    }
 
     persist();
     log("OK", "Factory State init ✅ " + VERSION);
@@ -385,12 +303,10 @@
 
   function setState(partial) {
     if (!partial || typeof partial !== "object") return false;
-
     state = safeMerge(clone(state), partial);
     state.modules = state.modules || {};
     state.modules.factoryState = true;
     state.activeModules = uniq(state.activeModules || []);
-    state.flags = safeMerge(clone(state.flags || {}), detectFlags());
     state.lastUpdate = nowISO();
     persist();
     return true;
@@ -398,19 +314,9 @@
 
   function setModule(name, value) {
     if (!name) return false;
-
-    var key = String(name);
     state.modules = state.modules || {};
-    state.modules[key] = !!value;
+    state.modules[String(name)] = !!value;
     state.modules.factoryState = true;
-
-    var active = uniq(state.activeModules || []);
-    var idx = active.indexOf(key);
-
-    if (value && idx < 0) active.push(key);
-    if (!value && idx >= 0) active.splice(idx, 1);
-
-    state.activeModules = uniq(active);
     state.lastUpdate = nowISO();
     persist();
     return true;
@@ -418,36 +324,18 @@
 
   function setModules(mods) {
     if (!mods || typeof mods !== "object") return false;
-
     state.modules = state.modules || {};
-
     Object.keys(mods).forEach(function (name) {
       state.modules[String(name)] = !!mods[name];
     });
-
     state.modules.factoryState = true;
-
-    var active = [];
-    Object.keys(state.modules).forEach(function (name) {
-      if (state.modules[name]) active.push(name);
-    });
-
-    state.activeModules = uniq(active);
     state.lastUpdate = nowISO();
     persist();
     return true;
   }
 
   function setActiveModules(list) {
-    var active = uniq(list || []);
-    state.activeModules = active;
-    state.modules = state.modules || {};
-
-    active.forEach(function (name) {
-      state.modules[String(name)] = true;
-    });
-
-    state.modules.factoryState = true;
+    state.activeModules = uniq(list || []);
     state.lastUpdate = nowISO();
     persist();
     return true;
@@ -481,11 +369,6 @@
     state.modules.logger = !!flag;
     state.modules.factoryState = true;
 
-    if (flag) {
-      state.flags = state.flags || {};
-      state.flags.hasLogger = true;
-    }
-
     if (state.bootStatus === "booting" && flag) {
       state.bootStatus = "ready";
     }
@@ -500,12 +383,6 @@
     state.modules = state.modules || {};
     state.modules.doctor = !!flag;
     state.modules.factoryState = true;
-
-    if (flag) {
-      state.flags = state.flags || {};
-      state.flags.hasDoctor = true;
-    }
-
     state.lastUpdate = nowISO();
     persist();
     return true;
@@ -537,29 +414,30 @@
       ts: nowISO(),
       meta: clone(meta || {})
     };
-
-    if (doctorReady) {
-      state.flags = state.flags || {};
-      state.flags.hasDoctor = true;
-    }
-
     state.lastUpdate = nowISO();
     persist();
     return true;
   }
 
   function refreshRuntime() {
-    var patch = buildRuntimePatch();
-    state = safeMerge(clone(state), patch);
+    var activeCtx = detectActiveContext();
+    var knownModules = detectKnownModules();
+    var activeModules = detectRegistryActiveModules();
 
-    state.modules = state.modules || {};
+    state.factoryVersion = global.RCF_VERSION || state.factoryVersion || "1.0.0";
+    state.engineVersion = VERSION;
+    state.runtimeVFS = detectRuntimeVFS();
+    state.loggerReady = !!knownModules.logger;
+    state.doctorReady = !!knownModules.doctor;
+    state.environment = detectEnvironment();
+    state.userAgent = (global.navigator && global.navigator.userAgent) ? global.navigator.userAgent : null;
+    state.activeView = activeCtx.activeView;
+    state.activeAppSlug = activeCtx.activeAppSlug;
+    state.activeModules = uniq(activeModules);
+    state.modules = safeMerge(clone(state.modules || {}), knownModules);
     state.modules.factoryState = true;
-    state.flags = safeMerge(clone(state.flags || {}), detectFlags());
-    state.activeModules = uniq(
-      (state.activeModules || []).concat(getRegistryActiveList())
-    );
-
-    if (!state.bootTime) state.bootTime = nowISO();
+    state.health = state.health || {};
+    state.health.lastRefresh = nowISO();
 
     if (state.bootStatus === "booting" || state.bootStatus === "unknown") {
       state.bootStatus = detectBootStatus();
@@ -570,11 +448,10 @@
       (
         state.loggerReady ||
         state.doctorReady ||
-        state.modules.moduleRegistry ||
         state.modules.contextEngine ||
         state.modules.factoryTree ||
         state.modules.factoryAI ||
-        (state.activeModules || []).length
+        state.activeModules.length > 0
       )
     ) {
       state.bootStatus = "ready";
@@ -595,14 +472,12 @@
       runtimeVFS: state.runtimeVFS,
       loggerReady: state.loggerReady,
       doctorReady: state.doctorReady,
-      doctorLastRun: clone(state.doctorLastRun),
+      doctorLastRun: state.doctorLastRun,
       environment: state.environment,
       activeView: state.activeView || "",
       activeAppSlug: state.activeAppSlug || "",
       activeModules: clone(state.activeModules || []),
-      modules: clone(state.modules),
-      flags: clone(state.flags || {}),
-      health: clone(state.health || {})
+      modules: clone(state.modules)
     };
   }
 
@@ -614,7 +489,7 @@
     __v13: true,
     __v14: true,
     __v141: true,
-    __v150: true,
+    __v142: true,
     version: VERSION,
     init: init,
     getState: getState,
@@ -676,12 +551,6 @@
         } catch (_) {}
       }, { passive: true });
     }
-  } catch (_) {}
-
-  try {
-    global.addEventListener("focus", function () {
-      try { refreshRuntime(); } catch (_) {}
-    }, { passive: true });
   } catch (_) {}
 
   try {
