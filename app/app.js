@@ -886,6 +886,11 @@
     }
   }
 
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => { safeInit(); }, { passive: true });
-  else safeInit();
+    if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+      safeInit();
+    }, { passive: true });
+  } else {
+    safeInit();
+  }
 })();
