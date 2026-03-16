@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/factory_state.js
    RControl Factory — Factory State Engine
-   v1.4.2 SAFE ROLLBACK / PATCH MÍNIMO
+   v1.4.3 SAFE PERSIST GUARD / PATCH MÍNIMO
 
    Objetivo:
    - registrar estado operacional mínimo da Factory
@@ -10,15 +10,20 @@
    - expor API global via window.RCF_FACTORY_STATE
    - funcionar como script clássico
    - manter compatibilidade máxima com Safari / PWA
+   - reduzir escrita excessiva em localStorage
+   - evitar flood de WARN persist falhou
 */
 
 ;(function (global) {
   "use strict";
 
-  if (global.RCF_FACTORY_STATE && global.RCF_FACTORY_STATE.__v142) return;
+  if (global.RCF_FACTORY_STATE && global.RCF_FACTORY_STATE.__v143) return;
 
   var STORAGE_KEY = "rcf:factory_state";
-  var VERSION = "v1.4.2";
+  var VERSION = "v1.4.3";
+
+  var PERSIST_DEBOUNCE_MS = 220;
+  var WARN_THROTTLE_MS = 10000;
 
   var state = {
     factoryVersion: "1.0.0",
@@ -43,9 +48,23 @@
     }
   };
 
+  var __persistTimer = null;
+  var __lastPersistSnapshot = "";
+  var __memorySnapshot = "";
+  var __persistQueued = false;
+  var __warnAt = {
+    persist: 0,
+    load: 0
+  };
+
   function nowISO() {
     try { return new Date().toISOString(); }
     catch (_) { return ""; }
+  }
+
+  function nowMS() {
+    try { return Date.now(); }
+    catch (_) { return 0; }
   }
 
   function clone(obj) {
@@ -99,6 +118,14 @@
       }
     } catch (_) {}
     try { console.log("[FACTORY_STATE]", level, msg); } catch (_) {}
+  }
+
+  function throttledWarn(kind, msg) {
+    var t = nowMS();
+    var last = __warnAt[kind] || 0;
+    if ((t - last) < WARN_THROTTLE_MS) return;
+    __warnAt[kind] = t;
+    log("WARN", msg);
   }
 
   function detectEnvironment() {
@@ -232,29 +259,87 @@
     }
   }
 
-  function persist() {
+  function serializeForPersist() {
     try {
-      state.lastUpdate = nowISO();
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      return JSON.stringify(state);
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function touchState() {
+    state.lastUpdate = nowISO();
+  }
+
+  function writeSnapshot(serialized) {
+    if (!serialized) return false;
+
+    __memorySnapshot = serialized;
+
+    try {
+      localStorage.setItem(STORAGE_KEY, serialized);
+      __lastPersistSnapshot = serialized;
       return true;
     } catch (_) {
-      log("WARN", "persist falhou");
+      throttledWarn("persist", "persist falhou");
       return false;
     }
+  }
+
+  function flushPersist() {
+    __persistQueued = false;
+
+    if (__persistTimer) {
+      try { clearTimeout(__persistTimer); } catch (_) {}
+      __persistTimer = null;
+    }
+
+    touchState();
+
+    var serialized = serializeForPersist();
+    if (!serialized) return false;
+
+    if (serialized === __lastPersistSnapshot) {
+      __memorySnapshot = serialized;
+      return true;
+    }
+
+    return writeSnapshot(serialized);
+  }
+
+  function schedulePersist(forceNow) {
+    if (forceNow) return flushPersist();
+
+    __persistQueued = true;
+
+    if (__persistTimer) return true;
+
+    __persistTimer = setTimeout(function () {
+      flushPersist();
+    }, PERSIST_DEBOUNCE_MS);
+
+    return true;
   }
 
   function load() {
     try {
       var raw = localStorage.getItem(STORAGE_KEY);
+
+      if (!raw && __memorySnapshot) {
+        raw = __memorySnapshot;
+      }
+
       if (!raw) return false;
 
       var parsed = JSON.parse(raw);
       if (!parsed || typeof parsed !== "object") return false;
 
       state = safeMerge(clone(state), parsed);
+      __lastPersistSnapshot = raw;
+      __memorySnapshot = raw;
       return true;
     } catch (_) {
-      log("WARN", "load falhou");
+      throttledWarn("load", "load falhou");
       return false;
     }
   }
@@ -290,9 +375,9 @@
     state.modules = state.modules || {};
     state.modules.factoryState = true;
     state.activeModules = uniq(state.activeModules || []);
-    state.lastUpdate = nowISO();
+    touchState();
 
-    persist();
+    schedulePersist(false);
     log("OK", "Factory State init ✅ " + VERSION);
     return status();
   }
@@ -307,37 +392,57 @@
     state.modules = state.modules || {};
     state.modules.factoryState = true;
     state.activeModules = uniq(state.activeModules || []);
-    state.lastUpdate = nowISO();
-    persist();
+    schedulePersist(false);
     return true;
   }
 
   function setModule(name, value) {
     if (!name) return false;
+
+    var key = String(name);
+    var next = !!value;
+
     state.modules = state.modules || {};
-    state.modules[String(name)] = !!value;
+
+    if (state.modules[key] === next) return true;
+
+    state.modules[key] = next;
     state.modules.factoryState = true;
-    state.lastUpdate = nowISO();
-    persist();
+    schedulePersist(false);
     return true;
   }
 
   function setModules(mods) {
     if (!mods || typeof mods !== "object") return false;
+
+    var changed = false;
     state.modules = state.modules || {};
+
     Object.keys(mods).forEach(function (name) {
-      state.modules[String(name)] = !!mods[name];
+      var next = !!mods[name];
+      if (state.modules[String(name)] !== next) {
+        state.modules[String(name)] = next;
+        changed = true;
+      }
     });
+
     state.modules.factoryState = true;
-    state.lastUpdate = nowISO();
-    persist();
+
+    if (!changed) return true;
+
+    schedulePersist(false);
     return true;
   }
 
   function setActiveModules(list) {
-    state.activeModules = uniq(list || []);
-    state.lastUpdate = nowISO();
-    persist();
+    var next = uniq(list || []);
+    var prev = JSON.stringify(state.activeModules || []);
+    var curr = JSON.stringify(next);
+
+    if (prev === curr) return true;
+
+    state.activeModules = next;
+    schedulePersist(false);
     return true;
   }
 
@@ -346,9 +451,10 @@
   }
 
   function markBoot(status) {
-    state.bootStatus = String(status || "unknown");
-    state.lastUpdate = nowISO();
-    persist();
+    var next = String(status || "unknown");
+    if (state.bootStatus === next) return true;
+    state.bootStatus = next;
+    schedulePersist(false);
     return true;
   }
 
@@ -357,48 +463,77 @@
   }
 
   function setRuntime(runtime) {
-    state.runtimeVFS = String(runtime || "browser");
-    state.lastUpdate = nowISO();
-    persist();
+    var next = String(runtime || "browser");
+    if (state.runtimeVFS === next) return true;
+    state.runtimeVFS = next;
+    schedulePersist(false);
     return true;
   }
 
   function setLoggerReady(flag) {
-    state.loggerReady = !!flag;
-    state.modules = state.modules || {};
-    state.modules.logger = !!flag;
-    state.modules.factoryState = true;
+    var next = !!flag;
+    var changed = false;
 
-    if (state.bootStatus === "booting" && flag) {
-      state.bootStatus = "ready";
+    if (state.loggerReady !== next) {
+      state.loggerReady = next;
+      changed = true;
     }
 
-    state.lastUpdate = nowISO();
-    persist();
+    state.modules = state.modules || {};
+    if (state.modules.logger !== next) {
+      state.modules.logger = next;
+      changed = true;
+    }
+
+    state.modules.factoryState = true;
+
+    if (state.bootStatus === "booting" && next) {
+      state.bootStatus = "ready";
+      changed = true;
+    }
+
+    if (!changed) return true;
+
+    schedulePersist(false);
     return true;
   }
 
   function setDoctorReady(flag) {
-    state.doctorReady = !!flag;
+    var next = !!flag;
+    var changed = false;
+
+    if (state.doctorReady !== next) {
+      state.doctorReady = next;
+      changed = true;
+    }
+
     state.modules = state.modules || {};
-    state.modules.doctor = !!flag;
+    if (state.modules.doctor !== next) {
+      state.modules.doctor = next;
+      changed = true;
+    }
+
     state.modules.factoryState = true;
-    state.lastUpdate = nowISO();
-    persist();
+
+    if (!changed) return true;
+
+    schedulePersist(false);
     return true;
   }
 
   function setActiveView(viewName) {
-    state.activeView = String(viewName || "");
-    state.lastUpdate = nowISO();
-    persist();
+    var next = String(viewName || "");
+    if (state.activeView === next) return true;
+    state.activeView = next;
+    schedulePersist(false);
     return true;
   }
 
   function setActiveAppSlug(appSlug) {
-    state.activeAppSlug = String(appSlug || "");
-    state.lastUpdate = nowISO();
-    persist();
+    var next = String(appSlug || "");
+    if (state.activeAppSlug === next) return true;
+    state.activeAppSlug = next;
+    schedulePersist(false);
     return true;
   }
 
@@ -414,8 +549,8 @@
       ts: nowISO(),
       meta: clone(meta || {})
     };
-    state.lastUpdate = nowISO();
-    persist();
+
+    schedulePersist(false);
     return true;
   }
 
@@ -424,27 +559,84 @@
     var knownModules = detectKnownModules();
     var activeModules = detectRegistryActiveModules();
 
-    state.factoryVersion = global.RCF_VERSION || state.factoryVersion || "1.0.0";
-    state.engineVersion = VERSION;
-    state.runtimeVFS = detectRuntimeVFS();
-    state.loggerReady = !!knownModules.logger;
-    state.doctorReady = !!knownModules.doctor;
-    state.environment = detectEnvironment();
-    state.userAgent = (global.navigator && global.navigator.userAgent) ? global.navigator.userAgent : null;
-    state.activeView = activeCtx.activeView;
-    state.activeAppSlug = activeCtx.activeAppSlug;
-    state.activeModules = uniq(activeModules);
+    var changed = false;
+    var nextFactoryVersion = global.RCF_VERSION || state.factoryVersion || "1.0.0";
+    var nextRuntimeVFS = detectRuntimeVFS();
+    var nextEnvironment = detectEnvironment();
+    var nextUserAgent = (global.navigator && global.navigator.userAgent) ? global.navigator.userAgent : null;
+    var nextActiveModules = uniq(activeModules);
+    var nextBoot = state.bootStatus;
+
+    if (state.factoryVersion !== nextFactoryVersion) {
+      state.factoryVersion = nextFactoryVersion;
+      changed = true;
+    }
+
+    if (state.engineVersion !== VERSION) {
+      state.engineVersion = VERSION;
+      changed = true;
+    }
+
+    if (state.runtimeVFS !== nextRuntimeVFS) {
+      state.runtimeVFS = nextRuntimeVFS;
+      changed = true;
+    }
+
+    if (state.loggerReady !== !!knownModules.logger) {
+      state.loggerReady = !!knownModules.logger;
+      changed = true;
+    }
+
+    if (state.doctorReady !== !!knownModules.doctor) {
+      state.doctorReady = !!knownModules.doctor;
+      changed = true;
+    }
+
+    if (state.environment !== nextEnvironment) {
+      state.environment = nextEnvironment;
+      changed = true;
+    }
+
+    if (state.userAgent !== nextUserAgent) {
+      state.userAgent = nextUserAgent;
+      changed = true;
+    }
+
+    if (state.activeView !== activeCtx.activeView) {
+      state.activeView = activeCtx.activeView;
+      changed = true;
+    }
+
+    if (state.activeAppSlug !== activeCtx.activeAppSlug) {
+      state.activeAppSlug = activeCtx.activeAppSlug;
+      changed = true;
+    }
+
+    if (JSON.stringify(state.activeModules || []) !== JSON.stringify(nextActiveModules)) {
+      state.activeModules = nextActiveModules;
+      changed = true;
+    }
+
+    var beforeModules = JSON.stringify(state.modules || {});
     state.modules = safeMerge(clone(state.modules || {}), knownModules);
     state.modules.factoryState = true;
+    if (JSON.stringify(state.modules || {}) !== beforeModules) {
+      changed = true;
+    }
+
     state.health = state.health || {};
-    state.health.lastRefresh = nowISO();
+    var nextRefresh = nowISO();
+    if (state.health.lastRefresh !== nextRefresh) {
+      state.health.lastRefresh = nextRefresh;
+      changed = true;
+    }
 
     if (state.bootStatus === "booting" || state.bootStatus === "unknown") {
-      state.bootStatus = detectBootStatus();
+      nextBoot = detectBootStatus();
     }
 
     if (
-      state.bootStatus !== "ready" &&
+      nextBoot !== "ready" &&
       (
         state.loggerReady ||
         state.doctorReady ||
@@ -454,11 +646,17 @@
         state.activeModules.length > 0
       )
     ) {
-      state.bootStatus = "ready";
+      nextBoot = "ready";
     }
 
-    state.lastUpdate = nowISO();
-    persist();
+    if (state.bootStatus !== nextBoot) {
+      state.bootStatus = nextBoot;
+      changed = true;
+    }
+
+    if (!changed) return true;
+
+    schedulePersist(false);
     return true;
   }
 
@@ -490,6 +688,7 @@
     __v14: true,
     __v141: true,
     __v142: true,
+    __v143: true,
     version: VERSION,
     init: init,
     getState: getState,
@@ -507,7 +706,7 @@
     setActiveAppSlug: setActiveAppSlug,
     markDoctorRun: markDoctorRun,
     refreshRuntime: refreshRuntime,
-    persistState: persist,
+    persistState: function () { return flushPersist(); },
     loadState: load,
     status: status
   };
