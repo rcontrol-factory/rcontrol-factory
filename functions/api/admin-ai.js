@@ -1,6 +1,6 @@
 /* FILE: /functions/api/admin-ai.js
    RControl Factory — Factory AI API
-   V3.1 CHAT COPILOT BACKEND SAFE
+   V3.2 CHAT COPILOT BACKEND REFINED
 
    - mantém CORS e POST atuais
    - continua usando OPENAI_API_KEY
@@ -9,9 +9,10 @@
    - aceita payload contextual expandido
    - aceita metadados de anexos
    - aceita alias de actions do front mais novo
-   - melhora o modo chat como copiloto técnico da Factory
+   - melhora o modo chat como copiloto técnico real da Factory
    - diferencia dado ausente de falha confirmada
    - orienta próximo arquivo quando faltar contexto
+   - reconhece intenção de relatório / próximo arquivo / arquivo completo
    - mantém resposta aterrada no payload
    - não autoriza invenção de estados da Factory
    - preparado para futuro suporte real a ZIP / PDF / imagem / vídeo / arquivos
@@ -43,7 +44,7 @@ export async function onRequestPost(context) {
       }, 400);
     }
 
-    const action = normalizeAction(body.action);
+    const action = normalizeAction(body.action, body.prompt);
     const payload = body.payload ?? null;
     const prompt = String(body.prompt || "").trim();
     const history = normalizeHistory(body.history);
@@ -123,27 +124,89 @@ export async function onRequestPost(context) {
   }
 }
 
-function normalizeAction(value) {
+function normalizeAction(value, promptValue = "") {
   const raw = String(value || "").trim().toLowerCase();
+  const prompt = String(promptValue || "").trim().toLowerCase();
 
-  if (!raw) return "chat";
+  if (raw) {
+    if (raw === "factory_diagnosis") return "factory_diagnosis";
+    if (raw === "analyze-architecture") return "analyze-architecture";
+    if (raw === "analyze-logs") return "analyze-logs";
+    if (raw === "review-module") return "review-module";
+    if (raw === "suggest-improvement") return "suggest-improvement";
+    if (raw === "summarize-structure") return "summarize-structure";
+    if (raw === "propose-patch") return "propose-patch";
+    if (raw === "generate-code") return "generate-code";
 
-  if (raw === "factory_diagnosis") return "factory_diagnosis";
-  if (raw === "analyze-architecture") return "analyze-architecture";
-  if (raw === "analyze-logs") return "analyze-logs";
-  if (raw === "review-module") return "review-module";
-  if (raw === "suggest-improvement") return "suggest-improvement";
-  if (raw === "summarize-structure") return "summarize-structure";
-  if (raw === "propose-patch") return "propose-patch";
-  if (raw === "generate-code") return "generate-code";
+    // compatibilidade entre versões do front
+    if (raw === "ingest-context") return "ingest-context";
+    if (raw === "zip-readiness") return "ingest-context";
 
-  // compatibilidade entre versões do front
-  if (raw === "ingest-context") return "ingest-context";
-  if (raw === "zip-readiness") return "ingest-context";
+    if (raw === "chat") return "chat";
+    return raw;
+  }
 
-  if (raw === "chat") return "chat";
+  if (
+    prompt.includes("relatório") ||
+    prompt.includes("relatorio") ||
+    prompt.includes("diagnóstico") ||
+    prompt.includes("diagnostico")
+  ) {
+    return "factory_diagnosis";
+  }
 
-  return raw;
+  if (
+    prompt.includes("arquitetura") ||
+    prompt.includes("estrutura") ||
+    prompt.includes("organização") ||
+    prompt.includes("organizacao")
+  ) {
+    return "analyze-architecture";
+  }
+
+  if (
+    prompt.includes("log") ||
+    prompt.includes("erro") ||
+    prompt.includes("falha") ||
+    prompt.includes("crash")
+  ) {
+    return "analyze-logs";
+  }
+
+  if (
+    prompt.includes("arquivo completo") ||
+    prompt.includes("código completo") ||
+    prompt.includes("codigo completo") ||
+    prompt.includes("gere o arquivo") ||
+    prompt.includes("gera o arquivo")
+  ) {
+    return "generate-code";
+  }
+
+  if (
+    prompt.includes("patch") ||
+    prompt.includes("corrige") ||
+    prompt.includes("corrigir") ||
+    prompt.includes("ajuste mínimo") ||
+    prompt.includes("ajuste minimo")
+  ) {
+    return "propose-patch";
+  }
+
+  if (
+    prompt.includes("zip") ||
+    prompt.includes("pdf") ||
+    prompt.includes("imagem") ||
+    prompt.includes("vídeo") ||
+    prompt.includes("video") ||
+    prompt.includes("áudio") ||
+    prompt.includes("audio") ||
+    prompt.includes("anexo")
+  ) {
+    return "ingest-context";
+  }
+
+  return "chat";
 }
 
 function normalizeHistory(value) {
@@ -226,6 +289,13 @@ function buildGroundedPrompt({ action, payload, prompt, history, attachments, so
     "- Depois ela poderá apoiar criação de módulos, agentes e fluxos de app building.",
     "- Sempre respeite fluxo supervisionado e seguro.",
     "",
+    "Sobre o estilo das respostas:",
+    "- Seja útil e prática.",
+    "- Evite repetir listas genéricas sem avanço real.",
+    "- Se o snapshot estiver raso, reconheça isso e foque no próximo arquivo mais útil.",
+    "- Não fique repetindo logger/doctor/version unknown como centro da resposta, a menos que isso seja realmente o ponto principal do pedido.",
+    "- Se o objetivo do usuário for evoluir a Factory AI, dê prioridade a isso.",
+    "",
     "Formato de resposta por action:",
     "",
     "Se action=factory_diagnosis, analyze-architecture, analyze-logs, summarize-structure ou suggest-improvement:",
@@ -251,10 +321,11 @@ function buildGroundedPrompt({ action, payload, prompt, history, attachments, so
     "- responda como chat técnico natural, conversável, direto e útil.",
     "- se o pedido for claro e houver contexto suficiente, responda direto.",
     "- se o pedido exigir arquivo específico que não foi enviado, diga qual arquivo é o próximo mais útil.",
-    "- se houver risco de inferência excessiva, explicite esse limite sem enrolar."
+    "- se houver risco de inferência excessiva, explicite esse limite sem enrolar.",
+    "- se o snapshot vier raso, não transforme isso automaticamente em diagnóstico de falha estrutural."
   ].join("\n");
 
-  const task = buildTaskText(action);
+  const task = buildTaskText(action, prompt);
 
   return [
     system,
@@ -285,7 +356,9 @@ function buildGroundedPrompt({ action, payload, prompt, history, attachments, so
   ].join("\n");
 }
 
-function buildTaskText(action) {
+function buildTaskText(action, prompt = "") {
+  const p = String(prompt || "").trim();
+
   if (action === "factory_diagnosis") {
     return "Analise o snapshot/relatório da RControl Factory e aponte somente fatos confirmados, dados ausentes, inferências prováveis e próximo passo mínimo.";
   }
@@ -323,7 +396,11 @@ function buildTaskText(action) {
   }
 
   if (action === "chat") {
-    return "Responda como o chat técnico oficial da Factory, de forma natural, objetiva e útil, ajudando a estruturar a própria Factory primeiro.";
+    return [
+      "Responda como o chat técnico oficial da Factory, de forma natural, objetiva e útil, ajudando a estruturar a própria Factory primeiro.",
+      "Quando o pedido estiver raso ou o snapshot vier incompleto, foque mais em qual é o próximo arquivo certo do que em repetir diagnóstico genérico.",
+      p ? `Pedido atual: ${p}` : ""
+    ].filter(Boolean).join(" ");
   }
 
   return "Analise a RControl Factory com base apenas no contexto enviado.";
