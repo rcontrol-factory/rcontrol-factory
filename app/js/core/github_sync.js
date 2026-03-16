@@ -1,14 +1,16 @@
-/* RControl Factory — /app/js/core/github_sync.js — v2.4h (FINAL STABLE + FILLERS)
-   PATCH sobre v2.4g:
-   - ✅ FILLERS: gera bundle completo automaticamente (lista padrão + auto-discovery) quando o bundle local estiver “mínimo”
-   - ✅ pushMotherBundle passa a empurrar esse bundle completo pro GitHub (resolve root: mother_bundle.json com files=1)
-   - ✅ expõe listFillers() para UI futura (search/ordem alfabética)
+/* RControl Factory — /app/js/core/github_sync.js — v2.4i (FINAL STABLE + FILLERS + RUNTIME PATH FIX)
+   PATCH sobre v2.4h:
+   - ✅ mantém estrutura completa da v2.4h
+   - ✅ FIX runtime path resolver (evita /app/app/)
+   - ✅ DEFAULT_FILLERS atualizado com arquivos aprovados da fase atual
+   - ✅ discovery continua como complemento
+   - ✅ pushMotherBundle continua forçando bundle completo
    - Mantém path FIXO: app/import/mother_bundle.json
 */
 (() => {
   "use strict";
 
-  if (window.RCF_GH_SYNC && window.RCF_GH_SYNC.__v24h) return;
+  if (window.RCF_GH_SYNC && window.RCF_GH_SYNC.__v24i) return;
 
   const LS_CFG_KEY = "rcf:ghcfg";
   const API_BASE = "https://api.github.com";
@@ -231,7 +233,7 @@
   // Objetivo: não ficar voltando em "files=1" nunca mais.
   // =========================================================
 
-  // ✅ Lista padrão “do core” (você pode ir acrescentando sem quebrar)
+  // ✅ Lista padrão “do core” atualizada com os arquivos aprovados desta fase
   // (paths no formato do repo: app/...)
   const DEFAULT_FILLERS = [
     // base
@@ -239,11 +241,18 @@
     "app/styles.css",
     "app/app.js",
 
-    // core
+    // core aprovados / atuais
     "app/js/core/logger.js",
+    "app/js/core/doctor_scan.js",
+    "app/js/core/context_engine.js",
+    "app/js/core/factory_state.js",
+    "app/js/core/module_registry.js",
+    "app/js/core/factory_tree.js",
+    "app/js/core/github_sync.js",
+
+    // core legado / compat
     "app/js/core/stability_guard.js",
     "app/js/core/storage.js",
-    "app/js/core/github_sync.js",
     "app/js/core/vfs_overrides.js",
     "app/js/core/vfs_shim.js",
     "app/js/core/mother_selfupdate.js",
@@ -268,7 +277,8 @@
     "app/js/engine/engine.js",
 
     // admin
-    "app/js/admin.github.js",
+    "app/js/admin.admin_ai.js",
+    "app/js/admin.github.js"
   ];
 
   function uniqSorted(list) {
@@ -292,22 +302,25 @@
         if (!src) continue;
 
         // normaliza pra repo
-        // aceita: ./js/core/x.js, /js/core/x.js, app/js/core/x.js
         let p = src.replace(/^(\.\/)+/, "").replace(/^\/+/, "");
         if (p.startsWith("js/")) p = "app/" + p;
-        if (p.startsWith("app/js/") || p.startsWith("app/index") || p.startsWith("app/styles") || p.startsWith("app/app.js")) {
+        if (
+          p.startsWith("app/js/") ||
+          p.startsWith("app/index") ||
+          p.startsWith("app/styles") ||
+          p.startsWith("app/app.js")
+        ) {
           out.push(p);
         }
       }
     } catch {}
 
     // 2) hints do boot (se existir algum array global)
-    // tenta ler nomes comuns sem quebrar
     try {
       const candidates = [
         window.__RCF_BOOT_MODULES,
         window.RCF_BOOT_MODULES,
-        window.__boot_modules,
+        window.__boot_modules
       ];
       for (const arr of candidates) {
         if (!Array.isArray(arr)) continue;
@@ -325,12 +338,29 @@
     return uniqSorted(out);
   }
 
+  function resolveRuntimeUrlFromRepoPath(repoPath) {
+    let p = String(repoPath || "").trim().replace(/\\/g, "/");
+    if (!p) return "";
+
+    // repo path -> runtime path dentro da PWA
+    // app/js/core/x.js => ./js/core/x.js
+    // app/index.html    => ./index.html
+    // app/styles.css    => ./styles.css
+    // app/app.js        => ./app.js
+    if (p.startsWith("app/")) {
+      p = p.slice(4);
+    }
+
+    p = p.replace(/^\/+/, "");
+    return "./" + p;
+  }
+
   async function fetchTextForPath(repoPath) {
-    // Converte repo path (app/...) -> runtime url (./app/...) e tenta fetch
     const p = String(repoPath || "").trim().replace(/^\/+/, "");
     if (!p) return null;
 
-    const url = "./" + p + (p.includes("?") ? "" : ("?cb=" + Date.now()));
+    const url = resolveRuntimeUrlFromRepoPath(p) + (p.includes("?") ? "" : ("?cb=" + Date.now()));
+
     try {
       const res = await fetch(url, { cache: "no-store" });
       if (!res.ok) return null;
@@ -379,7 +409,6 @@
   }
 
   function listFillers() {
-    // Para UI futura: alfabético + “todos os conhecidos”
     const discovered = discoverRuntimeFillers();
     return {
       ok: true,
@@ -428,7 +457,6 @@
     }
 
     // 3) se bundle local estiver “mínimo”, gera bundle completo (FILLERS)
-    // threshold: <= 2 é praticamente “bundle mínimo” (teu caso é 1)
     const THRESHOLD_MIN = 2;
 
     if (!localOk || localFilesCount <= THRESHOLD_MIN) {
@@ -437,7 +465,7 @@
       const built = await buildFactoryBundle({ includeDefault: true, includeDiscovered: true, maxFiles: 250 });
       const builtTxt = JSON.stringify(built);
 
-      // salva local também (pra scanner ver e pra você ter fallback)
+      // salva local também
       try { localStorage.setItem(LS_BUNDLE_KEY, builtTxt); } catch {}
 
       // valida antes de push
@@ -458,6 +486,7 @@
 
   window.RCF_GH_SYNC = {
     __v24h: true,
+    __v24i: true,
     loadConfig,
     saveConfig,
     setToken(token) { RUNTIME_PAT = String(token || "").trim(); return true; },
@@ -466,11 +495,11 @@
     pull,
     push,
     pushMotherBundle,
-    listFillers,          // ✅ novo (UI futura)
-    buildFactoryBundle    // ✅ novo (debug/manual)
+    listFillers,
+    buildFactoryBundle
   };
 
-  log("info", "github_sync.js loaded (v2.4h)");
+  log("info", "github_sync.js loaded (v2.4i)");
 })();
 
 // ---------------------------------------------------------
