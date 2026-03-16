@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/module_registry.js
    RControl Factory — Module Registry
-   v1.4 STABLE / PATCH MÍNIMO
+   v1.4.1 STABLE / PATCH MÍNIMO
 
    Objetivo:
    - detectar automaticamente módulos globais já carregados
@@ -14,9 +14,9 @@
 (function (global) {
   "use strict";
 
-  if (global.RCF_MODULE_REGISTRY && global.RCF_MODULE_REGISTRY.__v14) return;
+  if (global.RCF_MODULE_REGISTRY && global.RCF_MODULE_REGISTRY.__v141) return;
 
-  var VERSION = "v1.4";
+  var VERSION = "v1.4.1";
 
   var modules = {
     logger: false,
@@ -103,7 +103,7 @@
     var before = clone(modules);
 
     try { modules.logger = !!global.RCF_LOGGER; } catch (_) {}
-    try { modules.doctor = !!global.RCF_DOCTOR_SCAN; } catch (_) {}
+    try { modules.doctor = !!global.RCF_DOCTOR_SCAN || !!global.RCF_DOCTOR; } catch (_) {}
     try { modules.github = !!global.RCF_GH_SYNC; } catch (_) {}
     try { modules.vault = !!global.RCF_ZIP_VAULT; } catch (_) {}
     try { modules.bridge = !!global.RCF_AGENT_ZIP_BRIDGE; } catch (_) {}
@@ -222,6 +222,7 @@
     __v12: true,
     __v13: true,
     __v14: true,
+    __v141: true,
     version: VERSION,
     register: register,
     unregister: unregister,
@@ -257,11 +258,13 @@
   } catch (_) {}
 
   try {
-    global.addEventListener("visibilitychange", function () {
-      try {
-        if (document.visibilityState === "visible") detectModules();
-      } catch (_) {}
-    }, { passive: true });
+    if (global.document && global.document.addEventListener) {
+      global.document.addEventListener("visibilitychange", function () {
+        try {
+          if (global.document.visibilityState === "visible") detectModules();
+        } catch (_) {}
+      }, { passive: true });
+    }
   } catch (_) {}
 
   try {
