@@ -1,22 +1,23 @@
 /* FILE: /app/js/core/factory_tree.js
    RControl Factory — Factory Tree Engine
-   v1.2 SAFE / PATCH MÍNIMO
+   v1.3 STABLE / REBUILD MINIMAL
 
    Objetivo:
    - registrar estrutura visível da Factory
-   - mapear scripts carregados
-   - separar por grupos lógicos
-   - ajudar Admin AI / Factory AI a enxergar arquivos reais
-   - ampliar detecção sem depender de backend
+   - mapear scripts, styles, assets e arquivos conhecidos
+   - separar por grupos lógicos coerentes
+   - ajudar Context Engine / Factory AI / Patch Supervisor
+   - manter snapshot mais útil no Safari / PWA
+   - sincronizar presença com factory_state / module_registry sem dependência rígida
    - funcionar como script clássico
 */
 
 (function (global) {
   "use strict";
 
-  if (global.RCF_FACTORY_TREE && global.RCF_FACTORY_TREE.__v12) return;
+  if (global.RCF_FACTORY_TREE && global.RCF_FACTORY_TREE.__v13) return;
 
-  var VERSION = "v1.2";
+  var VERSION = "v1.3";
 
   var BUCKETS = [
     "core",
@@ -30,30 +31,67 @@
     "other"
   ];
 
-  var tree = {
-    core: [],
-    ui: [],
-    admin: [],
-    engine: [],
-    modules: [],
-    functions: [],
-    assets: [],
-    root: [],
-    other: []
+  var tree = emptyTree();
+  var meta = {
+    version: VERSION,
+    bootedAt: nowISO(),
+    lastRefresh: null,
+    lastChange: null
   };
+
+  function emptyTree() {
+    return {
+      core: [],
+      ui: [],
+      admin: [],
+      engine: [],
+      modules: [],
+      functions: [],
+      assets: [],
+      root: [],
+      other: []
+    };
+  }
+
+  function nowISO() {
+    try { return new Date().toISOString(); }
+    catch (_) { return ""; }
+  }
 
   function clone(obj) {
     try { return JSON.parse(JSON.stringify(obj)); }
     catch (_) { return obj || {}; }
   }
 
+  function safe(fn, fallback) {
+    try {
+      var v = fn();
+      return v === undefined ? fallback : v;
+    } catch (_) {
+      return fallback;
+    }
+  }
+
   function asArray(value) {
     return Array.isArray(value) ? value : [];
+  }
+
+  function uniq(list) {
+    var out = [];
+    var seen = {};
+    asArray(list).forEach(function (item) {
+      var key = String(item || "");
+      if (!key || seen[key]) return;
+      seen[key] = true;
+      out.push(key);
+    });
+    return out;
   }
 
   function normalizePath(src) {
     try {
       if (!src) return "";
+
       var s = String(src).trim();
       if (!s) return "";
 
@@ -69,15 +107,23 @@
       }
 
       s = s.replace(/\\/g, "/");
-      s = s.replace(/^\.\/+/, "/");
-      s = s.replace(/^\.\.\//, "/");
-      s = s.replace(/\/{2,}/g, "/");
 
       if (s.indexOf("?") >= 0) s = s.split("?")[0];
       if (s.indexOf("#") >= 0) s = s.split("#")[0];
 
+      s = s.replace(/^\.\/+/, "/");
+      s = s.replace(/^\/+/, "/");
+      s = s.replace(/\/{2,}/g, "/");
+
       if (!s) return "";
       if (s.charAt(0) !== "/") s = "/" + s;
+
+      // normalização de paths runtime -> repo/app
+      if (s === "/index.html") return "/app/index.html";
+      if (s === "/app.js") return "/app/app.js";
+      if (s === "/styles.css") return "/app/styles.css";
+      if (s.indexOf("/js/") === 0) return "/app" + s;
+      if (s.indexOf("/assets/") === 0) return "/app" + s;
 
       return s;
     } catch (_) {
@@ -85,35 +131,30 @@
     }
   }
 
-  function hasPath(list, path) {
-    return Array.isArray(list) && list.indexOf(path) >= 0;
-  }
-
-  function pushUnique(bucket, path) {
-    if (!path) return false;
-    if (!Array.isArray(tree[bucket])) return false;
-    if (hasPath(tree[bucket], path)) return false;
-    tree[bucket].push(path);
-    return true;
-  }
-
   function classify(path) {
     if (!path) return "other";
 
     if (path.indexOf("/functions/") === 0) return "functions";
-    if (path.indexOf("/app/js/core/") === 0 || path.indexOf("/js/core/") >= 0) return "core";
-    if (path.indexOf("/app/js/ui/") === 0 || path.indexOf("/js/ui/") >= 0) return "ui";
-    if (path.indexOf("/app/js/admin") === 0 || path.indexOf("/js/admin") >= 0) return "admin";
-    if (path.indexOf("/app/js/engine/") === 0 || path.indexOf("/js/engine/") >= 0) return "engine";
-    if (path.indexOf("/app/js/modules/") === 0 || path.indexOf("/js/modules/") >= 0) return "modules";
-    if (path.indexOf("/app/assets/") === 0 || path.indexOf("/assets/") >= 0) return "assets";
+    if (path.indexOf("/app/js/core/") === 0) return "core";
+    if (path.indexOf("/app/js/ui/") === 0) return "ui";
 
     if (
-      path === "/index.html" ||
-      path === "/app.js" ||
-      path.indexOf("/manifest.json") >= 0 ||
-      path.indexOf("/styles.css") >= 0 ||
-      path.indexOf("/sw.js") >= 0 ||
+      path.indexOf("/app/js/admin/") === 0 ||
+      path.indexOf("/app/js/admin.") === 0
+    ) {
+      return "admin";
+    }
+
+    if (path.indexOf("/app/js/engine/") === 0) return "engine";
+    if (path.indexOf("/app/js/modules/") === 0) return "modules";
+    if (path.indexOf("/app/assets/") === 0) return "assets";
+
+    if (
+      path === "/app/index.html" ||
+      path === "/app/app.js" ||
+      path === "/app/styles.css" ||
+      path === "/manifest.json" ||
+      path === "/sw.js" ||
       path.indexOf("/service-worker") >= 0
     ) {
       return "root";
@@ -124,6 +165,19 @@
     return "other";
   }
 
+  function hasPath(list, path) {
+    return Array.isArray(list) && list.indexOf(path) >= 0;
+  }
+
+  function pushUnique(bucket, path) {
+    if (!bucket || !path) return false;
+    if (!Array.isArray(tree[bucket])) return false;
+    if (hasPath(tree[bucket], path)) return false;
+    tree[bucket].push(path);
+    meta.lastChange = nowISO();
+    return true;
+  }
+
   function register(path) {
     var p = normalizePath(path);
     if (!p) return false;
@@ -131,9 +185,17 @@
   }
 
   function registerMany(list) {
-    if (!Array.isArray(list)) return;
-    list.forEach(function (item) {
-      register(item);
+    var changed = false;
+    asArray(list).forEach(function (item) {
+      if (register(item)) changed = true;
+    });
+    return changed;
+  }
+
+  function sortBuckets() {
+    BUCKETS.forEach(function (bucket) {
+      if (!Array.isArray(tree[bucket])) tree[bucket] = [];
+      tree[bucket] = uniq(tree[bucket]).sort();
     });
   }
 
@@ -155,21 +217,25 @@
     return getAllPaths();
   }
 
+  function counts() {
+    return {
+      core: asArray(tree.core).length,
+      ui: asArray(tree.ui).length,
+      admin: asArray(tree.admin).length,
+      engine: asArray(tree.engine).length,
+      modules: asArray(tree.modules).length,
+      functions: asArray(tree.functions).length,
+      assets: asArray(tree.assets).length,
+      root: asArray(tree.root).length,
+      other: asArray(tree.other).length,
+      total: getAllPaths().length
+    };
+  }
+
   function summary() {
     return {
       version: VERSION,
-      counts: {
-        core: tree.core.length,
-        ui: tree.ui.length,
-        admin: tree.admin.length,
-        engine: tree.engine.length,
-        modules: tree.modules.length,
-        functions: tree.functions.length,
-        assets: tree.assets.length,
-        root: tree.root.length,
-        other: tree.other.length,
-        total: getAllPaths().length
-      },
+      counts: counts(),
       samples: {
         core: tree.core.slice(0, 10),
         ui: tree.ui.slice(0, 10),
@@ -181,7 +247,10 @@
         root: tree.root.slice(0, 10),
         other: tree.other.slice(0, 10)
       },
-      ts: new Date().toISOString()
+      lastRefresh: meta.lastRefresh,
+      lastChange: meta.lastChange,
+      bootedAt: meta.bootedAt,
+      ts: nowISO()
     };
   }
 
@@ -189,55 +258,62 @@
     try {
       var scripts = document.querySelectorAll("script[src]");
       scripts.forEach(function (s) {
-        var src = s.getAttribute("src") || "";
-        if (!src) return;
-        register(src);
+        register(s.getAttribute("src") || "");
       });
     } catch (_) {}
   }
 
   function detectLoadedStyles() {
     try {
-      var links = document.querySelectorAll('link[rel="stylesheet"][href], link[href*=".css"]');
+      var links = document.querySelectorAll('link[href]');
       links.forEach(function (l) {
         var href = l.getAttribute("href") || "";
         if (!href) return;
-        register(href);
+        if (href.indexOf(".css") >= 0 || href.indexOf("/assets/") >= 0) {
+          register(href);
+        }
       });
     } catch (_) {}
   }
 
   function detectAssets() {
     try {
-      var imgs = document.querySelectorAll("img[src]");
-      imgs.forEach(function (img) {
-        var src = img.getAttribute("src") || "";
-        if (!src) return;
-        register(src);
+      var imgs = document.querySelectorAll("img[src], source[src], video[src], audio[src]");
+      imgs.forEach(function (el) {
+        register(el.getAttribute("src") || "");
       });
     } catch (_) {}
   }
 
   function detectRootFiles() {
-    try { register("/index.html"); } catch (_) {}
-    try { register("/app.js"); } catch (_) {}
-    try { register("/styles.css"); } catch (_) {}
-    try { register("/manifest.json"); } catch (_) {}
-    try { register("/sw.js"); } catch (_) {}
+    registerMany([
+      "/app/index.html",
+      "/app/app.js",
+      "/app/styles.css",
+      "/manifest.json",
+      "/sw.js"
+    ]);
   }
 
-  function detectFromContext() {
-    try {
-      if (!global.RCF_CONTEXT || typeof global.RCF_CONTEXT.getSnapshot !== "function") return;
-      var snap = global.RCF_CONTEXT.getSnapshot();
-      var paths = (((snap || {}).tree || {}).samples || []);
-      registerMany(paths);
-    } catch (_) {}
+  function detectKnownFactoryFiles() {
+    registerMany([
+      "/app/js/core/context_engine.js",
+      "/app/js/core/factory_state.js",
+      "/app/js/core/module_registry.js",
+      "/app/js/core/factory_tree.js",
+      "/app/js/core/doctor_scan.js",
+      "/app/js/core/github_sync.js",
+      "/app/js/core/factory_ai_bridge.js",
+      "/app/js/core/factory_ai_actions.js",
+      "/app/js/core/patch_supervisor.js",
+      "/app/js/admin.admin_ai.js",
+      "/functions/api/admin-ai.js"
+    ]);
   }
 
-  function detectFromState() {
+  function detectFromFactoryState() {
     try {
-      if (!global.RCF_FACTORY_STATE || typeof global.RCF_FACTORY_STATE.getState !== "function") return;
+      if (!global.RCF_FACTORY_STATE?.getState) return;
       var st = global.RCF_FACTORY_STATE.getState() || {};
 
       registerMany(asArray(st.loadedFiles));
@@ -246,15 +322,62 @@
     } catch (_) {}
   }
 
-  function detectKnownFactoryFiles() {
-    registerMany([
-      "/app/index.html",
-      "/app/app.js",
-      "/app/js/core/context_engine.js",
-      "/app/js/core/factory_tree.js",
-      "/app/js/admin.admin_ai.js",
-      "/functions/api/admin-ai.js"
-    ]);
+  function detectFromModuleRegistry() {
+    try {
+      if (!global.RCF_MODULE_REGISTRY?.summary) return;
+      var sm = global.RCF_MODULE_REGISTRY.summary() || {};
+      var mods = sm.modules || {};
+
+      if (mods.contextEngine) register("/app/js/core/context_engine.js");
+      if (mods.factoryState) register("/app/js/core/factory_state.js");
+      if (mods.moduleRegistry) register("/app/js/core/module_registry.js");
+      if (mods.factoryTree) register("/app/js/core/factory_tree.js");
+      if (mods.factoryAI) register("/app/js/admin.admin_ai.js");
+      if (mods.github) register("/app/js/core/github_sync.js");
+      if (mods.doctor) register("/app/js/core/doctor_scan.js");
+    } catch (_) {}
+  }
+
+  function detectFromContext() {
+    try {
+      if (!global.RCF_CONTEXT) return;
+
+      var snap = null;
+      if (typeof global.RCF_CONTEXT.getSnapshot === "function") {
+        snap = global.RCF_CONTEXT.getSnapshot();
+      } else if (typeof global.RCF_CONTEXT.getContext === "function") {
+        snap = global.RCF_CONTEXT.getContext();
+      }
+
+      if (!snap || typeof snap !== "object") return;
+
+      var treeBlock = snap.tree || {};
+      registerMany(asArray(treeBlock.samples));
+
+      var pathGroups = treeBlock.pathGroups || {};
+      Object.keys(pathGroups).forEach(function (k) {
+        registerMany(asArray(pathGroups[k]));
+      });
+
+      var candidateFiles = asArray(snap.candidateFiles);
+      registerMany(candidateFiles);
+    } catch (_) {}
+  }
+
+  function syncPresence() {
+    try {
+      if (global.RCF_FACTORY_STATE?.registerModule) {
+        global.RCF_FACTORY_STATE.registerModule("factoryTree");
+      } else if (global.RCF_FACTORY_STATE?.setModule) {
+        global.RCF_FACTORY_STATE.setModule("factoryTree", true);
+      }
+    } catch (_) {}
+
+    try {
+      if (global.RCF_MODULE_REGISTRY?.register) {
+        global.RCF_MODULE_REGISTRY.register("factoryTree");
+      }
+    } catch (_) {}
   }
 
   function refresh() {
@@ -263,25 +386,34 @@
     detectLoadedScripts();
     detectLoadedStyles();
     detectAssets();
-    detectFromState();
+    detectFromFactoryState();
+    detectFromModuleRegistry();
     detectFromContext();
+
+    sortBuckets();
+    meta.lastRefresh = nowISO();
+    syncPresence();
+
     return summary();
   }
 
   function init() {
     refresh();
+    return summary();
   }
 
   global.RCF_FACTORY_TREE = {
     __v1: true,
     __v11: true,
     __v12: true,
+    __v13: true,
     version: VERSION,
     register: register,
     registerMany: registerMany,
     getTree: getTree,
     getAllPaths: getAllPaths,
     getKnownPaths: getKnownPaths,
+    counts: counts,
     summary: summary,
     refresh: refresh,
     init: init
@@ -290,6 +422,42 @@
   try {
     init();
     console.log("[RCF] factory_tree ready", VERSION);
+  } catch (_) {}
+
+  try {
+    global.addEventListener("DOMContentLoaded", function () {
+      try { refresh(); } catch (_) {}
+    }, { once: true });
+  } catch (_) {}
+
+  try {
+    global.addEventListener("load", function () {
+      try { refresh(); } catch (_) {}
+    }, { once: true });
+  } catch (_) {}
+
+  try {
+    global.addEventListener("pageshow", function () {
+      try { refresh(); } catch (_) {}
+    }, { passive: true });
+  } catch (_) {}
+
+  try {
+    if (global.document && global.document.addEventListener) {
+      global.document.addEventListener("visibilitychange", function () {
+        try {
+          if (global.document.visibilityState === "visible") {
+            refresh();
+          }
+        } catch (_) {}
+      }, { passive: true });
+    }
+  } catch (_) {}
+
+  try {
+    global.addEventListener("RCF:UI_READY", function () {
+      try { refresh(); } catch (_) {}
+    }, { passive: true });
   } catch (_) {}
 
 })(window);
