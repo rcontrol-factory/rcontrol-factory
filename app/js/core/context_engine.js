@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/context_engine.js
    RControl Factory — Context Engine
-   v1.6.2 SNAPSHOT CONSOLIDATED / PATCH MÍNIMO
+   v1.6.3 SNAPSHOT CONSOLIDATED / SUPERVISED AI LAYER
 
    Objetivo:
    - consolidar snapshot estrutural mais confiável
@@ -9,15 +9,17 @@
    - incluir bloco de injector/admin sem criar dependência rígida
    - reduzir respostas genéricas da Admin AI / Factory AI
    - separar melhor presença / prontidão / ativação
+   - incluir camada supervisionada da Factory AI:
+     planner + bridge + actions + patch supervisor
    - funcionar como script clássico
 */
 
 (function (global) {
   "use strict";
 
-  if (global.RCF_CONTEXT && global.RCF_CONTEXT.__v162) return;
+  if (global.RCF_CONTEXT && global.RCF_CONTEXT.__v163) return;
 
-  var VERSION = "v1.6.2";
+  var VERSION = "v1.6.3";
 
   function safe(fn, fallback) {
     try {
@@ -140,36 +142,6 @@
     }, {});
   }
 
-  function getFlags() {
-    return {
-      hasLogger: !!global.RCF_LOGGER,
-      hasDoctor: !!global.RCF_DOCTOR_SCAN || !!global.RCF_DOCTOR,
-      hasGitHub: !!global.RCF_GH_SYNC,
-      hasVault: !!global.RCF_ZIP_VAULT,
-      hasBridge: !!global.RCF_AGENT_ZIP_BRIDGE,
-      hasAdminAI: !!global.RCF_ADMIN_AI,
-      hasFactoryAI: !!global.RCF_FACTORY_AI || !!global.RCF_FACTORY_IA,
-      hasFactoryState: !!global.RCF_FACTORY_STATE,
-      hasModuleRegistry: !!global.RCF_MODULE_REGISTRY,
-      hasContextEngine: true,
-      hasFactoryTree: !!global.RCF_FACTORY_TREE,
-      hasDiagnostics: !!global.RCF_DIAGNOSTICS,
-      hasInjectorSafe: !!global.RCF_INJECTOR_SAFE || !!global.RCF_INJECTOR || !!global.RCF_INJECTOR_SAFE_UI,
-      hasPreviewRunner: !!global.RCF_PREVIEW_RUNNER,
-      hasBuilder: !!global.RCF_BUILDER
-    };
-  }
-
-  function getEnvironment() {
-    return {
-      href: safe(function () { return global.location.href; }, ""),
-      userAgent: safe(function () { return global.navigator.userAgent; }, ""),
-      platform: safe(function () { return global.navigator.platform; }, ""),
-      language: safe(function () { return global.navigator.language; }, ""),
-      ts: nowISO()
-    };
-  }
-
   function getLoggerInfo() {
     var items = safe(function () {
       if (!global.RCF_LOGGER) return [];
@@ -238,6 +210,76 @@
     };
   }
 
+  function getPlannerInfo() {
+    var api = global.RCF_FACTORY_AI_PLANNER || null;
+    var st = safe(function () {
+      return api && typeof api.status === "function" ? api.status() : {};
+    }, {});
+    var lastPlan = safe(function () {
+      return api && typeof api.getLastPlan === "function" ? api.getLastPlan() : null;
+    }, null);
+
+    return {
+      ready: !!api,
+      version: safe(function () { return api && api.version; }, "unknown"),
+      lastGoal: st.lastGoal || "",
+      lastPriority: st.lastPriority || "",
+      lastNextFile: st.lastNextFile || "",
+      hasPlan: !!lastPlan
+    };
+  }
+
+  function getFactoryAIBridgeInfo() {
+    var api = global.RCF_FACTORY_AI_BRIDGE || null;
+    var st = safe(function () {
+      return api && typeof api.status === "function" ? api.status() : {};
+    }, {});
+    var lastPlan = safe(function () {
+      return api && typeof api.getLastPlan === "function" ? api.getLastPlan() : null;
+    }, null);
+
+    return {
+      ready: !!api,
+      version: safe(function () { return api && api.version; }, "unknown"),
+      hasPlan: !!st.hasPlan || !!lastPlan,
+      targetFile: st.targetFile || safe(function () { return lastPlan.targetFile; }, "") || "",
+      approvalStatus: st.approvalStatus || safe(function () { return lastPlan.approvalStatus; }, "") || "",
+      risk: st.risk || safe(function () { return lastPlan.risk; }, "") || "unknown"
+    };
+  }
+
+  function getFactoryAIActionsInfo() {
+    var api = global.RCF_FACTORY_AI_ACTIONS || null;
+    var st = safe(function () {
+      return api && typeof api.status === "function" ? api.status() : {};
+    }, {});
+
+    return {
+      ready: !!api,
+      version: safe(function () { return api && api.version; }, "unknown"),
+      lastAction: safe(function () { return st.lastAction && st.lastAction.name; }, "") || "",
+      plannerReady: !!st.plannerReady,
+      bridgeReady: !!st.bridgeReady,
+      patchSupervisorReady: !!st.patchSupervisorReady
+    };
+  }
+
+  function getPatchSupervisorInfo() {
+    var api = global.RCF_PATCH_SUPERVISOR || null;
+    var st = safe(function () {
+      return api && typeof api.status === "function" ? api.status() : {};
+    }, {});
+
+    return {
+      ready: !!api,
+      version: safe(function () { return api && api.version; }, "unknown"),
+      hasStagedPatch: !!st.hasStagedPatch,
+      stagedPlanId: st.stagedPlanId || "",
+      stagedTargetFile: st.stagedTargetFile || "",
+      lastApplyOk: !!st.lastApplyOk
+    };
+  }
+
   function getInjectorInfo() {
     var injector =
       global.RCF_INJECTOR_SAFE ||
@@ -284,6 +326,40 @@
       scanSummary: clone(scan || {}),
       preview: clone(preview || {}),
       logTail: clone(logItems || [])
+    };
+  }
+
+  function getFlags() {
+    return {
+      hasLogger: !!global.RCF_LOGGER,
+      hasDoctor: !!global.RCF_DOCTOR_SCAN || !!global.RCF_DOCTOR,
+      hasGitHub: !!global.RCF_GH_SYNC,
+      hasVault: !!global.RCF_ZIP_VAULT,
+      hasBridge: !!global.RCF_AGENT_ZIP_BRIDGE,
+      hasAdminAI: !!global.RCF_ADMIN_AI,
+      hasFactoryAI: !!global.RCF_FACTORY_AI || !!global.RCF_FACTORY_IA,
+      hasFactoryState: !!global.RCF_FACTORY_STATE,
+      hasModuleRegistry: !!global.RCF_MODULE_REGISTRY,
+      hasContextEngine: true,
+      hasFactoryTree: !!global.RCF_FACTORY_TREE,
+      hasDiagnostics: !!global.RCF_DIAGNOSTICS,
+      hasInjectorSafe: !!global.RCF_INJECTOR_SAFE || !!global.RCF_INJECTOR || !!global.RCF_INJECTOR_SAFE_UI,
+      hasPreviewRunner: !!global.RCF_PREVIEW_RUNNER,
+      hasBuilder: !!global.RCF_BUILDER,
+      hasFactoryAIPlanner: !!global.RCF_FACTORY_AI_PLANNER,
+      hasFactoryAIBridge: !!global.RCF_FACTORY_AI_BRIDGE,
+      hasFactoryAIActions: !!global.RCF_FACTORY_AI_ACTIONS,
+      hasPatchSupervisor: !!global.RCF_PATCH_SUPERVISOR
+    };
+  }
+
+  function getEnvironment() {
+    return {
+      href: safe(function () { return global.location.href; }, ""),
+      userAgent: safe(function () { return global.navigator.userAgent; }, ""),
+      platform: safe(function () { return global.navigator.platform; }, ""),
+      language: safe(function () { return global.navigator.language; }, ""),
+      ts: nowISO()
     };
   }
 
@@ -390,6 +466,10 @@
     var github = safeObj(snapshot && snapshot.github);
     var admin = safeObj(snapshot && snapshot.admin);
     var factoryAI = safeObj(snapshot && snapshot.factoryAI);
+    var planner = safeObj(snapshot && snapshot.factoryAIPlanner);
+    var bridge = safeObj(snapshot && snapshot.factoryAIBridge);
+    var actions = safeObj(snapshot && snapshot.factoryAIActions);
+    var patchSupervisor = safeObj(snapshot && snapshot.patchSupervisor);
     var injector = safeObj(snapshot && snapshot.injector);
     var activeList = asArray(modules.active);
     var moduleMap = safeObj(modules.modules);
@@ -402,17 +482,13 @@
           presence: !!flags.hasLogger,
           ready: !!firstDefined(factory.loggerReady, logger.ready),
           active: !!firstDefined(modules.logger, moduleMap.logger),
-          extra: {
-            itemsCount: numberOrNull(logger.itemsCount)
-          }
+          extra: { itemsCount: numberOrNull(logger.itemsCount) }
         }),
         doctor: buildModuleSemantic("doctor", {
           presence: !!flags.hasDoctor,
           ready: !!firstDefined(factory.doctorReady, doctor.ready),
           active: !!firstDefined(modules.doctor, moduleMap.doctor),
-          extra: {
-            lastRun: doctor.lastRun || null
-          }
+          extra: { lastRun: doctor.lastRun || null }
         }),
         github: buildModuleSemantic("github", {
           presence: !!flags.hasGitHub,
@@ -447,17 +523,13 @@
           presence: !!flags.hasFactoryState,
           ready: !!flags.hasFactoryState,
           active: !!firstDefined(modules.factoryState, moduleMap.factoryState),
-          extra: {
-            bootStatus: factory.bootStatus || ""
-          }
+          extra: { bootStatus: factory.bootStatus || "" }
         }),
         moduleRegistry: buildModuleSemantic("moduleRegistry", {
           presence: !!flags.hasModuleRegistry,
           ready: !!flags.hasModuleRegistry,
           active: !!firstDefined(modules.moduleRegistry, moduleMap.moduleRegistry),
-          extra: {
-            activeCount: numberOrNull(modules.activeCount)
-          }
+          extra: { activeCount: numberOrNull(modules.activeCount) }
         }),
         contextEngine: buildModuleSemantic("contextEngine", {
           presence: !!flags.hasContextEngine,
@@ -468,9 +540,7 @@
           presence: !!flags.hasFactoryTree,
           ready: !!flags.hasFactoryTree || numberOrNull(snapshot && snapshot.tree && snapshot.tree.pathsCount) !== null,
           active: !!firstDefined(modules.factoryTree, moduleMap.factoryTree),
-          extra: {
-            pathsCount: numberOrNull(snapshot && snapshot.tree && snapshot.tree.pathsCount)
-          }
+          extra: { pathsCount: numberOrNull(snapshot && snapshot.tree && snapshot.tree.pathsCount) }
         }),
         diagnostics: buildModuleSemantic("diagnostics", {
           presence: !!flags.hasDiagnostics,
@@ -481,6 +551,48 @@
           presence: !!flags.hasInjectorSafe,
           ready: !!injector.ready,
           active: !!firstDefined(moduleMap.injector, injector.ready)
+        }),
+        factoryAIPlanner: buildModuleSemantic("factoryAIPlanner", {
+          presence: !!flags.hasFactoryAIPlanner,
+          ready: !!planner.ready,
+          active: !!firstDefined(moduleMap.factoryAIPlanner, activeList.indexOf("factoryAIPlanner") >= 0),
+          extra: {
+            lastGoal: planner.lastGoal || "",
+            lastPriority: planner.lastPriority || "",
+            lastNextFile: planner.lastNextFile || "",
+            hasPlan: !!planner.hasPlan
+          }
+        }),
+        factoryAIBridge: buildModuleSemantic("factoryAIBridge", {
+          presence: !!flags.hasFactoryAIBridge,
+          ready: !!bridge.ready,
+          active: !!firstDefined(moduleMap.factoryAIBridge, activeList.indexOf("factoryAIBridge") >= 0),
+          extra: {
+            hasPlan: !!bridge.hasPlan,
+            targetFile: bridge.targetFile || "",
+            approvalStatus: bridge.approvalStatus || ""
+          }
+        }),
+        factoryAIActions: buildModuleSemantic("factoryAIActions", {
+          presence: !!flags.hasFactoryAIActions,
+          ready: !!actions.ready,
+          active: !!firstDefined(moduleMap.factoryAIActions, activeList.indexOf("factoryAIActions") >= 0),
+          extra: {
+            lastAction: actions.lastAction || "",
+            plannerReady: !!actions.plannerReady,
+            bridgeReady: !!actions.bridgeReady,
+            patchSupervisorReady: !!actions.patchSupervisorReady
+          }
+        }),
+        patchSupervisor: buildModuleSemantic("patchSupervisor", {
+          presence: !!flags.hasPatchSupervisor,
+          ready: !!patchSupervisor.ready,
+          active: !!firstDefined(moduleMap.patchSupervisor, activeList.indexOf("patchSupervisor") >= 0),
+          extra: {
+            hasStagedPatch: !!patchSupervisor.hasStagedPatch,
+            stagedTargetFile: patchSupervisor.stagedTargetFile || "",
+            lastApplyOk: !!patchSupervisor.lastApplyOk
+          }
         })
       }
     };
@@ -494,6 +606,10 @@
     };
 
     var active = asArray(snapshot && snapshot.modules && snapshot.modules.active);
+    var planner = safeObj(snapshot && snapshot.factoryAIPlanner);
+    var bridge = safeObj(snapshot && snapshot.factoryAIBridge);
+    var actions = safeObj(snapshot && snapshot.factoryAIActions);
+    var patchSupervisor = safeObj(snapshot && snapshot.patchSupervisor);
 
     push("/app/app.js");
     push("/app/index.html");
@@ -503,12 +619,20 @@
     push("/app/js/core/factory_tree.js");
     push("/app/js/core/logger.js");
     push("/app/js/core/doctor_scan.js");
+    push("/app/js/core/factory_ai_planner.js");
+    push("/app/js/core/factory_ai_bridge.js");
+    push("/app/js/core/factory_ai_actions.js");
+    push("/app/js/core/patch_supervisor.js");
     push("/app/js/core/ui_runtime.js");
     push("/app/js/core/ui_shell.js");
     push("/app/js/ui/ui_bootstrap.js");
     push("/app/js/ui/ui_views.js");
     push("/app/js/admin.admin_ai.js");
     push("/functions/api/admin-ai.js");
+
+    if (planner.lastNextFile) push(planner.lastNextFile);
+    if (bridge.targetFile) push(bridge.targetFile);
+    if (patchSupervisor.stagedTargetFile) push(patchSupervisor.stagedTargetFile);
 
     if (active.indexOf("factoryState") >= 0 || active.indexOf("factory_state") >= 0) {
       push("/app/js/core/factory_state.js");
@@ -530,6 +654,18 @@
     if (active.indexOf("logger") >= 0 || snapshot.logger.ready) {
       push("/app/js/core/logger.js");
     }
+    if (active.indexOf("factoryAIPlanner") >= 0 || planner.ready) {
+      push("/app/js/core/factory_ai_planner.js");
+    }
+    if (active.indexOf("factoryAIBridge") >= 0 || bridge.ready) {
+      push("/app/js/core/factory_ai_bridge.js");
+    }
+    if (active.indexOf("factoryAIActions") >= 0 || actions.ready) {
+      push("/app/js/core/factory_ai_actions.js");
+    }
+    if (active.indexOf("patchSupervisor") >= 0 || patchSupervisor.ready) {
+      push("/app/js/core/patch_supervisor.js");
+    }
 
     var grouped = safe(function () {
       return snapshot.tree.pathGroups;
@@ -541,7 +677,7 @@
     asArray(grouped.engine).slice(0, 8).forEach(push);
     asArray(grouped.functions).slice(0, 6).forEach(push);
 
-    return uniq(out).slice(0, 40);
+    return uniq(out).slice(0, 50);
   }
 
   function buildFactoryBlock() {
@@ -599,6 +735,10 @@
     var github = getGitHubInfo();
     var admin = getAdminInfo();
     var factoryAI = getFactoryAIInfo();
+    var planner = getPlannerInfo();
+    var bridge = getFactoryAIBridgeInfo();
+    var actions = getFactoryAIActionsInfo();
+    var patchSupervisor = getPatchSupervisorInfo();
     var injector = getInjectorInfo();
 
     var snapshot = {
@@ -627,6 +767,10 @@
         contextEngine: true,
         factoryTree: !!modules.factoryTree,
         diagnostics: !!modules.diagnostics,
+        factoryAIPlanner: !!safe(function () { return modules.modules.factoryAIPlanner; }, false),
+        factoryAIBridge: !!safe(function () { return modules.modules.factoryAIBridge; }, false),
+        factoryAIActions: !!safe(function () { return modules.modules.factoryAIActions; }, false),
+        patchSupervisor: !!safe(function () { return modules.modules.patchSupervisor; }, false),
         modules: clone(modules.modules || {})
       },
       tree: {
@@ -640,6 +784,10 @@
       github: github,
       admin: admin,
       factoryAI: factoryAI,
+      factoryAIPlanner: planner,
+      factoryAIBridge: bridge,
+      factoryAIActions: actions,
+      patchSupervisor: patchSupervisor,
       injector: injector,
       environment: environment
     };
@@ -672,7 +820,7 @@
       doctorLast: ctx.doctor.lastRun,
       activeModules: clone(ctx.modules.active || []),
       treeCount: ctx.tree.pathsCount || 0,
-      candidateFiles: clone(ctx.candidateFiles || []).slice(0, 12),
+      candidateFiles: clone(ctx.candidateFiles || []).slice(0, 14),
       injectorReady: !!safe(function () { return ctx.injector.ready; }, false),
       injectorTargetMapCount: Number(safe(function () { return ctx.injector.targetMapCount; }, 0) || 0),
       loggerReady: !!safe(function () { return ctx.logger.ready; }, false),
@@ -680,6 +828,13 @@
       githubReady: !!safe(function () { return ctx.github.ready; }, false),
       factoryAIReady: !!safe(function () { return ctx.factoryAI.ready; }, false),
       factoryAIHistoryCount: Number(safe(function () { return ctx.factoryAI.historyCount; }, 0) || 0),
+      plannerReady: !!safe(function () { return ctx.factoryAIPlanner.ready; }, false),
+      plannerLastNextFile: safe(function () { return ctx.factoryAIPlanner.lastNextFile; }, "") || "",
+      bridgeReady: !!safe(function () { return ctx.factoryAIBridge.ready; }, false),
+      bridgeTargetFile: safe(function () { return ctx.factoryAIBridge.targetFile; }, "") || "",
+      actionsReady: !!safe(function () { return ctx.factoryAIActions.ready; }, false),
+      patchSupervisorReady: !!safe(function () { return ctx.patchSupervisor.ready; }, false),
+      stagedTargetFile: safe(function () { return ctx.patchSupervisor.stagedTargetFile; }, "") || "",
       flags: ctx.factory.flags,
       ts: ctx.environment.ts
     };
@@ -695,6 +850,7 @@
     __v16: true,
     __v161: true,
     __v162: true,
+    __v163: true,
     version: VERSION,
     getContext: getContext,
     getSnapshot: getSnapshot,
