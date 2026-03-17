@@ -1,25 +1,34 @@
 /* FILE: /app/js/core/factory_ai_self_evolution.js
    RControl Factory — Factory AI Self Evolution
-   v1.0.0 SUPERVISED SELF EVOLUTION LOOP
+   v1.0.1 SUPERVISED SELF EVOLUTION LOOP + SAFE MEMORY COMPAT
 
    Objetivo:
    - rodar ciclo supervisionado de autoevolução da Factory AI
-   - usar planner + backend + bridge + patch supervisor + memory
+   - usar planner + actions + bridge + patch supervisor + memory
    - gerar proposta periódica sem apply automático
    - respeitar patch pendente e não sobrescrever proposta aberta
    - aprender com memória recente para evitar repetição burra
    - funcionar como script clássico
+
+   PATCH v1.0.1:
+   - FIX: remove dependência de APIs inexistentes do memory
+   - FIX: remove dependência de fromApiResponse/getPendingPlan do bridge
+   - FIX: usa actions.planFromCurrentRuntime como fluxo principal
+   - FIX: usa memory.latest/buildMemoryContext/rememberDecision/rememberNote/rememberError
+   - FIX: usa bridge.getLastPlan como fallback seguro
 */
 
 ;(function (global) {
   "use strict";
 
-  if (global.RCF_FACTORY_AI_SELF_EVOLUTION && global.RCF_FACTORY_AI_SELF_EVOLUTION.__v100) return;
+  if (global.RCF_FACTORY_AI_SELF_EVOLUTION && global.RCF_FACTORY_AI_SELF_EVOLUTION.__v101) return;
 
-  var VERSION = "v1.0.0";
+  var VERSION = "v1.0.1";
   var STORAGE_KEY = "rcf:factory_ai_self_evolution";
   var DEFAULT_INTERVAL_MS = 30 * 60 * 1000;
   var MIN_INTERVAL_MS = 5 * 60 * 1000;
+  var MAX_HISTORY = 80;
+  var RECENT_FILE_COOLDOWN_MS = 45 * 60 * 1000;
 
   var state = {
     version: VERSION,
@@ -36,7 +45,8 @@
     lastTargetFile: "",
     lastStatus: "",
     lastReason: "",
-    lastResult: null
+    lastResult: null,
+    history: []
   };
 
   function nowISO() {
@@ -108,7 +118,8 @@
         lastTargetFile: state.lastTargetFile,
         lastStatus: state.lastStatus,
         lastReason: state.lastReason,
-        lastResult: state.lastResult
+        lastResult: state.lastResult,
+        history: Array.isArray(state.history) ? state.history.slice(-MAX_HISTORY) : []
       }));
       return true;
     } catch (_) {
@@ -137,11 +148,21 @@
       state.lastStatus = parsed.lastStatus || "";
       state.lastReason = parsed.lastReason || "";
       state.lastResult = clone(parsed.lastResult || null);
+      state.history = Array.isArray(parsed.history) ? parsed.history.slice(-MAX_HISTORY) : [];
 
       return true;
     } catch (_) {
       return false;
     }
+  }
+
+  function pushHistory(entry) {
+    if (!Array.isArray(state.history)) state.history = [];
+    state.history.push(clone(entry || {}));
+    if (state.history.length > MAX_HISTORY) {
+      state.history = state.history.slice(-MAX_HISTORY);
+    }
+    persist();
   }
 
   function getPlanner() {
@@ -164,25 +185,40 @@
     return safe(function () { return global.RCF_FACTORY_AI_MEMORY || null; }, null);
   }
 
-  function getPendingPlan() {
-    var bridge = getBridge();
-    if (!bridge || typeof bridge.getPendingPlan !== "function") return null;
-    return bridge.getPendingPlan();
-  }
-
-  function hasStagedPatch() {
-    var sup = getSupervisor();
-    if (!sup || typeof sup.status !== "function") return false;
-    var status = sup.status();
-    return !!safe(function () { return status.hasStagedPatch; }, false);
-  }
-
   function getFactoryState() {
     return safe(function () {
       if (global.RCF_FACTORY_STATE?.getState) return global.RCF_FACTORY_STATE.getState();
       if (global.RCF_FACTORY_STATE?.status) return global.RCF_FACTORY_STATE.status();
       return {};
     }, {});
+  }
+
+  function getCurrentPlan() {
+    var bridge = getBridge();
+    if (!bridge || typeof bridge.getLastPlan !== "function") return null;
+    var plan = bridge.getLastPlan();
+    return (plan && typeof plan === "object") ? clone(plan) : null;
+  }
+
+  function hasPendingPlan() {
+    var plan = getCurrentPlan();
+    if (!plan) return false;
+    return trimText(plan.approvalStatus || "") !== "approved";
+  }
+
+  function hasStagedPatch() {
+    var sup = getSupervisor();
+    if (!sup || typeof sup.status !== "function") return false;
+    var st = sup.status() || {};
+    return !!safe(function () { return st.hasStagedPatch; }, false);
+  }
+
+  function getRecentMemoryItems() {
+    var memory = getMemory();
+    if (!memory || typeof memory.latest !== "function") return [];
+    var res = memory.latest(20);
+    if (!res || !res.ok || !Array.isArray(res.items)) return [];
+    return clone(res.items);
   }
 
   function buildPrompt(extra) {
@@ -199,82 +235,89 @@
     return add ? (base + " " + add) : base;
   }
 
-  function buildBackendPayload(plan, cycleId) {
-    var factoryState = getFactoryState();
-    var memory = getMemory();
-    var summary = memory && typeof memory.getSummary === "function"
-      ? memory.getSummary()
-      : {};
-
-    return {
-      snapshot: safe(function () {
-        if (global.RCF_CONTEXT?.getSnapshot) return global.RCF_CONTEXT.getSnapshot();
-        if (global.RCF_CONTEXT?.getContext) return global.RCF_CONTEXT.getContext();
-        return {};
-      }, {}),
-      plannerPlan: clone(plan || {}),
-      selfEvolution: {
-        cycleId: cycleId,
-        activeView: trimText(factoryState.activeView || ""),
-        bootStatus: trimText(factoryState.bootStatus || ""),
-        lastTargetFile: trimText(state.lastTargetFile || ""),
-        memorySummary: clone(summary || {})
-      }
-    };
-  }
-
-  function shouldSkipByMemory(targetFile) {
-    var memory = getMemory();
-    if (!memory || typeof memory.getAvoidList !== "function") return null;
-
-    var list = memory.getAvoidList({
-      cooldownMs: 45 * 60 * 1000,
-      maxFailed: 2
-    });
-
+  function isRecentTargetBlocked(targetFile) {
     var want = normalizePath(targetFile);
-    for (var i = 0; i < list.length; i++) {
-      var item = list[i];
-      if (normalizePath(item.file) === want) return item;
+    if (!want) return null;
+
+    var items = getRecentMemoryItems();
+    var now = nowMS();
+
+    for (var i = 0; i < items.length; i++) {
+      var item = items[i] || {};
+      var file = normalizePath(item.targetFile || item.file || "");
+      if (file !== want) continue;
+
+      var createdAt = trimText(item.createdAt || item.updatedAt || "");
+      var ts = createdAt ? Date.parse(createdAt) : 0;
+      if (!ts || !isFinite(ts)) continue;
+
+      if ((now - ts) <= RECENT_FILE_COOLDOWN_MS) {
+        return {
+          blocked: true,
+          file: want,
+          reason: "arquivo recente na memória operacional",
+          memoryItem: clone(item)
+        };
+      }
     }
+
     return null;
   }
 
-  async function callBackendForProposal(plan, cycleId) {
+  function rememberDecision(title, summary, targetFile, meta) {
+    var memory = getMemory();
+    if (!memory || typeof memory.rememberDecision !== "function") return false;
+
     try {
-      var res = await fetch("/api/admin-ai", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "propose-patch",
-          prompt: buildPrompt(
-            "Arquivo priorizado pelo planner: " + trimText(plan.targetFile || plan.nextFile || "")
-          ),
-          payload: buildBackendPayload(plan, cycleId),
-          history: [],
-          attachments: [],
-          source: "factory-ai-self-evolution",
-          version: VERSION
-        })
+      memory.rememberDecision({
+        title: trimText(title || "Decisão registrada"),
+        summary: trimText(summary || ""),
+        targetFile: normalizePath(targetFile || ""),
+        tags: ["self-evolution", "decision"],
+        source: "factory_ai_self_evolution",
+        meta: clone(meta || {})
       });
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
 
-      var data = await res.json().catch(function () { return {}; });
+  function rememberNote(title, summary, targetFile, meta) {
+    var memory = getMemory();
+    if (!memory || typeof memory.rememberNote !== "function") return false;
 
-      if (!res.ok) {
-        return {
-          ok: false,
-          msg: "Falha HTTP no backend.",
-          status: res.status,
-          data: data
-        };
-      }
+    try {
+      memory.rememberNote({
+        title: trimText(title || "Nota registrada"),
+        summary: trimText(summary || ""),
+        targetFile: normalizePath(targetFile || ""),
+        tags: ["self-evolution", "note"],
+        source: "factory_ai_self_evolution",
+        meta: clone(meta || {})
+      });
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
 
-      return data;
-    } catch (e) {
-      return {
-        ok: false,
-        msg: String(e && e.message || e || "falha backend self evolution")
-      };
+  function rememberError(summary, targetFile, meta) {
+    var memory = getMemory();
+    if (!memory || typeof memory.rememberError !== "function") return false;
+
+    try {
+      memory.rememberError({
+        title: "Falha no self evolution",
+        summary: trimText(summary || ""),
+        targetFile: normalizePath(targetFile || ""),
+        tags: ["self-evolution", "error"],
+        source: "factory_ai_self_evolution",
+        meta: clone(meta || {})
+      });
+      return true;
+    } catch (_) {
+      return false;
     }
   }
 
@@ -302,7 +345,7 @@
 
   async function runCycle(meta) {
     var info = clone(meta || {});
-    if (!state.enabled) {
+    if (!state.enabled && trimText(info.source || "") !== "manual-trigger") {
       return {
         ok: false,
         msg: "self evolution desabilitado"
@@ -325,24 +368,19 @@
     state.lastReason = "";
     persist();
 
-    var memory = getMemory();
-    if (memory && typeof memory.recordCycle === "function") {
-      memory.recordCycle({
-        cycleId: cycleId,
-        source: trimText(info.source || "manual")
-      });
-    }
-
     emit("RCF:FACTORY_AI_SELF_EVOLUTION_STARTED", {
       cycleId: cycleId,
       source: trimText(info.source || "manual")
     });
 
     try {
-      if (getPendingPlan()) {
+      if (hasPendingPlan()) {
         state.lastStatus = "waiting-approval";
         state.lastReason = "já existe plano pendente aguardando aprovação";
         persist();
+        rememberNote("Self evolution aguardando aprovação", state.lastReason, "", {
+          cycleId: cycleId
+        });
         scheduleNext();
 
         pushLog("INFO", "cycle skipped: pending plan", {
@@ -360,6 +398,9 @@
         state.lastStatus = "waiting-stage-resolution";
         state.lastReason = "já existe staged patch aguardando resolução";
         persist();
+        rememberNote("Self evolution aguardando resolução", state.lastReason, "", {
+          cycleId: cycleId
+        });
         scheduleNext();
 
         pushLog("INFO", "cycle skipped: staged patch", {
@@ -374,30 +415,69 @@
       }
 
       var actions = getActions();
+      var planner = getPlanner();
+
       if (!actions || typeof actions.planFromCurrentRuntime !== "function") {
-        throw new Error("RCF_FACTORY_AI_ACTIONS.planFromCurrentRuntime indisponível.");
+        if (!planner || (typeof planner.planFromRuntime !== "function" && typeof planner.buildPlan !== "function")) {
+          throw new Error("planner/actions indisponíveis para self evolution");
+        }
       }
 
-      var planResult = await actions.planFromCurrentRuntime({
-        prompt: buildPrompt(),
+      var factoryState = getFactoryState();
+      var activeView = trimText(factoryState.activeView || "");
+      var bootStatus = trimText(factoryState.bootStatus || "");
+
+      var req = {
+        prompt: buildPrompt(
+          [
+            activeView ? ("View ativa: " + activeView + ".") : "",
+            bootStatus ? ("Boot status: " + bootStatus + ".") : "",
+            state.lastTargetFile ? ("Último alvo recente: " + state.lastTargetFile + ".") : ""
+          ].join(" ")
+        ),
         reason: "self-evolution-cycle",
-        cycleId: cycleId
-      });
+        cycleId: cycleId,
+        source: "factory_ai_self_evolution"
+      };
+
+      var planResult = null;
+
+      if (actions && typeof actions.planFromCurrentRuntime === "function") {
+        planResult = await actions.planFromCurrentRuntime(req);
+      } else if (planner && typeof planner.planFromRuntime === "function") {
+        planResult = { ok: true, plan: planner.planFromRuntime(req) };
+      } else if (planner && typeof planner.buildPlan === "function") {
+        planResult = { ok: true, plan: planner.buildPlan(req) };
+      }
 
       if (!planResult || !planResult.ok || !planResult.plan) {
-        throw new Error(trimText(safe(function () { return planResult.msg; }, "")) || "Planner não retornou plano válido.");
+        throw new Error(trimText(safe(function () { return planResult.msg; }, "")) || "planner não retornou plano válido");
       }
 
       var plan = clone(planResult.plan || {});
       var targetFile = normalizePath(plan.targetFile || plan.nextFile || "");
+      var block = isRecentTargetBlocked(targetFile);
+
       state.lastPlanId = trimText(plan.id || "");
       state.lastTargetFile = targetFile;
 
-      var avoid = shouldSkipByMemory(targetFile);
-      if (avoid) {
+      if (block) {
         state.lastStatus = "cooldown";
-        state.lastReason = trimText(avoid.reason || "arquivo em cooldown");
+        state.lastReason = trimText(block.reason || "arquivo recente na memória");
+        state.lastResult = {
+          ok: true,
+          skipped: true,
+          cycleId: cycleId,
+          targetFile: targetFile,
+          reason: state.lastReason
+        };
         persist();
+
+        rememberNote("Self evolution em cooldown", state.lastReason, targetFile, {
+          cycleId: cycleId,
+          memoryItem: clone(block.memoryItem || {})
+        });
+
         scheduleNext();
 
         pushLog("INFO", "cycle skipped by memory cooldown", {
@@ -405,76 +485,43 @@
           targetFile: targetFile
         });
 
-        return {
-          ok: true,
-          skipped: true,
-          reason: state.lastReason,
-          targetFile: targetFile
-        };
+        return clone(state.lastResult);
       }
 
-      var backendResult = await callBackendForProposal(plan, cycleId);
-      if (!backendResult || !backendResult.ok) {
-        if (memory && typeof memory.recordFailure === "function") {
-          memory.recordFailure({
-            cycleId: cycleId,
-            planId: trimText(plan.id || ""),
-            targetFile: targetFile,
-            reason: trimText(safe(function () { return backendResult.msg; }, "")) || "falha backend"
-          });
+      state.lastStatus = "proposal-ready";
+      state.lastReason = trimText(plan.nextStep || plan.reason || "proposta supervisionada pronta para aprovação");
+      state.lastResult = {
+        ok: true,
+        cycleId: cycleId,
+        planId: trimText(plan.id || ""),
+        targetFile: targetFile,
+        priority: trimText(plan.priority || ""),
+        reason: state.lastReason
+      };
+      persist();
+
+      rememberDecision(
+        "Self evolution gerou novo plano",
+        state.lastReason,
+        targetFile,
+        {
+          cycleId: cycleId,
+          planId: trimText(plan.id || ""),
+          priority: trimText(plan.priority || ""),
+          objective: trimText(plan.objective || ""),
+          suggestedFiles: clone(plan.suggestedFiles || plan.executionLine || [])
         }
+      );
 
-        throw new Error(trimText(safe(function () { return backendResult.msg; }, "")) || "Backend não retornou proposta válida.");
-      }
-
-      var bridge = getBridge();
-      if (!bridge || typeof bridge.fromApiResponse !== "function") {
-        throw new Error("RCF_FACTORY_AI_BRIDGE.fromApiResponse indisponível.");
-      }
-
-      var proposalPlan = bridge.fromApiResponse({
-        analysis: trimText(backendResult.analysis || ""),
-        answer: trimText(backendResult.analysis || ""),
-        raw: clone(backendResult || {}),
+      emit("RCF:FACTORY_AI_SELF_EVOLUTION_PROPOSAL_READY", {
         cycleId: cycleId,
         plannerPlan: clone(plan)
       });
 
-      if (!proposalPlan || !proposalPlan.id) {
-        throw new Error("Bridge não conseguiu consolidar o plano supervisionado.");
-      }
-
-      state.lastPlanId = trimText(proposalPlan.id || state.lastPlanId || "");
-      state.lastTargetFile = normalizePath(proposalPlan.targetFile || targetFile || "");
-      state.lastStatus = "proposal-ready";
-      state.lastReason = "proposta supervisionada pronta para aprovação";
-      state.lastResult = {
-        cycleId: cycleId,
-        plannerPlanId: trimText(plan.id || ""),
-        proposalPlanId: trimText(proposalPlan.id || ""),
-        targetFile: state.lastTargetFile
-      };
-      persist();
-
-      if (memory && typeof memory.recordProposal === "function") {
-        memory.recordProposal({
-          cycleId: cycleId,
-          planId: trimText(proposalPlan.id || ""),
-          targetFile: state.lastTargetFile,
-          reason: trimText(proposalPlan.nextStep || proposalPlan.objective || "proposta pronta")
-        });
-      }
-
-      emit("RCF:FACTORY_AI_SELF_EVOLUTION_PROPOSAL_READY", {
-        cycleId: cycleId,
-        plannerPlan: clone(plan),
-        proposalPlan: clone(proposalPlan)
-      });
-
       pushLog("OK", "self evolution proposal ready ✅", {
         cycleId: cycleId,
-        targetFile: state.lastTargetFile,
-        planId: state.lastPlanId
+        targetFile: targetFile,
+        planId: trimText(plan.id || "")
       });
 
       scheduleNext();
@@ -482,8 +529,7 @@
       return {
         ok: true,
         cycleId: cycleId,
-        plannerPlan: clone(plan),
-        proposalPlan: clone(proposalPlan)
+        plannerPlan: clone(plan)
       };
     } catch (e) {
       var msg = String(e && e.message || e || "falha no ciclo");
@@ -496,15 +542,10 @@
       };
       persist();
 
-      var mem = getMemory();
-      if (mem && typeof mem.recordFailure === "function") {
-        mem.recordFailure({
-          cycleId: cycleId,
-          planId: trimText(state.lastPlanId || ""),
-          targetFile: trimText(state.lastTargetFile || ""),
-          reason: msg
-        });
-      }
+      rememberError(msg, state.lastTargetFile || "", {
+        cycleId: cycleId,
+        planId: trimText(state.lastPlanId || "")
+      });
 
       emit("RCF:FACTORY_AI_SELF_EVOLUTION_FAILED", {
         cycleId: cycleId,
@@ -538,6 +579,12 @@
     persist();
     scheduleNext();
 
+    pushHistory({
+      type: "self-evolution-enabled",
+      ts: nowISO(),
+      intervalMs: state.intervalMs
+    });
+
     pushLog("OK", "self evolution enabled ✅", {
       intervalMs: state.intervalMs
     });
@@ -558,6 +605,11 @@
     state.nextRunAt = null;
     persist();
 
+    pushHistory({
+      type: "self-evolution-disabled",
+      ts: nowISO()
+    });
+
     pushLog("OK", "self evolution disabled ✅");
     emit("RCF:FACTORY_AI_SELF_EVOLUTION_DISABLED", { ok: true });
 
@@ -575,69 +627,64 @@
     state.intervalMs = value;
     persist();
     if (state.enabled) scheduleNext();
+
+    pushHistory({
+      type: "self-evolution-interval",
+      ts: nowISO(),
+      intervalMs: value
+    });
+
     return status();
   }
 
   function bindApprovalEvents() {
     try {
-      if (global.__RCF_FACTORY_AI_SELF_EVOLUTION_EVENTS_V100) return;
-      global.__RCF_FACTORY_AI_SELF_EVOLUTION_EVENTS_V100 = true;
+      if (global.__RCF_FACTORY_AI_SELF_EVOLUTION_EVENTS_V101) return;
+      global.__RCF_FACTORY_AI_SELF_EVOLUTION_EVENTS_V101 = true;
 
       global.addEventListener("RCF:FACTORY_AI_ACTION_APPROVED", function (ev) {
         try {
           var detail = ev && ev.detail ? ev.detail : {};
           var result = detail.result || {};
-          var memory = getMemory();
-          if (memory && typeof memory.recordApproval === "function") {
-            memory.recordApproval({
+          rememberDecision(
+            "Plano aprovado",
+            "Plano supervisionado aprovado para seguir no fluxo.",
+            normalizePath(safe(function () { return result.summary.targetFile; }, "")),
+            {
               planId: trimText(result.planId || ""),
-              targetFile: normalizePath(safe(function () { return result.summary.targetFile; }, "")),
-              reason: "aprovação supervisionada"
-            });
-          }
+              sourceEvent: "RCF:FACTORY_AI_ACTION_APPROVED"
+            }
+          );
         } catch (_) {}
       }, { passive: true });
 
-      global.addEventListener("RCF:PATCH_STAGED", function (ev) {
+      global.addEventListener("RCF:PATCH_SUPERVISOR_STAGE_OK", function (ev) {
         try {
           var detail = ev && ev.detail ? ev.detail : {};
-          var patch = detail.stagedPatch || {};
-          var memory = getMemory();
-          if (memory && typeof memory.recordStage === "function") {
-            memory.recordStage({
-              planId: trimText(detail.planId || patch.planId || ""),
-              targetFile: normalizePath(patch.targetFile || ""),
-              reason: "patch staged"
-            });
-          }
-        } catch (_) {}
-      }, { passive: true });
-
-      global.addEventListener("RCF:PATCH_APPLIED", function (ev) {
-        try {
-          var detail = ev && ev.detail ? ev.detail : {};
-          var memory = getMemory();
-          if (memory && typeof memory.recordApply === "function") {
-            memory.recordApply({
+          rememberNote(
+            "Patch staged",
+            "Patch preparado com sucesso no supervisor.",
+            normalizePath(safe(function () { return detail.stagedPatch.targetFile; }, "")),
+            {
               planId: trimText(detail.planId || ""),
-              targetFile: normalizePath(detail.targetFile || ""),
-              reason: "patch aplicado"
-            });
-          }
+              sourceEvent: "RCF:PATCH_SUPERVISOR_STAGE_OK"
+            }
+          );
         } catch (_) {}
       }, { passive: true });
 
-      global.addEventListener("RCF:PATCH_APPLY_FAILED", function (ev) {
+      global.addEventListener("RCF:PATCH_SUPERVISOR_APPLY_OK", function (ev) {
         try {
           var detail = ev && ev.detail ? ev.detail : {};
-          var memory = getMemory();
-          if (memory && typeof memory.recordFailure === "function") {
-            memory.recordFailure({
+          rememberDecision(
+            "Patch aplicado",
+            "Patch aplicado com sucesso no supervisor.",
+            normalizePath(detail.targetFile || ""),
+            {
               planId: trimText(detail.planId || ""),
-              targetFile: normalizePath(detail.targetFile || ""),
-              reason: trimText(detail.msg || "patch apply failed")
-            });
-          }
+              sourceEvent: "RCF:PATCH_SUPERVISOR_APPLY_OK"
+            }
+          );
         } catch (_) {}
       }, { passive: true });
     } catch (_) {}
@@ -700,6 +747,7 @@
 
   global.RCF_FACTORY_AI_SELF_EVOLUTION = {
     __v100: true,
+    __v101: true,
     version: VERSION,
     init: init,
     status: status,
