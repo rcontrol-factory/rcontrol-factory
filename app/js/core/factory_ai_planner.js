@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/factory_ai_planner.js
    RControl Factory — Factory AI Planner
-   v1.0.2 SUPERVISED EVOLUTION PLANNER
+   v1.0.3 SUPERVISED EVOLUTION PLANNER
 
    Objetivo:
    - transformar snapshot/contexto em plano operacional supervisionado
@@ -11,18 +11,19 @@
    - NÃO aplicar patch automaticamente
    - funcionar como script clássico
 
-   PATCH v1.0.2:
-   - evita doctor_scan sequestrando prioridade quando meta = evolve-factory-ai
-   - mantém doctor forte apenas quando meta = diagnostics
-   - preserva estrutura existente com patch mínimo
+   PATCH v1.0.3:
+   - corrige goal detection para prompts genéricos de evolução/próximo passo
+   - evita doctor_scan sequestrando prioridade em general-supervision
+   - mantém doctor forte só quando a meta for realmente diagnostics
+   - preserva a estrutura existente com patch mínimo
 */
 
 ;(function (global) {
   "use strict";
 
-  if (global.RCF_FACTORY_AI_PLANNER && global.RCF_FACTORY_AI_PLANNER.__v102) return;
+  if (global.RCF_FACTORY_AI_PLANNER && global.RCF_FACTORY_AI_PLANNER.__v103) return;
 
-  var VERSION = "v1.0.2";
+  var VERSION = "v1.0.3";
   var STORAGE_KEY = "rcf:factory_ai_planner";
   var MAX_HISTORY = 80;
 
@@ -293,7 +294,15 @@
       text.indexOf("autonoma") >= 0 ||
       text.indexOf("inteligente") >= 0 ||
       text.indexOf("esperta") >= 0 ||
-      text.indexOf("evoluir a factory ai") >= 0
+      text.indexOf("evoluir a factory ai") >= 0 ||
+      text.indexOf("factory ai") >= 0 ||
+      text.indexOf("próximo arquivo") >= 0 ||
+      text.indexOf("proximo arquivo") >= 0 ||
+      text.indexOf("próxima etapa") >= 0 ||
+      text.indexOf("proxima etapa") >= 0 ||
+      text.indexOf("planejar") >= 0 ||
+      text.indexOf("montar plano") >= 0 ||
+      text.indexOf("gerar plano") >= 0
     ) {
       return {
         id: "evolve-factory-ai",
@@ -375,11 +384,6 @@
         score += 35;
         reasons.push("qualidade do snapshot e contexto");
       }
-
-      /* PATCH v1.0.2
-         Se a meta atual é evoluir a Factory AI, o doctor não pode virar prioridade principal
-         só porque ainda não rodou. Ele continua visível, mas perde força aqui.
-      */
       if (f === STRATEGIC_FILES.doctor) {
         score -= 40;
         reasons.push("doctor não deve sequestrar a prioridade da evolução cognitiva");
@@ -399,6 +403,10 @@
         score += 60;
         reasons.push("ponte entre resposta e operação");
       }
+      if (f === STRATEGIC_FILES.doctor) {
+        score -= 20;
+        reasons.push("doctor não é o foco do fluxo de patch supervisionado");
+      }
     }
 
     if (goalId === "diagnostics") {
@@ -412,6 +420,25 @@
       }
     }
 
+    if (goalId === "general-supervision") {
+      if (f === STRATEGIC_FILES.planner) {
+        score += 20;
+        reasons.push("planejamento ainda é prioridade estrutural");
+      }
+      if (f === STRATEGIC_FILES.actions) {
+        score += 16;
+        reasons.push("camada de ações supervisionadas continua prioritária");
+      }
+      if (f === STRATEGIC_FILES.bridge) {
+        score += 14;
+        reasons.push("ponte supervisionada ainda precisa amadurecer");
+      }
+      if (f === STRATEGIC_FILES.doctor) {
+        score -= 18;
+        reasons.push("doctor não deve assumir prioridade padrão nesta fase");
+      }
+    }
+
     if (f === STRATEGIC_FILES.state && !hasFile(knownFiles, STRATEGIC_FILES.planner)) {
       score += 8;
       reasons.push("estado ainda ajuda quando planner não existe");
@@ -422,14 +449,9 @@
       reasons.push("árvore ainda rasa");
     }
 
-    if (f === STRATEGIC_FILES.doctor && !doctor.lastRun) {
-      if (goalId === "diagnostics") {
-        score += 18;
-        reasons.push("doctor nunca executado");
-      } else {
-        score += 2;
-        reasons.push("doctor ainda não rodou, mas não é a prioridade principal desta fase");
-      }
+    if (f === STRATEGIC_FILES.doctor && !doctor.lastRun && goalId === "diagnostics") {
+      score += 18;
+      reasons.push("doctor nunca executado");
     }
 
     if (f === STRATEGIC_FILES.bridge && !bridge.ready) {
@@ -582,14 +604,6 @@
 
     if (nextFile === STRATEGIC_FILES.planner) {
       notes.push("Planner é a peça que transforma snapshot em prioridade real e evita repetição de respostas rasas.");
-    }
-
-    if (nextFile === STRATEGIC_FILES.actions) {
-      notes.push("Actions ajuda a Factory AI sair da conversa passiva e entrar em fluxo supervisionado real.");
-    }
-
-    if (nextFile === STRATEGIC_FILES.backend) {
-      notes.push("Backend melhora a qualidade real das respostas e reduz respostas genéricas da Factory AI.");
     }
 
     return uniq(notes);
@@ -787,7 +801,7 @@
   global.RCF_FACTORY_AI_PLANNER = {
     __v100: true,
     __v101: true,
-    __v102: true,
+    __v103: true,
     version: VERSION,
     init: init,
     status: status,
