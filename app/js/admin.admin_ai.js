@@ -1,6 +1,6 @@
 /* FILE: /app/js/admin.admin_ai.js
    RControl Factory — Factory AI
-   v4.2.1 MOUNT GUARD + CHAT SCROLL FIX + HISTORY PERSIST
+   v4.3.0 LOCAL ACTION BRIDGE + MOUNT GUARD + CHAT SCROLL FIX + HISTORY PERSIST
 
    - mantém visual chat-first aprovado
    - mantém botão + fora da cápsula
@@ -20,19 +20,20 @@
    - ADD: botão limpar histórico
    - FIX NOVO: corta loop de mount/log repetido
    - FIX NOVO: reduz sync agressivo
-   - não executa patch automático
+   - ADD NOVO: usa camada supervisionada local (planner/bridge/actions/patch supervisor)
+   - não executa patch automático sem fluxo supervisionado
 */
 
 (() => {
   "use strict";
 
-  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v421) return;
+  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v430) return;
 
-  const VERSION = "v4.2.1";
+  const VERSION = "v4.3.0";
   const BOX_ID = "rcfFactoryAIBox";
   const CHAT_ID = "rcfFactoryAIChat";
-  const STYLE_ID = "rcfFactoryAIStyleV421";
-  const HISTORY_KEY = "rcf:factory_ai_history_v42";
+  const STYLE_ID = "rcfFactoryAIStyleV430";
+  const HISTORY_KEY = "rcf:factory_ai_history_v43";
   const HISTORY_MAX = 80;
 
   const SYNC_INTERVAL_MS = 2200;
@@ -166,9 +167,9 @@
 
   function bindChatScroll() {
     const chat = getChatEl();
-    if (!chat || chat.__rcfBoundScrollV421) return;
+    if (!chat || chat.__rcfBoundScrollV430) return;
 
-    chat.__rcfBoundScrollV421 = true;
+    chat.__rcfBoundScrollV430 = true;
     STATE.pinnedToBottom = true;
 
     chat.addEventListener("scroll", () => {
@@ -425,6 +426,34 @@
       return null;
     })();
 
+    const plannerStatus = (() => {
+      try {
+        return window.RCF_FACTORY_AI_PLANNER?.status?.() || {};
+      } catch {}
+      return {};
+    })();
+
+    const bridgeStatus = (() => {
+      try {
+        return window.RCF_FACTORY_AI_BRIDGE?.status?.() || {};
+      } catch {}
+      return {};
+    })();
+
+    const actionsStatus = (() => {
+      try {
+        return window.RCF_FACTORY_AI_ACTIONS?.status?.() || {};
+      } catch {}
+      return {};
+    })();
+
+    const patchSupervisorStatus = (() => {
+      try {
+        return window.RCF_PATCH_SUPERVISOR?.status?.() || {};
+      } catch {}
+      return {};
+    })();
+
     return {
       factory: {
         version:
@@ -454,7 +483,11 @@
           hasModuleRegistry: !!window.RCF_MODULE_REGISTRY,
           hasContextEngine: !!window.RCF_CONTEXT,
           hasFactoryTree: !!window.RCF_FACTORY_TREE,
-          hasFactoryAI: !!window.RCF_FACTORY_AI || !!window.RCF_FACTORY_IA
+          hasFactoryAI: !!window.RCF_FACTORY_AI || !!window.RCF_FACTORY_IA,
+          hasFactoryAIPlanner: !!window.RCF_FACTORY_AI_PLANNER,
+          hasFactoryAIBridge: !!window.RCF_FACTORY_AI_BRIDGE,
+          hasFactoryAIActions: !!window.RCF_FACTORY_AI_ACTIONS,
+          hasPatchSupervisor: !!window.RCF_PATCH_SUPERVISOR
         }
       },
       doctor: {
@@ -477,7 +510,39 @@
         moduleRegistry: !!moduleSummary.moduleRegistry,
         contextEngine: !!moduleSummary.contextEngine,
         factoryTree: !!moduleSummary.factoryTree,
+        factoryAIPlanner: !!moduleSummary?.modules?.factoryAIPlanner,
+        factoryAIBridge: !!moduleSummary?.modules?.factoryAIBridge,
+        factoryAIActions: !!moduleSummary?.modules?.factoryAIActions,
+        patchSupervisor: !!moduleSummary?.modules?.patchSupervisor,
         modules: clone(moduleSummary.modules || {})
+      },
+      planner: {
+        ready: !!window.RCF_FACTORY_AI_PLANNER,
+        version: window.RCF_FACTORY_AI_PLANNER?.version || "unknown",
+        lastGoal: plannerStatus.lastGoal || "",
+        lastPriority: plannerStatus.lastPriority || "",
+        lastNextFile: plannerStatus.lastNextFile || ""
+      },
+      bridgeLayer: {
+        ready: !!window.RCF_FACTORY_AI_BRIDGE,
+        version: window.RCF_FACTORY_AI_BRIDGE?.version || "unknown",
+        approvalStatus: bridgeStatus.approvalStatus || "",
+        targetFile: bridgeStatus.targetFile || "",
+        risk: bridgeStatus.risk || "unknown"
+      },
+      actionsLayer: {
+        ready: !!window.RCF_FACTORY_AI_ACTIONS,
+        version: window.RCF_FACTORY_AI_ACTIONS?.version || "unknown",
+        plannerReady: !!actionsStatus.plannerReady,
+        bridgeReady: !!actionsStatus.bridgeReady,
+        patchSupervisorReady: !!actionsStatus.patchSupervisorReady
+      },
+      patchSupervisor: {
+        ready: !!window.RCF_PATCH_SUPERVISOR,
+        version: window.RCF_PATCH_SUPERVISOR?.version || "unknown",
+        hasStagedPatch: !!patchSupervisorStatus.hasStagedPatch,
+        stagedTargetFile: patchSupervisorStatus.stagedTargetFile || "",
+        lastApplyOk: !!patchSupervisorStatus.lastApplyOk
       },
       tree: {
         summary: clone(treeSummary.counts || treeSummary.summary || {}),
@@ -540,6 +605,10 @@
     const doctor = raw.doctor || {};
     const environment = raw.environment || {};
     const tree = raw.tree || {};
+    const planner = raw.factoryAIPlanner || raw.planner || {};
+    const bridgeLayer = raw.factoryAIBridge || raw.bridgeLayer || {};
+    const actionsLayer = raw.factoryAIActions || raw.actionsLayer || {};
+    const patchSupervisor = raw.patchSupervisor || {};
     const state = window.RCF?.state || {};
 
     const activeModules = (() => {
@@ -585,9 +654,41 @@
           factoryState: !!modules.factoryState,
           moduleRegistry: !!modules.moduleRegistry,
           contextEngine: !!modules.contextEngine,
-          factoryTree: !!modules.factoryTree
+          factoryTree: !!modules.factoryTree,
+          factoryAIPlanner: !!modules.factoryAIPlanner,
+          factoryAIBridge: !!modules.factoryAIBridge,
+          factoryAIActions: !!modules.factoryAIActions,
+          patchSupervisor: !!modules.patchSupervisor
         },
         total: Number(modules.total || 0)
+      },
+      planner: {
+        ready: !!planner.ready,
+        version: planner.version || "unknown",
+        lastGoal: planner.lastGoal || "",
+        lastPriority: planner.lastPriority || "",
+        lastNextFile: planner.lastNextFile || ""
+      },
+      bridgeLayer: {
+        ready: !!bridgeLayer.ready,
+        version: bridgeLayer.version || "unknown",
+        approvalStatus: bridgeLayer.approvalStatus || "",
+        targetFile: bridgeLayer.targetFile || "",
+        risk: bridgeLayer.risk || "unknown"
+      },
+      actionsLayer: {
+        ready: !!actionsLayer.ready,
+        version: actionsLayer.version || "unknown",
+        plannerReady: !!actionsLayer.plannerReady,
+        bridgeReady: !!actionsLayer.bridgeReady,
+        patchSupervisorReady: !!actionsLayer.patchSupervisorReady
+      },
+      patchSupervisor: {
+        ready: !!patchSupervisor.ready,
+        version: patchSupervisor.version || "unknown",
+        hasStagedPatch: !!patchSupervisor.hasStagedPatch,
+        stagedTargetFile: patchSupervisor.stagedTargetFile || "",
+        lastApplyOk: !!patchSupervisor.lastApplyOk
       },
       tree: {
         pathsCount: Number(tree.pathsCount || 0),
@@ -606,7 +707,11 @@
         hasFactoryTree: !!factory.flags?.hasFactoryTree,
         hasAdminAI: !!factory.flags?.hasAdminAI,
         hasVault: !!factory.flags?.hasVault,
-        hasBridge: !!factory.flags?.hasBridge
+        hasBridge: !!factory.flags?.hasBridge,
+        hasFactoryAIPlanner: !!factory.flags?.hasFactoryAIPlanner,
+        hasFactoryAIBridge: !!factory.flags?.hasFactoryAIBridge,
+        hasFactoryAIActions: !!factory.flags?.hasFactoryAIActions,
+        hasPatchSupervisor: !!factory.flags?.hasPatchSupervisor
       },
       environment: {
         platform: environment.platform || navigator.platform || "",
@@ -1433,6 +1538,64 @@
     return "chat";
   }
 
+  function inferLocalActionFromPrompt(prompt) {
+    const p = String(prompt || "").trim().toLowerCase();
+
+    if (!p) return "";
+
+    if (
+      (p.includes("aprovar") || p.includes("aprova")) &&
+      p.includes("patch")
+    ) return "approve_patch";
+
+    if (
+      (p.includes("validar") || p.includes("valida")) &&
+      p.includes("patch")
+    ) return "validate_patch";
+
+    if (
+      p.includes("stage") &&
+      p.includes("patch")
+    ) return "stage_patch";
+
+    if (
+      (p.includes("aplicar") || p.includes("aplica")) &&
+      p.includes("patch")
+    ) return "apply_patch";
+
+    if (
+      p.includes("planejar") ||
+      p.includes("gerar plano") ||
+      p.includes("montar plano") ||
+      (p.includes("plano") && p.includes("próximo"))
+    ) return "plan";
+
+    if (
+      p.includes("próximo arquivo") ||
+      p.includes("proximo arquivo")
+    ) return "next_file";
+
+    if (
+      p.includes("autonomia") ||
+      p.includes("snapshot") ||
+      p.includes("estado atual da factory") ||
+      p.includes("estado da factory")
+    ) return "snapshot";
+
+    if (
+      p.includes("rodar doctor") ||
+      p.includes("executar doctor") ||
+      p.includes("run doctor")
+    ) return "run_doctor";
+
+    if (
+      p.includes("coletar logs") ||
+      p.includes("mostrar logs locais")
+    ) return "collect_logs";
+
+    return "";
+  }
+
   function buildPayload(action) {
     const snapshot = buildLeanSnapshot();
     setSnapshotPreview(snapshot);
@@ -1489,6 +1652,295 @@
       size: item.size || 0,
       summary: item.summary || ""
     }));
+  }
+
+  function formatPlanResult(planResult) {
+    const plan = planResult?.plan || {};
+    const summary = planResult?.summary?.plan || {};
+
+    const targetFile = plan.nextFile || summary.targetFile || "";
+    const executionLine = Array.isArray(plan.executionLine) ? plan.executionLine : [];
+    const ranking = Array.isArray(plan.ranking) ? plan.ranking.slice(0, 5) : [];
+    const notes = Array.isArray(plan.notes) ? plan.notes : [];
+
+    return [
+      "1. Fatos confirmados",
+      `- Planner local executado: ${!!planResult?.ok}`,
+      `- Próximo arquivo calculado: ${targetFile || "dado ausente"}`,
+      `- Prioridade: ${plan.priority || "dado ausente"}`,
+      "",
+      "2. Dados ausentes ou mal consolidados",
+      "- O plano depende do snapshot atual do runtime; se algum módulo não apareceu no snapshot, ele pode estar fora da árvore/contexto atual.",
+      "",
+      "3. Inferências prováveis",
+      executionLine.length
+        ? `- Linha provável de execução: ${executionLine.join(" -> ")}`
+        : "- Linha de execução ainda não consolidada.",
+      notes.length
+        ? `- Nota principal: ${notes[0]}`
+        : "- O planner aponta que a próxima etapa deve continuar a camada supervisionada.",
+      "",
+      "4. Próximo passo mínimo recomendado",
+      targetFile
+        ? `- Trabalhar o arquivo ${targetFile}`
+        : "- Revisar snapshot e recalcular plano.",
+      "",
+      "5. Arquivos mais prováveis de ajuste",
+      ranking.length
+        ? ranking.map((item) => `- ${item.file} (${item.score})`).join("\n")
+        : "- dado ausente"
+    ].join("\n");
+  }
+
+  function formatNextFileResult(result) {
+    const suggestion = result?.suggestion || result?.nextFile || {};
+    return [
+      "1. Fatos confirmados",
+      `- Sugestão local calculada: ${!!result?.ok}`,
+      `- Próximo arquivo: ${suggestion.nextFile || "dado ausente"}`,
+      "",
+      "2. Dados ausentes ou mal consolidados",
+      "- A sugestão depende do plano e do snapshot disponíveis no runtime atual.",
+      "",
+      "3. Inferências prováveis",
+      `- Origem da sugestão: ${suggestion.source || "desconhecida"}`,
+      `- Risco estimado: ${suggestion.risk || "unknown"}`,
+      "",
+      "4. Próximo passo mínimo recomendado",
+      `- ${suggestion.reason || "Usar o próximo arquivo sugerido como base."}`,
+      "",
+      "5. Arquivos mais prováveis de ajuste",
+      `- ${suggestion.nextFile || "dado ausente"}`
+    ].join("\n");
+  }
+
+  function formatValidationResult(result) {
+    const validation = result?.validation || {};
+    const warnings = Array.isArray(validation.warnings) ? validation.warnings : [];
+    const errors = Array.isArray(validation.errors) ? validation.errors : [];
+
+    return [
+      "1. Fatos confirmados",
+      `- Validação executada: ${!!result?.ok}`,
+      `- PlanId: ${result?.planId || validation?.planId || "dado ausente"}`,
+      "",
+      "2. Dados ausentes ou mal consolidados",
+      errors.length ? errors.map((x) => `- ${x}`).join("\n") : "- Nenhum erro estrutural retornado pela validação.",
+      "",
+      "3. Inferências prováveis",
+      warnings.length ? warnings.map((x) => `- ${x}`).join("\n") : "- O plano parece coerente para seguir no fluxo supervisionado.",
+      "",
+      "4. Próximo passo mínimo recomendado",
+      result?.ok ? "- Seguir para stage do patch." : "- Corrigir o plano antes de stage/apply.",
+      "",
+      "5. Arquivos mais prováveis de ajuste",
+      `- ${validation?.normalized?.targetFile || "dado ausente"}`
+    ].join("\n");
+  }
+
+  function formatStageOrApplyResult(title, result) {
+    const staged = result?.stagedPatch || {};
+    return [
+      "1. Fatos confirmados",
+      `- ${title}: ${!!result?.ok}`,
+      `- Arquivo alvo: ${result?.targetFile || staged?.targetFile || "dado ausente"}`,
+      `- PlanId: ${result?.planId || staged?.planId || "dado ausente"}`,
+      "",
+      "2. Dados ausentes ou mal consolidados",
+      result?.ok ? "- Sem ausência crítica reportada nesta etapa." : `- ${result?.msg || "falha não detalhada"}`,
+      "",
+      "3. Inferências prováveis",
+      `- Risco: ${result?.risk || staged?.risk || "unknown"}`,
+      `- Modo: ${result?.mode || staged?.mode || "dado ausente"}`,
+      "",
+      "4. Próximo passo mínimo recomendado",
+      title === "Stage"
+        ? (result?.ok ? "- Seguir para apply supervisionado quando aprovado." : "- Corrigir o plano antes de repetir o stage.")
+        : (result?.ok ? "- Revalidar runtime e revisar o resultado aplicado." : "- Revisar writer/runtime antes de tentar novo apply."),
+      "",
+      "5. Arquivos mais prováveis de ajuste",
+      `- ${result?.targetFile || staged?.targetFile || "dado ausente"}`
+    ].join("\n");
+  }
+
+  function formatSnapshotResult(result) {
+    const runtime = result?.runtime || {};
+    const nextFile = result?.nextFile || {};
+    const bridge = result?.bridge || {};
+    const planner = result?.planner || {};
+    const supervisor = result?.patchSupervisor || {};
+
+    return [
+      "1. Fatos confirmados",
+      `- Snapshot local consolidado: ${!!result?.ok}`,
+      `- Planner ready: ${!!planner.ready}`,
+      `- Bridge ready: ${!!bridge.ready}`,
+      `- Patch Supervisor ready: ${!!supervisor.ready}`,
+      "",
+      "2. Dados ausentes ou mal consolidados",
+      `- bootStatus: ${runtime?.factoryState?.bootStatus || "dado ausente"}`,
+      `- activeView: ${runtime?.factoryState?.activeView || "dado ausente"}`,
+      "",
+      "3. Inferências prováveis",
+      `- Próximo arquivo provável: ${nextFile?.nextFile || "dado ausente"}`,
+      `- Motivo: ${nextFile?.reason || "dado ausente"}`,
+      "",
+      "4. Próximo passo mínimo recomendado",
+      nextFile?.nextFile
+        ? `- Trabalhar ${nextFile.nextFile}`
+        : "- Rodar planner local para consolidar o próximo alvo.",
+      "",
+      "5. Arquivos mais prováveis de ajuste",
+      `- ${nextFile?.nextFile || "dado ausente"}`
+    ].join("\n");
+  }
+
+  function formatDoctorResult(result) {
+    return [
+      "1. Fatos confirmados",
+      `- Doctor executado: ${!!result?.ok}`,
+      `- Modo: ${result?.mode || "dado ausente"}`,
+      "",
+      "2. Dados ausentes ou mal consolidados",
+      result?.ok ? "- O relatório completo fica no próprio Doctor/local state." : `- ${result?.msg || "falha não detalhada"}`,
+      "",
+      "3. Inferências prováveis",
+      `- lastRun: ${pretty(result?.lastRun || result?.data || {})}`,
+      "",
+      "4. Próximo passo mínimo recomendado",
+      result?.ok ? "- Ler o doctorLastRun no snapshot e seguir com o arquivo indicado." : "- Restaurar Doctor antes de nova execução.",
+      "",
+      "5. Arquivos mais prováveis de ajuste",
+      "- /app/js/core/doctor_scan.js",
+      "- /app/js/core/factory_state.js"
+    ].join("\n");
+  }
+
+  function formatLogsResult(result) {
+    const logs = Array.isArray(result?.logs) ? result.logs : [];
+    return [
+      "1. Fatos confirmados",
+      `- Coleta local de logs: ${!!result?.ok}`,
+      `- Quantidade retornada: ${logs.length}`,
+      "",
+      "2. Dados ausentes ou mal consolidados",
+      logs.length ? "- Os logs refletem só o tail atual disponível no runtime." : "- Nenhum log disponível no tail atual.",
+      "",
+      "3. Inferências prováveis",
+      logs.length ? `- Última linha: ${String(logs[logs.length - 1])}` : "- Sem inferência útil sem logs.",
+      "",
+      "4. Próximo passo mínimo recomendado",
+      "- Usar esses logs junto com snapshot ou doctor para decidir o próximo patch.",
+      "",
+      "5. Arquivos mais prováveis de ajuste",
+      "- /app/js/core/logger.js",
+      "- /app/js/core/context_engine.js"
+    ].join("\n");
+  }
+
+  function formatLocalActionResult(action, result) {
+    if (action === "plan") return formatPlanResult(result);
+    if (action === "next_file") return formatNextFileResult(result);
+    if (action === "validate_patch") return formatValidationResult(result);
+    if (action === "stage_patch") return formatStageOrApplyResult("Stage", result);
+    if (action === "apply_patch") return formatStageOrApplyResult("Apply", result);
+    if (action === "approve_patch") return [
+      "1. Fatos confirmados",
+      `- Aprovação executada: ${!!result?.ok}`,
+      `- PlanId: ${result?.planId || "dado ausente"}`,
+      "",
+      "2. Dados ausentes ou mal consolidados",
+      result?.ok ? "- Nenhuma ausência crítica retornada na aprovação." : `- ${result?.msg || "falha não detalhada"}`,
+      "",
+      "3. Inferências prováveis",
+      "- O plano pode seguir para validação/stage se a aprovação foi aceita.",
+      "",
+      "4. Próximo passo mínimo recomendado",
+      result?.ok ? "- Rodar validar patch." : "- Recalcular plano antes de nova aprovação.",
+      "",
+      "5. Arquivos mais prováveis de ajuste",
+      `- ${result?.summary?.targetFile || "dado ausente"}`
+    ].join("\n");
+    if (action === "snapshot") return formatSnapshotResult(result);
+    if (action === "run_doctor") return formatDoctorResult(result);
+    if (action === "collect_logs") return formatLogsResult(result);
+    return pretty(result || {});
+  }
+
+  async function runLocalAction(localAction, prompt) {
+    const api = window.RCF_FACTORY_AI_ACTIONS;
+    if (!api || typeof api.dispatch !== "function") {
+      return {
+        ok: false,
+        msg: "RCF_FACTORY_AI_ACTIONS indisponível no runtime atual."
+      };
+    }
+
+    const map = {
+      plan: { action: "plan", prompt },
+      approve_patch: { action: "approve_patch", prompt },
+      validate_patch: { action: "validate_patch", prompt },
+      stage_patch: { action: "stage_patch", prompt },
+      apply_patch: { action: "apply_patch", prompt },
+      run_doctor: { action: "run_doctor", prompt },
+      collect_logs: { action: "collect_logs", prompt, limit: 40 },
+      snapshot: { action: "snapshot", prompt },
+      next_file: { action: "next_file", prompt }
+    };
+
+    const req = map[localAction];
+    if (!req) {
+      return { ok: false, msg: "Ação local não mapeada." };
+    }
+
+    setButtonsBusy(true);
+    setComposerStatus("executando local...");
+    setTechResult("");
+
+    try {
+      const result = await api.dispatch(req);
+      const text = formatLocalActionResult(localAction, result);
+
+      setComposerStatus(result?.ok ? "concluído local" : "falha local");
+      setTechResult(text);
+
+      pushHistory({
+        role: "assistant",
+        text,
+        ts: new Date().toISOString()
+      });
+
+      renderChat({ forceBottom: true });
+
+      try {
+        window.dispatchEvent(new CustomEvent("RCF:FACTORY_AI_LOCAL_ACTION", {
+          detail: {
+            localAction,
+            request: req,
+            result: clone(result || {})
+          }
+        }));
+      } catch {}
+
+      log(result?.ok ? "OK" : "WARN", "ação local executada: " + localAction);
+      return result;
+    } catch (e) {
+      const msg = String(e?.message || e || "Erro local");
+      setComposerStatus("erro local");
+      setTechResult(msg);
+
+      pushHistory({
+        role: "assistant",
+        text: msg,
+        ts: new Date().toISOString()
+      });
+
+      renderChat({ forceBottom: true });
+      log("ERR", "erro ação local: " + localAction);
+      return { ok: false, msg };
+    } finally {
+      setButtonsBusy(false);
+    }
   }
 
   async function postJSON(url, body) {
@@ -1608,6 +2060,7 @@
 
     const finalPrompt = prompt || "Analise os anexos enviados e diga o próximo passo mais seguro.";
     const action = forcedAction || inferActionFromPrompt(finalPrompt);
+    const localAction = inferLocalActionFromPrompt(finalPrompt);
 
     let userText = finalPrompt;
     if (STATE.attachments && STATE.attachments.length) {
@@ -1622,7 +2075,11 @@
     });
     renderChat({ forceBottom: true });
 
-    callFactoryAI(action, buildPayload(action), finalPrompt);
+    if (localAction) {
+      runLocalAction(localAction, finalPrompt);
+    } else {
+      callFactoryAI(action, buildPayload(action), finalPrompt);
+    }
 
     const input = document.getElementById("rcfFactoryAIPrompt");
     if (input) {
@@ -2020,8 +2477,8 @@
 
   function bindHeaderButtons() {
     const btnClear = document.getElementById("rcfFactoryAIClearHistory");
-    if (btnClear && !btnClear.__boundClearV421) {
-      btnClear.__boundClearV421 = true;
+    if (btnClear && !btnClear.__boundClearV430) {
+      btnClear.__boundClearV430 = true;
       btnClear.addEventListener("click", () => {
         try {
           const ok = window.confirm("Limpar histórico desta conversa da Factory AI?");
@@ -2038,15 +2495,15 @@
     const attachBtn = document.getElementById("rcfFactoryAIAttachBtn");
     const voiceBtn = document.getElementById("rcfFactoryAIVoiceBtn");
 
-    if (sendBtn && !sendBtn.__boundV421) {
-      sendBtn.__boundV421 = true;
+    if (sendBtn && !sendBtn.__boundV430) {
+      sendBtn.__boundV430 = true;
       sendBtn.addEventListener("click", () => {
         sendPrompt(String(promptEl?.value || "").trim(), "");
       }, { passive: true });
     }
 
-    if (promptEl && !promptEl.__boundInputV421) {
-      promptEl.__boundInputV421 = true;
+    if (promptEl && !promptEl.__boundInputV430) {
+      promptEl.__boundInputV430 = true;
       autoResizePrompt(promptEl);
 
       promptEl.addEventListener("input", () => {
@@ -2063,15 +2520,15 @@
       });
     }
 
-    if (attachBtn && !attachBtn.__boundV421) {
-      attachBtn.__boundV421 = true;
+    if (attachBtn && !attachBtn.__boundV430) {
+      attachBtn.__boundV430 = true;
       attachBtn.addEventListener("click", () => {
         toggleAttachMenu("rcfFactoryAIClipMenuMain");
       }, { passive: true });
     }
 
-    if (voiceBtn && !voiceBtn.__boundV421) {
-      voiceBtn.__boundV421 = true;
+    if (voiceBtn && !voiceBtn.__boundV430) {
+      voiceBtn.__boundV430 = true;
       voiceBtn.addEventListener("click", () => {
         toggleListening();
       }, { passive: true });
@@ -2084,8 +2541,8 @@
     renderAttachments();
     setVoiceBtnState();
 
-    if (!document.__rcfFactoryAIOutsideClickV421) {
-      document.__rcfFactoryAIOutsideClickV421 = true;
+    if (!document.__rcfFactoryAIOutsideClickV430) {
+      document.__rcfFactoryAIOutsideClickV430 = true;
       document.addEventListener("click", (ev) => {
         try {
           const wrap = document.getElementById("rcfFactoryAIAttachWrap");
@@ -2121,7 +2578,7 @@
             </div>
           </div>
           <div class="rcfAiHeadActions">
-            <div class="rcfAiPill">OpenAI conectada</div>
+            <div class="rcfAiPill">OpenAI + runtime local</div>
             <button class="rcfAiHeadBtn" id="rcfFactoryAIClearHistory" type="button">Limpar</button>
           </div>
         </section>
@@ -2315,8 +2772,8 @@
     bindVisibilityHooksOnce();
 
     try {
-      if (!document.__rcfFactoryAIClickSyncV421) {
-        document.__rcfFactoryAIClickSyncV421 = true;
+      if (!document.__rcfFactoryAIClickSyncV430) {
+        document.__rcfFactoryAIClickSyncV430 = true;
         document.addEventListener("click", () => {
           setTimeout(() => {
             try { syncVisibility(); } catch {}
@@ -2333,6 +2790,7 @@
     __v411: true,
     __v42: true,
     __v421: true,
+    __v430: true,
     version: VERSION,
     mount,
     clearChat,
@@ -2355,6 +2813,7 @@
     __v411_bridge: true,
     __v42_bridge: true,
     __v421_bridge: true,
+    __v430_bridge: true,
     version: VERSION,
     mount,
     clearChat,
