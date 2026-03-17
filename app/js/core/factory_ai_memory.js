@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/factory_ai_memory.js
    RControl Factory — Factory AI Memory
-   v1.0.0 SUPERVISED MEMORY ENGINE
+   v1.0.1 SUPERVISED MEMORY ENGINE + PHASE AWARE
 
    Objetivo:
    - dar memória operacional à Factory AI
@@ -8,16 +8,24 @@
    - manter histórico útil sem depender do chat visível
    - permitir busca simples por arquivo, tag, tipo e texto
    - preparar base para autonomia supervisionada
+   - integrar fase atual da Factory ao contexto da memória
    - NÃO aplicar patch automaticamente
    - funcionar como script clássico
+
+   PATCH v1.0.1:
+   - FIX: corrige eventos reais do patch supervisor
+   - ADD: registra fase ativa da Factory
+   - ADD: registra mudança de fase
+   - ADD: buildMemoryContext inclui contexto de fase
+   - ADD: helper para listar arquivos a evitar por erros recentes
 */
 
 ;(function (global) {
   "use strict";
 
-  if (global.RCF_FACTORY_AI_MEMORY && global.RCF_FACTORY_AI_MEMORY.__v100) return;
+  if (global.RCF_FACTORY_AI_MEMORY && global.RCF_FACTORY_AI_MEMORY.__v101) return;
 
-  var VERSION = "v1.0.0";
+  var VERSION = "v1.0.1";
   var STORAGE_KEY = "rcf:factory_ai_memory";
   var MAX_ITEMS = 240;
 
@@ -102,7 +110,7 @@
   function normalizeRisk(risk) {
     var r = trimText(risk || "").toLowerCase();
     if (!r) return "unknown";
-    if (r.indexOf("low") >= 0 || r.indexOf("baixo") >= 0 || r.indexOf("safe") >= 0) return "low";
+    if (r.indexOf("low") >= 0 || r.indexOf("baixo") >= 0 || r.indexOf("safe") >= 0 || r.indexOf("seguro") >= 0) return "low";
     if (r.indexOf("medium") >= 0 || r.indexOf("médio") >= 0 || r.indexOf("medio") >= 0) return "medium";
     if (r.indexOf("high") >= 0 || r.indexOf("alto") >= 0 || r.indexOf("crit") >= 0) return "high";
     return "unknown";
@@ -360,15 +368,17 @@
   function list(filters) {
     var f = filters && typeof filters === "object" ? filters : {};
     var query = trimText(f.query || "").toLowerCase();
-    var type = normalizeType(f.type || "");
+    var typeRaw = trimText(f.type || "");
+    var type = normalizeType(typeRaw);
     var targetFile = normalizePath(f.targetFile || "");
     var tag = trimText(f.tag || "").toLowerCase();
-    var risk = normalizeRisk(f.risk || "");
+    var riskRaw = trimText(f.risk || "");
+    var risk = normalizeRisk(riskRaw);
     var approvalStatus = trimText(f.approvalStatus || "").toLowerCase();
     var limit = Math.max(1, Number(f.limit || 50));
 
-    var useType = trimText(f.type || "") !== "";
-    var useRisk = trimText(f.risk || "") !== "";
+    var useType = typeRaw !== "";
+    var useRisk = riskRaw !== "";
     var useApproval = approvalStatus !== "";
 
     var items = state.items.filter(function (item) {
@@ -434,8 +444,8 @@
       type: "plan",
       title: trimText(p.objective || p.title || "Plano supervisionado"),
       summary: trimText(p.analysis || p.nextStep || p.patchSummary || p.rawText || "Plano registrado"),
-      targetFile: normalizePath(p.targetFile || ""),
-      risk: normalizeRisk(p.risk || ""),
+      targetFile: normalizePath(p.targetFile || p.nextFile || ""),
+      risk: normalizeRisk(p.risk || p.priority || ""),
       tags: uniq([
         "plan",
         p.mode || "",
@@ -449,7 +459,7 @@
         code: String(p.proposedCode || "")
       } : null,
       meta: clone(meta || {
-        suggestedFiles: clone(p.suggestedFiles || []),
+        suggestedFiles: clone(p.suggestedFiles || p.executionLine || []),
         patchSummary: trimText(p.patchSummary || ""),
         nextStep: trimText(p.nextStep || ""),
         mode: trimText(p.mode || "")
@@ -505,6 +515,47 @@
     });
   }
 
+  function getPhaseContext() {
+    var phase = safe(function () { return global.RCF_FACTORY_PHASE_ENGINE || null; }, null);
+    if (!phase || typeof phase.buildPhaseContext !== "function") {
+      return {
+        ready: false,
+        activePhaseId: "",
+        activePhaseTitle: ""
+      };
+    }
+
+    var ctx = safe(function () { return phase.buildPhaseContext(); }, {}) || {};
+    return {
+      ready: true,
+      activePhaseId: safe(function () { return ctx.activePhase.id || ""; }, ""),
+      activePhaseTitle: safe(function () { return ctx.activePhase.title || ""; }, ""),
+      activePhase: clone(safe(function () { return ctx.activePhase; }, null)),
+      recommendedTargets: clone(safe(function () { return ctx.recommendedTargets || []; }, []))
+    };
+  }
+
+  function getAvoidFiles(limit) {
+    var max = Math.max(1, Number(limit || 20));
+    var recentErrors = latestByType("error", max);
+    var avoid = [];
+    var seen = {};
+
+    if (!recentErrors.ok) return [];
+
+    asArray(recentErrors.items).forEach(function (item) {
+      var file = normalizePath(item.targetFile || "");
+      if (!file || seen[file]) return;
+      seen[file] = true;
+      avoid.push({
+        file: file,
+        reason: trimText(item.summary || item.title || "erro recente")
+      });
+    });
+
+    return avoid;
+  }
+
   function buildMemoryContext(limit) {
     var data = latest(limit || 20);
     if (!data.ok) return { ok: false, msg: "falha ao montar contexto" };
@@ -513,7 +564,9 @@
       ok: true,
       version: VERSION,
       counters: clone(state.counters),
-      items: clone(data.items)
+      items: clone(data.items),
+      phase: clone(getPhaseContext()),
+      avoidFiles: clone(getAvoidFiles(12))
     };
   }
 
@@ -569,6 +622,20 @@
     } catch (_) {}
 
     try {
+      global.addEventListener("RCF:FACTORY_AI_PLAN_READY", function (ev) {
+        try {
+          var detail = ev && ev.detail ? ev.detail : {};
+          var plan = detail.plan || detail;
+          if (!plan || !plan.id) return;
+
+          rememberPlan(plan, {
+            importedFromEvent: "RCF:FACTORY_AI_PLAN_READY"
+          });
+        } catch (_) {}
+      }, { passive: true });
+    } catch (_) {}
+
+    try {
       global.addEventListener("RCF:FACTORY_AI_APPROVED", function (ev) {
         try {
           var detail = ev && ev.detail ? ev.detail : {};
@@ -586,17 +653,18 @@
     } catch (_) {}
 
     try {
-      global.addEventListener("RCF:PATCH_SUPERVISOR_STAGE_OK", function (ev) {
+      global.addEventListener("RCF:PATCH_STAGED", function (ev) {
         try {
           var detail = ev && ev.detail ? ev.detail : {};
+          var staged = detail.stagedPatch || {};
           rememberPatch({
             title: "Patch staged",
             summary: "Patch preparado com sucesso no supervisor.",
-            targetFile: normalizePath(detail.targetFile || ""),
-            risk: normalizeRisk(detail.risk || ""),
+            targetFile: normalizePath(staged.targetFile || detail.targetFile || ""),
+            risk: normalizeRisk(staged.risk || detail.risk || ""),
             tags: ["patch", "staged"],
             source: "patch_supervisor",
-            planId: trimText(detail.planId || ""),
+            planId: trimText(staged.planId || detail.planId || ""),
             approvalStatus: "approved",
             meta: clone(detail)
           });
@@ -605,7 +673,7 @@
     } catch (_) {}
 
     try {
-      global.addEventListener("RCF:PATCH_SUPERVISOR_APPLY_OK", function (ev) {
+      global.addEventListener("RCF:PATCH_APPLIED", function (ev) {
         try {
           var detail = ev && ev.detail ? ev.detail : {};
           rememberPatch({
@@ -617,6 +685,24 @@
             source: "patch_supervisor",
             planId: trimText(detail.planId || ""),
             approvalStatus: "approved",
+            meta: clone(detail)
+          });
+        } catch (_) {}
+      }, { passive: true });
+    } catch (_) {}
+
+    try {
+      global.addEventListener("RCF:FACTORY_PHASE_CHANGED", function (ev) {
+        try {
+          var detail = ev && ev.detail ? ev.detail : {};
+          var phase = detail.activePhase || {};
+          if (!phase || !phase.id) return;
+
+          rememberDecision({
+            title: "Mudança de fase",
+            summary: "Fase ativa da Factory atualizada para " + trimText(phase.title || phase.id),
+            tags: ["phase", "phase-change", trimText(phase.id || "")],
+            source: "factory_phase_engine",
             meta: clone(detail)
           });
         } catch (_) {}
@@ -639,6 +725,7 @@
 
   global.RCF_FACTORY_AI_MEMORY = {
     __v100: true,
+    __v101: true,
     version: VERSION,
     init: init,
     status: status,
@@ -660,7 +747,9 @@
     rememberNote: rememberNote,
     importFromBridgeLastPlan: importFromBridgeLastPlan,
     importFromPatchSupervisorStatus: importFromPatchSupervisorStatus,
-    buildMemoryContext: buildMemoryContext
+    buildMemoryContext: buildMemoryContext,
+    getPhaseContext: getPhaseContext,
+    getAvoidFiles: getAvoidFiles
   };
 
   try { init(); } catch (_) {}
