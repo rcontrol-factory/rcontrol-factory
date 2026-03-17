@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/factory_ai_runtime.js
    RControl Factory — Factory AI Runtime
-   v1.0.0 SUPERVISED RUNTIME
+   v1.0.1 SUPERVISED RUNTIME + SAFE FLOW
 
    Objetivo:
    - ligar Factory AI -> API -> bridge -> actions -> patch_supervisor
@@ -10,16 +10,23 @@
    - permitir execução SOMENTE após aprovação humana
    - não aplicar patch automaticamente sem aprovação
    - funcionar como script clássico
+
+   PATCH v1.0.1:
+   - FIX: remove dependência de APIs inexistentes (ingestPlan/setPlan/executePlan/queuePlan)
+   - FIX: usa bridge.fromText() como caminho principal de ingestão
+   - FIX: não consome plano antes da hora
+   - FIX: expõe wrappers seguros approve -> validate -> stage -> apply
 */
 
 ;(function (global) {
   "use strict";
 
-  if (global.RCF_FACTORY_AI_RUNTIME && global.RCF_FACTORY_AI_RUNTIME.__v100) return;
+  if (global.RCF_FACTORY_AI_RUNTIME && global.RCF_FACTORY_AI_RUNTIME.__v101) return;
 
-  var VERSION = "v1.0.0";
+  var VERSION = "v1.0.1";
   var STORAGE_KEY = "rcf:factory_ai_runtime";
   var LAST_RESPONSE_KEY = "rcf:factory_ai_runtime_last_response";
+  var MAX_HISTORY = 60;
 
   var state = {
     version: VERSION,
@@ -112,6 +119,8 @@
       var parsed = JSON.parse(raw);
       if (!parsed || typeof parsed !== "object") return false;
       state = merge(clone(state), parsed);
+      if (!Array.isArray(state.history)) state.history = [];
+      if (state.history.length > MAX_HISTORY) state.history = state.history.slice(-MAX_HISTORY);
       return true;
     } catch (_) {
       return false;
@@ -122,8 +131,8 @@
     if (!entry || typeof entry !== "object") return;
     if (!Array.isArray(state.history)) state.history = [];
     state.history.push(clone(entry));
-    if (state.history.length > 60) {
-      state.history = state.history.slice(-60);
+    if (state.history.length > MAX_HISTORY) {
+      state.history = state.history.slice(-MAX_HISTORY);
     }
   }
 
@@ -192,6 +201,18 @@
     return "/api/admin-ai";
   }
 
+  function getBridge() {
+    return safe(function () { return global.RCF_FACTORY_AI_BRIDGE || null; }, null);
+  }
+
+  function getActions() {
+    return safe(function () { return global.RCF_FACTORY_AI_ACTIONS || null; }, null);
+  }
+
+  function getPatchSupervisor() {
+    return safe(function () { return global.RCF_PATCH_SUPERVISOR || null; }, null);
+  }
+
   function buildRequest(input) {
     var prompt = trimText(safe(function () { return input.prompt; }, ""));
     var action = normalizeAction(safe(function () { return input.action; }, ""), prompt);
@@ -251,30 +272,34 @@
   }
 
   function ingestToBridge(responseObj) {
+    var bridge = getBridge();
+    if (!bridge) return null;
+
     try {
-      if (global.RCF_FACTORY_AI_BRIDGE?.ingestResponse) {
-        var plan = global.RCF_FACTORY_AI_BRIDGE.ingestResponse(responseObj || {});
-        state.lastPlanId = trimText(safe(function () { return plan.id; }, ""));
+      if (typeof bridge.ingestResponse === "function") {
+        var planA = bridge.ingestResponse(responseObj || {});
+        state.lastPlanId = trimText(safe(function () { return planA.id; }, ""));
         persist();
-        return plan || null;
+        return planA || null;
+      }
+
+      if (typeof bridge.fromText === "function") {
+        var analysisText = trimText(safe(function () { return responseObj.analysis; }, ""));
+        if (!analysisText) return null;
+
+        var planB = bridge.fromText(analysisText, {
+          source: "factory_ai_runtime.ask",
+          response: clone(responseObj || {})
+        });
+
+        state.lastPlanId = trimText(safe(function () { return planB.id; }, ""));
+        persist();
+        return planB || null;
       }
     } catch (e) {
       log("ERR", "bridge ingest error", String(e && e.message || e));
     }
-    return null;
-  }
 
-  function sendToActions(plan) {
-    try {
-      if (global.RCF_FACTORY_AI_ACTIONS?.ingestPlan) {
-        return global.RCF_FACTORY_AI_ACTIONS.ingestPlan(plan || null);
-      }
-      if (global.RCF_FACTORY_AI_ACTIONS?.setPlan) {
-        return global.RCF_FACTORY_AI_ACTIONS.setPlan(plan || null);
-      }
-    } catch (e) {
-      log("ERR", "actions ingest error", String(e && e.message || e));
-    }
     return null;
   }
 
@@ -365,9 +390,6 @@
       emit("RCF:FACTORY_AI_RESPONSE", clone(responseObj));
 
       var plan = ingestToBridge(responseObj);
-      if (plan) {
-        sendToActions(plan);
-      }
 
       rememberHistory({
         ts: nowISO(),
@@ -434,122 +456,146 @@
 
   function getPendingPlan() {
     try {
-      if (global.RCF_FACTORY_AI_BRIDGE?.getPendingPlan) {
-        return clone(global.RCF_FACTORY_AI_BRIDGE.getPendingPlan() || null);
+      var bridge = getBridge();
+      if (!bridge) return null;
+
+      if (typeof bridge.getPendingPlan === "function") {
+        return clone(bridge.getPendingPlan() || null);
+      }
+
+      if (typeof bridge.getLastPlan === "function") {
+        var plan = bridge.getLastPlan();
+        if (plan && typeof plan === "object" && trimText(plan.approvalStatus || "") !== "approved") {
+          return clone(plan);
+        }
       }
     } catch (_) {}
+
     return null;
   }
 
   function getApprovedPlan() {
     try {
-      var bridge = global.RCF_FACTORY_AI_BRIDGE;
-      if (!bridge || !bridge.getLastPlan) return null;
+      var bridge = getBridge();
+      if (!bridge || typeof bridge.getLastPlan !== "function") return null;
       var plan = bridge.getLastPlan();
       if (!plan || typeof plan !== "object") return null;
-      if (plan.approvalStatus !== "approved") return null;
+      if (trimText(plan.approvalStatus || "") !== "approved") return null;
       return clone(plan);
     } catch (_) {
       return null;
     }
   }
 
-  async function executeApprovedPlan(planId) {
-    var bridge = global.RCF_FACTORY_AI_BRIDGE || null;
-    if (!bridge || typeof bridge.consumeApprovedPlan !== "function") {
+  function getCurrentPlanId() {
+    var approved = getApprovedPlan();
+    if (approved && approved.id) return trimText(approved.id);
+
+    var pending = getPendingPlan();
+    if (pending && pending.id) return trimText(pending.id);
+
+    return "";
+  }
+
+  async function approvePlan(planId, meta) {
+    var bridge = getBridge();
+    if (!bridge || typeof bridge.approvePlan !== "function") {
       return { ok: false, error: "RCF_FACTORY_AI_BRIDGE indisponível." };
     }
 
-    var consumed = bridge.consumeApprovedPlan(planId);
-    if (!consumed || !consumed.ok || !consumed.plan) {
-      return { ok: false, error: trimText(safe(function () { return consumed.msg; }, "")) || "Plano não aprovado." };
+    var targetPlanId = trimText(planId || getCurrentPlanId());
+    if (!targetPlanId) {
+      return { ok: false, error: "Nenhum plano disponível para aprovação." };
     }
 
-    var plan = clone(consumed.plan);
-    state.lastApprovedPlanId = trimText(plan.id || "");
-    state.lastExecution = {
-      ts: nowISO(),
-      planId: trimText(plan.id || ""),
-      targetFile: trimText(plan.targetFile || ""),
-      mode: trimText(plan.mode || ""),
-      risk: trimText(plan.risk || "unknown")
-    };
-    persist();
-
-    emit("RCF:FACTORY_AI_EXECUTION_REQUEST", {
-      plan: clone(plan)
-    });
-
     try {
-      if (global.RCF_PATCH_SUPERVISOR?.queuePlan) {
-        var queued = global.RCF_PATCH_SUPERVISOR.queuePlan(plan);
-        emit("RCF:FACTORY_AI_EXECUTION_QUEUED", {
-          planId: trimText(plan.id || ""),
-          targetFile: trimText(plan.targetFile || ""),
-          result: clone(queued || {})
-        });
-        log("OK", "plan queued to patch_supervisor", {
-          planId: trimText(plan.id || ""),
-          targetFile: trimText(plan.targetFile || "")
-        });
-        return { ok: true, mode: "queuePlan", plan: plan, result: clone(queued || {}) };
+      var result = bridge.approvePlan(targetPlanId, meta || {});
+      if (result && result.ok) {
+        state.lastApprovedPlanId = targetPlanId;
+        persist();
       }
-
-      if (global.RCF_FACTORY_AI_ACTIONS?.executePlan) {
-        var executed = await global.RCF_FACTORY_AI_ACTIONS.executePlan(plan);
-        emit("RCF:FACTORY_AI_EXECUTION_DONE", {
-          planId: trimText(plan.id || ""),
-          targetFile: trimText(plan.targetFile || ""),
-          result: clone(executed || {})
-        });
-        log("OK", "plan executed by actions", {
-          planId: trimText(plan.id || ""),
-          targetFile: trimText(plan.targetFile || "")
-        });
-        return { ok: true, mode: "actions.executePlan", plan: plan, result: clone(executed || {}) };
-      }
-
-      emit("RCF:FACTORY_AI_EXECUTION_PENDING", {
-        planId: trimText(plan.id || ""),
-        targetFile: trimText(plan.targetFile || "")
-      });
-
-      log("WARN", "approved plan ready but no executor found", {
-        planId: trimText(plan.id || ""),
-        targetFile: trimText(plan.targetFile || "")
-      });
-
-      return { ok: true, mode: "pending", plan: plan };
+      return clone(result || { ok: false, error: "Falha ao aprovar plano." });
     } catch (e) {
-      var msg = String(e && e.message || e || "erro ao executar plano");
-      emit("RCF:FACTORY_AI_EXECUTION_ERROR", {
-        planId: trimText(plan.id || ""),
-        error: msg
-      });
-      log("ERR", "executeApprovedPlan error", msg);
-      return { ok: false, error: msg, plan: plan };
+      return { ok: false, error: String(e && e.message || e || "erro ao aprovar plano") };
     }
   }
 
-  function approveAndExecute(planId) {
-    try {
-      var bridge = global.RCF_FACTORY_AI_BRIDGE || null;
-      if (!bridge || typeof bridge.approvePlan !== "function") {
-        return Promise.resolve({ ok: false, error: "RCF_FACTORY_AI_BRIDGE indisponível." });
-      }
+  async function validateApprovedPlan(planId) {
+    var supervisor = getPatchSupervisor();
+    var targetPlanId = trimText(planId || state.lastApprovedPlanId || getCurrentPlanId());
 
-      var approved = bridge.approvePlan(planId);
-      if (!approved || !approved.ok) {
-        return Promise.resolve({
-          ok: false,
-          error: trimText(safe(function () { return approved.msg; }, "")) || "Falha ao aprovar plano."
-        });
-      }
-
-      return executeApprovedPlan(planId);
-    } catch (e) {
-      return Promise.resolve({ ok: false, error: String(e && e.message || e || "erro") });
+    if (!supervisor || typeof supervisor.validateApprovedPlan !== "function") {
+      return { ok: false, error: "RCF_PATCH_SUPERVISOR indisponível." };
     }
+
+    if (!targetPlanId) {
+      return { ok: false, error: "Nenhum plano aprovado disponível para validação." };
+    }
+
+    try {
+      return clone(supervisor.validateApprovedPlan(targetPlanId) || { ok: false, error: "Falha ao validar plano." });
+    } catch (e) {
+      return { ok: false, error: String(e && e.message || e || "erro ao validar plano") };
+    }
+  }
+
+  async function stageApprovedPlan(planId) {
+    var supervisor = getPatchSupervisor();
+    var targetPlanId = trimText(planId || state.lastApprovedPlanId || getCurrentPlanId());
+
+    if (!supervisor || typeof supervisor.stageApprovedPlan !== "function") {
+      return { ok: false, error: "RCF_PATCH_SUPERVISOR indisponível." };
+    }
+
+    if (!targetPlanId) {
+      return { ok: false, error: "Nenhum plano aprovado disponível para stage." };
+    }
+
+    try {
+      return clone(await supervisor.stageApprovedPlan(targetPlanId));
+    } catch (e) {
+      return { ok: false, error: String(e && e.message || e || "erro ao fazer stage do plano") };
+    }
+  }
+
+  async function applyApprovedPlan(planId, opts) {
+    var supervisor = getPatchSupervisor();
+    var targetPlanId = trimText(planId || state.lastApprovedPlanId || getCurrentPlanId());
+
+    if (!supervisor || typeof supervisor.applyApprovedPlan !== "function") {
+      return { ok: false, error: "RCF_PATCH_SUPERVISOR indisponível." };
+    }
+
+    if (!targetPlanId) {
+      return { ok: false, error: "Nenhum plano aprovado disponível para apply." };
+    }
+
+    try {
+      var result = await supervisor.applyApprovedPlan(targetPlanId, opts || {});
+      if (result && result.ok) {
+        state.lastExecution = {
+          ts: nowISO(),
+          planId: targetPlanId,
+          targetFile: trimText(result.targetFile || ""),
+          mode: trimText(result.mode || ""),
+          risk: trimText(result.risk || "unknown")
+        };
+        persist();
+      }
+      return clone(result || { ok: false, error: "Falha ao aplicar plano." });
+    } catch (e) {
+      return { ok: false, error: String(e && e.message || e || "erro ao aplicar plano") };
+    }
+  }
+
+  async function approveValidateStage(planId, meta) {
+    var approved = await approvePlan(planId, meta || {});
+    if (!approved || !approved.ok) return approved;
+
+    var validated = await validateApprovedPlan(planId);
+    if (!validated || !validated.ok) return validated;
+
+    return stageApprovedPlan(planId);
   }
 
   function bindEvents() {
@@ -584,6 +630,7 @@
 
   global.RCF_FACTORY_AI_RUNTIME = {
     __v100: true,
+    __v101: true,
     version: VERSION,
     init: init,
     status: status,
@@ -591,8 +638,11 @@
     getLastResponse: getLastResponse,
     getPendingPlan: getPendingPlan,
     getApprovedPlan: getApprovedPlan,
-    executeApprovedPlan: executeApprovedPlan,
-    approveAndExecute: approveAndExecute
+    approvePlan: approvePlan,
+    validateApprovedPlan: validateApprovedPlan,
+    stageApprovedPlan: stageApprovedPlan,
+    applyApprovedPlan: applyApprovedPlan,
+    approveValidateStage: approveValidateStage
   };
 
   try { init(); } catch (_) {}
