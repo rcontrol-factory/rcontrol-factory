@@ -1,5 +1,5 @@
-/* FILE: app/js/core/doctor_scan.js
-   RControl Factory — DOCTOR SCAN — v1.6 (LASTRUN + STATE SYNC + SAFE)
+/* FILE: /app/js/core/doctor_scan.js
+   RControl Factory — DOCTOR SCAN — v1.6.1 (PLANNER AWARE + STATE SYNC + SAFE)
    - mantém modal leve e iOS-safe
    - NÃO injeta botão sozinho
    - Expõe API: window.RCF_DOCTOR_SCAN.open()
@@ -7,14 +7,14 @@
    - PATCH: salva lastReport / lastRun
    - PATCH: sincroniza com RCF_FACTORY_STATE.markDoctorRun(...)
    - PATCH: tenta refresh em RCF_FACTORY_STATE e RCF_MODULE_REGISTRY
+   - PATCH NOVO: report entende planner/bridge/actions/patch supervisor
 */
 
 (() => {
   "use strict";
 
-  const VERSION = "v1.6";
+  const VERSION = "v1.6.1";
 
-  // evita double init
   if (window.__RCF_DOCTOR_SCAN_BOOTED__) return;
   window.__RCF_DOCTOR_SCAN_BOOTED__ = true;
 
@@ -49,6 +49,10 @@
     try { return JSON.parse(JSON.stringify(obj)); } catch { return obj || {}; }
   }
 
+  function asArray(v) {
+    return Array.isArray(v) ? v : [];
+  }
+
   function syncDoctorState(meta) {
     try {
       if (window.RCF_FACTORY_STATE?.markDoctorRun) {
@@ -75,9 +79,6 @@
     } catch {}
   }
 
-  // =========================================================
-  // Modal (iOS-safe scroll)
-  // =========================================================
   function ensureStyles() {
     if ($("#__rcfDoctorStyle")) return;
 
@@ -267,9 +268,6 @@
     return { overlay, pre, close };
   }
 
-  // =========================================================
-  // Scan core
-  // =========================================================
   function countLocalStorageKeys(prefix) {
     let total = 0, pref = 0;
     try {
@@ -361,6 +359,42 @@
     return {};
   }
 
+  function getPlannerStatus() {
+    try {
+      if (window.RCF_FACTORY_AI_PLANNER?.status) {
+        return safeClone(window.RCF_FACTORY_AI_PLANNER.status() || {});
+      }
+    } catch {}
+    return {};
+  }
+
+  function getBridgeStatus() {
+    try {
+      if (window.RCF_FACTORY_AI_BRIDGE?.status) {
+        return safeClone(window.RCF_FACTORY_AI_BRIDGE.status() || {});
+      }
+    } catch {}
+    return {};
+  }
+
+  function getActionsStatus() {
+    try {
+      if (window.RCF_FACTORY_AI_ACTIONS?.status) {
+        return safeClone(window.RCF_FACTORY_AI_ACTIONS.status() || {});
+      }
+    } catch {}
+    return {};
+  }
+
+  function getPatchSupervisorStatus() {
+    try {
+      if (window.RCF_PATCH_SUPERVISOR?.status) {
+        return safeClone(window.RCF_PATCH_SUPERVISOR.status() || {});
+      }
+    } catch {}
+    return {};
+  }
+
   async function buildReport() {
     const sw = await listSW();
     const ca = await listCaches();
@@ -369,22 +403,47 @@
     const rs = resourcesSummary();
     const mods = getModuleSnapshot();
     const st = getFactoryStateSnapshot();
+    const planner = getPlannerStatus();
+    const bridge = getBridgeStatus();
+    const actions = getActionsStatus();
+    const patchSupervisor = getPatchSupervisorStatus();
 
     const hints = [];
+
     if (sw.supported && sw.controller && sw.registrations === 0) {
-      hints.push("- SW controller=true mas registrations=0: pode ser SW antigo/controlando por outra scope.\n  Use: Tools > Unregister SW se ficar preso.");
+      hints.push("- SW controller=true mas registrations=0: pode ser SW antigo/controlando por outra scope.");
     }
+
     if (ca.supported && ca.keys === 0) {
-      hints.push("- Cache API vazio (keys=0): ok se você está usando overrides + bundle local.");
+      hints.push("- Cache API vazio: aceitável se o runtime atual estiver usando overrides + bundle local.");
     }
+
     if (!mb.present) {
-      hints.push("- mother_bundle_local não encontrado: se o app não estiver puxando o bundle, confira GitHub pull e MAE update.");
+      hints.push("- mother_bundle_local não encontrado: confira GitHub pull / MAE update se esperado.");
     }
+
     if (!mods.activeCount && Array.isArray(mods.active) && mods.active.length === 0) {
-      hints.push("- Module Registry sem ativos relevantes no snapshot. Vale revisar factory_state/module_registry/context_engine em conjunto.");
+      hints.push("- Module Registry sem ativos relevantes no snapshot atual.");
     }
+
     if (!st.doctorLastRun) {
-      hints.push("- Este scan ainda não estava consolidado no state antes. Agora deve aparecer em doctorLastRun após executar.");
+      hints.push("- Este scan ainda não estava consolidado no state antes. Após rodar, doctorLastRun deve aparecer.");
+    }
+
+    if (!planner.ready) {
+      hints.push("- Factory AI Planner não aparece como pronto no runtime atual.");
+    }
+
+    if (!bridge.ready) {
+      hints.push("- Factory AI Bridge não aparece como pronto no runtime atual.");
+    }
+
+    if (!actions.ready) {
+      hints.push("- Factory AI Actions não aparece como pronto no runtime atual.");
+    }
+
+    if (!patchSupervisor.ready) {
+      hints.push("- Patch Supervisor não aparece como pronto no runtime atual.");
     }
 
     const lines = [];
@@ -399,6 +458,7 @@
     lines.push(`environment: ${st.environment || "unknown"}`);
     lines.push(`activeView: ${st.activeView || ""}`);
     lines.push(`activeAppSlug: ${st.activeAppSlug || ""}`);
+    lines.push(`activeModulesCount: ${asArray(st.activeModules).length}`);
     lines.push("");
 
     lines.push("== Module Registry ==");
@@ -407,8 +467,30 @@
     if (Array.isArray(mods.active) && mods.active.length) {
       lines.push(`active: ${mods.active.join(" | ")}`);
     } else {
-      lines.push(`active: (vazio)`);
+      lines.push("active: (vazio)");
     }
+    lines.push(`factoryAI: ${!!mods.factoryAI}`);
+    lines.push(`contextEngine: ${!!mods.contextEngine}`);
+    lines.push(`factoryTree: ${!!mods.factoryTree}`);
+    lines.push(`factoryAIBridge: ${!!mods.factoryAIBridge}`);
+    lines.push(`factoryAIActions: ${!!mods.factoryAIActions}`);
+    lines.push(`factoryAIPlanner: ${!!mods.factoryAIPlanner}`);
+    lines.push(`patchSupervisor: ${!!mods.patchSupervisor}`);
+    lines.push("");
+
+    lines.push("== Cognitive / Supervised Flow ==");
+    lines.push(`planner.ready: ${!!planner.ready}`);
+    lines.push(`planner.lastNextFile: ${planner.lastNextFile || ""}`);
+    lines.push(`planner.lastPriority: ${planner.lastPriority || ""}`);
+    lines.push(`bridge.ready: ${!!bridge.ready}`);
+    lines.push(`bridge.hasPlan: ${!!bridge.hasPlan}`);
+    lines.push(`bridge.targetFile: ${bridge.targetFile || ""}`);
+    lines.push(`bridge.approvalStatus: ${bridge.approvalStatus || ""}`);
+    lines.push(`actions.ready: ${!!actions.ready}`);
+    lines.push(`actions.lastAction: ${actions.lastAction && actions.lastAction.name ? actions.lastAction.name : ""}`);
+    lines.push(`patchSupervisor.ready: ${!!patchSupervisor.ready}`);
+    lines.push(`patchSupervisor.hasStagedPatch: ${!!patchSupervisor.hasStagedPatch}`);
+    lines.push(`patchSupervisor.stagedTargetFile: ${patchSupervisor.stagedTargetFile || ""}`);
     lines.push("");
 
     lines.push("== Service Worker ==");
@@ -443,7 +525,7 @@
     if (hints.length) {
       lines.push("");
       lines.push("== Hints (SAFE) ==");
-      for (const h of hints) lines.push(h);
+      hints.forEach((h) => lines.push(h));
     }
 
     return lines.join("\n");
@@ -478,9 +560,6 @@
     return reportText;
   }
 
-  // =========================================================
-  // Public API
-  // =========================================================
   async function open() {
     const rep = await runScan().catch(e => "Doctor error: " + ((e && e.message) ? e.message : String(e)));
     const modal = openModal(rep);
