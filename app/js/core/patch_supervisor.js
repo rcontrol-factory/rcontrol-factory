@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/patch_supervisor.js
    RControl Factory — Patch Supervisor
-   v1.0.0 SUPERVISED PATCH FLOW
+   v1.0.1 SUPERVISED PATCH FLOW + SAFE WRITER FALLBACK
 
    Objetivo:
    - supervisionar fluxo de patch aprovado pela Factory AI
@@ -11,14 +11,21 @@
    - NÃO executar patch automático sem aprovação
    - expor API global via window.RCF_PATCH_SUPERVISOR
    - funcionar como script clássico
+
+   PATCH v1.0.1:
+   - FIX: aceita targetFile OU nextFile
+   - FIX: validação mais forte + contexto adicional
+   - FIX: writer com mais fallbacks seguros
+   - FIX: stage/apply mais consistente no Safari/PWA
+   - FIX: status expõe melhor staged/apply state
 */
 
 ;(function (global) {
   "use strict";
 
-  if (global.RCF_PATCH_SUPERVISOR && global.RCF_PATCH_SUPERVISOR.__v100) return;
+  if (global.RCF_PATCH_SUPERVISOR && global.RCF_PATCH_SUPERVISOR.__v101) return;
 
-  var VERSION = "v1.0.0";
+  var VERSION = "v1.0.1";
   var STORAGE_KEY = "rcf:patch_supervisor";
   var MAX_HISTORY = 80;
 
@@ -28,6 +35,7 @@
     lastUpdate: null,
     stagedPlanId: "",
     stagedPatch: null,
+    lastValidationResult: null,
     lastApplyResult: null,
     history: []
   };
@@ -63,9 +71,24 @@
     return p;
   }
 
-  function safeParse(raw, fallback) {
-    try { return raw ? JSON.parse(raw) : fallback; }
-    catch (_) { return fallback; }
+  function merge(base, patch) {
+    if (!patch || typeof patch !== "object") return base;
+
+    Object.keys(patch).forEach(function (key) {
+      var a = base[key];
+      var b = patch[key];
+
+      if (
+        a && typeof a === "object" && !Array.isArray(a) &&
+        b && typeof b === "object" && !Array.isArray(b)
+      ) {
+        base[key] = merge(clone(a), b);
+      } else {
+        base[key] = b;
+      }
+    });
+
+    return base;
   }
 
   function persist() {
@@ -89,26 +112,6 @@
     } catch (_) {
       return false;
     }
-  }
-
-  function merge(base, patch) {
-    if (!patch || typeof patch !== "object") return base;
-
-    Object.keys(patch).forEach(function (key) {
-      var a = base[key];
-      var b = patch[key];
-
-      if (
-        a && typeof a === "object" && !Array.isArray(a) &&
-        b && typeof b === "object" && !Array.isArray(b)
-      ) {
-        base[key] = merge(clone(a), b);
-      } else {
-        base[key] = b;
-      }
-    });
-
-    return base;
   }
 
   function pushLog(level, msg, extra) {
@@ -164,13 +167,12 @@
     }, "");
   }
 
-  function fileExistsInSnapshot(path) {
-    var want = normalizePath(path);
+  function getKnownFilesFromSnapshot() {
     var snapshot = getContextSnapshot();
     var tree = safe(function () { return snapshot.tree; }, {}) || {};
     var groups = safe(function () { return tree.pathGroups; }, {}) || {};
     var samples = Array.isArray(tree.samples) ? tree.samples.slice() : [];
-    var all = []
+    var out = []
       .concat(samples)
       .concat(Array.isArray(groups.core) ? groups.core : [])
       .concat(Array.isArray(groups.ui) ? groups.ui : [])
@@ -179,8 +181,26 @@
       .concat(Array.isArray(groups.functions) ? groups.functions : [])
       .concat(Array.isArray(snapshot.candidateFiles) ? snapshot.candidateFiles : []);
 
-    for (var i = 0; i < all.length; i++) {
-      if (normalizePath(all[i]) === want) return true;
+    var uniq = [];
+    var seen = {};
+
+    out.forEach(function (item) {
+      var p = normalizePath(item);
+      if (!p || seen[p]) return;
+      seen[p] = true;
+      uniq.push(p);
+    });
+
+    return uniq;
+  }
+
+  function fileExistsInSnapshot(path) {
+    var want = normalizePath(path);
+    if (!want) return false;
+
+    var files = getKnownFilesFromSnapshot();
+    for (var i = 0; i < files.length; i++) {
+      if (files[i] === want) return true;
     }
     return false;
   }
@@ -194,37 +214,38 @@
     return "unknown";
   }
 
+  function normalizePlan(plan) {
+    var p = clone(plan || {});
+    return {
+      id: trimText(p.id || ""),
+      mode: trimText(p.mode || "analysis"),
+      targetFile: normalizePath(p.targetFile || p.nextFile || ""),
+      nextFile: normalizePath(p.nextFile || p.targetFile || ""),
+      risk: normalizeRisk(p.risk || p.riskText || p.priority || ""),
+      approvalRequired: !!p.approvalRequired,
+      approvalStatus: trimText(p.approvalStatus || ""),
+      objective: trimText(p.objective || ""),
+      patchSummary: trimText(p.patchSummary || ""),
+      proposedCode: String(p.proposedCode || ""),
+      proposedLang: trimText(p.proposedLang || ""),
+      nextStep: trimText(p.nextStep || ""),
+      rawText: String(p.rawText || ""),
+      createdAt: trimText(p.createdAt || ""),
+      source: trimText(p.source || "")
+    };
+  }
+
   function validatePlanShape(plan) {
+    var normalized = normalizePlan(plan);
     var out = {
       ok: true,
       errors: [],
       warnings: [],
-      normalized: null
-    };
-
-    if (!plan || typeof plan !== "object") {
-      out.ok = false;
-      out.errors.push("plano ausente ou inválido");
-      return out;
-    }
-
-    var normalized = {
-      id: trimText(plan.id || ""),
-      mode: trimText(plan.mode || "analysis"),
-      targetFile: normalizePath(plan.targetFile || ""),
-      risk: normalizeRisk(plan.risk || plan.riskText || ""),
-      approvalRequired: !!plan.approvalRequired,
-      approvalStatus: trimText(plan.approvalStatus || ""),
-      objective: trimText(plan.objective || ""),
-      patchSummary: trimText(plan.patchSummary || ""),
-      proposedCode: String(plan.proposedCode || ""),
-      proposedLang: trimText(plan.proposedLang || ""),
-      nextStep: trimText(plan.nextStep || ""),
-      rawText: String(plan.rawText || "")
+      normalized: normalized
     };
 
     if (!normalized.id) out.errors.push("plan.id ausente");
-    if (!normalized.targetFile) out.errors.push("targetFile ausente");
+    if (!normalized.targetFile) out.errors.push("targetFile/nextFile ausente");
     if (!normalized.mode) out.warnings.push("mode ausente");
     if (!normalized.proposedCode) out.warnings.push("proposedCode ausente");
     if (!normalized.approvalRequired) out.warnings.push("approvalRequired=false");
@@ -235,7 +256,6 @@
     }
 
     out.ok = out.errors.length === 0;
-    out.normalized = normalized;
     return out;
   }
 
@@ -243,72 +263,94 @@
     var bridge = getBridge();
 
     if (!bridge || typeof bridge.getLastPlan !== "function") {
-      return {
+      var noBridge = {
         ok: false,
         msg: "Factory AI Bridge indisponível.",
         errors: ["bridge indisponível"],
-        warnings: []
+        warnings: [],
+        normalized: null
       };
+      state.lastValidationResult = clone(noBridge);
+      persist();
+      return noBridge;
     }
 
     var plan = bridge.getLastPlan();
     if (!plan || typeof plan !== "object") {
-      return {
+      var noPlan = {
         ok: false,
         msg: "Nenhum plano atual encontrado.",
         errors: ["plano ausente"],
-        warnings: []
+        warnings: [],
+        normalized: null
       };
+      state.lastValidationResult = clone(noPlan);
+      persist();
+      return noPlan;
     }
 
     var want = trimText(planId || plan.id);
     if (!want || want !== trimText(plan.id)) {
-      return {
+      var mismatch = {
         ok: false,
         msg: "planId não confere com o último plano.",
         errors: ["planId mismatch"],
-        warnings: []
+        warnings: [],
+        normalized: null
       };
+      state.lastValidationResult = clone(mismatch);
+      persist();
+      return mismatch;
     }
 
     if (typeof bridge.canApplyApprovedPlan === "function" && !bridge.canApplyApprovedPlan(want)) {
-      return {
+      var notApproved = {
         ok: false,
         msg: "Plano ainda não está liberado como aprovado.",
         errors: ["plano não aprovado"],
-        warnings: []
+        warnings: [],
+        normalized: normalizePlan(plan)
       };
+      state.lastValidationResult = clone(notApproved);
+      persist();
+      return notApproved;
     }
 
     var shape = validatePlanShape(plan);
 
-    return {
+    var result = {
       ok: !!shape.ok,
       msg: shape.ok ? "Plano validado ✅" : "Plano inválido para stage/apply.",
       planId: want,
       errors: shape.errors || [],
       warnings: shape.warnings || [],
       normalized: clone(shape.normalized || {}),
-      plan: clone(plan)
+      plan: clone(plan),
+      activeAppSlug: getActiveApp()
     };
+
+    state.lastValidationResult = clone(result);
+    persist();
+    return result;
   }
 
   function buildStagedPatch(plan) {
-    var p = clone(plan || {});
-    var normalized = validatePlanShape(p).normalized || {};
+    var normalized = normalizePlan(plan);
 
     return {
       stagedAt: nowISO(),
-      planId: trimText(p.id || normalized.id || ""),
-      targetFile: normalizePath(p.targetFile || normalized.targetFile || ""),
-      risk: normalizeRisk(p.risk || normalized.risk || ""),
-      mode: trimText(p.mode || normalized.mode || "analysis"),
-      objective: trimText(p.objective || normalized.objective || ""),
-      patchSummary: trimText(p.patchSummary || normalized.patchSummary || ""),
-      proposedCode: String(p.proposedCode || normalized.proposedCode || ""),
-      proposedLang: trimText(p.proposedLang || normalized.proposedLang || ""),
-      approvalRequired: !!(p.approvalRequired || normalized.approvalRequired),
-      source: "patch_supervisor"
+      planId: trimText(normalized.id || ""),
+      targetFile: normalizePath(normalized.targetFile || normalized.nextFile || ""),
+      risk: normalizeRisk(normalized.risk || ""),
+      mode: trimText(normalized.mode || "analysis"),
+      objective: trimText(normalized.objective || ""),
+      nextStep: trimText(normalized.nextStep || ""),
+      patchSummary: trimText(normalized.patchSummary || ""),
+      proposedCode: String(normalized.proposedCode || ""),
+      proposedLang: trimText(normalized.proposedLang || ""),
+      approvalRequired: !!normalized.approvalRequired,
+      source: "patch_supervisor",
+      createdAt: nowISO()
     };
   }
 
@@ -321,14 +363,17 @@
         msg: "Stage bloqueado.",
         validation: clone(validation)
       };
+
       state.stagedPlanId = "";
       state.stagedPatch = null;
       persist();
+
       pushHistory({
         type: "stage-fail",
         ts: nowISO(),
         result: clone(fail)
       });
+
       pushLog("WARN", "stageApprovedPlan bloqueado", fail);
       return fail;
     }
@@ -343,6 +388,9 @@
       ok: true,
       msg: "Plano staged ✅",
       stagedPatch: clone(staged),
+      targetFile: staged.targetFile,
+      risk: staged.risk,
+      mode: staged.mode,
       warnings: clone(validation.warnings || [])
     };
 
@@ -366,45 +414,107 @@
     return result;
   }
 
-  function tryWriteTargetFile(targetFile, content) {
+  function tryWriter(label, fn) {
+    try {
+      var result = fn();
+      return Promise.resolve(result)
+        .then(function () {
+          return { ok: true, mode: label };
+        })
+        .catch(function (e) {
+          return { ok: false, mode: label, msg: String(e && e.message || e || "writer failed") };
+        });
+    } catch (e) {
+      return Promise.resolve({
+        ok: false,
+        mode: label,
+        msg: String(e && e.message || e || "writer failed")
+      });
+    }
+  }
+
+  async function tryWriteTargetFile(targetFile, content) {
     var path = normalizePath(targetFile);
     var text = String(content == null ? "" : content);
 
     if (!path) {
-      return { ok: false, msg: "targetFile inválido" };
+      return { ok: false, msg: "targetFile inválido", path: path };
     }
 
-    try {
-      if (global.RCF_OVERRIDES_VFS && typeof global.RCF_OVERRIDES_VFS.writeFile === "function") {
-        var maybePromise = global.RCF_OVERRIDES_VFS.writeFile(path, text);
-        return Promise.resolve(maybePromise).then(function () {
-          return { ok: true, mode: "RCF_OVERRIDES_VFS.writeFile", path: path };
-        }).catch(function (e) {
-          return { ok: false, msg: String(e && e.message || e || "falha writeFile"), path: path };
-        });
-      }
-    } catch (_) {}
+    var attempts = [];
 
-    try {
-      if (global.RCF_INJECTOR_SAFE && typeof global.RCF_INJECTOR_SAFE.applyFilePatch === "function") {
-        var maybeApply = global.RCF_INJECTOR_SAFE.applyFilePatch({
-          path: path,
-          content: text,
-          mode: "REPLACE"
+    if (global.RCF_OVERRIDES_VFS && typeof global.RCF_OVERRIDES_VFS.writeFile === "function") {
+      attempts.push(function () {
+        return tryWriter("RCF_OVERRIDES_VFS.writeFile", function () {
+          return global.RCF_OVERRIDES_VFS.writeFile(path, text);
         });
-        return Promise.resolve(maybeApply).then(function () {
-          return { ok: true, mode: "RCF_INJECTOR_SAFE.applyFilePatch", path: path };
-        }).catch(function (e) {
-          return { ok: false, msg: String(e && e.message || e || "falha applyFilePatch"), path: path };
-        });
-      }
-    } catch (_) {}
+      });
+    }
 
-    return Promise.resolve({
+    if (global.RCF_OVERRIDES_VFS && typeof global.RCF_OVERRIDES_VFS.put === "function") {
+      attempts.push(function () {
+        return tryWriter("RCF_OVERRIDES_VFS.put", function () {
+          return global.RCF_OVERRIDES_VFS.put(path, text);
+        });
+      });
+    }
+
+    if (global.RCF_RUNTIME && typeof global.RCF_RUNTIME.put === "function") {
+      attempts.push(function () {
+        return tryWriter("RCF_RUNTIME.put", function () {
+          return global.RCF_RUNTIME.put(path, text);
+        });
+      });
+    }
+
+    if (global.RCF_VFS && typeof global.RCF_VFS.put === "function") {
+      attempts.push(function () {
+        return tryWriter("RCF_VFS.put", function () {
+          return global.RCF_VFS.put(path, text);
+        });
+      });
+    }
+
+    if (global.RCF_INJECTOR_SAFE && typeof global.RCF_INJECTOR_SAFE.applyFilePatch === "function") {
+      attempts.push(function () {
+        return tryWriter("RCF_INJECTOR_SAFE.applyFilePatch", function () {
+          return global.RCF_INJECTOR_SAFE.applyFilePatch({
+            path: path,
+            content: text,
+            mode: "REPLACE"
+          });
+        });
+      });
+    }
+
+    if (global.RCF_INJECTOR_SAFE && typeof global.RCF_INJECTOR_SAFE.writeFile === "function") {
+      attempts.push(function () {
+        return tryWriter("RCF_INJECTOR_SAFE.writeFile", function () {
+          return global.RCF_INJECTOR_SAFE.writeFile(path, text);
+        });
+      });
+    }
+
+    var lastFail = null;
+
+    for (var i = 0; i < attempts.length; i++) {
+      var res = await attempts[i]();
+      if (res && res.ok) {
+        return {
+          ok: true,
+          mode: res.mode,
+          path: path
+        };
+      }
+      lastFail = res;
+    }
+
+    return {
       ok: false,
-      msg: "Nenhum writer seguro disponível no runtime atual.",
+      msg: lastFail && lastFail.msg ? lastFail.msg : "Nenhum writer seguro disponível no runtime atual.",
+      mode: lastFail && lastFail.mode ? lastFail.mode : "",
       path: path
-    });
+    };
   }
 
   async function applyApprovedPlan(planId, opts) {
@@ -417,13 +527,16 @@
         msg: "Apply bloqueado: plano inválido ou não aprovado.",
         validation: clone(validation)
       };
+
       state.lastApplyResult = clone(blocked);
       persist();
+
       pushHistory({
         type: "apply-blocked",
         ts: nowISO(),
         result: clone(blocked)
       });
+
       pushLog("WARN", "applyApprovedPlan bloqueado", blocked);
       return blocked;
     }
@@ -437,13 +550,16 @@
           msg: "Apply bloqueado: stage falhou.",
           stage: clone(stageResult)
         };
+
         state.lastApplyResult = clone(noStage);
         persist();
+
         pushHistory({
           type: "apply-no-stage",
           ts: nowISO(),
           result: clone(noStage)
         });
+
         pushLog("WARN", "applyApprovedPlan sem stage", noStage);
         return noStage;
       }
@@ -455,13 +571,16 @@
         ok: false,
         msg: "Apply bloqueado: stagedPatch inválido."
       };
+
       state.lastApplyResult = clone(invalidStage);
       persist();
+
       pushHistory({
         type: "apply-invalid-stage",
         ts: nowISO(),
         result: clone(invalidStage)
       });
+
       pushLog("WARN", "applyApprovedPlan staged inválido", invalidStage);
       return invalidStage;
     }
@@ -471,13 +590,16 @@
         ok: false,
         msg: "Apply bloqueado: plano não contém proposedCode."
       };
+
       state.lastApplyResult = clone(noCode);
       persist();
+
       pushHistory({
         type: "apply-no-code",
         ts: nowISO(),
         result: clone(noCode)
       });
+
       pushLog("WARN", "applyApprovedPlan sem código", noCode);
       return noCode;
     }
@@ -552,6 +674,10 @@
     return clone(state.lastApplyResult || null);
   }
 
+  function getLastValidationResult() {
+    return clone(state.lastValidationResult || null);
+  }
+
   function status() {
     return {
       version: VERSION,
@@ -560,7 +686,9 @@
       stagedPlanId: state.stagedPlanId || "",
       hasStagedPatch: !!state.stagedPatch,
       stagedTargetFile: safe(function () { return state.stagedPatch.targetFile; }, ""),
+      stagedRisk: safe(function () { return state.stagedPatch.risk; }, "unknown"),
       lastApplyOk: safe(function () { return !!state.lastApplyResult.ok; }, false),
+      lastApplyTargetFile: safe(function () { return state.lastApplyResult.targetFile; }, ""),
       historyCount: Array.isArray(state.history) ? state.history.length : 0,
       activeAppSlug: getActiveApp()
     };
@@ -595,6 +723,7 @@
 
   global.RCF_PATCH_SUPERVISOR = {
     __v100: true,
+    __v101: true,
     version: VERSION,
     init: init,
     status: status,
@@ -604,6 +733,7 @@
     clearStage: clearStage,
     getStagedPatch: getStagedPatch,
     getLastApplyResult: getLastApplyResult,
+    getLastValidationResult: getLastValidationResult,
     getState: function () { return clone(state); }
   };
 
