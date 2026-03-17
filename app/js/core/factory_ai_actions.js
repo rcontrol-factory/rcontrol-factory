@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/factory_ai_actions.js
    RControl Factory — Factory AI Actions
-   v1.1.0 ACTION ORCHESTRATOR + PLANNER FLOW
+   v1.1.1 ACTION ORCHESTRATOR + PLANNER PRIORITY FIX
 
    Objetivo:
    - centralizar ações inteligentes da Factory AI
@@ -10,14 +10,20 @@
        analisar -> planejar -> aprovar -> validar -> stage -> apply
    - expor ações seguras e reutilizáveis via window.RCF_FACTORY_AI_ACTIONS
    - funcionar como script clássico
+
+   PATCH v1.1.1:
+   - FIX: prioriza planner.lastPlan antes de bridge.lastPlan
+   - FIX: evita sugestão stale herdada do bridge
+   - FIX: aceita planner.buildPlan() e planner.planFromRuntime()
+   - FIX: só usa bridge.lastPlan como fallback seguro
 */
 
 ;(function (global) {
   "use strict";
 
-  if (global.RCF_FACTORY_AI_ACTIONS && global.RCF_FACTORY_AI_ACTIONS.__v110) return;
+  if (global.RCF_FACTORY_AI_ACTIONS && global.RCF_FACTORY_AI_ACTIONS.__v111) return;
 
-  var VERSION = "v1.1.0";
+  var VERSION = "v1.1.1";
   var STORAGE_KEY = "rcf:factory_ai_actions";
   var MAX_HISTORY = 100;
 
@@ -36,6 +42,11 @@
     catch (_) { return ""; }
   }
 
+  function nowMS() {
+    try { return Date.now(); }
+    catch (_) { return 0; }
+  }
+
   function clone(obj) {
     try { return JSON.parse(JSON.stringify(obj)); }
     catch (_) { return obj || {}; }
@@ -52,6 +63,10 @@
 
   function trimText(v) {
     return String(v == null ? "" : v).trim();
+  }
+
+  function lower(v) {
+    return trimText(v).toLowerCase();
   }
 
   function persist() {
@@ -322,14 +337,16 @@
     var p = clone(plan || {});
     return {
       id: trimText(p.id || ""),
-      targetFile: normalizeFilePath(p.targetFile || ""),
+      targetFile: normalizeFilePath(p.targetFile || p.nextFile || ""),
       mode: trimText(p.mode || ""),
-      risk: trimText(p.risk || "unknown"),
+      risk: trimText(p.risk || p.priority || "unknown"),
       approvalRequired: !!p.approvalRequired,
       approvalStatus: trimText(p.approvalStatus || "pending"),
-      objective: trimText(p.objective || ""),
-      nextStep: trimText(p.nextStep || ""),
-      suggestedFiles: Array.isArray(p.suggestedFiles) ? p.suggestedFiles.slice(0, 20) : []
+      objective: trimText(p.objective || p.reason || ""),
+      nextStep: trimText(p.nextStep || p.reason || ""),
+      suggestedFiles: Array.isArray(p.suggestedFiles)
+        ? p.suggestedFiles.slice(0, 20)
+        : (Array.isArray(p.executionLine) ? p.executionLine.slice(0, 20) : [])
     };
   }
 
@@ -343,34 +360,110 @@
     return clone(state.lastPlanSummary);
   }
 
-  function buildNextFileSuggestionFromPlan() {
-    var bridge = getBridge();
-    var planner = getPlanner();
-    var plan = null;
+  function parsePlanTime(plan) {
+    var raw =
+      trimText(safe(function () { return plan.createdAt; }, "")) ||
+      trimText(safe(function () { return plan.ts; }, "")) ||
+      trimText(safe(function () { return plan.updatedAt; }, "")) ||
+      trimText(safe(function () { return plan.lastUpdate; }, ""));
 
-    if (bridge && typeof bridge.getLastPlan === "function") {
-      plan = bridge.getLastPlan();
+    if (!raw) return 0;
+
+    var ms = Date.parse(raw);
+    return isFinite(ms) ? ms : 0;
+  }
+
+  function normalizePlannerPlan(plan) {
+    if (!plan || typeof plan !== "object") return null;
+
+    var nextFile =
+      normalizeFilePath(plan.nextFile || plan.targetFile || "");
+
+    if (!nextFile) return null;
+
+    return {
+      id: trimText(plan.id || ""),
+      targetFile: nextFile,
+      reason: trimText(plan.reason || ""),
+      objective: trimText(plan.objective || plan.reason || ""),
+      nextStep: trimText(plan.nextStep || plan.reason || ""),
+      risk: trimText(plan.risk || plan.priority || "unknown"),
+      priority: trimText(plan.priority || ""),
+      createdAt: trimText(plan.createdAt || plan.ts || ""),
+      source: "planner.lastPlan",
+      raw: clone(plan)
+    };
+  }
+
+  function normalizeBridgePlan(plan) {
+    if (!plan || typeof plan !== "object") return null;
+
+    var targetFile = normalizeFilePath(plan.targetFile || plan.nextFile || "");
+    if (!targetFile) return null;
+
+    return {
+      id: trimText(plan.id || ""),
+      targetFile: targetFile,
+      reason: trimText(plan.nextStep || plan.objective || ""),
+      objective: trimText(plan.objective || ""),
+      nextStep: trimText(plan.nextStep || ""),
+      risk: trimText(plan.risk || "unknown"),
+      priority: trimText(plan.priority || ""),
+      createdAt: trimText(plan.createdAt || plan.ts || ""),
+      source: "bridge.lastPlan",
+      raw: clone(plan)
+    };
+  }
+
+  function getLastPlannerPlanNormalized() {
+    var planner = getPlanner();
+    if (!planner || typeof planner.getLastPlan !== "function") return null;
+    return normalizePlannerPlan(planner.getLastPlan());
+  }
+
+  function getLastBridgePlanNormalized() {
+    var bridge = getBridge();
+    if (!bridge || typeof bridge.getLastPlan !== "function") return null;
+    return normalizeBridgePlan(bridge.getLastPlan());
+  }
+
+  function shouldPreferPlannerPlan(plannerPlan, bridgePlan) {
+    if (plannerPlan && !bridgePlan) return true;
+    if (!plannerPlan) return false;
+    if (!bridgePlan) return true;
+
+    var plannerTs = parsePlanTime(plannerPlan);
+    var bridgeTs = parsePlanTime(bridgePlan);
+
+    if (plannerTs && bridgeTs) {
+      if (plannerTs >= bridgeTs) return true;
+      if ((bridgeTs - plannerTs) > 15000) return false;
+      return true;
     }
 
-    if (plan && trimText(plan.targetFile)) {
+    return true;
+  }
+
+  function buildNextFileSuggestionFromPlan() {
+    var plannerPlan = getLastPlannerPlanNormalized();
+    var bridgePlan = getLastBridgePlanNormalized();
+
+    if (shouldPreferPlannerPlan(plannerPlan, bridgePlan) && plannerPlan) {
       return {
-        nextFile: normalizeFilePath(plan.targetFile),
-        reason: trimText(plan.nextStep || plan.objective || "Arquivo alvo vindo do plano supervisionado atual."),
-        source: "bridge.lastPlan",
-        risk: trimText(plan.risk || "unknown")
+        nextFile: normalizeFilePath(plannerPlan.targetFile),
+        reason: trimText(plannerPlan.nextStep || plannerPlan.objective || plannerPlan.reason || "Arquivo alvo vindo do planner atual."),
+        source: "planner.lastPlan",
+        risk: trimText(plannerPlan.risk || "unknown")
       };
     }
 
-    if (planner && typeof planner.getLastPlan === "function") {
-      plan = planner.getLastPlan();
-      if (plan && trimText(plan.targetFile)) {
-        return {
-          nextFile: normalizeFilePath(plan.targetFile),
-          reason: trimText(plan.nextStep || plan.objective || "Arquivo alvo vindo do planner atual."),
-          source: "planner.lastPlan",
-          risk: trimText(plan.risk || "unknown")
-        };
-      }
+    if (bridgePlan) {
+      return {
+        nextFile: normalizeFilePath(bridgePlan.targetFile),
+        reason: trimText(bridgePlan.nextStep || bridgePlan.objective || bridgePlan.reason || "Arquivo alvo vindo do plano supervisionado atual."),
+        source: "bridge.lastPlan",
+        risk: trimText(bridgePlan.risk || "unknown")
+      };
     }
 
     return {
@@ -385,7 +478,7 @@
     var planner = getPlanner();
     var bridge = getBridge();
 
-    if (!planner || typeof planner.planFromRuntime !== "function") {
+    if (!planner || (typeof planner.planFromRuntime !== "function" && typeof planner.buildPlan !== "function")) {
       var fail = { ok: false, msg: "Factory AI Planner indisponível." };
       markAction("planFromCurrentRuntime", meta, fail);
       pushLog("WARN", "planner indisponível", fail);
@@ -393,7 +486,13 @@
     }
 
     var plannerInput = buildDefaultPlanInput(meta);
-    var plan = planner.planFromRuntime(plannerInput);
+    var plan = null;
+
+    if (typeof planner.planFromRuntime === "function") {
+      plan = planner.planFromRuntime(plannerInput);
+    } else if (typeof planner.buildPlan === "function") {
+      plan = planner.buildPlan(plannerInput);
+    }
 
     if (!plan || !plan.id) {
       var failPlan = { ok: false, msg: "Planner não retornou plano válido." };
@@ -405,19 +504,22 @@
     if (bridge && typeof bridge.fromText === "function") {
       var text = [
         "1. Objetivo",
-        plan.objective || "",
+        plan.objective || plan.reason || "",
         "",
         "2. Arquivo alvo",
-        plan.targetFile || "",
+        plan.targetFile || plan.nextFile || "",
         "",
         "3. Risco",
-        plan.risk || "unknown",
+        plan.risk || plan.priority || "unknown",
         "",
         "4. Próximo passo mínimo recomendado",
-        plan.nextStep || "",
+        plan.nextStep || plan.reason || "",
         "",
         "5. Arquivos mais prováveis de ajuste",
-        (Array.isArray(plan.suggestedFiles) ? plan.suggestedFiles : []).map(function (x) { return "- " + x; }).join("\n"),
+        (Array.isArray(plan.suggestedFiles)
+          ? plan.suggestedFiles
+          : (Array.isArray(plan.executionLine) ? plan.executionLine : [])
+        ).map(function (x) { return "- " + x; }).join("\n"),
         "",
         "6. Patch mínimo sugerido",
         plan.patchSummary || ""
@@ -426,7 +528,8 @@
       try {
         bridge.fromText(text, {
           source: "factory_ai_actions.planFromCurrentRuntime",
-          plannerPlan: clone(plan)
+          plannerPlan: clone(plan),
+          plannerTs: nowISO()
         });
       } catch (_) {}
     }
@@ -441,8 +544,8 @@
     markAction("planFromCurrentRuntime", meta, result);
     emit("RCF:FACTORY_AI_PLAN_READY", clone(result));
     pushLog("OK", "planFromCurrentRuntime ✅", {
-      targetFile: plan.targetFile,
-      risk: plan.risk
+      targetFile: plan.targetFile || plan.nextFile || "",
+      risk: plan.risk || plan.priority || "unknown"
     });
 
     return result;
@@ -750,6 +853,7 @@
   global.RCF_FACTORY_AI_ACTIONS = {
     __v100: true,
     __v110: true,
+    __v111: true,
     version: VERSION,
     init: init,
     status: status,
