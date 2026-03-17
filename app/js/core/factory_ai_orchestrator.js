@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/factory_ai_orchestrator.js
    RControl Factory — Factory AI Orchestrator
-   v1.0.1 ORCHESTRATOR CORE + LOCAL/REMOTE ROUTING FIX
+   v1.1.0 ORCHESTRATOR CORE + FACTORY-FOCUSED CHAT POLICY
 
    Objetivo:
    - atuar como camada central cognitiva da Factory AI
@@ -8,15 +8,17 @@
    - aproveitar snapshot consolidado da Factory
    - evitar chamadas quebradas por APIs antigas/inexistentes
    - manter fluxo supervisionado sem apply automático
+   - responder como chat útil sem perder o foco da Factory
+   - sempre fechar respostas puxando o usuário de volta para a Factory
    - funcionar como script clássico
 */
 
 (function (global) {
   "use strict";
 
-  if (global.RCF_FACTORY_AI_ORCHESTRATOR && global.RCF_FACTORY_AI_ORCHESTRATOR.__v101) return;
+  if (global.RCF_FACTORY_AI_ORCHESTRATOR && global.RCF_FACTORY_AI_ORCHESTRATOR.__v110) return;
 
-  var VERSION = "v1.0.1";
+  var VERSION = "v1.1.0";
 
   function safe(fn, fallback) {
     try {
@@ -40,6 +42,11 @@
     return trimText(v).toLowerCase();
   }
 
+  function nowISO() {
+    try { return new Date().toISOString(); }
+    catch (_) { return ""; }
+  }
+
   function pushLog(level, msg, extra) {
     try {
       if (extra !== undefined) {
@@ -60,30 +67,42 @@
 
   function getContext() {
     return safe(function () {
-      if (global.RCF_CONTEXT?.getSnapshot) return global.RCF_CONTEXT.getSnapshot();
-      if (global.RCF_CONTEXT?.getContext) return global.RCF_CONTEXT.getContext();
+      if (global.RCF_CONTEXT && typeof global.RCF_CONTEXT.getSnapshot === "function") {
+        return global.RCF_CONTEXT.getSnapshot();
+      }
+      if (global.RCF_CONTEXT && typeof global.RCF_CONTEXT.getContext === "function") {
+        return global.RCF_CONTEXT.getContext();
+      }
       return {};
     }, {});
   }
 
   function getFactoryState() {
     return safe(function () {
-      if (global.RCF_FACTORY_STATE?.getState) return global.RCF_FACTORY_STATE.getState();
-      if (global.RCF_FACTORY_STATE?.status) return global.RCF_FACTORY_STATE.status();
+      if (global.RCF_FACTORY_STATE && typeof global.RCF_FACTORY_STATE.getState === "function") {
+        return global.RCF_FACTORY_STATE.getState();
+      }
+      if (global.RCF_FACTORY_STATE && typeof global.RCF_FACTORY_STATE.status === "function") {
+        return global.RCF_FACTORY_STATE.status();
+      }
       return {};
     }, {});
   }
 
   function getModuleSummary() {
     return safe(function () {
-      if (global.RCF_MODULE_REGISTRY?.summary) return global.RCF_MODULE_REGISTRY.summary();
+      if (global.RCF_MODULE_REGISTRY && typeof global.RCF_MODULE_REGISTRY.summary === "function") {
+        return global.RCF_MODULE_REGISTRY.summary();
+      }
       return {};
     }, {});
   }
 
   function getTreeSummary() {
     return safe(function () {
-      if (global.RCF_FACTORY_TREE?.summary) return global.RCF_FACTORY_TREE.summary();
+      if (global.RCF_FACTORY_TREE && typeof global.RCF_FACTORY_TREE.summary === "function") {
+        return global.RCF_FACTORY_TREE.summary();
+      }
       return {};
     }, {});
   }
@@ -139,6 +158,7 @@
 
   function buildSnapshot() {
     return {
+      ts: nowISO(),
       snapshot: clone(getContext() || {}),
       factoryState: clone(getFactoryState() || {}),
       modules: clone(getModuleSummary() || {}),
@@ -178,12 +198,108 @@
       p.indexOf("patch") >= 0 ||
       p.indexOf("corrigir") >= 0 ||
       p.indexOf("corrige") >= 0 ||
-      p.indexOf("ajuste") >= 0
+      p.indexOf("ajuste") >= 0 ||
+      p.indexOf("consertar") >= 0
     ) {
       return "propose-patch";
     }
 
     return "chat";
+  }
+
+  function getFactoryAnchor(snapshotPayload) {
+    var state = safe(function () { return snapshotPayload.factoryState; }, {}) || {};
+    var snap = safe(function () { return snapshotPayload.snapshot; }, {}) || {};
+    var modules = safe(function () { return snapshotPayload.modules; }, {}) || {};
+    var planner = safe(function () { return snap.factoryAI || snap.planner || {}; }, {}) || {};
+
+    var activeView =
+      trimText(state.activeView || "") ||
+      trimText(safe(function () { return snap.factory.activeView; }, "") || "");
+
+    var bootStatus =
+      trimText(state.bootStatus || "") ||
+      trimText(safe(function () { return snap.factory.bootStatus; }, "") || "") ||
+      "unknown";
+
+    var nextFile =
+      trimText(safe(function () { return planner.lastNextFile; }, "") || "") ||
+      trimText(safe(function () { return snap.summary && snap.summary.candidateFiles && snap.summary.candidateFiles[0]; }, "") || "");
+
+    if (nextFile) {
+      return "Voltando para a Factory: o próximo alvo mais seguro no runtime atual continua sendo " + nextFile + ".";
+    }
+
+    if (activeView) {
+      return "Voltando para a Factory: a view ativa atual é '" + activeView + "' e o bootStatus está '" + bootStatus + "'.";
+    }
+
+    if (Array.isArray(modules.active) && modules.active.length) {
+      return "Voltando para a Factory: os módulos ativos atuais são " + modules.active.slice(0, 6).join(", ") + ".";
+    }
+
+    return "Voltando para a Factory: siga pelo próximo passo supervisionado antes de qualquer apply automático.";
+  }
+
+  function ensureFactoryClosure(text, snapshotPayload) {
+    var raw = trimText(text || "");
+    var anchor = getFactoryAnchor(snapshotPayload);
+
+    if (!raw) return anchor;
+
+    var low = lower(raw);
+
+    if (
+      low.indexOf("voltando para a factory") >= 0 ||
+      low.indexOf("voltando pra factory") >= 0 ||
+      low.indexOf("próximo passo") >= 0 ||
+      low.indexOf("proximo passo") >= 0
+    ) {
+      return raw;
+    }
+
+    return raw + "\n\n" + anchor;
+  }
+
+  function buildBackendPrompt(prompt, snapshotPayload) {
+    var snap = safe(function () { return snapshotPayload.snapshot; }, {}) || {};
+    var state = safe(function () { return snapshotPayload.factoryState; }, {}) || {};
+    var modules = safe(function () { return snapshotPayload.modules; }, {}) || {};
+
+    var activeView =
+      trimText(state.activeView || "") ||
+      trimText(safe(function () { return snap.factory.activeView; }, "") || "") ||
+      "unknown";
+
+    var bootStatus =
+      trimText(state.bootStatus || "") ||
+      trimText(safe(function () { return snap.factory.bootStatus; }, "") || "") ||
+      "unknown";
+
+    var activeModules = [];
+    try {
+      if (Array.isArray(modules.active)) activeModules = modules.active.slice(0, 10);
+    } catch (_) {}
+
+    return [
+      "Você está respondendo como Factory AI da RControl Factory.",
+      "Regras obrigatórias:",
+      "- Responda de forma útil e natural, como um chat inteligente.",
+      "- Não perca o foco do ecossistema Factory.",
+      "- Se a pergunta for geral, responda normalmente, mas termine puxando de volta para a Factory.",
+      "- Não trate esta conversa como bate-papo solto.",
+      "- Não invente ações já aplicadas.",
+      "- Nunca sugera apply automático sem fluxo supervisionado.",
+      "- Sempre que possível, termine com orientação prática ligada à Factory.",
+      "",
+      "Estado atual conhecido:",
+      "- bootStatus: " + bootStatus,
+      "- activeView: " + activeView,
+      "- activeModules: " + (activeModules.length ? activeModules.join(", ") : "desconhecido"),
+      "",
+      "Pergunta do usuário:",
+      prompt
+    ].join("\n");
   }
 
   async function runPlanner(prompt) {
@@ -217,6 +333,46 @@
     });
   }
 
+  function buildLocalFallback(intent, prompt, payload) {
+    var anchor = getFactoryAnchor(payload);
+    var state = safe(function () { return payload.factoryState; }, {}) || {};
+    var modules = safe(function () { return payload.modules; }, {}) || {};
+    var doctor = safe(function () { return payload.doctor; }, {}) || {};
+
+    var lines = [];
+    lines.push("1. Fatos confirmados");
+    lines.push("- Intent detectado: " + intent);
+    lines.push("- Boot status: " + (trimText(state.bootStatus || "") || "unknown"));
+    lines.push("- Doctor ready: " + (!!doctor.ready));
+    lines.push("");
+
+    lines.push("2. Dados ausentes ou mal consolidados");
+    lines.push("- O backend remoto não retornou resposta utilizável nesta tentativa.");
+    lines.push("");
+
+    lines.push("3. Inferências prováveis");
+    if (Array.isArray(modules.active) && modules.active.length) {
+      lines.push("- Módulos ativos atuais: " + modules.active.slice(0, 8).join(" | "));
+    } else {
+      lines.push("- Snapshot sem lista confiável de módulos ativos.");
+    }
+    lines.push("");
+
+    lines.push("4. Próximo passo mínimo recomendado");
+    lines.push("- Repetir a solicitação ou seguir pelo próximo fluxo supervisionado local.");
+    lines.push("");
+
+    lines.push("5. Direcionamento");
+    lines.push("- " + anchor);
+
+    return {
+      ok: false,
+      fallback: true,
+      source: "orchestrator.local_fallback",
+      analysis: lines.join("\n")
+    };
+  }
+
   async function callBackend(action, prompt, payload) {
     try {
       var res = await fetch("/api/admin-ai", {
@@ -224,12 +380,13 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: action,
-          prompt: prompt,
+          prompt: buildBackendPrompt(prompt, payload),
           payload: payload,
           history: [],
           attachments: [],
           source: "factory-ai-orchestrator",
-          version: VERSION
+          version: VERSION,
+          mode: "factory-focused-chat"
         })
       });
 
@@ -253,7 +410,7 @@
     }
   }
 
-  function normalizeResult(intent, raw) {
+  function normalizeResult(intent, raw, payload) {
     var result = clone(raw || {});
 
     if (intent === "plan" && result && result.id && !result.ok) {
@@ -267,6 +424,18 @@
 
     if (!result.analysis && result.plan) {
       result.analysis = "Plano local consolidado.";
+    }
+
+    if (!result.analysis && result.answer) {
+      result.analysis = result.answer;
+    }
+
+    if (!result.analysis && result.result && typeof result.result === "string") {
+      result.analysis = result.result;
+    }
+
+    if (result.analysis) {
+      result.analysis = ensureFactoryClosure(result.analysis, payload);
     }
 
     return result;
@@ -286,12 +455,14 @@
 
     if (intent === "plan") {
       result = await runPlanner(prompt);
-      result = normalizeResult(intent, result);
+      result = normalizeResult(intent, result, payload);
+
       emit("RCF:FACTORY_AI_ORCHESTRATED", {
         intent: intent,
         mode: "planner.local",
         result: clone(result)
       });
+
       return result;
     }
 
@@ -306,28 +477,42 @@
       intent === "next_file"
     ) {
       result = await runActions(intent, prompt);
-      result = normalizeResult(intent, result);
+      result = normalizeResult(intent, result, payload);
+
       emit("RCF:FACTORY_AI_ORCHESTRATED", {
         intent: intent,
         mode: "actions.local",
         result: clone(result)
       });
+
       return result;
     }
 
     if (intent === "propose-patch" || intent === "generate_code" || intent === "chat") {
       result = await callBackend(intent, prompt, payload);
-      result = normalizeResult(intent, result);
+
+      if (!result || result.ok === false && !result.analysis && !result.answer && !result.result) {
+        result = buildLocalFallback(intent, prompt, payload);
+      }
+
+      result = normalizeResult(intent, result, payload);
+
       emit("RCF:FACTORY_AI_ORCHESTRATED", {
         intent: intent,
         mode: "backend.remote",
         result: clone(result)
       });
+
       return result;
     }
 
     result = await callBackend("chat", prompt, payload);
-    result = normalizeResult("chat", result);
+
+    if (!result || result.ok === false && !result.analysis && !result.answer && !result.result) {
+      result = buildLocalFallback("chat", prompt, payload);
+    }
+
+    result = normalizeResult("chat", result, payload);
 
     emit("RCF:FACTORY_AI_ORCHESTRATED", {
       intent: intent,
@@ -340,15 +525,15 @@
 
   function syncPresence() {
     try {
-      if (global.RCF_FACTORY_STATE?.registerModule) {
+      if (global.RCF_FACTORY_STATE && typeof global.RCF_FACTORY_STATE.registerModule === "function") {
         global.RCF_FACTORY_STATE.registerModule("factoryAIOrchestrator");
-      } else if (global.RCF_FACTORY_STATE?.setModule) {
+      } else if (global.RCF_FACTORY_STATE && typeof global.RCF_FACTORY_STATE.setModule === "function") {
         global.RCF_FACTORY_STATE.setModule("factoryAIOrchestrator", true);
       }
     } catch (_) {}
 
     try {
-      if (global.RCF_MODULE_REGISTRY?.register) {
+      if (global.RCF_MODULE_REGISTRY && typeof global.RCF_MODULE_REGISTRY.register === "function") {
         global.RCF_MODULE_REGISTRY.register("factoryAIOrchestrator");
       }
     } catch (_) {}
@@ -374,6 +559,7 @@
   global.RCF_FACTORY_AI_ORCHESTRATOR = {
     __v100: true,
     __v101: true,
+    __v110: true,
     version: VERSION,
     init: init,
     orchestrate: orchestrate,
