@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/factory_ai_bridge.js
    RControl Factory — Factory AI Bridge
-   v1.1.0 SUPERVISED ACTION BRIDGE + ACTIONS COMPAT
+   v1.1.1 SUPERVISED ACTION BRIDGE + STALE PLAN GUARD
 
    Objetivo:
    - criar a ponte supervisionada entre resposta da Factory AI e ações futuras da Factory
@@ -10,14 +10,22 @@
    - preparar base para patch_supervisor / factory_ai_actions
    - alinhar compatibilidade com approveLastPlan / rejectLastPlan
    - funcionar como script clássico
+
+   PATCH v1.1.1:
+   - FIX: prioriza plannerPlan quando vier em meta local
+   - FIX: normaliza targetFile/nextFile de forma consistente
+   - FIX: evita overwrite cego por plano mais fraco/stale
+   - FIX: status expõe createdAt/source/nextStep
+   - FIX: getPendingPlan não devolve plano rejeitado
+   - FIX: bindEvents usa guarda própria da versão atual
 */
 
 ;(function (global) {
   "use strict";
 
-  if (global.RCF_FACTORY_AI_BRIDGE && global.RCF_FACTORY_AI_BRIDGE.__v110) return;
+  if (global.RCF_FACTORY_AI_BRIDGE && global.RCF_FACTORY_AI_BRIDGE.__v111) return;
 
-  var VERSION = "v1.1.0";
+  var VERSION = "v1.1.1";
   var STORAGE_KEY = "rcf:factory_ai_bridge";
   var LAST_PLAN_KEY = "rcf:factory_ai_bridge_last_plan";
   var MAX_HISTORY = 40;
@@ -56,12 +64,24 @@
     return String(v == null ? "" : v).trim();
   }
 
+  function lower(v) {
+    return trimText(v).toLowerCase();
+  }
+
   function normalizeSpace(v) {
     return trimText(v).replace(/\r/g, "");
   }
 
   function safeLines(text) {
     return normalizeSpace(text).split("\n");
+  }
+
+  function normalizeFilePath(path) {
+    var p = trimText(path || "").replace(/\\/g, "/");
+    if (!p) return "";
+    if (p.charAt(0) !== "/") p = "/" + p;
+    p = p.replace(/\/{2,}/g, "/");
+    return p;
   }
 
   function unique(arr) {
@@ -98,6 +118,32 @@
 
   function buildPlanId() {
     return "fab_" + Math.random().toString(36).slice(2, 10) + "_" + Date.now();
+  }
+
+  function parseTime(value) {
+    var raw = trimText(value || "");
+    if (!raw) return 0;
+    var ms = Date.parse(raw);
+    return isFinite(ms) ? ms : 0;
+  }
+
+  function planStrength(plan) {
+    if (!plan || typeof plan !== "object") return 0;
+
+    var mode = trimText(plan.mode || "");
+    var source = trimText(plan.source || "");
+    var strength = 0;
+
+    if (source.indexOf("planner") >= 0) strength += 50;
+    if (mode === "code") strength += 30;
+    else if (mode === "patch") strength += 20;
+    else if (mode === "analysis") strength += 8;
+
+    if (trimText(plan.targetFile || plan.nextFile || "")) strength += 10;
+    if (trimText(plan.nextStep || "")) strength += 4;
+    if (Array.isArray(plan.suggestedFiles) && plan.suggestedFiles.length) strength += 4;
+
+    return strength;
   }
 
   function pushLog(level, msg, extra) {
@@ -191,7 +237,7 @@
     var m;
 
     while ((m = rg.exec(src))) {
-      out.push(String(m[1] || "").trim());
+      out.push(normalizeFilePath(String(m[1] || "").trim()));
     }
 
     return unique(out);
@@ -207,12 +253,12 @@
 
     for (i = 0; i < lines.length; i++) {
       var line = trimText(lines[i]);
-      var lower = line.toLowerCase();
+      var lowerLine = line.toLowerCase();
       var isHit = false;
 
       for (var j = 0; j < lowerLabels.length; j++) {
         if (!lowerLabels[j]) continue;
-        if (lower === lowerLabels[j] || lower.indexOf(lowerLabels[j] + ":") === 0) {
+        if (lowerLine === lowerLabels[j] || lowerLine.indexOf(lowerLabels[j] + ":") === 0) {
           isHit = true;
           break;
         }
@@ -260,6 +306,17 @@
     return "";
   }
 
+  function normalizeSuggestedFiles(list, fallbackText) {
+    var fromList = Array.isArray(list) ? list : [];
+    var fromText = extractFiles(String(fallbackText || ""));
+    return unique(
+      fromList
+        .concat(fromText)
+        .map(function (x) { return normalizeFilePath(x); })
+        .filter(Boolean)
+    );
+  }
+
   function parseStructuredPlan(text, raw) {
     var src = normalizeSpace(text);
     var codeBlocks = extractCodeBlocks(src);
@@ -299,15 +356,15 @@
       findSection(src, ["5. arquivos mais prováveis de ajuste", "arquivos mais provaveis de ajuste", "arquivos mais úteis para próxima análise", "arquivos mais uteis para proxima analise"]) ||
       "";
 
-    var suggestedFiles = unique(files.concat(extractFiles(suggestedFilesSection)));
-
     var patchSummary =
       findSection(src, ["6. patch mínimo sugerido", "patch minimo sugerido", "patch sugerido"]) ||
       "";
 
     var proposedCode = codeBlocks.length ? codeBlocks[0].code : "";
     var proposedLang = codeBlocks.length ? codeBlocks[0].lang : "";
-    var wantsApproval = !!(proposedCode || patchSummary || targetFile);
+    var normalizedTarget = normalizeFilePath(targetFile || "");
+    var suggestedFiles = normalizeSuggestedFiles(files, suggestedFilesSection);
+    var wantsApproval = !!(proposedCode || patchSummary || normalizedTarget);
 
     return {
       id: buildPlanId(),
@@ -315,7 +372,8 @@
       source: "factory_ai_bridge",
       mode: proposedCode ? "code" : (patchSummary ? "patch" : "analysis"),
       objective: trimText(objective),
-      targetFile: trimText(targetFile),
+      targetFile: normalizedTarget,
+      nextFile: normalizedTarget,
       risk: normalizeRisk(riskText, riskText),
       riskText: trimText(riskText),
       analysis: trimText(analysis),
@@ -331,30 +389,103 @@
     };
   }
 
+  function normalizePlannerPlan(plan, rawText, raw) {
+    if (!plan || typeof plan !== "object") return null;
+
+    var targetFile = normalizeFilePath(plan.targetFile || plan.nextFile || "");
+    var suggestedFiles = normalizeSuggestedFiles(
+      Array.isArray(plan.suggestedFiles) ? plan.suggestedFiles :
+      (Array.isArray(plan.executionLine) ? plan.executionLine : []),
+      rawText || ""
+    );
+
+    return {
+      id: trimText(plan.id || "") || buildPlanId(),
+      createdAt: trimText(plan.createdAt || plan.ts || nowISO()),
+      source: "planner.plan",
+      mode: trimText(plan.mode || "patch") || "patch",
+      objective: trimText(plan.objective || plan.reason || ""),
+      targetFile: targetFile,
+      nextFile: targetFile,
+      risk: normalizeRisk(plan.risk || plan.priority || "", plan.risk || plan.priority || ""),
+      riskText: trimText(plan.risk || plan.priority || ""),
+      analysis: trimText(plan.analysis || ""),
+      nextStep: trimText(plan.nextStep || plan.reason || ""),
+      suggestedFiles: suggestedFiles,
+      patchSummary: trimText(plan.patchSummary || ""),
+      proposedCode: String(plan.proposedCode || ""),
+      proposedLang: trimText(plan.proposedLang || ""),
+      approvalRequired: !!plan.approvalRequired,
+      approvalStatus: trimText(plan.approvalStatus || "pending") || "pending",
+      rawText: String(rawText || ""),
+      raw: clone(raw || {})
+    };
+  }
+
+  function shouldReplacePlan(currentPlan, nextPlan) {
+    if (!nextPlan || typeof nextPlan !== "object") return false;
+    if (!currentPlan || typeof currentPlan !== "object") return true;
+
+    var currentTs = parseTime(currentPlan.createdAt || currentPlan.ts || "");
+    var nextTs = parseTime(nextPlan.createdAt || nextPlan.ts || "");
+
+    if (nextTs && currentTs) {
+      if (nextTs > currentTs) return true;
+      if (nextTs < currentTs) {
+        var currentStrengthOlder = planStrength(currentPlan);
+        var nextStrengthOlder = planStrength(nextPlan);
+        return nextStrengthOlder > currentStrengthOlder + 20;
+      }
+    }
+
+    var currentStrength = planStrength(currentPlan);
+    var nextStrength = planStrength(nextPlan);
+
+    if (nextStrength > currentStrength) return true;
+    if (nextStrength < currentStrength) return false;
+
+    var currentTarget = trimText(currentPlan.targetFile || currentPlan.nextFile || "");
+    var nextTarget = trimText(nextPlan.targetFile || nextPlan.nextFile || "");
+
+    if (!currentTarget && nextTarget) return true;
+    return true;
+  }
+
   function summarizePlan(plan) {
     var p = plan || {};
     return {
       id: p.id || "",
       mode: p.mode || "analysis",
-      targetFile: p.targetFile || "",
+      targetFile: p.targetFile || p.nextFile || "",
       risk: p.risk || "unknown",
       approvalRequired: !!p.approvalRequired,
       approvalStatus: p.approvalStatus || "pending",
       suggestedFiles: Array.isArray(p.suggestedFiles) ? p.suggestedFiles.slice(0, 12) : [],
-      createdAt: p.createdAt || ""
+      createdAt: p.createdAt || "",
+      source: p.source || "",
+      nextStep: p.nextStep || ""
     };
   }
 
   function rememberPlan(plan) {
     if (!plan || typeof plan !== "object") return false;
 
+    if (!shouldReplacePlan(state.lastPlan, plan)) {
+      pushLog("INFO", "plano ignorado por stale/força menor", {
+        current: summarizePlan(state.lastPlan),
+        incoming: summarizePlan(plan)
+      });
+      return false;
+    }
+
     state.lastPlan = clone(plan);
     state.lastResponseText = String(plan.rawText || "");
     state.lastInput = {
-      targetFile: plan.targetFile || "",
+      targetFile: plan.targetFile || plan.nextFile || "",
       mode: plan.mode || "",
       risk: plan.risk || "unknown",
-      createdAt: plan.createdAt || nowISO()
+      createdAt: plan.createdAt || nowISO(),
+      source: plan.source || ""
     };
 
     if (!Array.isArray(state.history)) state.history = [];
@@ -362,9 +493,10 @@
       id: plan.id,
       ts: plan.createdAt || nowISO(),
       mode: plan.mode || "analysis",
-      targetFile: plan.targetFile || "",
+      targetFile: plan.targetFile || plan.nextFile || "",
       risk: plan.risk || "unknown",
-      approvalRequired: !!plan.approvalRequired
+      approvalRequired: !!plan.approvalRequired,
+      source: plan.source || ""
     });
 
     if (state.history.length > MAX_HISTORY) {
@@ -419,7 +551,7 @@
   function getPendingPlan() {
     var p = state.lastPlan;
     if (!p || typeof p !== "object") return null;
-    if (p.approvalStatus === "approved" || p.approvalStatus === "consumed") return null;
+    if (p.approvalStatus === "approved" || p.approvalStatus === "consumed" || p.approvalStatus === "rejected") return null;
     return clone(p);
   }
 
@@ -531,14 +663,24 @@
       trimText(payload.text) ||
       "";
 
-    var plan = parseStructuredPlan(text, payload);
+    var plan = null;
+
+    if (payload && payload.plannerPlan && typeof payload.plannerPlan === "object") {
+      plan = normalizePlannerPlan(payload.plannerPlan, text, payload);
+    }
+
+    if (!plan) {
+      plan = parseStructuredPlan(text, payload);
+    }
+
     rememberPlan(plan);
 
     pushLog("OK", "response ingested ✅", {
       mode: plan.mode,
-      targetFile: plan.targetFile,
+      targetFile: plan.targetFile || plan.nextFile || "",
       risk: plan.risk,
-      approvalRequired: plan.approvalRequired
+      approvalRequired: plan.approvalRequired,
+      source: plan.source || ""
     });
 
     return clone(plan);
@@ -597,19 +739,22 @@
       hasPlan: !!state.lastPlan,
       lastPlanId: p.id || "",
       lastMode: p.mode || "",
-      targetFile: p.targetFile || "",
+      targetFile: p.targetFile || p.nextFile || "",
+      nextStep: p.nextStep || "",
       risk: p.risk || "unknown",
       approvalRequired: !!p.approvalRequired,
       approvalStatus: p.approvalStatus || "",
       approvedPlanId: state.approvedPlanId || "",
+      source: p.source || "",
+      createdAt: p.createdAt || "",
       historyCount: Array.isArray(state.history) ? state.history.length : 0
     };
   }
 
   function bindEvents() {
     try {
-      if (global.__RCF_FACTORY_AI_BRIDGE_EVENTS_V110) return;
-      global.__RCF_FACTORY_AI_BRIDGE_EVENTS_V110 = true;
+      if (global.__RCF_FACTORY_AI_BRIDGE_EVENTS_V111) return;
+      global.__RCF_FACTORY_AI_BRIDGE_EVENTS_V111 = true;
 
       global.addEventListener("RCF:FACTORY_AI_RESPONSE", function (ev) {
         try {
@@ -637,6 +782,7 @@
   global.RCF_FACTORY_AI_BRIDGE = {
     __v100: true,
     __v110: true,
+    __v111: true,
     version: VERSION,
     init: init,
     status: status,
