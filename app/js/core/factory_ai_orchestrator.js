@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/factory_ai_orchestrator.js
    RControl Factory — Factory AI Orchestrator
-   v1.1.0 ORCHESTRATOR CORE + FACTORY-FOCUSED CHAT POLICY
+   v1.1.1 ORCHESTRATOR CORE + FACTORY-FOCUSED CHAT POLICY + BACKEND ACTION FIX
 
    Objetivo:
    - atuar como camada central cognitiva da Factory AI
@@ -11,14 +11,19 @@
    - responder como chat útil sem perder o foco da Factory
    - sempre fechar respostas puxando o usuário de volta para a Factory
    - funcionar como script clássico
+
+   PATCH v1.1.1:
+   - FIX: normaliza actions do backend (generate_code -> generate-code)
+   - FIX: backend recebe action compatível com /api/admin-ai
+   - preserva toda a estrutura atual com patch mínimo
 */
 
 (function (global) {
   "use strict";
 
-  if (global.RCF_FACTORY_AI_ORCHESTRATOR && global.RCF_FACTORY_AI_ORCHESTRATOR.__v110) return;
+  if (global.RCF_FACTORY_AI_ORCHESTRATOR && global.RCF_FACTORY_AI_ORCHESTRATOR.__v111) return;
 
-  var VERSION = "v1.1.0";
+  var VERSION = "v1.1.1";
 
   function safe(fn, fallback) {
     try {
@@ -207,6 +212,14 @@
     return "chat";
   }
 
+  function normalizeBackendAction(action) {
+    var raw = trimText(action || "");
+    if (!raw) return "chat";
+
+    if (raw === "generate_code") return "generate-code";
+    return raw;
+  }
+
   function getFactoryAnchor(snapshotPayload) {
     var state = safe(function () { return snapshotPayload.factoryState; }, {}) || {};
     var snap = safe(function () { return snapshotPayload.snapshot; }, {}) || {};
@@ -375,11 +388,13 @@
 
   async function callBackend(action, prompt, payload) {
     try {
+      var normalizedAction = normalizeBackendAction(action);
+
       var res = await fetch("/api/admin-ai", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          action: action,
+          action: normalizedAction,
           prompt: buildBackendPrompt(prompt, payload),
           payload: payload,
           history: [],
@@ -560,6 +575,7 @@
     __v100: true,
     __v101: true,
     __v110: true,
+    __v111: true,
     version: VERSION,
     init: init,
     orchestrate: orchestrate,
