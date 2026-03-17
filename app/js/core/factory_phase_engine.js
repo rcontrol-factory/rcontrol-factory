@@ -482,6 +482,9 @@
 
     emit("RCF:FACTORY_PHASE_CHANGED", {
       phase: clone(phase),
+      activePhase: clone(phase),
+      phaseId: trimText(phase.id || ""),
+      activePhaseId: trimText(phase.id || ""),
       meta: clone(meta || {})
     });
 
@@ -518,6 +521,68 @@
     }
 
     return setPhase(PHASES[idx - 1].id, meta);
+  }
+
+  function buildPhaseContext() {
+    var phase = getCurrentPhase();
+    var rec = recommendNextPhase();
+    var runtime = buildRuntimeSnapshot();
+    var recommendedTargets = [];
+
+    if (phase && phase.id === "factory-ai-supervised") {
+      recommendedTargets = [
+        "/app/js/core/factory_ai_planner.js",
+        "/app/js/core/factory_ai_actions.js",
+        "/app/js/core/factory_ai_bridge.js",
+        "/app/js/core/patch_supervisor.js",
+        "/functions/api/admin-ai.js",
+        "/app/js/admin.admin_ai.js"
+      ];
+    } else if (phase && phase.id === "factory-ai-assisted-apply") {
+      recommendedTargets = [
+        "/app/js/core/patch_supervisor.js",
+        "/app/js/admin.injector.js",
+        "/app/js/core/injector.js",
+        "/app/js/core/factory_ai_actions.js"
+      ];
+    } else if (phase && phase.id === "factory-ai-autoloop-supervised") {
+      recommendedTargets = [
+        "/app/js/core/factory_ai_autoloop.js",
+        "/app/js/core/factory_ai_memory.js",
+        "/app/js/core/factory_ai_self_evolution.js",
+        "/app/js/core/factory_ai_runtime.js"
+      ];
+    } else if (phase && phase.id === "agent-ai-bootstrap") {
+      recommendedTargets = [
+        "/app/js/core/factory_ai_runtime.js",
+        "/app/js/core/factory_ai_orchestrator.js",
+        "/app/js/admin.admin_ai.js",
+        "/app/js/core/context_engine.js"
+      ];
+    } else if (phase && phase.id === "preview-validation-pipeline") {
+      recommendedTargets = [
+        "/app/js/ui/ui_views.js",
+        "/app/js/core/ui_router.js",
+        "/app/js/core/ui_bindings.js",
+        "/app/app.js"
+      ];
+    } else if (phase && phase.id === "opportunity-scan-expansion") {
+      recommendedTargets = [
+        "/app/js/core/factory_ai_runtime.js",
+        "/app/js/core/factory_ai_orchestrator.js",
+        "/functions/api/admin-ai.js",
+        "/app/js/admin.admin_ai.js"
+      ];
+    }
+
+    return {
+      activePhaseId: trimText(phase && phase.id || ""),
+      activePhaseTitle: trimText(phase && phase.title || ""),
+      activePhase: clone(phase || null),
+      recommendation: clone(rec || null),
+      runtime: clone(runtime || {}),
+      recommendedTargets: clone(recommendedTargets || [])
+    };
   }
 
   function explainCurrentPhase() {
@@ -597,6 +662,7 @@
     getCatalog: getCatalog,
     getCurrentPhase: getCurrentPhase,
     explainCurrentPhase: explainCurrentPhase,
+    buildPhaseContext: buildPhaseContext,
     recommendNextPhase: recommendNextPhase,
     canMoveTo: canMoveTo,
     setPhase: setPhase,
