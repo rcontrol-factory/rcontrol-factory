@@ -21,6 +21,7 @@
    - FIX NOVO: corta loop de mount/log repetido
    - FIX NOVO: reduz sync agressivo
    - ADD NOVO: usa camada supervisionada local (planner/bridge/actions/patch supervisor)
+   - ADD NOVO: sobe para orchestrator local quando não for ação local direta
    - não executa patch automático sem fluxo supervisionado
 */
 
@@ -1658,7 +1659,7 @@
     const plan = planResult?.plan || {};
     const summary = planResult?.summary?.plan || {};
 
-    const targetFile = plan.nextFile || summary.targetFile || "";
+    const targetFile = plan.nextFile || plan.targetFile || summary.targetFile || "";
     const executionLine = Array.isArray(plan.executionLine) ? plan.executionLine : [];
     const ranking = Array.isArray(plan.ranking) ? plan.ranking.slice(0, 5) : [];
     const notes = Array.isArray(plan.notes) ? plan.notes : [];
@@ -1943,6 +1944,62 @@
     }
   }
 
+  async function runOrchestratorPrompt(prompt) {
+    const orch = window.RCF_FACTORY_AI_ORCHESTRATOR;
+
+    if (!orch || typeof orch.orchestrate !== "function") {
+      return { ok: false, msg: "RCF_FACTORY_AI_ORCHESTRATOR indisponível." };
+    }
+
+    setButtonsBusy(true);
+    setComposerStatus("orquestrando...");
+    setTechResult("");
+
+    try {
+      const result = await orch.orchestrate({ prompt });
+      const text =
+        (typeof result?.analysis === "string" && result.analysis.trim())
+          ? result.analysis
+          : pretty(result || { ok: false, msg: "sem resposta do orchestrator" });
+
+      setComposerStatus(result?.ok === false ? "falha local" : "concluído local");
+      setTechResult(text);
+
+      pushHistory({
+        role: "assistant",
+        text,
+        ts: new Date().toISOString()
+      });
+
+      renderChat({ forceBottom: true });
+
+      try {
+        window.dispatchEvent(new CustomEvent("RCF:FACTORY_AI_ORCHESTRATED", {
+          detail: { prompt, result: clone(result || {}) }
+        }));
+      } catch {}
+
+      log(result?.ok === false ? "WARN" : "OK", "orchestrator executado");
+      return result;
+    } catch (e) {
+      const msg = String(e?.message || e || "Erro no orchestrator");
+      setComposerStatus("erro local");
+      setTechResult(msg);
+
+      pushHistory({
+        role: "assistant",
+        text: msg,
+        ts: new Date().toISOString()
+      });
+
+      renderChat({ forceBottom: true });
+      log("ERR", "erro no orchestrator");
+      return { ok: false, msg };
+    } finally {
+      setButtonsBusy(false);
+    }
+  }
+
   async function postJSON(url, body) {
     const res = await fetch(url, {
       method: "POST",
@@ -2077,6 +2134,8 @@
 
     if (localAction) {
       runLocalAction(localAction, finalPrompt);
+    } else if (window.RCF_FACTORY_AI_ORCHESTRATOR?.orchestrate) {
+      runOrchestratorPrompt(finalPrompt);
     } else {
       callFactoryAI(action, buildPayload(action), finalPrompt);
     }
