@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/factory_ai_autoloop.js
    RControl Factory — Factory AI AutoLoop
-   v1.0.0 SUPERVISED AUTO EVOLUTION LOOP
+   v1.0.1 SUPERVISED AUTO EVOLUTION LOOP + PHASE GUARD
 
    Objetivo:
    - criar laço supervisionado de autoevolução da Factory AI
@@ -11,14 +11,19 @@
    - NUNCA aplicar patch automático sem aprovação explícita
    - preparar base para futuro fluxo approve -> validate -> stage -> apply
    - funcionar como script clássico
+
+   PATCH v1.0.1:
+   - FIX: bloqueia autoloop quando a fase ativa não permite allow.autoloop
+   - FIX: getPhaseContext mais robusto com fallback para activePhaseId/activePhaseTitle
+   - FIX: bindEvents aceita activePhaseId e phaseId
 */
 
 ;(function (global) {
   "use strict";
 
-  if (global.RCF_FACTORY_AI_AUTOLOOP && global.RCF_FACTORY_AI_AUTOLOOP.__v100) return;
+  if (global.RCF_FACTORY_AI_AUTOLOOP && global.RCF_FACTORY_AI_AUTOLOOP.__v101) return;
 
-  var VERSION = "v1.0.0";
+  var VERSION = "v1.0.1";
   var STORAGE_KEY = "rcf:factory_ai_autoloop";
   var DEFAULT_INTERVAL_MS = 30 * 60 * 1000;
   var MIN_INTERVAL_MS = 60 * 1000;
@@ -208,12 +213,28 @@
     }
 
     var ctx = safe(function () { return phase.buildPhaseContext(); }, {}) || {};
+    var activePhase = clone(safe(function () { return ctx.activePhase; }, null));
+    var activePhaseId =
+      trimText(safe(function () { return ctx.activePhaseId; }, "")) ||
+      trimText(safe(function () { return ctx.phaseId; }, "")) ||
+      trimText(safe(function () { return activePhase.id; }, ""));
+    var activePhaseTitle =
+      trimText(safe(function () { return ctx.activePhaseTitle; }, "")) ||
+      trimText(safe(function () { return activePhase.title; }, ""));
+
     return {
-      activePhaseId: trimText(safe(function () { return ctx.activePhase.id; }, "")),
-      activePhaseTitle: trimText(safe(function () { return ctx.activePhase.title; }, "")),
-      activePhase: clone(safe(function () { return ctx.activePhase; }, null)),
+      activePhaseId: activePhaseId,
+      activePhaseTitle: activePhaseTitle,
+      activePhase: activePhase,
       recommendedTargets: clone(safe(function () { return ctx.recommendedTargets; }, []))
     };
+  }
+
+  function isAutoLoopAllowed() {
+    var phaseCtx = getPhaseContext();
+    var activePhase = phaseCtx && phaseCtx.activePhase ? phaseCtx.activePhase : null;
+    var allow = safe(function () { return activePhase.allow; }, {}) || {};
+    return !!allow.autoloop;
   }
 
   function getMemoryContext() {
@@ -343,6 +364,29 @@
       return { ok: false, msg: "autoloop já em execução" };
     }
 
+    if (!isAutoLoopAllowed()) {
+      var blockedPhase = {
+        ok: false,
+        msg: "autoloop bloqueado pela fase ativa"
+      };
+      state.lastStatus = "blocked-phase";
+      state.lastError = blockedPhase.msg;
+      state.lastPhaseId = trimText(getPhaseContext().activePhaseId || "");
+      persist();
+
+      pushHistory({
+        type: "autoloop-blocked-phase",
+        ts: nowISO(),
+        phaseId: state.lastPhaseId
+      });
+
+      pushLog("WARN", "runCycle bloqueado pela fase", {
+        phaseId: state.lastPhaseId
+      });
+
+      return blockedPhase;
+    }
+
     state.running = true;
     state.lastStatus = "running";
     state.lastError = "";
@@ -462,6 +506,19 @@
       return false;
     }
 
+    if (!isAutoLoopAllowed()) {
+      state.lastStatus = "blocked-phase";
+      state.lastError = "autoloop bloqueado pela fase ativa";
+      state.lastPhaseId = trimText(getPhaseContext().activePhaseId || "");
+      persist();
+
+      pushLog("WARN", "schedule bloqueado pela fase", {
+        phaseId: state.lastPhaseId
+      });
+
+      return false;
+    }
+
     state.timerId = setInterval(function () {
       runCycle({
         reason: "factory_ai_autoloop.interval"
@@ -480,17 +537,34 @@
       state.intervalMs = normalizeInterval(options.intervalMs);
     }
 
-    schedule();
+    var scheduled = schedule();
 
     pushHistory({
       type: "autoloop-enabled",
       ts: nowISO(),
-      intervalMs: state.intervalMs
+      intervalMs: state.intervalMs,
+      scheduled: !!scheduled
     });
 
     emit("RCF:FACTORY_AI_AUTOLOOP_ENABLED", {
-      intervalMs: state.intervalMs
+      intervalMs: state.intervalMs,
+      scheduled: !!scheduled
     });
+
+    if (!scheduled) {
+      pushLog("WARN", "autoloop enable bloqueado pela fase", {
+        intervalMs: state.intervalMs,
+        phaseId: trimText(getPhaseContext().activePhaseId || "")
+      });
+
+      return {
+        ok: false,
+        enabled: true,
+        scheduled: false,
+        intervalMs: state.intervalMs,
+        msg: "autoloop habilitado, mas bloqueado pela fase ativa"
+      };
+    }
 
     pushLog("OK", "autoloop enabled ✅", {
       intervalMs: state.intervalMs
@@ -499,6 +573,7 @@
     return {
       ok: true,
       enabled: true,
+      scheduled: true,
       intervalMs: state.intervalMs
     };
   }
@@ -620,7 +695,11 @@
       global.addEventListener("RCF:FACTORY_PHASE_CHANGED", function (ev) {
         try {
           var detail = ev && ev.detail ? ev.detail : {};
-          var phaseId = trimText(safe(function () { return detail.activePhase.id; }, ""));
+          var phaseId =
+            trimText(safe(function () { return detail.activePhaseId; }, "")) ||
+            trimText(safe(function () { return detail.phaseId; }, "")) ||
+            trimText(safe(function () { return detail.activePhase.id; }, "")) ||
+            trimText(safe(function () { return detail.phase.id; }, ""));
           state.lastPhaseId = phaseId;
           persist();
 
@@ -629,6 +708,10 @@
             ts: nowISO(),
             phaseId: phaseId
           });
+
+          if (state.enabled) {
+            schedule();
+          }
         } catch (_) {}
       }, { passive: true });
     } catch (_) {}
@@ -654,6 +737,7 @@
 
   global.RCF_FACTORY_AI_AUTOLOOP = {
     __v100: true,
+    __v101: true,
     version: VERSION,
     init: init,
     status: status,
