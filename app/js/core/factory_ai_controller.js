@@ -1,22 +1,23 @@
 /* FILE: /app/js/core/factory_ai_controller.js
    RControl Factory — Factory AI Controller
-   v1.0.1 CORE ORCHESTRATOR + SAFE SUPERVISED FLOW
+   v1.1.0 CORE ORCHESTRATOR + SAFE SUPERVISION HUB
 
-   Responsável por:
-   - orquestrar comportamento da Factory AI
-   - integrar runtime, planner, bridge, actions, patch supervisor e phase engine
-   - escolher próximos passos da evolução da Factory
-   - centralizar helpers seguros approve -> validate -> stage -> apply
-   - respeitar fase ativa da Factory
-   - NÃO aplicar patch automático sem fluxo supervisionado
+   Objetivo:
+   - centralizar o comando operacional da Factory AI
+   - integrar orchestrator + runtime + bridge + planner + patch supervisor + policy + phase engine
+   - evitar lógica solta espalhada em múltiplos módulos
+   - expor ações seguras para evolução supervisionada da Factory
+   - manter a Factory AI focada no núcleo da própria Factory
+   - não aplicar patch automático sem aprovação
+   - funcionar como script clássico
 */
 
 ;(function (global) {
   "use strict";
 
-  if (global.RCF_FACTORY_AI_CONTROLLER && global.RCF_FACTORY_AI_CONTROLLER.__v101) return;
+  if (global.RCF_FACTORY_AI_CONTROLLER && global.RCF_FACTORY_AI_CONTROLLER.__v110) return;
 
-  var VERSION = "1.0.1";
+  var VERSION = "v1.1.0";
   var STORAGE_KEY = "rcf:factory_ai_controller";
   var MAX_HISTORY = 80;
 
@@ -28,6 +29,7 @@
     lastAction: "",
     lastPlanId: "",
     lastAnalysis: null,
+    lastPrompt: "",
     history: []
   };
 
@@ -41,18 +43,6 @@
     catch (_) { return obj || {}; }
   }
 
-  function trimText(v) {
-    return String(v == null ? "" : v).trim();
-  }
-
-  function normalizePath(path) {
-    var p = trimText(path || "").replace(/\\/g, "/");
-    if (!p) return "";
-    if (p.charAt(0) !== "/") p = "/" + p;
-    p = p.replace(/\/{2,}/g, "/");
-    return p;
-  }
-
   function safe(fn, fallback) {
     try {
       var v = fn();
@@ -62,30 +52,24 @@
     }
   }
 
-  function merge(base, patch) {
-    if (!patch || typeof patch !== "object") return base;
-
-    Object.keys(patch).forEach(function (key) {
-      var a = base[key];
-      var b = patch[key];
-
-      if (
-        a && typeof a === "object" && !Array.isArray(a) &&
-        b && typeof b === "object" && !Array.isArray(b)
-      ) {
-        base[key] = merge(clone(a), b);
-      } else {
-        base[key] = b;
-      }
-    });
-
-    return base;
+  function trimText(v) {
+    return String(v == null ? "" : v).trim();
   }
 
   function persist() {
     try {
       state.lastUpdate = nowISO();
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        version: state.version,
+        ready: !!state.ready,
+        busy: !!state.busy,
+        lastUpdate: state.lastUpdate,
+        lastAction: state.lastAction,
+        lastPlanId: state.lastPlanId,
+        lastAnalysis: clone(state.lastAnalysis || null),
+        lastPrompt: state.lastPrompt,
+        history: clone(state.history || [])
+      }));
       return true;
     } catch (_) {
       return false;
@@ -98,13 +82,39 @@
       if (!raw) return false;
       var parsed = JSON.parse(raw);
       if (!parsed || typeof parsed !== "object") return false;
-      state = merge(clone(state), parsed);
-      if (!Array.isArray(state.history)) state.history = [];
-      if (state.history.length > MAX_HISTORY) state.history = state.history.slice(-MAX_HISTORY);
+
+      state.version = VERSION;
+      state.ready = !!parsed.ready;
+      state.busy = !!parsed.busy;
+      state.lastUpdate = parsed.lastUpdate || null;
+      state.lastAction = trimText(parsed.lastAction || "");
+      state.lastPlanId = trimText(parsed.lastPlanId || "");
+      state.lastAnalysis = clone(parsed.lastAnalysis || null);
+      state.lastPrompt = trimText(parsed.lastPrompt || "");
+      state.history = Array.isArray(parsed.history) ? parsed.history.slice(-MAX_HISTORY) : [];
+      state.busy = false;
       return true;
     } catch (_) {
       return false;
     }
+  }
+
+  function pushLog(level, msg, extra) {
+    try {
+      if (extra !== undefined) {
+        global.RCF_LOGGER?.push?.(level, "[FACTORY_AI_CONTROLLER] " + msg + " " + JSON.stringify(extra));
+      } else {
+        global.RCF_LOGGER?.push?.(level, "[FACTORY_AI_CONTROLLER] " + msg);
+      }
+    } catch (_) {}
+
+    try { console.log("[FACTORY_AI_CONTROLLER]", level, msg, extra || ""); } catch (_) {}
+  }
+
+  function emit(name, detail) {
+    try {
+      global.dispatchEvent(new CustomEvent(name, { detail: detail || {} }));
+    } catch (_) {}
   }
 
   function pushHistory(entry) {
@@ -116,118 +126,413 @@
     persist();
   }
 
-  function emit(name, detail) {
-    try {
-      global.dispatchEvent(new CustomEvent(name, { detail: detail || {} }));
-    } catch (_) {}
-  }
-
-  function log(level, msg, extra) {
-    try {
-      if (extra !== undefined) {
-        global.RCF_LOGGER?.push?.(level, "[FACTORY_AI_CONTROLLER] " + msg + " " + JSON.stringify(extra));
-      } else {
-        global.RCF_LOGGER?.push?.(level, "[FACTORY_AI_CONTROLLER] " + msg);
-      }
-    } catch (_) {}
-
-    try {
-      console.log("[FACTORY_AI_CONTROLLER]", level, msg, extra || "");
-    } catch (_) {}
-  }
-
   function getRuntime() {
-    return safe(function () { return global.RCF_FACTORY_AI_RUNTIME || null; }, null);
+    return global.RCF_FACTORY_AI_RUNTIME || null;
   }
 
   function getBridge() {
-    return safe(function () { return global.RCF_FACTORY_AI_BRIDGE || null; }, null);
+    return global.RCF_FACTORY_AI_BRIDGE || null;
   }
 
   function getPlanner() {
-    return safe(function () { return global.RCF_FACTORY_AI_PLANNER || null; }, null);
-  }
-
-  function getActions() {
-    return safe(function () { return global.RCF_FACTORY_AI_ACTIONS || null; }, null);
+    return global.RCF_FACTORY_AI_PLANNER || null;
   }
 
   function getPatchSupervisor() {
-    return safe(function () { return global.RCF_PATCH_SUPERVISOR || null; }, null);
+    return global.RCF_PATCH_SUPERVISOR || null;
+  }
+
+  function getOrchestrator() {
+    return global.RCF_FACTORY_AI_ORCHESTRATOR || null;
+  }
+
+  function getPolicy() {
+    return global.RCF_FACTORY_AI_POLICY || null;
   }
 
   function getPhaseEngine() {
-    return safe(function () { return global.RCF_FACTORY_PHASE_ENGINE || null; }, null);
+    return global.RCF_FACTORY_PHASE_ENGINE || null;
+  }
+
+  function getAutoLoop() {
+    return global.RCF_FACTORY_AI_AUTOLOOP || null;
   }
 
   function getMemory() {
-    return safe(function () { return global.RCF_FACTORY_AI_MEMORY || null; }, null);
+    return global.RCF_FACTORY_AI_MEMORY || null;
   }
 
-  function getCurrentPlanId() {
-    var runtime = getRuntime();
-    if (runtime && typeof runtime.getApprovedPlan === "function") {
-      var approved = runtime.getApprovedPlan();
-      if (approved && approved.id) return trimText(approved.id);
-    }
-
-    if (runtime && typeof runtime.getPendingPlan === "function") {
-      var pending = runtime.getPendingPlan();
-      if (pending && pending.id) return trimText(pending.id);
-    }
-
-    var bridge = getBridge();
-    if (bridge && typeof bridge.getLastPlan === "function") {
-      var last = bridge.getLastPlan();
-      if (last && last.id) return trimText(last.id);
-    }
-
-    return "";
+  function getFactoryState() {
+    return safe(function () {
+      if (global.RCF_FACTORY_STATE?.getState) return global.RCF_FACTORY_STATE.getState();
+      if (global.RCF_FACTORY_STATE?.status) return global.RCF_FACTORY_STATE.status();
+      return {};
+    }, {});
   }
 
-  function getPhaseContext() {
-    var phase = getPhaseEngine();
-    if (!phase || typeof phase.buildPhaseContext !== "function") {
-      return {
-        activePhaseId: "",
-        activePhaseTitle: "",
-        activePhase: null,
-        recommendedTargets: []
-      };
-    }
+  function markBusy(action, prompt) {
+    state.busy = true;
+    state.lastAction = trimText(action || "");
+    state.lastPrompt = trimText(prompt || "");
+    persist();
+  }
 
-    var ctx = safe(function () { return phase.buildPhaseContext(); }, {}) || {};
-    return {
-      activePhaseId:
-        trimText(safe(function () { return ctx.activePhaseId; }, "")) ||
-        trimText(safe(function () { return ctx.phaseId; }, "")) ||
-        trimText(safe(function () { return ctx.activePhase.id; }, "")),
-      activePhaseTitle:
-        trimText(safe(function () { return ctx.activePhaseTitle; }, "")) ||
-        trimText(safe(function () { return ctx.activePhase.title; }, "")),
-      activePhase: clone(safe(function () { return ctx.activePhase; }, null)),
-      recommendedTargets: clone(safe(function () { return ctx.recommendedTargets; }, []))
+  function clearBusy() {
+    state.busy = false;
+    persist();
+  }
+
+  function saveResult(action, result, prompt) {
+    var planId =
+      trimText(safe(function () { return result.plan.id; }, "")) ||
+      trimText(safe(function () { return result.response.plan.id; }, "")) ||
+      trimText(safe(function () { return result.planId; }, "")) ||
+      trimText(state.lastPlanId || "");
+
+    if (planId) state.lastPlanId = planId;
+
+    state.lastAnalysis = {
+      ts: nowISO(),
+      action: trimText(action || ""),
+      prompt: trimText(prompt || ""),
+      result: clone(result || {})
     };
+
+    pushHistory({
+      ts: nowISO(),
+      action: trimText(action || ""),
+      prompt: trimText(prompt || ""),
+      planId: planId,
+      ok: !!safe(function () { return result.ok; }, false)
+    });
+
+    persist();
   }
 
-  function getControllerSnapshot() {
-    var planner = getPlanner();
+  function buildControllerSnapshot() {
+    var factoryState = getFactoryState();
     var bridge = getBridge();
-    var actions = getActions();
+    var planner = getPlanner();
     var runtime = getRuntime();
-    var supervisor = getPatchSupervisor();
+    var patchSupervisor = getPatchSupervisor();
+    var orchestrator = getOrchestrator();
+    var policy = getPolicy();
+    var phaseEngine = getPhaseEngine();
+    var autoLoop = getAutoLoop();
     var memory = getMemory();
 
     return {
       ts: nowISO(),
-      phase: clone(getPhaseContext()),
+      factoryState: clone(factoryState || {}),
       planner: clone(safe(function () { return planner.status(); }, {})),
       bridge: clone(safe(function () { return bridge.status(); }, {})),
-      actions: clone(safe(function () { return actions.status(); }, {})),
       runtime: clone(safe(function () { return runtime.status(); }, {})),
-      patchSupervisor: clone(safe(function () { return supervisor.status(); }, {})),
-      memory: clone(safe(function () { return memory.status(); }, {})),
-      currentPlanId: getCurrentPlanId()
+      patchSupervisor: clone(safe(function () { return patchSupervisor.status(); }, {})),
+      orchestrator: clone(safe(function () { return orchestrator.status(); }, {})),
+      policy: clone(safe(function () { return policy.status(); }, {})),
+      phase: clone(safe(function () { return phaseEngine.buildPhaseContext(); }, {})),
+      autoloop: clone(safe(function () { return autoLoop.status(); }, {})),
+      memory: clone(safe(function () { return memory.status(); }, {}))
+    };
+  }
+
+  async function analyzeFactory(prompt) {
+    var text = trimText(prompt || "Analise a arquitetura atual da RControl Factory e sugira melhorias estruturais supervisionadas.");
+    var orchestrator = getOrchestrator();
+    var runtime = getRuntime();
+
+    if (state.busy) {
+      return { ok: false, msg: "controller ocupado" };
+    }
+
+    markBusy("analyzeFactory", text);
+
+    try {
+      var result = null;
+
+      if (orchestrator && typeof orchestrator.orchestrate === "function") {
+        result = await orchestrator.orchestrate({
+          prompt: text
+        });
+      } else if (runtime && typeof runtime.ask === "function") {
+        result = await runtime.ask({
+          action: "analyze-architecture",
+          prompt: text
+        });
+      } else {
+        result = { ok: false, msg: "orchestrator/runtime indisponível" };
+      }
+
+      saveResult("analyzeFactory", result, text);
+      return clone(result);
+    } finally {
+      clearBusy();
+    }
+  }
+
+  async function planNextEvolution(prompt) {
+    var text = trimText(prompt || "Planeje a próxima evolução supervisionada da Factory AI e indique o próximo arquivo mais estratégico.");
+    var orchestrator = getOrchestrator();
+    var planner = getPlanner();
+
+    if (state.busy) {
+      return { ok: false, msg: "controller ocupado" };
+    }
+
+    markBusy("planNextEvolution", text);
+
+    try {
+      var result = null;
+
+      if (orchestrator && typeof orchestrator.orchestrate === "function") {
+        result = await orchestrator.orchestrate({
+          prompt: text
+        });
+      } else if (planner && typeof planner.planFromRuntime === "function") {
+        result = {
+          ok: true,
+          plan: planner.planFromRuntime({
+            prompt: text,
+            goal: text,
+            reason: text
+          })
+        };
+      } else if (planner && typeof planner.buildPlan === "function") {
+        result = {
+          ok: true,
+          plan: planner.buildPlan({
+            prompt: text,
+            goal: text,
+            reason: text
+          })
+        };
+      } else {
+        result = { ok: false, msg: "planner/orchestrator indisponível" };
+      }
+
+      saveResult("planNextEvolution", result, text);
+      return clone(result);
+    } finally {
+      clearBusy();
+    }
+  }
+
+  async function approveLastPlan(meta) {
+    var runtime = getRuntime();
+    var bridge = getBridge();
+    var payload = clone(meta || {});
+
+    if (runtime && typeof runtime.approvePlan === "function") {
+      var resultRuntime = await runtime.approvePlan(payload.planId || "", payload);
+      saveResult("approveLastPlan", resultRuntime, "approveLastPlan");
+      return clone(resultRuntime);
+    }
+
+    if (bridge && typeof bridge.approveLastPlan === "function") {
+      var resultBridge = bridge.approveLastPlan(payload);
+      saveResult("approveLastPlan", resultBridge, "approveLastPlan");
+      return clone(resultBridge);
+    }
+
+    return { ok: false, msg: "runtime/bridge ausente para aprovação" };
+  }
+
+  async function validatePlan(planId) {
+    var runtime = getRuntime();
+    var supervisor = getPatchSupervisor();
+
+    if (runtime && typeof runtime.validateApprovedPlan === "function") {
+      var resultRuntime = await runtime.validateApprovedPlan(planId || "");
+      saveResult("validatePlan", resultRuntime, "validatePlan");
+      return clone(resultRuntime);
+    }
+
+    if (supervisor && typeof supervisor.validateApprovedPlan === "function") {
+      var resultSup = supervisor.validateApprovedPlan(planId || "");
+      saveResult("validatePlan", resultSup, "validatePlan");
+      return clone(resultSup);
+    }
+
+    return { ok: false, msg: "patch supervisor ausente" };
+  }
+
+  async function stagePlan(planId) {
+    var runtime = getRuntime();
+    var supervisor = getPatchSupervisor();
+
+    if (runtime && typeof runtime.stageApprovedPlan === "function") {
+      var resultRuntime = await runtime.stageApprovedPlan(planId || "");
+      saveResult("stagePlan", resultRuntime, "stagePlan");
+      return clone(resultRuntime);
+    }
+
+    if (supervisor && typeof supervisor.stageApprovedPlan === "function") {
+      var resultSup = await supervisor.stageApprovedPlan(planId || "");
+      saveResult("stagePlan", resultSup, "stagePlan");
+      return clone(resultSup);
+    }
+
+    return { ok: false, msg: "patch supervisor ausente" };
+  }
+
+  async function applyPlan(planId, opts) {
+    var runtime = getRuntime();
+    var supervisor = getPatchSupervisor();
+    var phaseEngine = getPhaseEngine();
+    var phase = safe(function () { return phaseEngine.buildPhaseContext(); }, {}) || {};
+    var allowApply = !!safe(function () { return phase.activePhase.allow.apply; }, false);
+
+    if (!allowApply) {
+      return {
+        ok: false,
+        msg: "apply bloqueado pela fase ativa da Factory"
+      };
+    }
+
+    if (runtime && typeof runtime.applyApprovedPlan === "function") {
+      var resultRuntime = await runtime.applyApprovedPlan(planId || "", opts || {});
+      saveResult("applyPlan", resultRuntime, "applyPlan");
+      return clone(resultRuntime);
+    }
+
+    if (supervisor && typeof supervisor.applyApprovedPlan === "function") {
+      var resultSup = await supervisor.applyApprovedPlan(planId || "", opts || {});
+      saveResult("applyPlan", resultSup, "applyPlan");
+      return clone(resultSup);
+    }
+
+    return { ok: false, msg: "patch supervisor ausente" };
+  }
+
+  async function approveValidateStage(planId, meta) {
+    var runtime = getRuntime();
+
+    if (runtime && typeof runtime.approveValidateStage === "function") {
+      var resultRuntime = await runtime.approveValidateStage(planId || "", meta || {});
+      saveResult("approveValidateStage", resultRuntime, "approveValidateStage");
+      return clone(resultRuntime);
+    }
+
+    var approved = await approveLastPlan(meta || { planId: planId || "" });
+    if (!approved || !approved.ok) return approved;
+
+    var validated = await validatePlan(planId || "");
+    if (!validated || !validated.ok) return validated;
+
+    return stagePlan(planId || "");
+  }
+
+  async function runEvolutionStep() {
+    if (state.busy) {
+      return { ok: false, msg: "controller ocupado" };
+    }
+
+    pushLog("OK", "executando evolução supervisionada da Factory");
+
+    var result = await planNextEvolution("Planeje a próxima evolução supervisionada da Factory AI com foco no núcleo da própria Factory.");
+    if (!result || result.ok === false) {
+      return clone(result || { ok: false, msg: "falha ao planejar evolução" });
+    }
+
+    return {
+      ok: true,
+      msg: "Evolução supervisionada planejada",
+      planId:
+        trimText(safe(function () { return result.plan.id; }, "")) ||
+        trimText(state.lastPlanId || ""),
+      result: clone(result)
+    };
+  }
+
+  async function getNextFile() {
+    var orchestrator = getOrchestrator();
+
+    if (orchestrator && typeof orchestrator.orchestrate === "function") {
+      var result = await orchestrator.orchestrate({
+        prompt: "Qual é o próximo arquivo mais estratégico da Factory AI agora?"
+      });
+      saveResult("getNextFile", result, "next_file");
+      return clone(result);
+    }
+
+    var planner = getPlanner();
+    if (planner && typeof planner.getLastPlan === "function") {
+      var plan = planner.getLastPlan();
+      return {
+        ok: true,
+        nextFile: trimText(safe(function () { return plan.targetFile || plan.nextFile; }, "")),
+        plan: clone(plan || null)
+      };
+    }
+
+    return { ok: false, msg: "orchestrator/planner indisponível" };
+  }
+
+  function explainRoles() {
+    var policy = getPolicy();
+    if (!policy || typeof policy.buildPolicyContext !== "function") {
+      return {
+        ok: false,
+        msg: "factory_ai_policy indisponível"
+      };
+    }
+
+    var ctx = policy.buildPolicyContext();
+    return {
+      ok: true,
+      policy: clone(ctx),
+      text: [
+        "Factory AI: estrutura e evolui o núcleo da própria Factory.",
+        "Agent AI: cria aplicativos.",
+        "Opportunity Scan: encontra oportunidades.",
+        "Test AI: testa no Preview.",
+        "Validation AI: valida com rigor antes da decisão final."
+      ].join("\n")
+    };
+  }
+
+  async function setAutoLoopEnabled(enabled, opts) {
+    var autoLoop = getAutoLoop();
+    if (!autoLoop) {
+      return { ok: false, msg: "autoloop ausente" };
+    }
+
+    var result = enabled
+      ? autoLoop.enable(opts || {})
+      : autoLoop.disable();
+
+    saveResult(enabled ? "enableAutoLoop" : "disableAutoLoop", result, enabled ? "enable autoloop" : "disable autoloop");
+    return clone(result);
+  }
+
+  async function runAutoLoopNow() {
+    var autoLoop = getAutoLoop();
+    if (!autoLoop || typeof autoLoop.runNow !== "function") {
+      return { ok: false, msg: "autoloop ausente" };
+    }
+
+    var result = await autoLoop.runNow();
+    saveResult("runAutoLoopNow", result, "run autoloop now");
+    return clone(result);
+  }
+
+  function status() {
+    return {
+      version: VERSION,
+      ready: !!state.ready,
+      busy: !!state.busy,
+      lastAction: state.lastAction || "",
+      lastPlanId: state.lastPlanId || "",
+      lastPrompt: state.lastPrompt || "",
+      historyCount: Array.isArray(state.history) ? state.history.length : 0,
+      runtimeReady: !!getRuntime(),
+      plannerReady: !!getPlanner(),
+      bridgeReady: !!getBridge(),
+      patchSupervisorReady: !!getPatchSupervisor(),
+      orchestratorReady: !!getOrchestrator(),
+      policyReady: !!getPolicy(),
+      phaseEngineReady: !!getPhaseEngine(),
+      autoLoopReady: !!getAutoLoop()
     };
   }
 
@@ -245,374 +550,44 @@
         global.RCF_MODULE_REGISTRY.register("factoryAIController");
       }
     } catch (_) {}
-
-    try {
-      if (global.RCF_FACTORY_STATE?.refreshRuntime) {
-        global.RCF_FACTORY_STATE.refreshRuntime();
-      }
-    } catch (_) {}
-
-    try {
-      if (global.RCF_MODULE_REGISTRY?.refresh) {
-        global.RCF_MODULE_REGISTRY.refresh();
-      }
-    } catch (_) {}
-  }
-
-  async function analyzeFactory(promptOverride) {
-    var runtime = getRuntime();
-    if (!runtime || typeof runtime.ask !== "function") {
-      return { ok: false, msg: "Factory AI Runtime não encontrado" };
-    }
-
-    var prompt = trimText(promptOverride || "Analise a arquitetura atual da RControl Factory e sugira melhorias estruturais.");
-    state.busy = true;
-    state.lastAction = "analyzeFactory";
-    persist();
-
-    try {
-      var result = await runtime.ask({
-        action: "analyze-architecture",
-        prompt: prompt
-      });
-
-      state.lastAnalysis = clone(result || null);
-
-      if (result && result.plan && result.plan.id) {
-        state.lastPlanId = trimText(result.plan.id);
-      } else {
-        state.lastPlanId = getCurrentPlanId();
-      }
-
-      pushHistory({
-        ts: nowISO(),
-        type: "analyze",
-        ok: !!(result && result.ok),
-        planId: trimText(safe(function () { return result.plan.id; }, "")) || state.lastPlanId,
-        targetFile: normalizePath(safe(function () { return result.plan.targetFile || result.plan.nextFile; }, "")),
-        prompt: prompt
-      });
-
-      persist();
-      emit("RCF:FACTORY_AI_CONTROLLER_ANALYSIS", {
-        result: clone(result || null),
-        snapshot: clone(getControllerSnapshot())
-      });
-
-      return result;
-    } catch (e) {
-      var fail = { ok: false, msg: String(e && e.message || e || "falha na análise") };
-      state.lastAnalysis = clone(fail);
-      pushHistory({
-        ts: nowISO(),
-        type: "analyze-fail",
-        ok: false,
-        msg: fail.msg
-      });
-      persist();
-      return fail;
-    } finally {
-      state.busy = false;
-      persist();
-    }
-  }
-
-  async function approveLastPlan(planId, meta) {
-    var runtime = getRuntime();
-    if (!runtime || typeof runtime.approvePlan !== "function") {
-      return { ok: false, msg: "runtime ausente" };
-    }
-
-    var targetPlanId = trimText(planId || state.lastPlanId || getCurrentPlanId());
-    if (!targetPlanId) {
-      return { ok: false, msg: "nenhum plano disponível para aprovação" };
-    }
-
-    state.lastAction = "approveLastPlan";
-    persist();
-
-    var result = await runtime.approvePlan(targetPlanId, meta || {});
-    if (result && result.ok) {
-      state.lastPlanId = targetPlanId;
-      pushHistory({
-        ts: nowISO(),
-        type: "approve",
-        ok: true,
-        planId: targetPlanId
-      });
-    } else {
-      pushHistory({
-        ts: nowISO(),
-        type: "approve-fail",
-        ok: false,
-        planId: targetPlanId,
-        msg: trimText(safe(function () { return result.error || result.msg; }, ""))
-      });
-    }
-
-    persist();
-    return result;
-  }
-
-  async function validatePlan(planId) {
-    var runtime = getRuntime();
-    if (!runtime || typeof runtime.validateApprovedPlan !== "function") {
-      return { ok: false, msg: "runtime ausente" };
-    }
-
-    var targetPlanId = trimText(planId || state.lastPlanId || getCurrentPlanId());
-    if (!targetPlanId) {
-      return { ok: false, msg: "nenhum plano aprovado disponível para validação" };
-    }
-
-    state.lastAction = "validatePlan";
-    persist();
-
-    var result = await runtime.validateApprovedPlan(targetPlanId);
-
-    pushHistory({
-      ts: nowISO(),
-      type: result && result.ok ? "validate" : "validate-fail",
-      ok: !!(result && result.ok),
-      planId: targetPlanId,
-      targetFile: normalizePath(safe(function () { return result.normalized.targetFile; }, "")),
-      msg: trimText(safe(function () { return result.error || result.msg; }, ""))
-    });
-
-    persist();
-    return result;
-  }
-
-  async function stagePlan(planId) {
-    var runtime = getRuntime();
-    if (!runtime || typeof runtime.stageApprovedPlan !== "function") {
-      return { ok: false, msg: "runtime ausente" };
-    }
-
-    var targetPlanId = trimText(planId || state.lastPlanId || getCurrentPlanId());
-    if (!targetPlanId) {
-      return { ok: false, msg: "nenhum plano aprovado disponível para stage" };
-    }
-
-    state.lastAction = "stagePlan";
-    persist();
-
-    var result = await runtime.stageApprovedPlan(targetPlanId);
-
-    pushHistory({
-      ts: nowISO(),
-      type: result && result.ok ? "stage" : "stage-fail",
-      ok: !!(result && result.ok),
-      planId: targetPlanId,
-      targetFile: normalizePath(safe(function () { return result.targetFile || result.stagedPatch.targetFile; }, "")),
-      msg: trimText(safe(function () { return result.error || result.msg; }, ""))
-    });
-
-    persist();
-    return result;
-  }
-
-  async function applyPlan(planId, opts) {
-    var runtime = getRuntime();
-    if (!runtime || typeof runtime.applyApprovedPlan !== "function") {
-      return { ok: false, msg: "runtime ausente" };
-    }
-
-    var targetPlanId = trimText(planId || state.lastPlanId || getCurrentPlanId());
-    if (!targetPlanId) {
-      return { ok: false, msg: "nenhum plano aprovado disponível para apply" };
-    }
-
-    state.lastAction = "applyPlan";
-    persist();
-
-    var result = await runtime.applyApprovedPlan(targetPlanId, opts || {});
-
-    pushHistory({
-      ts: nowISO(),
-      type: result && result.ok ? "apply" : "apply-fail",
-      ok: !!(result && result.ok),
-      planId: targetPlanId,
-      targetFile: normalizePath(safe(function () { return result.targetFile; }, "")),
-      msg: trimText(safe(function () { return result.error || result.msg; }, ""))
-    });
-
-    persist();
-    return result;
-  }
-
-  async function approveValidateStage(planId, meta) {
-    var runtime = getRuntime();
-    if (!runtime || typeof runtime.approveValidateStage !== "function") {
-      return { ok: false, msg: "runtime ausente" };
-    }
-
-    var targetPlanId = trimText(planId || state.lastPlanId || getCurrentPlanId());
-    if (!targetPlanId) {
-      return { ok: false, msg: "nenhum plano disponível" };
-    }
-
-    state.lastAction = "approveValidateStage";
-    persist();
-
-    var result = await runtime.approveValidateStage(targetPlanId, meta || {});
-
-    pushHistory({
-      ts: nowISO(),
-      type: result && result.ok ? "approve-validate-stage" : "approve-validate-stage-fail",
-      ok: !!(result && result.ok),
-      planId: targetPlanId,
-      msg: trimText(safe(function () { return result.error || result.msg; }, ""))
-    });
-
-    persist();
-    return result;
-  }
-
-  async function runPlannerStep(promptOverride) {
-    var actions = getActions();
-    if (!actions || typeof actions.planFromCurrentRuntime !== "function") {
-      return { ok: false, msg: "Factory AI Actions indisponível" };
-    }
-
-    if (state.busy) {
-      return { ok: false, msg: "controller ocupado" };
-    }
-
-    state.busy = true;
-    state.lastAction = "runPlannerStep";
-    persist();
-
-    try {
-      var result = await actions.planFromCurrentRuntime({
-        prompt: trimText(promptOverride || "Planeje a próxima evolução supervisionada da Factory AI."),
-        reason: "factory_ai_controller.runPlannerStep"
-      });
-
-      if (result && result.ok && result.plan && result.plan.id) {
-        state.lastPlanId = trimText(result.plan.id);
-      }
-
-      pushHistory({
-        ts: nowISO(),
-        type: result && result.ok ? "planner-step" : "planner-step-fail",
-        ok: !!(result && result.ok),
-        planId: trimText(safe(function () { return result.plan.id; }, "")),
-        targetFile: normalizePath(safe(function () { return result.plan.targetFile || result.plan.nextFile; }, "")),
-        msg: trimText(safe(function () { return result.msg; }, ""))
-      });
-
-      persist();
-      return result;
-    } catch (e) {
-      var fail = { ok: false, msg: String(e && e.message || e || "falha no planner step") };
-      pushHistory({
-        ts: nowISO(),
-        type: "planner-step-fail",
-        ok: false,
-        msg: fail.msg
-      });
-      persist();
-      return fail;
-    } finally {
-      state.busy = false;
-      persist();
-    }
-  }
-
-  async function runEvolutionStep() {
-    if (state.busy) {
-      return { ok: false, msg: "controller ocupado" };
-    }
-
-    log("INFO", "executando evolução da Factory", {
-      phase: getPhaseContext().activePhaseId
-    });
-
-    var analysis = await analyzeFactory(
-      "Analise a arquitetura atual da RControl Factory, priorize a evolução da própria Factory AI e sugira o próximo avanço estrutural supervisionado."
-    );
-
-    if (!analysis || !analysis.ok) {
-      return analysis || { ok: false, msg: "falha na análise" };
-    }
-
-    return {
-      ok: true,
-      msg: "Análise concluída",
-      planId: state.lastPlanId || getCurrentPlanId(),
-      snapshot: clone(getControllerSnapshot())
-    };
-  }
-
-  function getLastPlanSummary() {
-    var bridge = getBridge();
-    if (!bridge || typeof bridge.getLastSummary !== "function") {
-      return {
-        planId: state.lastPlanId || "",
-        targetFile: "",
-        risk: "unknown"
-      };
-    }
-
-    return clone(bridge.getLastSummary() || {});
-  }
-
-  function status() {
-    return {
-      version: VERSION,
-      ready: !!state.ready,
-      busy: !!state.busy,
-      lastUpdate: state.lastUpdate || null,
-      lastAction: state.lastAction || "",
-      lastPlanId: state.lastPlanId || "",
-      phaseId: trimText(getPhaseContext().activePhaseId || ""),
-      runtimeReady: !!getRuntime(),
-      plannerReady: !!getPlanner(),
-      bridgeReady: !!getBridge(),
-      actionsReady: !!getActions(),
-      patchSupervisorReady: !!getPatchSupervisor(),
-      historyCount: Array.isArray(state.history) ? state.history.length : 0
-    };
-  }
-
-  function getState() {
-    return clone(state);
   }
 
   function init() {
     load();
-    state.ready = true;
     state.version = VERSION;
-    state.lastUpdate = nowISO();
+    state.ready = true;
+    state.busy = false;
     persist();
     syncPresence();
 
-    log("OK", "Factory AI Controller iniciado", {
-      version: VERSION,
-      phase: trimText(getPhaseContext().activePhaseId || "")
+    emit("RCF:FACTORY_AI_CONTROLLER_READY", {
+      version: VERSION
     });
 
+    pushLog("OK", "Factory AI Controller iniciado ✅ " + VERSION);
     return status();
   }
 
   global.RCF_FACTORY_AI_CONTROLLER = {
     __v100: true,
-    __v101: true,
+    __v110: true,
     version: VERSION,
     init: init,
     status: status,
-    getState: getState,
-    getControllerSnapshot: getControllerSnapshot,
-    getLastPlanSummary: getLastPlanSummary,
+    buildControllerSnapshot: buildControllerSnapshot,
     analyzeFactory: analyzeFactory,
-    runPlannerStep: runPlannerStep,
+    planNextEvolution: planNextEvolution,
     approveLastPlan: approveLastPlan,
     validatePlan: validatePlan,
     stagePlan: stagePlan,
     applyPlan: applyPlan,
     approveValidateStage: approveValidateStage,
-    runEvolutionStep: runEvolutionStep
+    runEvolutionStep: runEvolutionStep,
+    getNextFile: getNextFile,
+    explainRoles: explainRoles,
+    setAutoLoopEnabled: setAutoLoopEnabled,
+    runAutoLoopNow: runAutoLoopNow,
+    getState: function () { return clone(state); }
   };
 
   try { init(); } catch (_) {}
