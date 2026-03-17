@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/module_registry.js
    RControl Factory — Module Registry
-   v1.4.2 STABLE / REBUILD FROM ZERO
+   v1.4.3 SAFE LOOP GUARD / PATCH MÍNIMO
 
    Objetivo:
    - detectar módulos globais realmente carregados
@@ -8,15 +8,16 @@
    - sincronizar com RCF_FACTORY_STATE sem depender rigidamente dele
    - expor summary confiável para Context Engine / Factory AI
    - reduzir snapshot vazio/inconsistente em Safari / PWA / pageshow / restore
+   - evitar loop indireto entre summary -> refresh -> factory_state -> registry
    - funcionar como script clássico
 */
 
 (function (global) {
   "use strict";
 
-  if (global.RCF_MODULE_REGISTRY && global.RCF_MODULE_REGISTRY.__v142) return;
+  if (global.RCF_MODULE_REGISTRY && global.RCF_MODULE_REGISTRY.__v143) return;
 
-  var VERSION = "v1.4.2";
+  var VERSION = "v1.4.3";
 
   var MODULE_KEYS = [
     "logger",
@@ -33,7 +34,11 @@
     "diagnostics",
     "injector",
     "ui",
-    "runtime"
+    "runtime",
+    "factoryAIBridge",
+    "factoryAIActions",
+    "factoryAIPlanner",
+    "patchSupervisor"
   ];
 
   var modules = {
@@ -51,7 +56,11 @@
     diagnostics: false,
     injector: false,
     ui: false,
-    runtime: false
+    runtime: false,
+    factoryAIBridge: false,
+    factoryAIActions: false,
+    factoryAIPlanner: false,
+    patchSupervisor: false
   };
 
   var meta = {
@@ -60,6 +69,9 @@
     lastChange: null,
     bootedAt: nowISO()
   };
+
+  var __refreshing = false;
+  var __syncingState = false;
 
   function nowISO() {
     try { return new Date().toISOString(); }
@@ -87,8 +99,9 @@
 
   function sameModules(a, b) {
     try {
-      for (var i = 0; i < MODULE_KEYS.length; i++) {
-        var k = MODULE_KEYS[i];
+      var keys = uniqKeys(a, b);
+      for (var i = 0; i < keys.length; i++) {
+        var k = keys[i];
         if (!!safe(function () { return a[k]; }, false) !== !!safe(function () { return b[k]; }, false)) {
           return false;
         }
@@ -97,6 +110,30 @@
     } catch (_) {
       return false;
     }
+  }
+
+  function uniqKeys(a, b) {
+    var out = {};
+    var arrA = Object.keys(a || {});
+    var arrB = Object.keys(b || {});
+    var arrC = MODULE_KEYS.slice();
+
+    arrA.concat(arrB).concat(arrC).forEach(function (k) {
+      if (!k) return;
+      out[k] = true;
+    });
+
+    return Object.keys(out);
+  }
+
+  function ensureModuleKey(name) {
+    var key = String(name || "").trim();
+    if (!key) return "";
+    if (MODULE_KEYS.indexOf(key) < 0) MODULE_KEYS.push(key);
+    if (!Object.prototype.hasOwnProperty.call(modules, key)) {
+      modules[key] = false;
+    }
+    return key;
   }
 
   function detectLogger() {
@@ -162,7 +199,8 @@
           hasFn(global.RCF_ADMIN_AI, "sendPrompt") ||
           !!global.RCF_ADMIN_AI.__v41_bridge ||
           !!global.RCF_ADMIN_AI.__v411_bridge ||
-          !!global.RCF_ADMIN_AI.__v42_bridge
+          !!global.RCF_ADMIN_AI.__v42_bridge ||
+          !!global.RCF_ADMIN_AI.__v421_bridge
         );
     } catch (_) {
       return false;
@@ -179,7 +217,8 @@
           hasFn(api, "getHistory") ||
           !!api.__v41 ||
           !!api.__v411 ||
-          !!api.__v42
+          !!api.__v42 ||
+          !!api.__v421
         );
     } catch (_) {
       return false;
@@ -271,6 +310,55 @@
     }
   }
 
+  function detectFactoryAIBridge() {
+    try {
+      return !!global.RCF_FACTORY_AI_BRIDGE &&
+        (
+          hasFn(global.RCF_FACTORY_AI_BRIDGE, "ingestResponse") ||
+          hasFn(global.RCF_FACTORY_AI_BRIDGE, "getLastPlan")
+        );
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function detectFactoryAIActions() {
+    try {
+      return !!global.RCF_FACTORY_AI_ACTIONS &&
+        (
+          hasFn(global.RCF_FACTORY_AI_ACTIONS, "dispatch") ||
+          hasFn(global.RCF_FACTORY_AI_ACTIONS, "getAutonomySnapshot")
+        );
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function detectFactoryAIPlanner() {
+    try {
+      return !!global.RCF_FACTORY_AI_PLANNER &&
+        (
+          hasFn(global.RCF_FACTORY_AI_PLANNER, "buildPlan") ||
+          hasFn(global.RCF_FACTORY_AI_PLANNER, "getLastPlan")
+        );
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function detectPatchSupervisor() {
+    try {
+      return !!global.RCF_PATCH_SUPERVISOR &&
+        (
+          hasFn(global.RCF_PATCH_SUPERVISOR, "validateApprovedPlan") ||
+          hasFn(global.RCF_PATCH_SUPERVISOR, "stageApprovedPlan") ||
+          hasFn(global.RCF_PATCH_SUPERVISOR, "applyApprovedPlan")
+        );
+    } catch (_) {
+      return false;
+    }
+  }
+
   function computeModules() {
     return {
       logger: detectLogger(),
@@ -287,13 +375,21 @@
       diagnostics: detectDiagnostics(),
       injector: detectInjector(),
       ui: detectUI(),
-      runtime: detectRuntime()
+      runtime: detectRuntime(),
+      factoryAIBridge: detectFactoryAIBridge(),
+      factoryAIActions: detectFactoryAIActions(),
+      factoryAIPlanner: detectFactoryAIPlanner(),
+      patchSupervisor: detectPatchSupervisor()
     };
   }
 
   function syncToFactoryState() {
+    if (__syncingState) return;
+
     try {
       if (!global.RCF_FACTORY_STATE) return;
+
+      __syncingState = true;
 
       if (hasFn(global.RCF_FACTORY_STATE, "setModules")) {
         global.RCF_FACTORY_STATE.setModules(clone(modules));
@@ -312,11 +408,10 @@
       } else if (hasFn(global.RCF_FACTORY_STATE, "setModule")) {
         global.RCF_FACTORY_STATE.setModule("moduleRegistry", true);
       }
-
-      if (hasFn(global.RCF_FACTORY_STATE, "refreshRuntime")) {
-        global.RCF_FACTORY_STATE.refreshRuntime();
-      }
-    } catch (_) {}
+    } catch (_) {
+    } finally {
+      __syncingState = false;
+    }
   }
 
   function logRefresh(before, after) {
@@ -328,33 +423,41 @@
   }
 
   function refresh() {
-    var before = clone(modules);
-    var next = computeModules();
+    if (__refreshing) return getModules();
 
-    modules = clone(next);
-    meta.lastRefresh = nowISO();
+    __refreshing = true;
 
-    if (!sameModules(before, next)) {
-      meta.lastChange = meta.lastRefresh;
+    try {
+      var before = clone(modules);
+      var next = computeModules();
+
+      Object.keys(next).forEach(function (k) {
+        ensureModuleKey(k);
+      });
+
+      modules = clone(next);
+      meta.lastRefresh = nowISO();
+
+      if (!sameModules(before, next)) {
+        meta.lastChange = meta.lastRefresh;
+      }
+
+      syncToFactoryState();
+      logRefresh(before, next);
+
+      return getModules();
+    } finally {
+      __refreshing = false;
     }
-
-    syncToFactoryState();
-    logRefresh(before, next);
-
-    return getModules();
   }
 
   function register(name) {
-    var key = String(name || "").trim();
+    var key = ensureModuleKey(name);
     if (!key) return false;
 
-    if (!Object.prototype.hasOwnProperty.call(modules, key)) {
-      modules[key] = true;
-      if (MODULE_KEYS.indexOf(key) < 0) MODULE_KEYS.push(key);
-    } else {
-      modules[key] = true;
-    }
+    if (modules[key] === true) return true;
 
+    modules[key] = true;
     meta.lastChange = nowISO();
     meta.lastRefresh = meta.lastChange;
     syncToFactoryState();
@@ -366,6 +469,7 @@
     if (!key) return false;
     if (key === "moduleRegistry") return false;
     if (!Object.prototype.hasOwnProperty.call(modules, key)) return false;
+    if (modules[key] === false) return true;
 
     modules[key] = false;
     meta.lastChange = nowISO();
@@ -399,8 +503,6 @@
   }
 
   function summary() {
-    refresh();
-
     var c = counts();
     var active = getActiveModules();
     var current = getModules();
@@ -428,6 +530,10 @@
       injector: !!current.injector,
       ui: !!current.ui,
       runtime: !!current.runtime,
+      factoryAIBridge: !!current.factoryAIBridge,
+      factoryAIActions: !!current.factoryAIActions,
+      factoryAIPlanner: !!current.factoryAIPlanner,
+      patchSupervisor: !!current.patchSupervisor,
 
       lastRefresh: meta.lastRefresh || nowISO(),
       lastChange: meta.lastChange || null,
@@ -443,6 +549,7 @@
     __v14: true,
     __v141: true,
     __v142: true,
+    __v143: true,
     version: VERSION,
     register: register,
     unregister: unregister,
@@ -497,6 +604,12 @@
 
   try {
     global.addEventListener("RCF:UI_READY", function () {
+      try { refresh(); } catch (_) {}
+    }, { passive: true });
+  } catch (_) {}
+
+  try {
+    global.addEventListener("RCF:FACTORY_AI_RESPONSE", function () {
       try { refresh(); } catch (_) {}
     }, { passive: true });
   } catch (_) {}
