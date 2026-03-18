@@ -114,7 +114,7 @@ export async function onRequestPost(context) {
           provider: "openai",
           configured: true,
           attempted: true,
-          status: "upstream_error",
+          status: upstream.status === 0 ? "network_error" : "upstream_error",
           model,
           upstreamStatus: upstream.status
         }
