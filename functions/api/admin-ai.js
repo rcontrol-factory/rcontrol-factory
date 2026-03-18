@@ -1,12 +1,12 @@
 /* FILE: /functions/api/admin-ai.js
    RControl Factory — Factory AI API
-   v3.5.1 CHAT COPILOT BACKEND + DETERMINISTIC PLANNER HINT + OPENAI STATUS FIX
+   v3.5.2 CHAT COPILOT BACKEND + DETERMINISTIC PLANNER HINT + OPENAI STATUS FIX HARDENED
 
-   PATCH v3.5.1:
-   - FIX: retorna status explícito da conexão OpenAI no backend
-   - FIX: melhora diagnóstico quando OPENAI_API_KEY estiver ausente
-   - FIX: adiciona timeout seguro na chamada upstream
-   - FIX: expõe model/provider/upstream status no retorno
+   PATCH v3.5.2:
+   - FIX: normaliza OPENAI_BASE_URL para evitar erro quando vier base sem /v1/responses
+   - FIX: padroniza bloco connection em todas as respostas
+   - FIX: melhora diagnóstico de upstream/network/internal error
+   - FIX: reduz desvio genérico para planner quando o pedido for sobre conexão OpenAI/runtime/backend
    - FIX: mantém compatibilidade total com o fluxo atual
    - FIX: não muda arquitetura central, apenas fortalece diagnóstico e resposta
 */
@@ -26,12 +26,15 @@ export async function onRequestPost(context) {
       return json({
         ok: false,
         error: "OPENAI_API_KEY ausente no ambiente.",
-        connection: {
+        connection: buildConnectionMeta({
           provider: "openai",
           configured: false,
           attempted: false,
-          status: "missing_api_key"
-        }
+          status: "missing_api_key",
+          model: String(env?.OPENAI_MODEL || "gpt-4.1-mini").trim() || "gpt-4.1-mini",
+          upstreamStatus: 0,
+          endpoint: normalizeOpenAIUrl(env?.OPENAI_BASE_URL)
+        })
       }, 500);
     }
 
@@ -40,12 +43,15 @@ export async function onRequestPost(context) {
       return json({
         ok: false,
         error: "JSON inválido.",
-        connection: {
+        connection: buildConnectionMeta({
           provider: "openai",
           configured: true,
           attempted: false,
-          status: "invalid_json"
-        }
+          status: "invalid_json",
+          model: String(env.OPENAI_MODEL || "gpt-4.1-mini").trim() || "gpt-4.1-mini",
+          upstreamStatus: 0,
+          endpoint: normalizeOpenAIUrl(env.OPENAI_BASE_URL)
+        })
       }, 400);
     }
 
@@ -75,12 +81,15 @@ export async function onRequestPost(context) {
         ok: false,
         error: "Ação não permitida nesta fase.",
         action,
-        connection: {
+        connection: buildConnectionMeta({
           provider: "openai",
           configured: true,
           attempted: false,
-          status: "blocked_action"
-        }
+          status: "blocked_action",
+          model: String(env.OPENAI_MODEL || "gpt-4.1-mini").trim() || "gpt-4.1-mini",
+          upstreamStatus: 0,
+          endpoint: normalizeOpenAIUrl(env.OPENAI_BASE_URL)
+        })
       }, 400);
     }
 
@@ -95,7 +104,7 @@ export async function onRequestPost(context) {
     });
 
     const model = String(env.OPENAI_MODEL || "gpt-4.1-mini").trim() || "gpt-4.1-mini";
-    const upstreamUrl = String(env.OPENAI_BASE_URL || "https://api.openai.com/v1/responses").trim();
+    const upstreamUrl = normalizeOpenAIUrl(env.OPENAI_BASE_URL);
 
     const upstream = await postToOpenAI({
       url: upstreamUrl,
@@ -105,19 +114,32 @@ export async function onRequestPost(context) {
     });
 
     if (!upstream.ok) {
+      const upstreamStatus = Number(upstream.status || 0) || 0;
+      const failureStatus =
+        upstreamStatus === 0
+          ? "network_error"
+          : upstreamStatus === 401
+            ? "invalid_api_key"
+            : upstreamStatus === 403
+              ? "forbidden"
+              : upstreamStatus === 429
+                ? "rate_limited"
+                : "upstream_error";
+
       return json({
         ok: false,
         error: "Falha ao chamar OpenAI.",
-        status: upstream.status,
+        status: upstreamStatus,
         details: upstream.data,
-        connection: {
+        connection: buildConnectionMeta({
           provider: "openai",
           configured: true,
           attempted: true,
-          status: upstream.status === 0 ? "network_error" : "upstream_error",
+          status: failureStatus,
           model,
-          upstreamStatus: upstream.status
-        }
+          upstreamStatus,
+          endpoint: upstreamUrl
+        })
       }, 502);
     }
 
@@ -133,25 +155,29 @@ export async function onRequestPost(context) {
       analysis: text || "(sem texto retornado)",
       hints: derived,
       raw: data,
-      connection: {
+      connection: buildConnectionMeta({
         provider: "openai",
         configured: true,
         attempted: true,
         status: "connected",
         model,
-        upstreamStatus: upstream.status
-      }
+        upstreamStatus: Number(upstream.status || 200) || 200,
+        endpoint: upstreamUrl
+      })
     });
   } catch (err) {
     return json({
       ok: false,
       error: String(err?.message || err || "Erro interno."),
-      connection: {
+      connection: buildConnectionMeta({
         provider: "openai",
         configured: true,
         attempted: true,
-        status: "internal_error"
-      }
+        status: "internal_error",
+        model: "",
+        upstreamStatus: 0,
+        endpoint: ""
+      })
     }, 500);
   }
 }
@@ -194,6 +220,36 @@ async function postToOpenAI({ url, apiKey, model, input }) {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function normalizeOpenAIUrl(value) {
+  const raw = String(value || "").trim();
+  const fallback = "https://api.openai.com/v1/responses";
+
+  if (!raw) return fallback;
+
+  if (/\/v1\/responses\/?$/i.test(raw)) return raw.replace(/\/+$/, "");
+  if (/\/v1\/?$/i.test(raw)) return raw.replace(/\/+$/, "") + "/responses";
+  if (/api\.openai\.com\/?$/i.test(raw)) return raw.replace(/\/+$/, "") + "/v1/responses";
+
+  if (/^https?:\/\/[^/]+$/i.test(raw)) {
+    return raw.replace(/\/+$/, "") + "/v1/responses";
+  }
+
+  return raw;
+}
+
+function buildConnectionMeta(info) {
+  const data = info && typeof info === "object" ? info : {};
+  return {
+    provider: String(data.provider || "openai").trim() || "openai",
+    configured: !!data.configured,
+    attempted: !!data.attempted,
+    status: String(data.status || "unknown").trim() || "unknown",
+    model: String(data.model || "").trim(),
+    upstreamStatus: Number(data.upstreamStatus || 0) || 0,
+    endpoint: String(data.endpoint || "").trim()
+  };
 }
 
 function normalizeAction(value, promptValue = "") {
@@ -654,6 +710,19 @@ function detectBackendGoal(prompt, action) {
   if (action === "factory_diagnosis") return "diagnostics";
 
   if (
+    prompt.includes("openai") ||
+    prompt.includes("conexão") ||
+    prompt.includes("conexao") ||
+    prompt.includes("api key") ||
+    prompt.includes("endpoint") ||
+    prompt.includes("runtime") ||
+    prompt.includes("backend") ||
+    prompt.includes("/api/admin-ai")
+  ) {
+    return "openai-connectivity";
+  }
+
+  if (
     prompt.includes("autonomia") ||
     prompt.includes("autônom") ||
     prompt.includes("autonom") ||
@@ -714,6 +783,25 @@ function rankStrategicFiles({ goal, activeModules, candidateFiles, flags, snapsh
   const ranking = files.map((file) => {
     const reasons = [];
     let score = 0;
+
+    if (goal === "openai-connectivity") {
+      if (file === "/functions/api/admin-ai.js") {
+        score += 120;
+        reasons.push("backend real da conexão com OpenAI");
+      }
+      if (file === "/app/js/core/factory_ai_runtime.js") {
+        score += 95;
+        reasons.push("runtime lê e expõe status real da conexão");
+      }
+      if (file === "/app/js/admin.admin_ai.js") {
+        score += 72;
+        reasons.push("front exibe endpoint/status e envia prompt");
+      }
+      if (file === "/app/js/core/factory_ai_planner.js") {
+        score -= 24;
+        reasons.push("planner não é o primeiro gargalo da conectividade");
+      }
+    }
 
     if (goal === "evolve-factory-ai") {
       if (file === "/app/js/core/factory_ai_planner.js") {
@@ -885,7 +973,11 @@ function buildExecutionLineForGoal(goal, nextFile) {
 
   if (nextFile) line.push(nextFile);
 
-  if (goal === "evolve-factory-ai") {
+  if (goal === "openai-connectivity") {
+    line.push("/functions/api/admin-ai.js");
+    line.push("/app/js/core/factory_ai_runtime.js");
+    line.push("/app/js/admin.admin_ai.js");
+  } else if (goal === "evolve-factory-ai") {
     line.push("/app/js/core/factory_ai_planner.js");
     line.push("/app/js/core/factory_ai_actions.js");
     line.push("/functions/api/admin-ai.js");
@@ -988,6 +1080,16 @@ function cloneValue(value) {
 
 function buildGroundedPrompt({ action, payload, prompt, history, attachments, source, version }) {
   const plannerHint = safeObj(payload).__planner_hint;
+  const lowerPrompt = String(prompt || "").trim().toLowerCase();
+  const asksOpenAI =
+    lowerPrompt.includes("openai") ||
+    lowerPrompt.includes("conexão") ||
+    lowerPrompt.includes("conexao") ||
+    lowerPrompt.includes("api key") ||
+    lowerPrompt.includes("endpoint") ||
+    lowerPrompt.includes("runtime") ||
+    lowerPrompt.includes("backend");
+
   const system = [
     "Você é a Factory AI da RControl Factory.",
     "Você é o chat oficial interno da Factory.",
@@ -1043,6 +1145,12 @@ function buildGroundedPrompt({ action, payload, prompt, history, attachments, so
     "- Se existir __planner_hint no payload, trate-o como guidance operacional forte.",
     "- Não ignore __planner_hint quando o usuário pedir próximo arquivo, prioridade, autonomia, evolução ou plano.",
     "",
+    "Regra especial para perguntas sobre OpenAI/conectividade/runtime/backend:",
+    "- Se o pedido falar de OpenAI, conexão, endpoint, backend, runtime ou API key, priorize diagnosticar a trilha real backend -> runtime -> frontend.",
+    "- Nessa situação, NÃO empurre automaticamente a resposta para factory_ai_planner.js se houver sinais mais fortes em /functions/api/admin-ai.js ou no runtime.",
+    "- Diga claramente se a conexão está confirmada, ausente, falhando por chave, rede, upstream ou dado ausente.",
+    "- Use o campo connection do backend como evidência principal quando existir.",
+    "",
     "Formato de resposta por action:",
     "",
     "Se action=factory_diagnosis, analyze-architecture, analyze-logs, summarize-structure ou suggest-improvement:",
@@ -1071,8 +1179,11 @@ function buildGroundedPrompt({ action, payload, prompt, history, attachments, so
     "- se existir planner_hint.nextFile, use esse alvo como base principal, salvo se o payload trouxer fato mais forte em sentido contrário.",
     "- se o pedido exigir arquivo específico que não foi enviado, diga qual arquivo é o próximo mais útil.",
     "- se houver risco de inferência excessiva, explicite esse limite sem enrolar.",
-    "- se o snapshot vier raso, não transforme isso automaticamente em diagnóstico de falha estrutural."
-  ].join("\n");
+    "- se o snapshot vier raso, não transforme isso automaticamente em diagnóstico de falha estrutural.",
+    asksOpenAI
+      ? "- como o pedido atual é sobre OpenAI/conexão/runtime/backend, priorize /functions/api/admin-ai.js e status connection antes de sugerir planner."
+      : ""
+  ].filter(Boolean).join("\n");
 
   const task = buildTaskText(action, prompt, payload);
 
@@ -1130,6 +1241,14 @@ function buildTaskText(action, prompt = "", payload = null) {
     p.includes("plano") ||
     p.includes("sequência") ||
     p.includes("sequencia");
+  const asksOpenAI =
+    p.includes("openai") ||
+    p.includes("conexão") ||
+    p.includes("conexao") ||
+    p.includes("endpoint") ||
+    p.includes("runtime") ||
+    p.includes("backend") ||
+    p.includes("api key");
 
   if (action === "factory_diagnosis") {
     return [
@@ -1182,6 +1301,11 @@ function buildTaskText(action, prompt = "", payload = null) {
       "Quando o pedido estiver raso ou o snapshot vier incompleto, foque mais em qual é o próximo arquivo certo do que em repetir diagnóstico genérico.",
       "Se o payload trouxer nuances entre presence, ready e active, respeite essas diferenças explicitamente."
     ];
+
+    if (asksOpenAI) {
+      lines.push("O pedido atual é sobre OpenAI/conexão/runtime/backend. Priorize diagnosticar a trilha real /functions/api/admin-ai.js -> runtime -> front.");
+      lines.push("Só indique planner como próximo arquivo se o próprio payload trouxer fato forte de que ele é o gargalo principal.");
+    }
 
     if (asksNextFile || asksPlan || asksAutonomy) {
       lines.push("O usuário está pedindo priorização real. Dê uma resposta objetiva indicando o próximo arquivo mais estratégico e por quê.");
@@ -1252,6 +1376,7 @@ function deriveResponseHints(text, payload, action, prompt = "") {
     risk: risk || "unknown",
     hasCodeBlock: /```[\s\S]*?```/.test(content),
     mentionsPlannerFlow: /planner|plano|prioridade|próximo arquivo|proximo arquivo/i.test(content),
+    mentionsOpenAIFlow: /openai|conexão|conexao|runtime|backend|endpoint|api key/i.test(content),
     nextFileCandidate: targetFile || "",
     plannerHintUsed: !!plannerHintFile,
     promptClass: detectBackendGoal(String(prompt || "").toLowerCase(), action)
