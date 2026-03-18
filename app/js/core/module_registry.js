@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/module_registry.js
    RControl Factory — Module Registry
-   v1.4.3 SAFE LOOP GUARD / PATCH MÍNIMO
+   v1.4.4 CURRENT STACK REGISTRY / SAFE LOOP GUARD
 
    Objetivo:
    - detectar módulos globais realmente carregados
@@ -10,14 +10,20 @@
    - reduzir snapshot vazio/inconsistente em Safari / PWA / pageshow / restore
    - evitar loop indireto entre summary -> refresh -> factory_state -> registry
    - funcionar como script clássico
+
+   PATCH v1.4.4:
+   - FIX: inclui stack completa atual da Factory AI
+   - FIX: diagnostics agora aponta para RCF_FACTORY_AI_DIAGNOSTICS
+   - FIX: adiciona memory/phase/autoloop/runtime/orchestrator/proposalUI/selfEvolution/autoheal/evolutionMode/governor/controller
+   - FIX: summary expõe módulos atuais completos
 */
 
 (function (global) {
   "use strict";
 
-  if (global.RCF_MODULE_REGISTRY && global.RCF_MODULE_REGISTRY.__v143) return;
+  if (global.RCF_MODULE_REGISTRY && global.RCF_MODULE_REGISTRY.__v144) return;
 
-  var VERSION = "v1.4.3";
+  var VERSION = "v1.4.4";
 
   var MODULE_KEYS = [
     "logger",
@@ -35,10 +41,23 @@
     "injector",
     "ui",
     "runtime",
+
     "factoryAIBridge",
     "factoryAIActions",
     "factoryAIPlanner",
-    "patchSupervisor"
+    "patchSupervisor",
+    "factoryAIDiagnostics",
+    "factoryAIMemory",
+    "factoryPhaseEngine",
+    "factoryAIAutoLoop",
+    "factoryAIRuntime",
+    "factoryAIOrchestrator",
+    "factoryAIProposalUI",
+    "factoryAISelfEvolution",
+    "factoryAIAutoHeal",
+    "factoryAIEvolutionMode",
+    "factoryAIGovernor",
+    "factoryAIController"
   ];
 
   var modules = {
@@ -57,10 +76,23 @@
     injector: false,
     ui: false,
     runtime: false,
+
     factoryAIBridge: false,
     factoryAIActions: false,
     factoryAIPlanner: false,
-    patchSupervisor: false
+    patchSupervisor: false,
+    factoryAIDiagnostics: false,
+    factoryAIMemory: false,
+    factoryPhaseEngine: false,
+    factoryAIAutoLoop: false,
+    factoryAIRuntime: false,
+    factoryAIOrchestrator: false,
+    factoryAIProposalUI: false,
+    factoryAISelfEvolution: false,
+    factoryAIAutoHeal: false,
+    factoryAIEvolutionMode: false,
+    factoryAIGovernor: false,
+    factoryAIController: false
   };
 
   var meta = {
@@ -185,7 +217,7 @@
 
   function detectBridge() {
     try {
-      return !!global.RCF_AGENT_ZIP_BRIDGE;
+      return !!global.RCF_AGENT_ZIP_BRIDGE || !!global.RCF_FACTORY_AI_BRIDGE;
     } catch (_) {
       return false;
     }
@@ -266,7 +298,12 @@
 
   function detectDiagnostics() {
     try {
-      return !!global.RCF_DIAGNOSTICS;
+      return !!global.RCF_FACTORY_AI_DIAGNOSTICS &&
+        (
+          hasFn(global.RCF_FACTORY_AI_DIAGNOSTICS, "scan") ||
+          hasFn(global.RCF_FACTORY_AI_DIAGNOSTICS, "getLastReport") ||
+          hasFn(global.RCF_FACTORY_AI_DIAGNOSTICS, "status")
+        );
     } catch (_) {
       return false;
     }
@@ -359,6 +396,141 @@
     }
   }
 
+  function detectFactoryAIMemory() {
+    try {
+      return !!global.RCF_FACTORY_AI_MEMORY &&
+        (
+          hasFn(global.RCF_FACTORY_AI_MEMORY, "buildMemoryContext") ||
+          hasFn(global.RCF_FACTORY_AI_MEMORY, "rememberDecision") ||
+          hasFn(global.RCF_FACTORY_AI_MEMORY, "status")
+        );
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function detectFactoryPhaseEngine() {
+    try {
+      return !!global.RCF_FACTORY_PHASE_ENGINE &&
+        (
+          hasFn(global.RCF_FACTORY_PHASE_ENGINE, "buildPhaseContext") ||
+          hasFn(global.RCF_FACTORY_PHASE_ENGINE, "status")
+        );
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function detectFactoryAIAutoLoop() {
+    try {
+      return !!global.RCF_FACTORY_AI_AUTOLOOP &&
+        (
+          hasFn(global.RCF_FACTORY_AI_AUTOLOOP, "runNow") ||
+          hasFn(global.RCF_FACTORY_AI_AUTOLOOP, "status")
+        );
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function detectFactoryAIRuntime() {
+    try {
+      return !!global.RCF_FACTORY_AI_RUNTIME &&
+        (
+          hasFn(global.RCF_FACTORY_AI_RUNTIME, "ask") ||
+          hasFn(global.RCF_FACTORY_AI_RUNTIME, "status")
+        );
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function detectFactoryAIOrchestrator() {
+    try {
+      return !!global.RCF_FACTORY_AI_ORCHESTRATOR &&
+        (
+          hasFn(global.RCF_FACTORY_AI_ORCHESTRATOR, "orchestrate") ||
+          hasFn(global.RCF_FACTORY_AI_ORCHESTRATOR, "status")
+        );
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function detectFactoryAIProposalUI() {
+    try {
+      return !!global.RCF_FACTORY_AI_PROPOSAL_UI &&
+        (
+          hasFn(global.RCF_FACTORY_AI_PROPOSAL_UI, "status") ||
+          hasFn(global.RCF_FACTORY_AI_PROPOSAL_UI, "show") ||
+          hasFn(global.RCF_FACTORY_AI_PROPOSAL_UI, "mount")
+        );
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function detectFactoryAISelfEvolution() {
+    try {
+      return !!global.RCF_FACTORY_AI_SELF_EVOLUTION &&
+        (
+          hasFn(global.RCF_FACTORY_AI_SELF_EVOLUTION, "status") ||
+          hasFn(global.RCF_FACTORY_AI_SELF_EVOLUTION, "runNow")
+        );
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function detectFactoryAIAutoHeal() {
+    try {
+      return !!global.RCF_FACTORY_AI_AUTOHEAL &&
+        (
+          hasFn(global.RCF_FACTORY_AI_AUTOHEAL, "scan") ||
+          hasFn(global.RCF_FACTORY_AI_AUTOHEAL, "status")
+        );
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function detectFactoryAIEvolutionMode() {
+    try {
+      return !!global.RCF_FACTORY_AI_EVOLUTION_MODE &&
+        (
+          hasFn(global.RCF_FACTORY_AI_EVOLUTION_MODE, "getMode") ||
+          hasFn(global.RCF_FACTORY_AI_EVOLUTION_MODE, "setMode") ||
+          hasFn(global.RCF_FACTORY_AI_EVOLUTION_MODE, "status")
+        );
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function detectFactoryAIGovernor() {
+    try {
+      return !!global.RCF_FACTORY_AI_GOVERNOR &&
+        (
+          hasFn(global.RCF_FACTORY_AI_GOVERNOR, "tick") ||
+          hasFn(global.RCF_FACTORY_AI_GOVERNOR, "status")
+        );
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function detectFactoryAIController() {
+    try {
+      return !!global.RCF_FACTORY_AI_CONTROLLER &&
+        (
+          hasFn(global.RCF_FACTORY_AI_CONTROLLER, "runEvolutionStep") ||
+          hasFn(global.RCF_FACTORY_AI_CONTROLLER, "status")
+        );
+    } catch (_) {
+      return false;
+    }
+  }
+
   function computeModules() {
     return {
       logger: detectLogger(),
@@ -376,10 +548,23 @@
       injector: detectInjector(),
       ui: detectUI(),
       runtime: detectRuntime(),
+
       factoryAIBridge: detectFactoryAIBridge(),
       factoryAIActions: detectFactoryAIActions(),
       factoryAIPlanner: detectFactoryAIPlanner(),
-      patchSupervisor: detectPatchSupervisor()
+      patchSupervisor: detectPatchSupervisor(),
+      factoryAIDiagnostics: detectDiagnostics(),
+      factoryAIMemory: detectFactoryAIMemory(),
+      factoryPhaseEngine: detectFactoryPhaseEngine(),
+      factoryAIAutoLoop: detectFactoryAIAutoLoop(),
+      factoryAIRuntime: detectFactoryAIRuntime(),
+      factoryAIOrchestrator: detectFactoryAIOrchestrator(),
+      factoryAIProposalUI: detectFactoryAIProposalUI(),
+      factoryAISelfEvolution: detectFactoryAISelfEvolution(),
+      factoryAIAutoHeal: detectFactoryAIAutoHeal(),
+      factoryAIEvolutionMode: detectFactoryAIEvolutionMode(),
+      factoryAIGovernor: detectFactoryAIGovernor(),
+      factoryAIController: detectFactoryAIController()
     };
   }
 
@@ -530,10 +715,23 @@
       injector: !!current.injector,
       ui: !!current.ui,
       runtime: !!current.runtime,
+
       factoryAIBridge: !!current.factoryAIBridge,
       factoryAIActions: !!current.factoryAIActions,
       factoryAIPlanner: !!current.factoryAIPlanner,
       patchSupervisor: !!current.patchSupervisor,
+      factoryAIDiagnostics: !!current.factoryAIDiagnostics,
+      factoryAIMemory: !!current.factoryAIMemory,
+      factoryPhaseEngine: !!current.factoryPhaseEngine,
+      factoryAIAutoLoop: !!current.factoryAIAutoLoop,
+      factoryAIRuntime: !!current.factoryAIRuntime,
+      factoryAIOrchestrator: !!current.factoryAIOrchestrator,
+      factoryAIProposalUI: !!current.factoryAIProposalUI,
+      factoryAISelfEvolution: !!current.factoryAISelfEvolution,
+      factoryAIAutoHeal: !!current.factoryAIAutoHeal,
+      factoryAIEvolutionMode: !!current.factoryAIEvolutionMode,
+      factoryAIGovernor: !!current.factoryAIGovernor,
+      factoryAIController: !!current.factoryAIController,
 
       lastRefresh: meta.lastRefresh || nowISO(),
       lastChange: meta.lastChange || null,
@@ -550,6 +748,7 @@
     __v141: true,
     __v142: true,
     __v143: true,
+    __v144: true,
     version: VERSION,
     register: register,
     unregister: unregister,
