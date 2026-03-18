@@ -1,29 +1,14 @@
 /* FILE: /functions/api/admin-ai.js
    RControl Factory — Factory AI API
-   v3.5.0 CHAT COPILOT BACKEND + DETERMINISTIC PLANNER HINT
+   v3.5.1 CHAT COPILOT BACKEND + DETERMINISTIC PLANNER HINT + OPENAI STATUS FIX
 
-   - mantém CORS e POST atuais
-   - continua usando OPENAI_API_KEY
-   - mantém compatibilidade com actions antigas
-   - aceita histórico simples de conversa
-   - aceita payload contextual expandido
-   - aceita metadados de anexos
-   - aceita aliases do fluxo novo da Factory AI
-   - melhora modo chat como copiloto técnico real da Factory
-   - diferencia dado ausente de falha confirmada
-   - diferencia presença x prontidão x ativação
-   - prioriza evolução da própria Factory AI
-   - entende melhor planner / next file / autonomia / patch supervisionado
-   - mantém resposta aterrada no payload
-   - não autoriza invenção de estados da Factory
-   - preparado para futuro suporte real a ZIP / PDF / imagem / vídeo / arquivos
-
-   PATCH v3.5.0:
-   - ADD: planner_hint determinístico no backend
-   - ADD: priorização local forte para next file / autonomia / evolução
-   - FIX: evita tree/state/doctor sequestrarem resposta quando contexto já aponta para Factory AI
-   - FIX: targetFile derivado agora prioriza planner_hint real
-   - FIX: prompt do modelo recebe guidance operacional mais forte e menos ambígua
+   PATCH v3.5.1:
+   - FIX: retorna status explícito da conexão OpenAI no backend
+   - FIX: melhora diagnóstico quando OPENAI_API_KEY estiver ausente
+   - FIX: adiciona timeout seguro na chamada upstream
+   - FIX: expõe model/provider/upstream status no retorno
+   - FIX: mantém compatibilidade total com o fluxo atual
+   - FIX: não muda arquitetura central, apenas fortalece diagnóstico e resposta
 */
 
 export async function onRequestOptions() {
@@ -37,10 +22,16 @@ export async function onRequestPost(context) {
   const { request, env } = context;
 
   try {
-    if (!env.OPENAI_API_KEY) {
+    if (!env || !env.OPENAI_API_KEY) {
       return json({
         ok: false,
-        error: "OPENAI_API_KEY ausente no ambiente."
+        error: "OPENAI_API_KEY ausente no ambiente.",
+        connection: {
+          provider: "openai",
+          configured: false,
+          attempted: false,
+          status: "missing_api_key"
+        }
       }, 500);
     }
 
@@ -48,7 +39,13 @@ export async function onRequestPost(context) {
     if (!body || typeof body !== "object") {
       return json({
         ok: false,
-        error: "JSON inválido."
+        error: "JSON inválido.",
+        connection: {
+          provider: "openai",
+          configured: true,
+          attempted: false,
+          status: "invalid_json"
+        }
       }, 400);
     }
 
@@ -77,7 +74,13 @@ export async function onRequestPost(context) {
       return json({
         ok: false,
         error: "Ação não permitida nesta fase.",
-        action
+        action,
+        connection: {
+          provider: "openai",
+          configured: true,
+          attempted: false,
+          status: "blocked_action"
+        }
       }, 400);
     }
 
@@ -91,29 +94,34 @@ export async function onRequestPost(context) {
       version
     });
 
-    const upstream = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${env.OPENAI_API_KEY}`
-      },
-      body: JSON.stringify({
-        model: env.OPENAI_MODEL || "gpt-4.1-mini",
-        input
-      })
-    });
+    const model = String(env.OPENAI_MODEL || "gpt-4.1-mini").trim() || "gpt-4.1-mini";
+    const upstreamUrl = String(env.OPENAI_BASE_URL || "https://api.openai.com/v1/responses").trim();
 
-    const data = await upstream.json().catch(() => ({}));
+    const upstream = await postToOpenAI({
+      url: upstreamUrl,
+      apiKey: env.OPENAI_API_KEY,
+      model,
+      input
+    });
 
     if (!upstream.ok) {
       return json({
         ok: false,
         error: "Falha ao chamar OpenAI.",
         status: upstream.status,
-        details: data
+        details: upstream.data,
+        connection: {
+          provider: "openai",
+          configured: true,
+          attempted: true,
+          status: "upstream_error",
+          model,
+          upstreamStatus: upstream.status
+        }
       }, 502);
     }
 
+    const data = upstream.data || {};
     const text = extractText(data);
     const derived = deriveResponseHints(text, payload, action, prompt);
 
@@ -124,13 +132,67 @@ export async function onRequestPost(context) {
       version,
       analysis: text || "(sem texto retornado)",
       hints: derived,
-      raw: data
+      raw: data,
+      connection: {
+        provider: "openai",
+        configured: true,
+        attempted: true,
+        status: "connected",
+        model,
+        upstreamStatus: upstream.status
+      }
     });
   } catch (err) {
     return json({
       ok: false,
-      error: String(err?.message || err || "Erro interno.")
+      error: String(err?.message || err || "Erro interno."),
+      connection: {
+        provider: "openai",
+        configured: true,
+        attempted: true,
+        status: "internal_error"
+      }
     }, 500);
+  }
+}
+
+async function postToOpenAI({ url, apiKey, model, input }) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    try { controller.abort(); } catch (_) {}
+  }, 45000);
+
+  try {
+    const upstream = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model,
+        input
+      }),
+      signal: controller.signal
+    });
+
+    const data = await upstream.json().catch(() => ({}));
+
+    return {
+      ok: upstream.ok,
+      status: upstream.status,
+      data
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      status: 0,
+      data: {
+        error: String(err?.message || err || "Falha de rede para OpenAI.")
+      }
+    };
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
