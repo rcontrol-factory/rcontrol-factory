@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/factory_ai_autoloop.js
    RControl Factory — Factory AI AutoLoop
-   v1.0.1 SUPERVISED AUTO EVOLUTION LOOP + PHASE GUARD
+   v1.0.2 SUPERVISED AUTO EVOLUTION LOOP + PHASE GUARD
 
    Objetivo:
    - criar laço supervisionado de autoevolução da Factory AI
@@ -12,18 +12,20 @@
    - preparar base para futuro fluxo approve -> validate -> stage -> apply
    - funcionar como script clássico
 
-   PATCH v1.0.1:
-   - FIX: bloqueia autoloop quando a fase ativa não permite allow.autoloop
-   - FIX: getPhaseContext mais robusto com fallback para activePhaseId/activePhaseTitle
-   - FIX: bindEvents aceita activePhaseId e phaseId
+   PATCH v1.0.2:
+   - FIX: bindEvents agora usa guarda para evitar duplo bind
+   - FIX: normaliza leitura de plano (plan / plannerPlan / response.plan)
+   - FIX: bloqueia autoloop quando já existe plano pendente no bridge
+   - FIX: bloqueia autoloop quando já existe staged patch no patch supervisor
+   - FIX: rememberRun / rememberIntoMemory usam plano normalizado
 */
 
 ;(function (global) {
   "use strict";
 
-  if (global.RCF_FACTORY_AI_AUTOLOOP && global.RCF_FACTORY_AI_AUTOLOOP.__v101) return;
+  if (global.RCF_FACTORY_AI_AUTOLOOP && global.RCF_FACTORY_AI_AUTOLOOP.__v102) return;
 
-  var VERSION = "v1.0.1";
+  var VERSION = "v1.0.2";
   var STORAGE_KEY = "rcf:factory_ai_autoloop";
   var DEFAULT_INTERVAL_MS = 30 * 60 * 1000;
   var MIN_INTERVAL_MS = 60 * 1000;
@@ -50,11 +52,6 @@
   function nowISO() {
     try { return new Date().toISOString(); }
     catch (_) { return ""; }
-  }
-
-  function nowMS() {
-    try { return Date.now(); }
-    catch (_) { return 0; }
   }
 
   function clone(obj) {
@@ -182,6 +179,14 @@
     return safe(function () { return global.RCF_FACTORY_AI_MEMORY || null; }, null);
   }
 
+  function getBridge() {
+    return safe(function () { return global.RCF_FACTORY_AI_BRIDGE || null; }, null);
+  }
+
+  function getPatchSupervisor() {
+    return safe(function () { return global.RCF_PATCH_SUPERVISOR || null; }, null);
+  }
+
   function getPhaseEngine() {
     return safe(function () { return global.RCF_FACTORY_PHASE_ENGINE || null; }, null);
   }
@@ -252,6 +257,37 @@
     return clone(memory.buildMemoryContext(20) || {});
   }
 
+  function getPendingPlan() {
+    var bridge = getBridge();
+    if (!bridge || typeof bridge.getPendingPlan !== "function") return null;
+    return clone(bridge.getPendingPlan() || null);
+  }
+
+  function hasStagedPatch() {
+    var sup = getPatchSupervisor();
+    if (!sup || typeof sup.status !== "function") return false;
+    var st = sup.status() || {};
+    return !!safe(function () { return st.hasStagedPatch; }, false);
+  }
+
+  function extractPlan(result) {
+    if (!result || typeof result !== "object") return null;
+
+    if (result.plan && typeof result.plan === "object") {
+      return clone(result.plan);
+    }
+
+    if (result.plannerPlan && typeof result.plannerPlan === "object") {
+      return clone(result.plannerPlan);
+    }
+
+    if (result.response && result.response.plan && typeof result.response.plan === "object") {
+      return clone(result.response.plan);
+    }
+
+    return null;
+  }
+
   function buildAutoPrompt() {
     var phase = getPhaseContext();
     var memory = getMemoryContext();
@@ -281,7 +317,7 @@
   }
 
   function rememberRun(result) {
-    var plan = clone(result && result.plan || {});
+    var plan = extractPlan(result) || {};
     var targetFile = normalizePath(plan.targetFile || plan.nextFile || "");
     var planId = trimText(plan.id || "");
     var reason = trimText(plan.nextStep || plan.reason || "");
@@ -311,7 +347,7 @@
     var memory = getMemory();
     if (!memory) return false;
 
-    var plan = clone(result && result.plan || {});
+    var plan = extractPlan(result) || {};
     var phase = getPhaseContext();
 
     try {
@@ -387,6 +423,53 @@
       return blockedPhase;
     }
 
+    var pendingPlan = getPendingPlan();
+    if (pendingPlan && pendingPlan.id) {
+      var blockedPending = {
+        ok: false,
+        msg: "autoloop bloqueado: já existe plano pendente"
+      };
+
+      state.lastStatus = "blocked-pending-plan";
+      state.lastError = blockedPending.msg;
+      state.lastPlanId = trimText(pendingPlan.id || "");
+      state.lastTargetFile = normalizePath(pendingPlan.targetFile || pendingPlan.nextFile || "");
+      persist();
+
+      pushHistory({
+        type: "autoloop-blocked-pending-plan",
+        ts: nowISO(),
+        planId: state.lastPlanId,
+        targetFile: state.lastTargetFile
+      });
+
+      pushLog("WARN", "runCycle bloqueado por plano pendente", {
+        planId: state.lastPlanId,
+        targetFile: state.lastTargetFile
+      });
+
+      return blockedPending;
+    }
+
+    if (hasStagedPatch()) {
+      var blockedStage = {
+        ok: false,
+        msg: "autoloop bloqueado: já existe staged patch aguardando resolução"
+      };
+
+      state.lastStatus = "blocked-staged-patch";
+      state.lastError = blockedStage.msg;
+      persist();
+
+      pushHistory({
+        type: "autoloop-blocked-staged-patch",
+        ts: nowISO()
+      });
+
+      pushLog("WARN", "runCycle bloqueado por staged patch");
+      return blockedStage;
+    }
+
     state.running = true;
     state.lastStatus = "running";
     state.lastError = "";
@@ -459,9 +542,11 @@
         result: clone(result)
       });
 
+      var resultPlan = extractPlan(result) || {};
+
       pushLog("OK", "runCycle ✅", {
-        planId: trimText(safe(function () { return result.plan.id; }, "")),
-        targetFile: normalizePath(safe(function () { return result.plan.targetFile || result.plan.nextFile; }, "")),
+        planId: trimText(resultPlan.id || ""),
+        targetFile: normalizePath(resultPlan.targetFile || resultPlan.nextFile || ""),
         phaseId: state.lastPhaseId
       });
 
@@ -692,6 +777,9 @@
 
   function bindEvents() {
     try {
+      if (global.__RCF_FACTORY_AI_AUTOLOOP_EVENTS_V102) return;
+      global.__RCF_FACTORY_AI_AUTOLOOP_EVENTS_V102 = true;
+
       global.addEventListener("RCF:FACTORY_PHASE_CHANGED", function (ev) {
         try {
           var detail = ev && ev.detail ? ev.detail : {};
@@ -738,6 +826,7 @@
   global.RCF_FACTORY_AI_AUTOLOOP = {
     __v100: true,
     __v101: true,
+    __v102: true,
     version: VERSION,
     init: init,
     status: status,
