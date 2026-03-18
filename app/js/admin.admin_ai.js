@@ -1,6 +1,6 @@
 /* FILE: /app/js/admin.admin_ai.js
    RControl Factory — Factory AI
-   v4.3.0 LOCAL ACTION BRIDGE + MOUNT GUARD + CHAT SCROLL FIX + HISTORY PERSIST
+   v4.3.1 BRAIN-FIRST ENTRY + LOCAL ACTION BRIDGE + MOUNT GUARD + CHAT SCROLL FIX + HISTORY PERSIST
 
    - mantém visual chat-first aprovado
    - mantém botão + fora da cápsula
@@ -22,19 +22,21 @@
    - FIX NOVO: reduz sync agressivo
    - ADD NOVO: usa camada supervisionada local (planner/bridge/actions/patch supervisor)
    - ADD NOVO: sobe para orchestrator local quando não for ação local direta
+   - ADD v4.3.1: sobe primeiro para RCF_FACTORY_AI_BRAIN quando disponível
+   - ADD v4.3.1: inclui identity/brainLayer no snapshot lean
    - não executa patch automático sem fluxo supervisionado
 */
 
 (() => {
   "use strict";
 
-  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v430) return;
+  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v431) return;
 
-  const VERSION = "v4.3.0";
+  const VERSION = "v4.3.1";
   const BOX_ID = "rcfFactoryAIBox";
   const CHAT_ID = "rcfFactoryAIChat";
-  const STYLE_ID = "rcfFactoryAIStyleV430";
-  const HISTORY_KEY = "rcf:factory_ai_history_v43";
+  const STYLE_ID = "rcfFactoryAIStyleV431";
+  const HISTORY_KEY = "rcf:factory_ai_history_v431";
   const HISTORY_MAX = 80;
 
   const SYNC_INTERVAL_MS = 2200;
@@ -168,9 +170,9 @@
 
   function bindChatScroll() {
     const chat = getChatEl();
-    if (!chat || chat.__rcfBoundScrollV430) return;
+    if (!chat || chat.__rcfBoundScrollV431) return;
 
-    chat.__rcfBoundScrollV430 = true;
+    chat.__rcfBoundScrollV431 = true;
     STATE.pinnedToBottom = true;
 
     chat.addEventListener("scroll", () => {
@@ -455,6 +457,20 @@
       return {};
     })();
 
+    const brainStatus = (() => {
+      try {
+        return window.RCF_FACTORY_AI_BRAIN?.status?.() || {};
+      } catch {}
+      return {};
+    })();
+
+    const identitySummary = (() => {
+      try {
+        return window.RCF_FACTORY_AI_IDENTITY?.summary?.() || {};
+      } catch {}
+      return {};
+    })();
+
     return {
       factory: {
         version:
@@ -488,7 +504,9 @@
           hasFactoryAIPlanner: !!window.RCF_FACTORY_AI_PLANNER,
           hasFactoryAIBridge: !!window.RCF_FACTORY_AI_BRIDGE,
           hasFactoryAIActions: !!window.RCF_FACTORY_AI_ACTIONS,
-          hasPatchSupervisor: !!window.RCF_PATCH_SUPERVISOR
+          hasPatchSupervisor: !!window.RCF_PATCH_SUPERVISOR,
+          hasFactoryAIBrain: !!window.RCF_FACTORY_AI_BRAIN,
+          hasFactoryAIIdentity: !!window.RCF_FACTORY_AI_IDENTITY
         }
       },
       doctor: {
@@ -515,6 +533,7 @@
         factoryAIBridge: !!moduleSummary?.modules?.factoryAIBridge,
         factoryAIActions: !!moduleSummary?.modules?.factoryAIActions,
         patchSupervisor: !!moduleSummary?.modules?.patchSupervisor,
+        factoryAIBrain: !!moduleSummary?.modules?.factoryAIBrain,
         modules: clone(moduleSummary.modules || {})
       },
       planner: {
@@ -537,6 +556,15 @@
         plannerReady: !!actionsStatus.plannerReady,
         bridgeReady: !!actionsStatus.bridgeReady,
         patchSupervisorReady: !!actionsStatus.patchSupervisorReady
+      },
+      brainLayer: {
+        ready: !!window.RCF_FACTORY_AI_BRAIN,
+        version: window.RCF_FACTORY_AI_BRAIN?.version || "unknown",
+        lastIntent: brainStatus.lastIntent || "",
+        lastRoute: brainStatus.lastRoute || "",
+        lastTargetFile: brainStatus.lastTargetFile || "",
+        identityName: identitySummary.name || "",
+        identityRole: identitySummary.role || ""
       },
       patchSupervisor: {
         ready: !!window.RCF_PATCH_SUPERVISOR,
@@ -609,8 +637,12 @@
     const planner = raw.factoryAIPlanner || raw.planner || {};
     const bridgeLayer = raw.factoryAIBridge || raw.bridgeLayer || {};
     const actionsLayer = raw.factoryAIActions || raw.actionsLayer || {};
+    const brainLayer = raw.factoryAIBrain || raw.brainLayer || {};
     const patchSupervisor = raw.patchSupervisor || {};
     const state = window.RCF?.state || {};
+    const identitySummary = (() => {
+      try { return window.RCF_FACTORY_AI_IDENTITY?.summary?.() || {}; } catch { return {}; }
+    })();
 
     const activeModules = (() => {
       try {
@@ -659,7 +691,8 @@
           factoryAIPlanner: !!modules.factoryAIPlanner,
           factoryAIBridge: !!modules.factoryAIBridge,
           factoryAIActions: !!modules.factoryAIActions,
-          patchSupervisor: !!modules.patchSupervisor
+          patchSupervisor: !!modules.patchSupervisor,
+          factoryAIBrain: !!modules.factoryAIBrain
         },
         total: Number(modules.total || 0)
       },
@@ -683,6 +716,15 @@
         plannerReady: !!actionsLayer.plannerReady,
         bridgeReady: !!actionsLayer.bridgeReady,
         patchSupervisorReady: !!actionsLayer.patchSupervisorReady
+      },
+      brainLayer: {
+        ready: !!brainLayer.ready || !!window.RCF_FACTORY_AI_BRAIN,
+        version: brainLayer.version || window.RCF_FACTORY_AI_BRAIN?.version || "unknown",
+        lastIntent: brainLayer.lastIntent || "",
+        lastRoute: brainLayer.lastRoute || "",
+        lastTargetFile: brainLayer.lastTargetFile || "",
+        identityName: identitySummary.name || "",
+        identityRole: identitySummary.role || ""
       },
       patchSupervisor: {
         ready: !!patchSupervisor.ready,
@@ -712,7 +754,14 @@
         hasFactoryAIPlanner: !!factory.flags?.hasFactoryAIPlanner,
         hasFactoryAIBridge: !!factory.flags?.hasFactoryAIBridge,
         hasFactoryAIActions: !!factory.flags?.hasFactoryAIActions,
-        hasPatchSupervisor: !!factory.flags?.hasPatchSupervisor
+        hasPatchSupervisor: !!factory.flags?.hasPatchSupervisor,
+        hasFactoryAIBrain: !!factory.flags?.hasFactoryAIBrain || !!window.RCF_FACTORY_AI_BRAIN,
+        hasFactoryAIIdentity: !!factory.flags?.hasFactoryAIIdentity || !!window.RCF_FACTORY_AI_IDENTITY
+      },
+      identity: {
+        name: identitySummary.name || "",
+        role: identitySummary.role || "",
+        mission: identitySummary.mission || ""
       },
       environment: {
         platform: environment.platform || navigator.platform || "",
@@ -1944,6 +1993,64 @@
     }
   }
 
+  async function runBrainPrompt(prompt) {
+    const brain = window.RCF_FACTORY_AI_BRAIN;
+
+    if (!brain || typeof brain.think !== "function") {
+      return { ok: false, msg: "RCF_FACTORY_AI_BRAIN indisponível." };
+    }
+
+    setButtonsBusy(true);
+    setComposerStatus("pensando...");
+    setTechResult("");
+
+    try {
+      const result = await brain.think({ prompt });
+      const text =
+        (typeof result?.answer === "string" && result.answer.trim())
+          ? result.answer
+          : (typeof result?.analysis === "string" && result.analysis.trim())
+            ? result.analysis
+            : pretty(result || { ok: false, msg: "sem resposta do brain" });
+
+      setComposerStatus(result?.ok === false ? "falha local" : "concluído local");
+      setTechResult(text);
+
+      pushHistory({
+        role: "assistant",
+        text,
+        ts: new Date().toISOString()
+      });
+
+      renderChat({ forceBottom: true });
+
+      try {
+        window.dispatchEvent(new CustomEvent("RCF:FACTORY_AI_BRAIN_RESPONSE", {
+          detail: { prompt, result: clone(result || {}) }
+        }));
+      } catch {}
+
+      log(result?.ok === false ? "WARN" : "OK", "brain executado");
+      return result;
+    } catch (e) {
+      const msg = String(e?.message || e || "Erro no brain");
+      setComposerStatus("erro local");
+      setTechResult(msg);
+
+      pushHistory({
+        role: "assistant",
+        text: msg,
+        ts: new Date().toISOString()
+      });
+
+      renderChat({ forceBottom: true });
+      log("ERR", "erro no brain");
+      return { ok: false, msg };
+    } finally {
+      setButtonsBusy(false);
+    }
+  }
+
   async function runOrchestratorPrompt(prompt) {
     const orch = window.RCF_FACTORY_AI_ORCHESTRATOR;
 
@@ -2134,6 +2241,8 @@
 
     if (localAction) {
       runLocalAction(localAction, finalPrompt);
+    } else if (window.RCF_FACTORY_AI_BRAIN?.think) {
+      runBrainPrompt(finalPrompt);
     } else if (window.RCF_FACTORY_AI_ORCHESTRATOR?.orchestrate) {
       runOrchestratorPrompt(finalPrompt);
     } else {
@@ -2536,8 +2645,8 @@
 
   function bindHeaderButtons() {
     const btnClear = document.getElementById("rcfFactoryAIClearHistory");
-    if (btnClear && !btnClear.__boundClearV430) {
-      btnClear.__boundClearV430 = true;
+    if (btnClear && !btnClear.__boundClearV431) {
+      btnClear.__boundClearV431 = true;
       btnClear.addEventListener("click", () => {
         try {
           const ok = window.confirm("Limpar histórico desta conversa da Factory AI?");
@@ -2554,15 +2663,15 @@
     const attachBtn = document.getElementById("rcfFactoryAIAttachBtn");
     const voiceBtn = document.getElementById("rcfFactoryAIVoiceBtn");
 
-    if (sendBtn && !sendBtn.__boundV430) {
-      sendBtn.__boundV430 = true;
+    if (sendBtn && !sendBtn.__boundV431) {
+      sendBtn.__boundV431 = true;
       sendBtn.addEventListener("click", () => {
         sendPrompt(String(promptEl?.value || "").trim(), "");
       }, { passive: true });
     }
 
-    if (promptEl && !promptEl.__boundInputV430) {
-      promptEl.__boundInputV430 = true;
+    if (promptEl && !promptEl.__boundInputV431) {
+      promptEl.__boundInputV431 = true;
       autoResizePrompt(promptEl);
 
       promptEl.addEventListener("input", () => {
@@ -2579,15 +2688,15 @@
       });
     }
 
-    if (attachBtn && !attachBtn.__boundV430) {
-      attachBtn.__boundV430 = true;
+    if (attachBtn && !attachBtn.__boundV431) {
+      attachBtn.__boundV431 = true;
       attachBtn.addEventListener("click", () => {
         toggleAttachMenu("rcfFactoryAIClipMenuMain");
       }, { passive: true });
     }
 
-    if (voiceBtn && !voiceBtn.__boundV430) {
-      voiceBtn.__boundV430 = true;
+    if (voiceBtn && !voiceBtn.__boundV431) {
+      voiceBtn.__boundV431 = true;
       voiceBtn.addEventListener("click", () => {
         toggleListening();
       }, { passive: true });
@@ -2600,8 +2709,8 @@
     renderAttachments();
     setVoiceBtnState();
 
-    if (!document.__rcfFactoryAIOutsideClickV430) {
-      document.__rcfFactoryAIOutsideClickV430 = true;
+    if (!document.__rcfFactoryAIOutsideClickV431) {
+      document.__rcfFactoryAIOutsideClickV431 = true;
       document.addEventListener("click", (ev) => {
         try {
           const wrap = document.getElementById("rcfFactoryAIAttachWrap");
@@ -2637,7 +2746,7 @@
             </div>
           </div>
           <div class="rcfAiHeadActions">
-            <div class="rcfAiPill">OpenAI + runtime local</div>
+            <div class="rcfAiPill">Brain + Orchestrator + runtime local</div>
             <button class="rcfAiHeadBtn" id="rcfFactoryAIClearHistory" type="button">Limpar</button>
           </div>
         </section>
@@ -2831,8 +2940,8 @@
     bindVisibilityHooksOnce();
 
     try {
-      if (!document.__rcfFactoryAIClickSyncV430) {
-        document.__rcfFactoryAIClickSyncV430 = true;
+      if (!document.__rcfFactoryAIClickSyncV431) {
+        document.__rcfFactoryAIClickSyncV431 = true;
         document.addEventListener("click", () => {
           setTimeout(() => {
             try { syncVisibility(); } catch {}
@@ -2850,6 +2959,7 @@
     __v42: true,
     __v421: true,
     __v430: true,
+    __v431: true,
     version: VERSION,
     mount,
     clearChat,
@@ -2873,6 +2983,7 @@
     __v42_bridge: true,
     __v421_bridge: true,
     __v430_bridge: true,
+    __v431_bridge: true,
     version: VERSION,
     mount,
     clearChat,
