@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/patch_supervisor.js
    RControl Factory — Patch Supervisor
-   v1.0.1 SUPERVISED PATCH FLOW + SAFE WRITER FALLBACK
+   v1.0.2 SUPERVISED PATCH FLOW + SAFE WRITER FALLBACK + PLAN RESOLVE GUARD
 
    Objetivo:
    - supervisionar fluxo de patch aprovado pela Factory AI
@@ -12,20 +12,19 @@
    - expor API global via window.RCF_PATCH_SUPERVISOR
    - funcionar como script clássico
 
-   PATCH v1.0.1:
-   - FIX: aceita targetFile OU nextFile
-   - FIX: validação mais forte + contexto adicional
-   - FIX: writer com mais fallbacks seguros
-   - FIX: stage/apply mais consistente no Safari/PWA
-   - FIX: status expõe melhor staged/apply state
+   PATCH v1.0.2:
+   - FIX: resolve melhor o plano atual via pending/last/planId explícito
+   - FIX: valida known files usando snapshot + factory_tree
+   - FIX: apply também respeita allow.apply da fase ativa
+   - FIX: status expõe melhor validação/stage/apply
 */
 
 ;(function (global) {
   "use strict";
 
-  if (global.RCF_PATCH_SUPERVISOR && global.RCF_PATCH_SUPERVISOR.__v101) return;
+  if (global.RCF_PATCH_SUPERVISOR && global.RCF_PATCH_SUPERVISOR.__v102) return;
 
-  var VERSION = "v1.0.1";
+  var VERSION = "v1.0.2";
   var STORAGE_KEY = "rcf:patch_supervisor";
   var MAX_HISTORY = 80;
 
@@ -94,7 +93,16 @@
   function persist() {
     try {
       state.lastUpdate = nowISO();
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        version: VERSION,
+        ready: !!state.ready,
+        lastUpdate: state.lastUpdate,
+        stagedPlanId: state.stagedPlanId || "",
+        stagedPatch: clone(state.stagedPatch || null),
+        lastValidationResult: clone(state.lastValidationResult || null),
+        lastApplyResult: clone(state.lastApplyResult || null),
+        history: Array.isArray(state.history) ? state.history.slice(-MAX_HISTORY) : []
+      }));
       return true;
     } catch (_) {
       return false;
@@ -108,6 +116,9 @@
       var parsed = JSON.parse(raw);
       if (!parsed || typeof parsed !== "object") return false;
       state = merge(clone(state), parsed);
+      state.version = VERSION;
+      if (!Array.isArray(state.history)) state.history = [];
+      if (state.history.length > MAX_HISTORY) state.history = state.history.slice(-MAX_HISTORY);
       return true;
     } catch (_) {
       return false;
@@ -161,6 +172,22 @@
     }, {});
   }
 
+  function getTreeKnownPaths() {
+    return safe(function () {
+      if (global.RCF_FACTORY_TREE?.getKnownPaths) return global.RCF_FACTORY_TREE.getKnownPaths();
+      return [];
+    }, []);
+  }
+
+  function getPhaseContext() {
+    return safe(function () {
+      if (global.RCF_FACTORY_PHASE_ENGINE?.buildPhaseContext) {
+        return global.RCF_FACTORY_PHASE_ENGINE.buildPhaseContext();
+      }
+      return {};
+    }, {});
+  }
+
   function getActiveApp() {
     return safe(function () {
       return global.RCF?.state?.active?.appSlug || "";
@@ -179,7 +206,8 @@
       .concat(Array.isArray(groups.admin) ? groups.admin : [])
       .concat(Array.isArray(groups.engine) ? groups.engine : [])
       .concat(Array.isArray(groups.functions) ? groups.functions : [])
-      .concat(Array.isArray(snapshot.candidateFiles) ? snapshot.candidateFiles : []);
+      .concat(Array.isArray(snapshot.candidateFiles) ? snapshot.candidateFiles : [])
+      .concat(Array.isArray(getTreeKnownPaths()) ? getTreeKnownPaths() : []);
 
     var uniq = [];
     var seen = {};
@@ -235,6 +263,30 @@
     };
   }
 
+  function resolvePlanFromBridge(planId) {
+    var bridge = getBridge();
+    if (!bridge) return null;
+
+    var want = trimText(planId || "");
+    var pending = safe(function () {
+      return typeof bridge.getPendingPlan === "function" ? bridge.getPendingPlan() : null;
+    }, null);
+    var last = safe(function () {
+      return typeof bridge.getLastPlan === "function" ? bridge.getLastPlan() : null;
+    }, null);
+
+    if (want) {
+      if (pending && trimText(pending.id) === want) return clone(pending);
+      if (last && trimText(last.id) === want) return clone(last);
+      return null;
+    }
+
+    if (pending && trimText(pending.id || "")) return clone(pending);
+    if (last && trimText(last.id || "")) return clone(last);
+
+    return null;
+  }
+
   function validatePlanShape(plan) {
     var normalized = normalizePlan(plan);
     var out = {
@@ -252,7 +304,7 @@
     if (normalized.approvalStatus !== "approved") out.warnings.push("approvalStatus não está approved");
 
     if (normalized.targetFile && !fileExistsInSnapshot(normalized.targetFile)) {
-      out.warnings.push("targetFile não encontrado no snapshot atual");
+      out.warnings.push("targetFile não encontrado no snapshot/tree atual");
     }
 
     out.ok = out.errors.length === 0;
@@ -262,7 +314,7 @@
   function validateApprovedPlan(planId) {
     var bridge = getBridge();
 
-    if (!bridge || typeof bridge.getLastPlan !== "function") {
+    if (!bridge) {
       var noBridge = {
         ok: false,
         msg: "Factory AI Bridge indisponível.",
@@ -275,7 +327,7 @@
       return noBridge;
     }
 
-    var plan = bridge.getLastPlan();
+    var plan = resolvePlanFromBridge(planId);
     if (!plan || typeof plan !== "object") {
       var noPlan = {
         ok: false,
@@ -293,7 +345,7 @@
     if (!want || want !== trimText(plan.id)) {
       var mismatch = {
         ok: false,
-        msg: "planId não confere com o último plano.",
+        msg: "planId não confere com o plano resolvido.",
         errors: ["planId mismatch"],
         warnings: [],
         normalized: null
@@ -401,6 +453,11 @@
     });
 
     emit("RCF:PATCH_STAGED", {
+      planId: staged.planId,
+      stagedPatch: clone(staged)
+    });
+
+    emit("RCF:PATCH_SUPERVISOR_STAGE_OK", {
       planId: staged.planId,
       stagedPatch: clone(staged)
     });
@@ -517,6 +574,12 @@
     };
   }
 
+  function isApplyAllowedByPhase() {
+    var phaseCtx = getPhaseContext();
+    var allow = safe(function () { return phaseCtx.activePhase.allow; }, {}) || {};
+    return !!allow.apply;
+  }
+
   async function applyApprovedPlan(planId, opts) {
     var options = clone(opts || {});
     var validation = validateApprovedPlan(planId);
@@ -539,6 +602,26 @@
 
       pushLog("WARN", "applyApprovedPlan bloqueado", blocked);
       return blocked;
+    }
+
+    if (!isApplyAllowedByPhase()) {
+      var blockedByPhase = {
+        ok: false,
+        msg: "Apply bloqueado pela fase ativa da Factory.",
+        planId: trimText(validation.planId || "")
+      };
+
+      state.lastApplyResult = clone(blockedByPhase);
+      persist();
+
+      pushHistory({
+        type: "apply-blocked-phase",
+        ts: nowISO(),
+        result: clone(blockedByPhase)
+      });
+
+      pushLog("WARN", "applyApprovedPlan bloqueado pela fase", blockedByPhase);
+      return blockedByPhase;
     }
 
     var staged = state.stagedPatch;
@@ -636,6 +719,12 @@
         }
       } catch (_) {}
 
+      try {
+        if (global.RCF_FACTORY_TREE?.refresh) {
+          global.RCF_FACTORY_TREE.refresh();
+        }
+      } catch (_) {}
+
       state.stagedPlanId = "";
       state.stagedPatch = null;
     }
@@ -650,6 +739,11 @@
     });
 
     emit(result.ok ? "RCF:PATCH_APPLIED" : "RCF:PATCH_APPLY_FAILED", clone(result));
+
+    if (result.ok) {
+      emit("RCF:PATCH_SUPERVISOR_APPLY_OK", clone(result));
+    }
+
     pushLog(result.ok ? "OK" : "ERR", "applyApprovedPlan", result);
 
     return result;
@@ -687,8 +781,13 @@
       hasStagedPatch: !!state.stagedPatch,
       stagedTargetFile: safe(function () { return state.stagedPatch.targetFile; }, ""),
       stagedRisk: safe(function () { return state.stagedPatch.risk; }, "unknown"),
+      stagedMode: safe(function () { return state.stagedPatch.mode; }, ""),
+      lastValidationOk: safe(function () { return !!state.lastValidationResult.ok; }, false),
+      lastValidationPlanId: safe(function () { return state.lastValidationResult.planId; }, ""),
+      lastValidationMsg: safe(function () { return state.lastValidationResult.msg; }, ""),
       lastApplyOk: safe(function () { return !!state.lastApplyResult.ok; }, false),
       lastApplyTargetFile: safe(function () { return state.lastApplyResult.targetFile; }, ""),
+      lastApplyMsg: safe(function () { return state.lastApplyResult.msg; }, ""),
       historyCount: Array.isArray(state.history) ? state.history.length : 0,
       activeAppSlug: getActiveApp()
     };
@@ -724,6 +823,7 @@
   global.RCF_PATCH_SUPERVISOR = {
     __v100: true,
     __v101: true,
+    __v102: true,
     version: VERSION,
     init: init,
     status: status,
