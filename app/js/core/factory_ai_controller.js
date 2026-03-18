@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/factory_ai_controller.js
    RControl Factory — Factory AI Controller
-   v1.1.0 CORE ORCHESTRATOR + SAFE SUPERVISION HUB
+   v1.1.1 CORE ORCHESTRATOR + SAFE SUPERVISION HUB + EXECUTION GATE AWARE
 
    Objetivo:
    - centralizar o comando operacional da Factory AI
@@ -10,14 +10,21 @@
    - manter a Factory AI focada no núcleo da própria Factory
    - não aplicar patch automático sem aprovação
    - funcionar como script clássico
+
+   PATCH v1.1.1:
+   - FIX: adiciona integração com execution gate quando existir
+   - FIX: snapshot inclui focus/intelligence e memoryContext útil
+   - FIX: apply usa guarda mais robusta da fase ativa
+   - FIX: getNextFile respeita focus/intelligence/planner como fallback real
+   - FIX: evita depender de APIs ausentes sem quebrar o fluxo
 */
 
 ;(function (global) {
   "use strict";
 
-  if (global.RCF_FACTORY_AI_CONTROLLER && global.RCF_FACTORY_AI_CONTROLLER.__v110) return;
+  if (global.RCF_FACTORY_AI_CONTROLLER && global.RCF_FACTORY_AI_CONTROLLER.__v111) return;
 
-  var VERSION = "v1.1.0";
+  var VERSION = "v1.1.1";
   var STORAGE_KEY = "rcf:factory_ai_controller";
   var MAX_HISTORY = 80;
 
@@ -54,6 +61,14 @@
 
   function trimText(v) {
     return String(v == null ? "" : v).trim();
+  }
+
+  function normalizePath(path) {
+    var p = trimText(path || "").replace(/\\/g, "/");
+    if (!p) return "";
+    if (p.charAt(0) !== "/") p = "/" + p;
+    p = p.replace(/\/{2,}/g, "/");
+    return p;
   }
 
   function persist() {
@@ -162,10 +177,58 @@
     return global.RCF_FACTORY_AI_MEMORY || null;
   }
 
+  function getExecutionGate() {
+    return global.RCF_FACTORY_AI_EXECUTION_GATE || null;
+  }
+
+  function getFocusEngine() {
+    return global.RCF_FACTORY_AI_FOCUS_ENGINE || null;
+  }
+
+  function getIntelligence() {
+    return global.RCF_FACTORY_AI_INTELLIGENCE || null;
+  }
+
   function getFactoryState() {
     return safe(function () {
       if (global.RCF_FACTORY_STATE?.getState) return global.RCF_FACTORY_STATE.getState();
       if (global.RCF_FACTORY_STATE?.status) return global.RCF_FACTORY_STATE.status();
+      return {};
+    }, {});
+  }
+
+  function getMemoryContext() {
+    var memory = getMemory();
+    return safe(function () {
+      if (memory && typeof memory.buildMemoryContext === "function") {
+        return memory.buildMemoryContext(20);
+      }
+      return {};
+    }, {});
+  }
+
+  function getFocusContext() {
+    var focus = getFocusEngine();
+    return safe(function () {
+      if (focus && typeof focus.buildCompactContext === "function") {
+        return focus.buildCompactContext();
+      }
+      if (focus && typeof focus.getLastFocus === "function") {
+        return { ok: true, focus: focus.getLastFocus() || null };
+      }
+      return {};
+    }, {});
+  }
+
+  function getIntelligenceContext() {
+    var intelligence = getIntelligence();
+    return safe(function () {
+      if (intelligence && typeof intelligence.buildCompactContext === "function") {
+        return intelligence.buildCompactContext();
+      }
+      if (intelligence && typeof intelligence.summary === "function") {
+        return intelligence.summary();
+      }
       return {};
     }, {});
   }
@@ -186,6 +249,7 @@
     var planId =
       trimText(safe(function () { return result.plan.id; }, "")) ||
       trimText(safe(function () { return result.response.plan.id; }, "")) ||
+      trimText(safe(function () { return result.result.plan.id; }, "")) ||
       trimText(safe(function () { return result.planId; }, "")) ||
       trimText(state.lastPlanId || "");
 
@@ -220,6 +284,9 @@
     var phaseEngine = getPhaseEngine();
     var autoLoop = getAutoLoop();
     var memory = getMemory();
+    var executionGate = getExecutionGate();
+    var focus = getFocusEngine();
+    var intelligence = getIntelligence();
 
     return {
       ts: nowISO(),
@@ -232,7 +299,13 @@
       policy: clone(safe(function () { return policy.status(); }, {})),
       phase: clone(safe(function () { return phaseEngine.buildPhaseContext(); }, {})),
       autoloop: clone(safe(function () { return autoLoop.status(); }, {})),
-      memory: clone(safe(function () { return memory.status(); }, {}))
+      memory: clone(safe(function () { return memory.status(); }, {})),
+      memoryContext: clone(getMemoryContext() || {}),
+      executionGate: clone(safe(function () { return executionGate.status(); }, {})),
+      focus: clone(safe(function () { return focus.status(); }, {})),
+      focusContext: clone(getFocusContext() || {}),
+      intelligence: clone(safe(function () { return intelligence.status(); }, {})),
+      intelligenceContext: clone(getIntelligenceContext() || {})
     };
   }
 
@@ -318,9 +391,16 @@
   }
 
   async function approveLastPlan(meta) {
+    var gate = getExecutionGate();
     var runtime = getRuntime();
     var bridge = getBridge();
     var payload = clone(meta || {});
+
+    if (gate && typeof gate.approvePlan === "function") {
+      var resultGate = await gate.approvePlan(payload.planId || "", payload);
+      saveResult("approveLastPlan", resultGate, "approveLastPlan");
+      return clone(resultGate);
+    }
 
     if (runtime && typeof runtime.approvePlan === "function") {
       var resultRuntime = await runtime.approvePlan(payload.planId || "", payload);
@@ -334,12 +414,19 @@
       return clone(resultBridge);
     }
 
-    return { ok: false, msg: "runtime/bridge ausente para aprovação" };
+    return { ok: false, msg: "runtime/bridge/execution gate ausente para aprovação" };
   }
 
   async function validatePlan(planId) {
+    var gate = getExecutionGate();
     var runtime = getRuntime();
     var supervisor = getPatchSupervisor();
+
+    if (gate && typeof gate.validateApprovedPlan === "function") {
+      var resultGate = await gate.validateApprovedPlan(planId || "");
+      saveResult("validatePlan", resultGate, "validatePlan");
+      return clone(resultGate);
+    }
 
     if (runtime && typeof runtime.validateApprovedPlan === "function") {
       var resultRuntime = await runtime.validateApprovedPlan(planId || "");
@@ -353,12 +440,19 @@
       return clone(resultSup);
     }
 
-    return { ok: false, msg: "patch supervisor ausente" };
+    return { ok: false, msg: "patch supervisor/execution gate ausente" };
   }
 
   async function stagePlan(planId) {
+    var gate = getExecutionGate();
     var runtime = getRuntime();
     var supervisor = getPatchSupervisor();
+
+    if (gate && typeof gate.stageApprovedPlan === "function") {
+      var resultGate = await gate.stageApprovedPlan(planId || "");
+      saveResult("stagePlan", resultGate, "stagePlan");
+      return clone(resultGate);
+    }
 
     if (runtime && typeof runtime.stageApprovedPlan === "function") {
       var resultRuntime = await runtime.stageApprovedPlan(planId || "");
@@ -372,21 +466,39 @@
       return clone(resultSup);
     }
 
-    return { ok: false, msg: "patch supervisor ausente" };
+    return { ok: false, msg: "patch supervisor/execution gate ausente" };
+  }
+
+  function isApplyAllowed() {
+    var phaseEngine = getPhaseEngine();
+    var phase = safe(function () { return phaseEngine.buildPhaseContext(); }, {}) || {};
+    var allowApply =
+      !!safe(function () { return phase.activePhase.allow.apply; }, false) ||
+      !!safe(function () { return phase.runtime.patchSupervisor.applyReady; }, false) && !!safe(function () { return phase.activePhase.allow.apply; }, false);
+
+    return {
+      ok: !!allowApply,
+      phase: clone(phase || {})
+    };
   }
 
   async function applyPlan(planId, opts) {
+    var gate = getExecutionGate();
     var runtime = getRuntime();
     var supervisor = getPatchSupervisor();
-    var phaseEngine = getPhaseEngine();
-    var phase = safe(function () { return phaseEngine.buildPhaseContext(); }, {}) || {};
-    var allowApply = !!safe(function () { return phase.activePhase.allow.apply; }, false);
+    var applyGuard = isApplyAllowed();
 
-    if (!allowApply) {
+    if (!applyGuard.ok) {
       return {
         ok: false,
         msg: "apply bloqueado pela fase ativa da Factory"
       };
+    }
+
+    if (gate && typeof gate.applyApprovedPlan === "function") {
+      var resultGate = await gate.applyApprovedPlan(planId || "", opts || {});
+      saveResult("applyPlan", resultGate, "applyPlan");
+      return clone(resultGate);
     }
 
     if (runtime && typeof runtime.applyApprovedPlan === "function") {
@@ -401,11 +513,18 @@
       return clone(resultSup);
     }
 
-    return { ok: false, msg: "patch supervisor ausente" };
+    return { ok: false, msg: "patch supervisor/execution gate ausente" };
   }
 
   async function approveValidateStage(planId, meta) {
+    var gate = getExecutionGate();
     var runtime = getRuntime();
+
+    if (gate && typeof gate.approveValidateStage === "function") {
+      var resultGate = await gate.approveValidateStage(planId || "", meta || {});
+      saveResult("approveValidateStage", resultGate, "approveValidateStage");
+      return clone(resultGate);
+    }
 
     if (runtime && typeof runtime.approveValidateStage === "function") {
       var resultRuntime = await runtime.approveValidateStage(planId || "", meta || {});
@@ -446,6 +565,8 @@
 
   async function getNextFile() {
     var orchestrator = getOrchestrator();
+    var focus = getFocusEngine();
+    var intelligence = getIntelligence();
 
     if (orchestrator && typeof orchestrator.orchestrate === "function") {
       var result = await orchestrator.orchestrate({
@@ -455,17 +576,46 @@
       return clone(result);
     }
 
+    if (focus && typeof focus.getLastFocus === "function") {
+      var focusData = focus.getLastFocus();
+      var focusFile = normalizePath(safe(function () { return focusData.targetFile; }, ""));
+      if (focusFile) {
+        var focusResult = {
+          ok: true,
+          nextFile: focusFile,
+          focus: clone(focusData || null)
+        };
+        saveResult("getNextFile", focusResult, "next_file");
+        return focusResult;
+      }
+    }
+
+    if (intelligence && typeof intelligence.getNextTarget === "function") {
+      var intelResult = intelligence.getNextTarget();
+      var intelFile = normalizePath(safe(function () { return intelResult.nextFile; }, ""));
+      if (intelFile) {
+        var merged = {
+          ok: true,
+          nextFile: intelFile,
+          intelligence: clone(intelResult || null)
+        };
+        saveResult("getNextFile", merged, "next_file");
+        return merged;
+      }
+    }
+
     var planner = getPlanner();
     if (planner && typeof planner.getLastPlan === "function") {
       var plan = planner.getLastPlan();
+      var plannerFile = normalizePath(safe(function () { return plan.targetFile || plan.nextFile; }, ""));
       return {
         ok: true,
-        nextFile: trimText(safe(function () { return plan.targetFile || plan.nextFile; }, "")),
+        nextFile: plannerFile,
         plan: clone(plan || null)
       };
     }
 
-    return { ok: false, msg: "orchestrator/planner indisponível" };
+    return { ok: false, msg: "orchestrator/planner/focus/intelligence indisponível" };
   }
 
   function explainRoles() {
@@ -532,7 +682,10 @@
       orchestratorReady: !!getOrchestrator(),
       policyReady: !!getPolicy(),
       phaseEngineReady: !!getPhaseEngine(),
-      autoLoopReady: !!getAutoLoop()
+      autoLoopReady: !!getAutoLoop(),
+      executionGateReady: !!getExecutionGate(),
+      focusReady: !!getFocusEngine(),
+      intelligenceReady: !!getIntelligence()
     };
   }
 
@@ -571,6 +724,7 @@
   global.RCF_FACTORY_AI_CONTROLLER = {
     __v100: true,
     __v110: true,
+    __v111: true,
     version: VERSION,
     init: init,
     status: status,
