@@ -1,6 +1,6 @@
 /* FILE: /functions/api/admin-ai.js
    RControl Factory — Factory AI API
-   v3.4.0 CHAT COPILOT BACKEND + PLANNER FLOW
+   v3.5.0 CHAT COPILOT BACKEND + DETERMINISTIC PLANNER HINT
 
    - mantém CORS e POST atuais
    - continua usando OPENAI_API_KEY
@@ -17,6 +17,13 @@
    - mantém resposta aterrada no payload
    - não autoriza invenção de estados da Factory
    - preparado para futuro suporte real a ZIP / PDF / imagem / vídeo / arquivos
+
+   PATCH v3.5.0:
+   - ADD: planner_hint determinístico no backend
+   - ADD: priorização local forte para next file / autonomia / evolução
+   - FIX: evita tree/state/doctor sequestrarem resposta quando contexto já aponta para Factory AI
+   - FIX: targetFile derivado agora prioriza planner_hint real
+   - FIX: prompt do modelo recebe guidance operacional mais forte e menos ambígua
 */
 
 export async function onRequestOptions() {
@@ -51,7 +58,7 @@ export async function onRequestPost(context) {
     const attachments = normalizeAttachments(body.attachments);
     const source = String(body.source || "factory-ai").trim();
     const version = String(body.version || "").trim();
-    const payload = preparePayloadForModel(body.payload ?? null);
+    const payload = preparePayloadForModel(body.payload ?? null, prompt, action);
 
     const allowed = new Set([
       "factory_diagnosis",
@@ -108,7 +115,7 @@ export async function onRequestPost(context) {
     }
 
     const text = extractText(data);
-    const derived = deriveResponseHints(text, payload, action);
+    const derived = deriveResponseHints(text, payload, action, prompt);
 
     return json({
       ok: true,
@@ -274,7 +281,7 @@ function normalizeAttachments(value) {
     .filter(Boolean);
 }
 
-function preparePayloadForModel(payload) {
+function preparePayloadForModel(payload, prompt = "", action = "chat") {
   const base = cloneValue(payload);
 
   if (!base || typeof base !== "object") {
@@ -282,11 +289,13 @@ function preparePayloadForModel(payload) {
   }
 
   const semantic = buildSnapshotSemanticSummary(base);
-  const planner = buildPlannerContext(base);
+  const planner = buildPlannerContext(base, prompt, action);
+  const deterministic = buildDeterministicPlannerHint(base, prompt, action);
 
   const out = cloneValue(base);
   if (semantic) out.__snapshot_semantics = semantic;
   if (planner) out.__planner_context = planner;
+  if (deterministic) out.__planner_hint = deterministic;
 
   return out;
 }
@@ -473,7 +482,7 @@ function buildSnapshotSemanticSummary(payload) {
   }
 }
 
-function buildPlannerContext(payload) {
+function buildPlannerContext(payload, prompt = "", action = "chat") {
   try {
     if (!payload || typeof payload !== "object") return null;
 
@@ -492,6 +501,8 @@ function buildPlannerContext(payload) {
         "quando possível, indicar próximo arquivo mais estratégico",
         "dar preferência a planner/bridge/actions/backend/chat supervisionado quando a meta for inteligência da Factory"
       ],
+      action,
+      prompt: String(prompt || ""),
       activeModules,
       candidateFiles,
       pathGroups: {
@@ -505,6 +516,336 @@ function buildPlannerContext(payload) {
   } catch {
     return null;
   }
+}
+
+function buildDeterministicPlannerHint(payload, prompt = "", action = "chat") {
+  try {
+    if (!payload || typeof payload !== "object") return null;
+
+    const snapshot = safeObj(payload.snapshot || payload);
+    const tree = safeObj(snapshot.tree);
+    const pathGroups = safeObj(tree.pathGroups || tree.grouped);
+    const modules = safeObj(snapshot.modules);
+    const flags = safeObj(snapshot.flags || snapshot.factory?.flags);
+
+    const activeModules = Array.isArray(modules.active) ? modules.active.slice() : [];
+    const candidateFiles = collectCandidateFiles(snapshot, pathGroups);
+    const normalizedPrompt = String(prompt || "").trim().toLowerCase();
+
+    const goal = detectBackendGoal(normalizedPrompt, action);
+    const ranking = rankStrategicFiles({
+      goal,
+      activeModules,
+      candidateFiles,
+      flags,
+      snapshot
+    });
+
+    const top = ranking[0] || {
+      file: "",
+      score: 0,
+      reasons: ["dado ausente"]
+    };
+
+    return {
+      goal,
+      nextFile: top.file || "",
+      score: Number(top.score || 0),
+      reasons: Array.isArray(top.reasons) ? top.reasons.slice(0, 6) : [],
+      ranking: ranking.slice(0, 8),
+      executionLine: buildExecutionLineForGoal(goal, top.file),
+      note: [
+        "Este planner_hint foi calculado deterministicamente no backend.",
+        "Ele deve ter prioridade sobre heurísticas genéricas quando o usuário pedir evolução, autonomia, plano ou próximo arquivo.",
+        "Evite cair automaticamente em doctor/state/registry/tree se o contexto atual já aponta para evolução cognitiva da Factory AI."
+      ].join(" ")
+    };
+  } catch {
+    return null;
+  }
+}
+
+function collectCandidateFiles(snapshot, pathGroups) {
+  const out = [];
+
+  const directCandidates = Array.isArray(snapshot.candidateFiles) ? snapshot.candidateFiles : [];
+  const directSamples = Array.isArray(snapshot.tree?.samples) ? snapshot.tree.samples : [];
+  const groupedValues = [
+    ...(Array.isArray(pathGroups.core) ? pathGroups.core : []),
+    ...(Array.isArray(pathGroups.ui) ? pathGroups.ui : []),
+    ...(Array.isArray(pathGroups.admin) ? pathGroups.admin : []),
+    ...(Array.isArray(pathGroups.engine) ? pathGroups.engine : []),
+    ...(Array.isArray(pathGroups.functions) ? pathGroups.functions : [])
+  ];
+
+  for (const item of [...directCandidates, ...directSamples, ...groupedValues]) {
+    const normalized = normalizePathLoose(item);
+    if (normalized && !out.includes(normalized)) out.push(normalized);
+  }
+
+  return out.slice(0, 64);
+}
+
+function detectBackendGoal(prompt, action) {
+  if (action === "generate-code") return "generate-code";
+  if (action === "propose-patch") return "propose-patch";
+  if (action === "factory_diagnosis") return "diagnostics";
+
+  if (
+    prompt.includes("autonomia") ||
+    prompt.includes("autônom") ||
+    prompt.includes("autonom") ||
+    prompt.includes("evoluir") ||
+    prompt.includes("evolução") ||
+    prompt.includes("evolucao") ||
+    prompt.includes("factory ai") ||
+    prompt.includes("próximo arquivo") ||
+    prompt.includes("proximo arquivo") ||
+    prompt.includes("plano") ||
+    prompt.includes("planejar") ||
+    prompt.includes("próxima etapa") ||
+    prompt.includes("proxima etapa")
+  ) {
+    return "evolve-factory-ai";
+  }
+
+  if (
+    prompt.includes("patch") ||
+    prompt.includes("aprovar") ||
+    prompt.includes("validar") ||
+    prompt.includes("stage") ||
+    prompt.includes("apply")
+  ) {
+    return "supervised-patch-flow";
+  }
+
+  if (
+    prompt.includes("doctor") ||
+    prompt.includes("diagnóstico") ||
+    prompt.includes("diagnostico") ||
+    prompt.includes("logs") ||
+    prompt.includes("erro") ||
+    prompt.includes("falha")
+  ) {
+    return "diagnostics";
+  }
+
+  return "general-supervision";
+}
+
+function rankStrategicFiles({ goal, activeModules, candidateFiles, flags, snapshot }) {
+  const files = [
+    "/app/js/core/factory_ai_planner.js",
+    "/app/js/core/factory_ai_actions.js",
+    "/app/js/core/factory_ai_bridge.js",
+    "/app/js/core/patch_supervisor.js",
+    "/functions/api/admin-ai.js",
+    "/app/js/admin.admin_ai.js",
+    "/app/js/core/context_engine.js",
+    "/app/js/core/factory_state.js",
+    "/app/js/core/module_registry.js",
+    "/app/js/core/factory_tree.js",
+    "/app/js/core/doctor_scan.js",
+    "/app/app.js"
+  ];
+
+  const ranking = files.map((file) => {
+    const reasons = [];
+    let score = 0;
+
+    if (goal === "evolve-factory-ai") {
+      if (file === "/app/js/core/factory_ai_planner.js") {
+        score += 100;
+        reasons.push("camada principal de priorização e inteligência supervisionada");
+      }
+      if (file === "/app/js/core/factory_ai_actions.js") {
+        score += 85;
+        reasons.push("coordena execução supervisionada real da Factory AI");
+      }
+      if (file === "/app/js/core/factory_ai_bridge.js") {
+        score += 72;
+        reasons.push("faz a ponte entre resposta textual e plano operacional");
+      }
+      if (file === "/functions/api/admin-ai.js") {
+        score += 66;
+        reasons.push("backend do chat precisa obedecer melhor a lógica de prioridade");
+      }
+      if (file === "/app/js/admin.admin_ai.js") {
+        score += 54;
+        reasons.push("front do chat e integração da Factory AI");
+      }
+      if (file === "/app/js/core/patch_supervisor.js") {
+        score += 45;
+        reasons.push("fecha o fluxo supervisionado approve → validate → stage → apply");
+      }
+      if (file === "/app/js/core/factory_tree.js") {
+        score -= 22;
+        reasons.push("tree não deve voltar a sequestrar prioridade nesta fase");
+      }
+      if (file === "/app/js/core/factory_state.js") {
+        score -= 14;
+        reasons.push("state já não deve ser prioridade padrão quando a meta é inteligência da Factory");
+      }
+      if (file === "/app/js/core/doctor_scan.js") {
+        score -= 40;
+        reasons.push("doctor não deve assumir a prioridade se o foco for evolução cognitiva");
+      }
+    }
+
+    if (goal === "supervised-patch-flow") {
+      if (file === "/app/js/core/patch_supervisor.js") {
+        score += 100;
+        reasons.push("núcleo do fluxo supervisionado de patch");
+      }
+      if (file === "/app/js/core/factory_ai_actions.js") {
+        score += 82;
+        reasons.push("ações coordenam approve, validate, stage e apply");
+      }
+      if (file === "/app/js/core/factory_ai_bridge.js") {
+        score += 68;
+        reasons.push("bridge mantém integridade do plano supervisionado");
+      }
+      if (file === "/functions/api/admin-ai.js") {
+        score += 32;
+        reasons.push("backend pode melhorar a proposta textual do patch");
+      }
+    }
+
+    if (goal === "diagnostics") {
+      if (file === "/app/js/core/doctor_scan.js") {
+        score += 100;
+        reasons.push("doctor é prioritário quando o foco real é diagnóstico");
+      }
+      if (file === "/app/js/core/factory_state.js") {
+        score += 55;
+        reasons.push("estado ajuda a consolidar dados diagnósticos");
+      }
+      if (file === "/app/js/core/factory_tree.js") {
+        score += 34;
+        reasons.push("tree ajuda a visibilidade estrutural do runtime");
+      }
+    }
+
+    if (goal === "generate-code") {
+      if (file === "/functions/api/admin-ai.js") {
+        score += 58;
+        reasons.push("backend influencia a qualidade da geração");
+      }
+      if (file === "/app/js/core/factory_ai_actions.js") {
+        score += 66;
+        reasons.push("actions ajuda a transformar geração em fluxo operacional");
+      }
+      if (file === "/app/js/core/factory_ai_bridge.js") {
+        score += 48;
+        reasons.push("bridge melhora consolidação do código gerado");
+      }
+    }
+
+    if (goal === "propose-patch") {
+      if (file === "/app/js/core/factory_ai_bridge.js") {
+        score += 76;
+        reasons.push("bridge interpreta resposta e consolida plano de patch");
+      }
+      if (file === "/app/js/core/factory_ai_actions.js") {
+        score += 74;
+        reasons.push("actions coordena proposta e fluxo local");
+      }
+      if (file === "/app/js/core/patch_supervisor.js") {
+        score += 70;
+        reasons.push("patch supervisor é a camada segura de aplicação");
+      }
+    }
+
+    if (goal === "general-supervision") {
+      if (file === "/app/js/core/factory_ai_planner.js") {
+        score += 30;
+        reasons.push("planner continua sendo prioridade estrutural");
+      }
+      if (file === "/app/js/core/factory_ai_actions.js") {
+        score += 24;
+        reasons.push("actions mantém avanço supervisionado real");
+      }
+      if (file === "/app/js/core/factory_ai_bridge.js") {
+        score += 20;
+        reasons.push("bridge continua chave na orquestração");
+      }
+      if (file === "/app/js/core/doctor_scan.js") {
+        score -= 12;
+        reasons.push("doctor não deve assumir prioridade padrão sem pedido específico");
+      }
+    }
+
+    const hasContextEngine = activeModules.includes("contextEngine");
+    const hasFactoryAI = activeModules.includes("factoryAI");
+
+    if (hasContextEngine && hasFactoryAI) {
+      if (
+        file === "/app/js/core/factory_ai_planner.js" ||
+        file === "/app/js/core/factory_ai_actions.js" ||
+        file === "/app/js/core/factory_ai_bridge.js" ||
+        file === "/functions/api/admin-ai.js"
+      ) {
+        score += 14;
+        reasons.push("núcleo ativo já permite subir para camada cognitiva mais forte");
+      }
+    }
+
+    if (candidateFiles.includes(file)) {
+      score += 8;
+      reasons.push("arquivo já aparece entre candidatos do snapshot");
+    }
+
+    const hasTree = boolFrom(flagValue(flags, ["hasFactoryTree"]));
+    if (!hasTree && file === "/app/js/core/factory_tree.js") {
+      score += 12;
+      reasons.push("tree ainda pode precisar consolidação se realmente estiver ausente");
+    }
+
+    const pathsCount = numberOrNull(snapshot?.tree?.pathsCount) || 0;
+    if (pathsCount < 20 && file === "/app/js/core/factory_tree.js") {
+      score += 16;
+      reasons.push("árvore ainda está rasa");
+    }
+
+    return {
+      file,
+      score,
+      reasons: dedupeStrings(reasons).slice(0, 8)
+    };
+  });
+
+  ranking.sort((a, b) => b.score - a.score);
+  return ranking;
+}
+
+function buildExecutionLineForGoal(goal, nextFile) {
+  const line = [];
+
+  if (nextFile) line.push(nextFile);
+
+  if (goal === "evolve-factory-ai") {
+    line.push("/app/js/core/factory_ai_planner.js");
+    line.push("/app/js/core/factory_ai_actions.js");
+    line.push("/functions/api/admin-ai.js");
+    line.push("/app/js/admin.admin_ai.js");
+    line.push("/app/js/core/patch_supervisor.js");
+  } else if (goal === "supervised-patch-flow") {
+    line.push("/app/js/core/patch_supervisor.js");
+    line.push("/app/js/core/factory_ai_actions.js");
+    line.push("/app/js/core/factory_ai_bridge.js");
+    line.push("/functions/api/admin-ai.js");
+  } else if (goal === "diagnostics") {
+    line.push("/app/js/core/doctor_scan.js");
+    line.push("/app/js/core/factory_state.js");
+    line.push("/app/js/core/module_registry.js");
+    line.push("/app/js/core/factory_tree.js");
+  } else {
+    line.push("/app/js/core/factory_ai_actions.js");
+    line.push("/app/js/core/factory_ai_bridge.js");
+    line.push("/functions/api/admin-ai.js");
+  }
+
+  return dedupeStrings(line.filter(Boolean)).slice(0, 8);
 }
 
 function buildModuleSemantic(name, info) {
@@ -584,6 +925,7 @@ function cloneValue(value) {
 }
 
 function buildGroundedPrompt({ action, payload, prompt, history, attachments, source, version }) {
+  const plannerHint = safeObj(payload).__planner_hint;
   const system = [
     "Você é a Factory AI da RControl Factory.",
     "Você é o chat oficial interno da Factory.",
@@ -636,6 +978,8 @@ function buildGroundedPrompt({ action, payload, prompt, history, attachments, so
     "- Se o snapshot estiver raso, reconheça isso e foque no próximo arquivo mais útil.",
     "- Não fique repetindo logger/doctor/version unknown como centro da resposta, a menos que isso seja realmente o ponto principal do pedido.",
     "- Se o objetivo do usuário for evoluir a Factory AI, dê prioridade a planner/bridge/actions/backend/chat supervisionado antes de cair automaticamente em doctor/state/registry/tree.",
+    "- Se existir __planner_hint no payload, trate-o como guidance operacional forte.",
+    "- Não ignore __planner_hint quando o usuário pedir próximo arquivo, prioridade, autonomia, evolução ou plano.",
     "",
     "Formato de resposta por action:",
     "",
@@ -662,6 +1006,7 @@ function buildGroundedPrompt({ action, payload, prompt, history, attachments, so
     "- responda como chat técnico natural, conversável, direto e útil.",
     "- se o pedido for claro e houver contexto suficiente, responda direto.",
     "- se o pedido pedir próximo arquivo, prioridade ou autonomia, dê resposta objetiva e priorizada.",
+    "- se existir planner_hint.nextFile, use esse alvo como base principal, salvo se o payload trouxer fato mais forte em sentido contrário.",
     "- se o pedido exigir arquivo específico que não foi enviado, diga qual arquivo é o próximo mais útil.",
     "- se houver risco de inferência excessiva, explicite esse limite sem enrolar.",
     "- se o snapshot vier raso, não transforme isso automaticamente em diagnóstico de falha estrutural."
@@ -684,6 +1029,9 @@ function buildGroundedPrompt({ action, payload, prompt, history, attachments, so
     "Tarefa:",
     task,
     "",
+    "Planner hint determinístico:",
+    stringify(plannerHint || "(ausente)"),
+    "",
     "Histórico recente:",
     historyToText(history),
     "",
@@ -701,6 +1049,9 @@ function buildGroundedPrompt({ action, payload, prompt, history, attachments, so
 function buildTaskText(action, prompt = "", payload = null) {
   const p = String(prompt || "").trim().toLowerCase();
   const hasPlannerContext = !!safeObj(payload).__planner_context;
+  const plannerHint = safeObj(payload).__planner_hint;
+  const hintedNextFile = String(plannerHint.nextFile || "").trim();
+
   const asksNextFile =
     p.includes("próximo arquivo") ||
     p.includes("proximo arquivo") ||
@@ -773,6 +1124,9 @@ function buildTaskText(action, prompt = "", payload = null) {
     if (asksNextFile || asksPlan || asksAutonomy) {
       lines.push("O usuário está pedindo priorização real. Dê uma resposta objetiva indicando o próximo arquivo mais estratégico e por quê.");
       lines.push("Evite cair automaticamente no ciclo genérico doctor/state/registry/tree se o contexto atual estiver voltado para evolução da Factory AI.");
+      if (hintedNextFile) {
+        lines.push("O backend já calculou planner_hint.nextFile='" + hintedNextFile + "'. Use isso como base principal, salvo se o próprio payload trouxer fato mais forte em sentido contrário.");
+      }
     }
 
     if (hasPlannerContext) {
@@ -818,9 +1172,15 @@ function attachmentsToText(attachments) {
     .join("\n");
 }
 
-function deriveResponseHints(text, payload, action) {
+function deriveResponseHints(text, payload, action, prompt = "") {
   const content = String(text || "");
-  const targetFile = extractFirstFile(content) || extractPayloadNextFile(payload);
+  const plannerHint = safeObj(payload).__planner_hint;
+  const plannerHintFile = String(plannerHint.nextFile || "").trim();
+  const targetFile =
+    extractFirstFile(content) ||
+    plannerHintFile ||
+    extractPayloadNextFile(payload);
+
   const risk = extractRisk(content);
   const mode = action === "generate-code" ? "code" : (action === "propose-patch" ? "patch" : "analysis");
 
@@ -830,7 +1190,9 @@ function deriveResponseHints(text, payload, action) {
     risk: risk || "unknown",
     hasCodeBlock: /```[\s\S]*?```/.test(content),
     mentionsPlannerFlow: /planner|plano|prioridade|próximo arquivo|proximo arquivo/i.test(content),
-    nextFileCandidate: targetFile || ""
+    nextFileCandidate: targetFile || "",
+    plannerHintUsed: !!plannerHintFile,
+    promptClass: detectBackendGoal(String(prompt || "").toLowerCase(), action)
   };
 }
 
@@ -842,6 +1204,11 @@ function extractFirstFile(text) {
 
 function extractPayloadNextFile(payload) {
   try {
+    const plannerHint = safeObj(payload).__planner_hint;
+    if (typeof plannerHint.nextFile === "string" && plannerHint.nextFile.trim()) {
+      return plannerHint.nextFile.trim();
+    }
+
     const planner = safeObj(payload).__planner_context;
     const files = Array.isArray(planner.candidateFiles) ? planner.candidateFiles : [];
     return files.length ? String(files[0] || "") : "";
@@ -917,4 +1284,25 @@ function corsHeaders() {
     "Access-Control-Allow-Methods": "POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type"
   };
+}
+
+function normalizePathLoose(path) {
+  const raw = String(path || "").trim().replace(/\\/g, "/");
+  if (!raw) return "";
+  const out = raw.startsWith("/") ? raw : "/" + raw;
+  return out.replace(/\/{2,}/g, "/");
+}
+
+function dedupeStrings(arr) {
+  const out = [];
+  const seen = new Set();
+
+  for (const item of Array.isArray(arr) ? arr : []) {
+    const value = String(item || "").trim();
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    out.push(value);
+  }
+
+  return out;
 }
