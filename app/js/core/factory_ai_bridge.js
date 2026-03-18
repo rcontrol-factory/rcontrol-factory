@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/factory_ai_bridge.js
    RControl Factory — Factory AI Bridge
-   v1.1.2 SUPERVISED ACTION BRIDGE + STALE PLAN GUARD HARDENED
+   v1.1.3 SUPERVISED ACTION BRIDGE + API RESPONSE/HINT HARDENED
 
    Objetivo:
    - criar a ponte supervisionada entre resposta da Factory AI e ações futuras da Factory
@@ -11,19 +11,21 @@
    - alinhar compatibilidade com approveLastPlan / rejectLastPlan
    - funcionar como script clássico
 
-   PATCH v1.1.2:
-   - FIX: stale guard mais rígido para evitar overwrite por plano mais fraco/empatado sem ganho real
-   - FIX: ingestResponse não loga sucesso falso quando o plano é ignorado
-   - FIX: load usa fallback de LAST_PLAN_KEY se lastPlan vier vazio/inconsistente
-   - ADD: histórico explícito para approve/reject/clearApproval/consume
+   PATCH v1.1.3:
+   - FIX: bridge passa a ler melhor resposta real do backend /api/admin-ai
+   - FIX: usa hints.targetFile / nextFileCandidate / risk quando o texto vier genérico
+   - FIX: usa plannerPlan/meta/planner_hint como fonte forte de targetFile
+   - FIX: preserva status de conexão OpenAI retornado pelo backend
+   - FIX: fromApiResponse normaliza action/analysis/hints/connection/raw sem depender só de textão
+   - FIX: status expõe melhor última conexão e origem do último plano
 */
 
 ;(function (global) {
   "use strict";
 
-  if (global.RCF_FACTORY_AI_BRIDGE && global.RCF_FACTORY_AI_BRIDGE.__v112) return;
+  if (global.RCF_FACTORY_AI_BRIDGE && global.RCF_FACTORY_AI_BRIDGE.__v113) return;
 
-  var VERSION = "v1.1.2";
+  var VERSION = "v1.1.3";
   var STORAGE_KEY = "rcf:factory_ai_bridge";
   var LAST_PLAN_KEY = "rcf:factory_ai_bridge_last_plan";
   var MAX_HISTORY = 40;
@@ -36,6 +38,7 @@
     lastResponseText: "",
     lastPlan: null,
     approvedPlanId: "",
+    lastConnection: null,
     history: []
   };
 
@@ -133,6 +136,8 @@
     var strength = 0;
 
     if (source.indexOf("planner") >= 0) strength += 50;
+    if (source.indexOf("api_response") >= 0) strength += 20;
+    if (source.indexOf("backend") >= 0) strength += 12;
     if (mode === "code") strength += 30;
     else if (mode === "patch") strength += 20;
     else if (mode === "analysis") strength += 8;
@@ -143,6 +148,7 @@
     if (trimText(plan.patchSummary || "")) strength += 3;
     if (trimText(plan.proposedCode || "")) strength += 6;
     if (trimText(plan.objective || "")) strength += 2;
+    if (safe(function () { return plan.connection.status; }, "")) strength += 2;
 
     return strength;
   }
@@ -191,6 +197,7 @@
         if (onlyLast) {
           state.lastPlan = clone(onlyLast);
           state.lastResponseText = String(onlyLast.rawText || "");
+          state.lastConnection = clone(onlyLast.connection || null);
         }
         return false;
       }
@@ -206,6 +213,7 @@
         if (fallbackPlan) {
           state.lastPlan = clone(fallbackPlan);
           state.lastResponseText = String(fallbackPlan.rawText || state.lastResponseText || "");
+          state.lastConnection = clone(fallbackPlan.connection || state.lastConnection || null);
         }
       }
 
@@ -215,6 +223,7 @@
       if (fallback) {
         state.lastPlan = clone(fallback);
         state.lastResponseText = String(fallback.rawText || "");
+        state.lastConnection = clone(fallback.connection || null);
       }
       return false;
     }
@@ -236,7 +245,10 @@
       s.indexOf("medio") >= 0 ||
       s.indexOf("alto") >= 0 ||
       s.indexOf("safe") >= 0 ||
-      s.indexOf("seguro") >= 0
+      s.indexOf("seguro") >= 0 ||
+      s.indexOf("medium") >= 0 ||
+      s.indexOf("high") >= 0 ||
+      s.indexOf("low") >= 0
     );
   }
 
@@ -353,12 +365,55 @@
     );
   }
 
+  function normalizeConnection(connection) {
+    if (!connection || typeof connection !== "object") return null;
+
+    return {
+      provider: trimText(connection.provider || ""),
+      configured: !!connection.configured,
+      attempted: !!connection.attempted,
+      status: trimText(connection.status || ""),
+      model: trimText(connection.model || ""),
+      upstreamStatus: Number(connection.upstreamStatus || 0) || 0
+    };
+  }
+
+  function extractPlannerHint(raw) {
+    var plannerHint =
+      safe(function () { return raw.payload.__planner_hint; }, null) ||
+      safe(function () { return raw.raw.__planner_hint; }, null) ||
+      safe(function () { return raw.__planner_hint; }, null);
+
+    return plannerHint && typeof plannerHint === "object" ? clone(plannerHint) : null;
+  }
+
+  function extractHintTarget(raw) {
+    return normalizeFilePath(
+      safe(function () { return raw.hints.targetFile; }, "") ||
+      safe(function () { return raw.hints.nextFileCandidate; }, "") ||
+      safe(function () { return raw.hints.nextFile; }, "") ||
+      safe(function () { return raw.connection.targetFile; }, "")
+    );
+  }
+
+  function extractHintRisk(raw) {
+    return normalizeRisk(
+      safe(function () { return raw.hints.risk; }, "") ||
+      safe(function () { return raw.connection.risk; }, ""),
+      ""
+    );
+  }
+
   function parseStructuredPlan(text, raw) {
     var src = normalizeSpace(text);
     var codeBlocks = extractCodeBlocks(src);
     var files = extractFiles(src);
     var riskLine = "";
     var lines = safeLines(src);
+    var plannerHint = extractPlannerHint(raw || {});
+    var hintedTarget = extractHintTarget(raw || {});
+    var hintedRisk = extractHintRisk(raw || {});
+    var connection = normalizeConnection(safe(function () { return raw.connection; }, null));
 
     for (var i = 0; i < lines.length; i++) {
       if (looksLikeRisk(lines[i])) {
@@ -369,24 +424,30 @@
 
     var objective =
       findSection(src, ["1. objetivo", "objetivo"]) ||
-      extractFirstNonEmptyLine(src);
+      extractFirstNonEmptyLine(src) ||
+      trimText(safe(function () { return raw.action; }, "")) ||
+      "Análise supervisionada da Factory AI";
 
     var targetFile =
       findSection(src, ["2. arquivo alvo", "arquivo alvo"]) ||
+      hintedTarget ||
+      normalizeFilePath(safe(function () { return plannerHint.nextFile; }, "")) ||
       (files.length ? files[0] : "");
 
     var riskText =
       findSection(src, ["3. risco", "risco"]) ||
-      riskLine;
+      riskLine ||
+      hintedRisk;
 
     var analysis =
       findSection(src, ["1. fatos confirmados", "fatos confirmados"]) ||
       findSection(src, ["análise", "analise"]) ||
-      "";
+      trimText(src);
 
     var nextStep =
       findSection(src, ["4. próximo passo mínimo recomendado", "proximo passo minimo recomendado", "próximo passo", "proximo passo"]) ||
-      "";
+      trimText(safe(function () { return plannerHint.executionLine[0]; }, "")) ||
+      trimText(safe(function () { return raw.action; }, ""));
 
     var suggestedFilesSection =
       findSection(src, ["5. arquivos mais prováveis de ajuste", "arquivos mais provaveis de ajuste", "arquivos mais úteis para próxima análise", "arquivos mais uteis para proxima analise"]) ||
@@ -399,13 +460,20 @@
     var proposedCode = codeBlocks.length ? codeBlocks[0].code : "";
     var proposedLang = codeBlocks.length ? codeBlocks[0].lang : "";
     var normalizedTarget = normalizeFilePath(targetFile || "");
-    var suggestedFiles = normalizeSuggestedFiles(files, suggestedFilesSection);
+    var suggestedFiles = normalizeSuggestedFiles(
+      []
+        .concat(files)
+        .concat(safe(function () { return plannerHint.executionLine; }, []))
+        .concat(safe(function () { return plannerHint.ranking.map(function (x) { return x.file; }); }, [])),
+      suggestedFilesSection
+    );
     var wantsApproval = !!(proposedCode || patchSummary || normalizedTarget);
 
     return {
       id: buildPlanId(),
       createdAt: nowISO(),
-      source: "factory_ai_bridge",
+      source: "factory_ai_bridge.api_response",
+      action: trimText(safe(function () { return raw.action; }, "")),
       mode: proposedCode ? "code" : (patchSummary ? "patch" : "analysis"),
       objective: trimText(objective),
       targetFile: normalizedTarget,
@@ -420,6 +488,8 @@
       proposedLang: trimText(proposedLang || ""),
       approvalRequired: wantsApproval,
       approvalStatus: "pending",
+      connection: connection,
+      plannerHint: clone(plannerHint || null),
       rawText: src,
       raw: clone(raw || {})
     };
@@ -439,6 +509,7 @@
       id: trimText(plan.id || "") || buildPlanId(),
       createdAt: trimText(plan.createdAt || plan.ts || nowISO()),
       source: "planner.plan",
+      action: trimText(safe(function () { return raw.action; }, "")),
       mode: trimText(plan.mode || "patch") || "patch",
       objective: trimText(plan.objective || plan.reason || ""),
       targetFile: targetFile,
@@ -453,6 +524,8 @@
       proposedLang: trimText(plan.proposedLang || ""),
       approvalRequired: !!plan.approvalRequired,
       approvalStatus: trimText(plan.approvalStatus || "pending") || "pending",
+      connection: normalizeConnection(safe(function () { return raw.connection; }, null)),
+      plannerHint: clone(extractPlannerHint(raw || {}) || null),
       rawText: String(rawText || ""),
       raw: clone(raw || {})
     };
@@ -468,6 +541,7 @@
     if (!trimText(currentPlan.nextStep || "") && trimText(nextPlan.nextStep || "")) return true;
     if (!trimText(currentPlan.patchSummary || "") && trimText(nextPlan.patchSummary || "")) return true;
     if (!trimText(currentPlan.proposedCode || "") && trimText(nextPlan.proposedCode || "")) return true;
+    if (!safe(function () { return currentPlan.connection.status; }, "") && safe(function () { return nextPlan.connection.status; }, "")) return true;
 
     var currentFiles = Array.isArray(currentPlan.suggestedFiles) ? currentPlan.suggestedFiles.length : 0;
     var nextFiles = Array.isArray(nextPlan.suggestedFiles) ? nextPlan.suggestedFiles.length : 0;
@@ -514,7 +588,9 @@
       suggestedFiles: Array.isArray(p.suggestedFiles) ? p.suggestedFiles.slice(0, 12) : [],
       createdAt: p.createdAt || "",
       source: p.source || "",
-      nextStep: p.nextStep || ""
+      nextStep: p.nextStep || "",
+      connectionStatus: safe(function () { return p.connection.status; }, ""),
+      action: p.action || ""
     };
   }
 
@@ -530,7 +606,8 @@
       risk: p.risk || "unknown",
       approvalRequired: !!p.approvalRequired,
       approvalStatus: p.approvalStatus || "",
-      source: p.source || ""
+      source: p.source || "",
+      connectionStatus: safe(function () { return p.connection.status; }, "")
     });
 
     if (state.history.length > MAX_HISTORY) {
@@ -551,12 +628,14 @@
 
     state.lastPlan = clone(plan);
     state.lastResponseText = String(plan.rawText || "");
+    state.lastConnection = clone(plan.connection || null);
     state.lastInput = {
       targetFile: plan.targetFile || plan.nextFile || "",
       mode: plan.mode || "",
       risk: plan.risk || "unknown",
       createdAt: plan.createdAt || nowISO(),
-      source: plan.source || ""
+      source: plan.source || "",
+      connectionStatus: safe(function () { return plan.connection.status; }, "")
     };
 
     pushPlanHistory("plan", plan);
@@ -615,6 +694,10 @@
 
   function getLastApprovedPlanId() {
     return String(state.approvedPlanId || "");
+  }
+
+  function getLastConnection() {
+    return clone(state.lastConnection || null);
   }
 
   function clearApproval() {
@@ -723,6 +806,7 @@
       trimText(payload.answer) ||
       trimText(payload.result) ||
       trimText(payload.text) ||
+      trimText(safe(function () { return payload.raw.output_text; }, "")) ||
       "";
 
     var plan = null;
@@ -743,7 +827,8 @@
         targetFile: plan.targetFile || plan.nextFile || "",
         risk: plan.risk,
         approvalRequired: plan.approvalRequired,
-        source: plan.source || ""
+        source: plan.source || "",
+        connectionStatus: safe(function () { return plan.connection.status; }, "")
       });
     } else {
       pushLog("INFO", "response parsed but plan ignored", {
@@ -751,7 +836,8 @@
         targetFile: plan.targetFile || plan.nextFile || "",
         risk: plan.risk,
         approvalRequired: plan.approvalRequired,
-        source: plan.source || ""
+        source: plan.source || "",
+        connectionStatus: safe(function () { return plan.connection.status; }, "")
       });
     }
 
@@ -759,7 +845,17 @@
   }
 
   function fromApiResponse(responseObj) {
-    return ingestResponse(responseObj || {});
+    var raw = clone(responseObj || {});
+    return ingestResponse({
+      action: trimText(raw.action || ""),
+      analysis: trimText(raw.analysis || ""),
+      hints: clone(raw.hints || {}),
+      connection: clone(raw.connection || {}),
+      raw: clone(raw.raw || {}),
+      payload: clone(raw.payload || {}),
+      plannerPlan: clone(raw.plannerPlan || null),
+      source: trimText(raw.source || "factory_ai_bridge.fromApiResponse")
+    });
   }
 
   function fromText(text, meta) {
@@ -818,15 +914,18 @@
       approvalStatus: p.approvalStatus || "",
       approvedPlanId: state.approvedPlanId || "",
       source: p.source || "",
+      action: p.action || "",
       createdAt: p.createdAt || "",
+      connectionStatus: safe(function () { return state.lastConnection.status; }, ""),
+      connectionModel: safe(function () { return state.lastConnection.model; }, ""),
       historyCount: Array.isArray(state.history) ? state.history.length : 0
     };
   }
 
   function bindEvents() {
     try {
-      if (global.__RCF_FACTORY_AI_BRIDGE_EVENTS_V112) return;
-      global.__RCF_FACTORY_AI_BRIDGE_EVENTS_V112 = true;
+      if (global.__RCF_FACTORY_AI_BRIDGE_EVENTS_V113) return;
+      global.__RCF_FACTORY_AI_BRIDGE_EVENTS_V113 = true;
 
       global.addEventListener("RCF:FACTORY_AI_RESPONSE", function (ev) {
         try {
@@ -856,6 +955,7 @@
     __v110: true,
     __v111: true,
     __v112: true,
+    __v113: true,
     version: VERSION,
     init: init,
     status: status,
@@ -864,6 +964,7 @@
     getLastSummary: getLastSummary,
     getPendingPlan: getPendingPlan,
     getLastApprovedPlanId: getLastApprovedPlanId,
+    getLastConnection: getLastConnection,
     ingestResponse: ingestResponse,
     fromApiResponse: fromApiResponse,
     fromText: fromText,
