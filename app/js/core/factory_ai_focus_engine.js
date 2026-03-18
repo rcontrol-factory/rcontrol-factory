@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/factory_ai_focus_engine.js
    RControl Factory — Factory AI Focus Engine
-   v1.0.0 SUPERVISED FOCUS ORCHESTRATOR
+   v1.0.1 SUPERVISED FOCUS ORCHESTRATOR
 
    Objetivo:
    - manter a Factory AI focada no alvo certo da fase atual
@@ -9,16 +9,24 @@
    - priorizar próximo alvo com base no estado real do runtime
    - expor contexto curto e útil para UI / orchestrator / autoloop / diagnostics
    - funcionar como script clássico
+
+   PATCH v1.0.1:
+   - FIX: adiciona scheduleFocus para evitar tempestade de rebuild em cascata
+   - FIX: getPhaseContext mais robusto com fallback para phaseId/phaseTitle
+   - FIX: readiness de actions aceita ready/plannerReady
+   - FIX: persist limita history corretamente
+   - FIX: bindEvents usa guarda própria da versão atual
 */
 
 ;(function (global) {
   "use strict";
 
-  if (global.RCF_FACTORY_AI_FOCUS_ENGINE && global.RCF_FACTORY_AI_FOCUS_ENGINE.__v100) return;
+  if (global.RCF_FACTORY_AI_FOCUS_ENGINE && global.RCF_FACTORY_AI_FOCUS_ENGINE.__v101) return;
 
-  var VERSION = "v1.0.0";
+  var VERSION = "v1.0.1";
   var STORAGE_KEY = "rcf:factory_ai_focus_engine";
   var MAX_HISTORY = 80;
+  var FOCUS_DEBOUNCE_MS = 180;
 
   var state = {
     version: VERSION,
@@ -27,6 +35,8 @@
     lastFocus: null,
     history: []
   };
+
+  var __focusTimer = null;
 
   var FOCUS_PRESETS = {
     "factory-ai-supervised": {
@@ -142,10 +152,6 @@
     return String(v == null ? "" : v).trim();
   }
 
-  function lower(v) {
-    return trimText(v).toLowerCase();
-  }
-
   function asArray(v) {
     return Array.isArray(v) ? v : [];
   }
@@ -178,7 +184,7 @@
         ready: !!state.ready,
         lastUpdate: state.lastUpdate,
         lastFocus: clone(state.lastFocus || null),
-        history: clone(state.history || [])
+        history: Array.isArray(state.history) ? state.history.slice(-MAX_HISTORY) : []
       }));
       return true;
     } catch (_) {
@@ -245,14 +251,18 @@
     }
 
     var ctx = safe(function () { return api.buildPhaseContext(); }, {}) || {};
+    var activePhase = clone(safe(function () { return ctx.activePhase; }, null));
+
     return {
       activePhaseId:
         trimText(ctx.activePhaseId || "") ||
-        trimText(safe(function () { return ctx.activePhase.id; }, "")),
+        trimText(ctx.phaseId || "") ||
+        trimText(safe(function () { return activePhase.id; }, "")),
       activePhaseTitle:
         trimText(ctx.activePhaseTitle || "") ||
-        trimText(safe(function () { return ctx.activePhase.title; }, "")),
-      activePhase: clone(ctx.activePhase || null),
+        trimText(ctx.phaseTitle || "") ||
+        trimText(safe(function () { return activePhase.title; }, "")),
+      activePhase: activePhase,
       recommendedTargets: clone(ctx.recommendedTargets || [])
     };
   }
@@ -291,6 +301,11 @@
     return safe(function () {
       return global.RCF_FACTORY_AI_ACTIONS?.status?.() || {};
     }, {});
+  }
+
+  function isActionsReady(actionsStatus) {
+    var st = actionsStatus || {};
+    return !!(st.ready || st.plannerReady);
   }
 
   function getPatchSupervisorStatus() {
@@ -418,7 +433,7 @@
     var avoid = isAvoided(file, ctx.avoidFiles);
     var activeView = trimText(safe(function () { return ctx.factoryState.activeView; }, ""));
     var patchReady = !!safe(function () { return ctx.patchSupervisor.ready; }, false);
-    var actionsReady = !!safe(function () { return ctx.actions.plannerReady; }, false);
+    var actionsReady = !!isActionsReady(ctx.actions);
     var bridgeReady = !!safe(function () { return ctx.bridge.ready; }, false);
     var plannerReady = !!safe(function () { return ctx.planner.ready; }, false);
 
@@ -540,7 +555,7 @@
     var notes = [];
     var plannerReady = !!safe(function () { return ctx.planner.ready; }, false);
     var bridgeReady = !!safe(function () { return ctx.bridge.ready; }, false);
-    var actionsReady = !!safe(function () { return ctx.actions.plannerReady; }, false);
+    var actionsReady = !!isActionsReady(ctx.actions);
     var patchReady = !!safe(function () { return ctx.patchSupervisor.ready; }, false);
     var activeView = trimText(safe(function () { return ctx.factoryState.activeView; }, ""));
     var phaseTitle = trimText(safe(function () { return ctx.phase.activePhaseTitle; }, ""));
@@ -602,7 +617,7 @@
       factoryState: clone(factoryState || {}),
       modules: clone(modules || {}),
       tree: clone(tree || {}),
-      avoidFiles: clone(avoidFiles || {})
+      avoidFiles: clone(avoidFiles || [])
     };
 
     var candidates = buildCandidateTargets();
@@ -648,7 +663,7 @@
         bootStatus: trimText(factoryState.bootStatus || ""),
         plannerReady: !!planner.ready,
         bridgeReady: !!bridge.ready,
-        actionsReady: !!actions.plannerReady,
+        actionsReady: !!isActionsReady(actions),
         patchSupervisorReady: !!patchSupervisor.ready,
         hasStagedPatch: !!patchSupervisor.hasStagedPatch,
         historyCount: Number(safe(function () { return runtime.historyCount; }, 0) || 0),
@@ -678,6 +693,22 @@
     });
 
     return clone(focus);
+  }
+
+  function scheduleFocus(reason) {
+    try {
+      if (__focusTimer) clearTimeout(__focusTimer);
+    } catch (_) {}
+
+    __focusTimer = setTimeout(function () {
+      __focusTimer = null;
+      try {
+        pushLog("INFO", "scheduled focus rebuild", { reason: trimText(reason || "") });
+        buildFocus();
+      } catch (_) {}
+    }, FOCUS_DEBOUNCE_MS);
+
+    return true;
   }
 
   function getLastFocus() {
@@ -767,35 +798,35 @@
 
   function bindEvents() {
     try {
-      if (global.__RCF_FACTORY_AI_FOCUS_ENGINE_EVENTS_V100) return;
-      global.__RCF_FACTORY_AI_FOCUS_ENGINE_EVENTS_V100 = true;
+      if (global.__RCF_FACTORY_AI_FOCUS_ENGINE_EVENTS_V101) return;
+      global.__RCF_FACTORY_AI_FOCUS_ENGINE_EVENTS_V101 = true;
 
       global.addEventListener("RCF:FACTORY_PHASE_CHANGED", function () {
-        try { buildFocus(); } catch (_) {}
+        try { scheduleFocus("RCF:FACTORY_PHASE_CHANGED"); } catch (_) {}
       }, { passive: true });
 
       global.addEventListener("RCF:FACTORY_AI_PLAN_READY", function () {
-        try { buildFocus(); } catch (_) {}
+        try { scheduleFocus("RCF:FACTORY_AI_PLAN_READY"); } catch (_) {}
       }, { passive: true });
 
       global.addEventListener("RCF:FACTORY_AI_APPROVED", function () {
-        try { buildFocus(); } catch (_) {}
+        try { scheduleFocus("RCF:FACTORY_AI_APPROVED"); } catch (_) {}
       }, { passive: true });
 
       global.addEventListener("RCF:PATCH_STAGED", function () {
-        try { buildFocus(); } catch (_) {}
+        try { scheduleFocus("RCF:PATCH_STAGED"); } catch (_) {}
       }, { passive: true });
 
       global.addEventListener("RCF:PATCH_APPLIED", function () {
-        try { buildFocus(); } catch (_) {}
+        try { scheduleFocus("RCF:PATCH_APPLIED"); } catch (_) {}
       }, { passive: true });
 
       global.addEventListener("RCF:PATCH_APPLY_FAILED", function () {
-        try { buildFocus(); } catch (_) {}
+        try { scheduleFocus("RCF:PATCH_APPLY_FAILED"); } catch (_) {}
       }, { passive: true });
 
       global.addEventListener("RCF:UI_READY", function () {
-        try { buildFocus(); } catch (_) {}
+        try { scheduleFocus("RCF:UI_READY"); } catch (_) {}
       }, { passive: true });
     } catch (_) {}
   }
@@ -813,10 +844,12 @@
 
   global.RCF_FACTORY_AI_FOCUS_ENGINE = {
     __v100: true,
+    __v101: true,
     version: VERSION,
     init: init,
     status: status,
     refreshFocus: refreshFocus,
+    scheduleFocus: scheduleFocus,
     getLastFocus: getLastFocus,
     explainFocus: explainFocus,
     buildCompactContext: buildCompactContext,
