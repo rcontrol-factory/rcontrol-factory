@@ -1,6 +1,6 @@
 /* FILE: /app/js/admin.admin_ai.js
    RControl Factory — Factory AI
-   v4.3.1 BRAIN-FIRST ENTRY + LOCAL ACTION BRIDGE + MOUNT GUARD + CHAT SCROLL FIX + HISTORY PERSIST
+   v4.3.2 RUNTIME-FIRST ENTRY + OPENAI PATH PRIORITY + LOCAL ACTION BRIDGE + MOUNT GUARD + CHAT SCROLL FIX + HISTORY PERSIST
 
    - mantém visual chat-first aprovado
    - mantém botão + fora da cápsula
@@ -21,22 +21,22 @@
    - FIX NOVO: corta loop de mount/log repetido
    - FIX NOVO: reduz sync agressivo
    - ADD NOVO: usa camada supervisionada local (planner/bridge/actions/patch supervisor)
-   - ADD NOVO: sobe para orchestrator local quando não for ação local direta
-   - ADD v4.3.1: sobe primeiro para RCF_FACTORY_AI_BRAIN quando disponível
-   - ADD v4.3.1: inclui identity/brainLayer no snapshot lean
+   - ADD NOVO: sobe para runtime antes de brain/orchestrator quando não for ação local direta
+   - ADD v4.3.2: expõe runtimeLayer no snapshot lean
+   - ADD v4.3.2: registra melhor endpoint efetivo usado
    - não executa patch automático sem fluxo supervisionado
 */
 
 (() => {
   "use strict";
 
-  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v431) return;
+  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v432) return;
 
-  const VERSION = "v4.3.1";
+  const VERSION = "v4.3.2";
   const BOX_ID = "rcfFactoryAIBox";
   const CHAT_ID = "rcfFactoryAIChat";
-  const STYLE_ID = "rcfFactoryAIStyleV431";
-  const HISTORY_KEY = "rcf:factory_ai_history_v431";
+  const STYLE_ID = "rcfFactoryAIStyleV432";
+  const HISTORY_KEY = "rcf:factory_ai_history_v432";
   const HISTORY_MAX = 80;
 
   const SYNC_INTERVAL_MS = 2200;
@@ -170,9 +170,9 @@
 
   function bindChatScroll() {
     const chat = getChatEl();
-    if (!chat || chat.__rcfBoundScrollV431) return;
+    if (!chat || chat.__rcfBoundScrollV432) return;
 
-    chat.__rcfBoundScrollV431 = true;
+    chat.__rcfBoundScrollV432 = true;
     STATE.pinnedToBottom = true;
 
     chat.addEventListener("scroll", () => {
@@ -450,16 +450,23 @@
       return {};
     })();
 
-    const patchSupervisorStatus = (() => {
+    const brainStatus = (() => {
       try {
-        return window.RCF_PATCH_SUPERVISOR?.status?.() || {};
+        return window.RCF_FACTORY_AI_BRAIN?.status?.() || {};
       } catch {}
       return {};
     })();
 
-    const brainStatus = (() => {
+    const runtimeStatus = (() => {
       try {
-        return window.RCF_FACTORY_AI_BRAIN?.status?.() || {};
+        return window.RCF_FACTORY_AI_RUNTIME?.status?.() || {};
+      } catch {}
+      return {};
+    })();
+
+    const patchSupervisorStatus = (() => {
+      try {
+        return window.RCF_PATCH_SUPERVISOR?.status?.() || {};
       } catch {}
       return {};
     })();
@@ -504,6 +511,7 @@
           hasFactoryAIPlanner: !!window.RCF_FACTORY_AI_PLANNER,
           hasFactoryAIBridge: !!window.RCF_FACTORY_AI_BRIDGE,
           hasFactoryAIActions: !!window.RCF_FACTORY_AI_ACTIONS,
+          hasFactoryAIRuntime: !!window.RCF_FACTORY_AI_RUNTIME,
           hasPatchSupervisor: !!window.RCF_PATCH_SUPERVISOR,
           hasFactoryAIBrain: !!window.RCF_FACTORY_AI_BRAIN,
           hasFactoryAIIdentity: !!window.RCF_FACTORY_AI_IDENTITY
@@ -532,6 +540,7 @@
         factoryAIPlanner: !!moduleSummary?.modules?.factoryAIPlanner,
         factoryAIBridge: !!moduleSummary?.modules?.factoryAIBridge,
         factoryAIActions: !!moduleSummary?.modules?.factoryAIActions,
+        factoryAIRuntime: !!moduleSummary?.modules?.factoryAIRuntime,
         patchSupervisor: !!moduleSummary?.modules?.patchSupervisor,
         factoryAIBrain: !!moduleSummary?.modules?.factoryAIBrain,
         modules: clone(moduleSummary.modules || {})
@@ -542,6 +551,13 @@
         lastGoal: plannerStatus.lastGoal || "",
         lastPriority: plannerStatus.lastPriority || "",
         lastNextFile: plannerStatus.lastNextFile || ""
+      },
+      runtimeLayer: {
+        ready: !!window.RCF_FACTORY_AI_RUNTIME,
+        version: window.RCF_FACTORY_AI_RUNTIME?.version || "unknown",
+        lastEndpoint: runtimeStatus.lastEndpoint || "",
+        lastAction: runtimeStatus.lastAction || "",
+        lastOk: !!runtimeStatus.lastOk
       },
       bridgeLayer: {
         ready: !!window.RCF_FACTORY_AI_BRIDGE,
@@ -635,6 +651,7 @@
     const environment = raw.environment || {};
     const tree = raw.tree || {};
     const planner = raw.factoryAIPlanner || raw.planner || {};
+    const runtimeLayer = raw.factoryAIRuntime || raw.runtimeLayer || {};
     const bridgeLayer = raw.factoryAIBridge || raw.bridgeLayer || {};
     const actionsLayer = raw.factoryAIActions || raw.actionsLayer || {};
     const brainLayer = raw.factoryAIBrain || raw.brainLayer || {};
@@ -691,6 +708,7 @@
           factoryAIPlanner: !!modules.factoryAIPlanner,
           factoryAIBridge: !!modules.factoryAIBridge,
           factoryAIActions: !!modules.factoryAIActions,
+          factoryAIRuntime: !!modules.factoryAIRuntime,
           patchSupervisor: !!modules.patchSupervisor,
           factoryAIBrain: !!modules.factoryAIBrain
         },
@@ -702,6 +720,13 @@
         lastGoal: planner.lastGoal || "",
         lastPriority: planner.lastPriority || "",
         lastNextFile: planner.lastNextFile || ""
+      },
+      runtimeLayer: {
+        ready: !!runtimeLayer.ready || !!window.RCF_FACTORY_AI_RUNTIME,
+        version: runtimeLayer.version || window.RCF_FACTORY_AI_RUNTIME?.version || "unknown",
+        lastEndpoint: runtimeLayer.lastEndpoint || STATE.lastEndpoint || "",
+        lastAction: runtimeLayer.lastAction || "",
+        lastOk: !!runtimeLayer.lastOk
       },
       bridgeLayer: {
         ready: !!bridgeLayer.ready,
@@ -754,6 +779,7 @@
         hasFactoryAIPlanner: !!factory.flags?.hasFactoryAIPlanner,
         hasFactoryAIBridge: !!factory.flags?.hasFactoryAIBridge,
         hasFactoryAIActions: !!factory.flags?.hasFactoryAIActions,
+        hasFactoryAIRuntime: !!factory.flags?.hasFactoryAIRuntime || !!window.RCF_FACTORY_AI_RUNTIME,
         hasPatchSupervisor: !!factory.flags?.hasPatchSupervisor,
         hasFactoryAIBrain: !!factory.flags?.hasFactoryAIBrain || !!window.RCF_FACTORY_AI_BRAIN,
         hasFactoryAIIdentity: !!factory.flags?.hasFactoryAIIdentity || !!window.RCF_FACTORY_AI_IDENTITY
@@ -1943,6 +1969,7 @@
       return { ok: false, msg: "Ação local não mapeada." };
     }
 
+    STATE.lastEndpoint = "local:factory_ai_actions";
     setButtonsBusy(true);
     setComposerStatus("executando local...");
     setTechResult("");
@@ -1993,6 +2020,92 @@
     }
   }
 
+  async function runRuntimePrompt(action, prompt) {
+    const runtime = window.RCF_FACTORY_AI_RUNTIME;
+
+    if (!runtime || typeof runtime.ask !== "function") {
+      return { ok: false, msg: "RCF_FACTORY_AI_RUNTIME indisponível." };
+    }
+
+    STATE.lastEndpoint = "runtime:/api/admin-ai";
+    setButtonsBusy(true);
+    setComposerStatus("consultando runtime...");
+    setTechResult("");
+
+    try {
+      const result = await runtime.ask({
+        action,
+        prompt,
+        history: STATE.history.slice(-12).map((m) => ({
+          role: m.role,
+          text: m.text
+        })),
+        attachments: getAttachmentPayload()
+      });
+
+      if (!result || result.ok === false) {
+        const msg = pretty(result || { ok: false, msg: "sem resposta do runtime" });
+        setComposerStatus("falha runtime");
+        setTechResult(msg);
+
+        pushHistory({
+          role: "assistant",
+          text: msg,
+          ts: new Date().toISOString()
+        });
+
+        renderChat({ forceBottom: true });
+        log("WARN", "runtime falhou");
+        return result || { ok: false, msg };
+      }
+
+      const text =
+        (typeof result.analysis === "string" && result.analysis.trim())
+          ? result.analysis
+          : (typeof result.answer === "string" && result.answer.trim())
+            ? result.answer
+            : (typeof result.result === "string" && result.result.trim())
+              ? result.result
+              : pretty(result);
+
+      setComposerStatus("concluído runtime");
+      setTechResult(text);
+
+      pushHistory({
+        role: "assistant",
+        text,
+        ts: new Date().toISOString()
+      });
+
+      renderChat({ forceBottom: true });
+
+      try {
+        window.dispatchEvent(new CustomEvent("RCF:FACTORY_AI_RUNTIME_RESPONSE", {
+          detail: { action, prompt, result: clone(result || {}) }
+        }));
+      } catch {}
+
+      log("OK", "runtime executado");
+      return result;
+    } catch (e) {
+      const msg = String(e?.message || e || "Erro no runtime");
+      setComposerStatus("erro runtime");
+      setTechResult(msg);
+
+      pushHistory({
+        role: "assistant",
+        text: msg,
+        ts: new Date().toISOString()
+      });
+
+      renderChat({ forceBottom: true });
+      log("ERR", "erro no runtime");
+      return { ok: false, msg };
+    } finally {
+      setButtonsBusy(false);
+    }
+  }
+
   async function runBrainPrompt(prompt) {
     const brain = window.RCF_FACTORY_AI_BRAIN;
 
@@ -2000,6 +2113,7 @@
       return { ok: false, msg: "RCF_FACTORY_AI_BRAIN indisponível." };
     }
 
+    STATE.lastEndpoint = "local:factory_ai_brain";
     setButtonsBusy(true);
     setComposerStatus("pensando...");
     setTechResult("");
@@ -2058,6 +2172,7 @@
       return { ok: false, msg: "RCF_FACTORY_AI_ORCHESTRATOR indisponível." };
     }
 
+    STATE.lastEndpoint = "local:factory_ai_orchestrator";
     setButtonsBusy(true);
     setComposerStatus("orquestrando...");
     setTechResult("");
@@ -2241,6 +2356,8 @@
 
     if (localAction) {
       runLocalAction(localAction, finalPrompt);
+    } else if (window.RCF_FACTORY_AI_RUNTIME?.ask) {
+      runRuntimePrompt(action, finalPrompt);
     } else if (window.RCF_FACTORY_AI_BRAIN?.think) {
       runBrainPrompt(finalPrompt);
     } else if (window.RCF_FACTORY_AI_ORCHESTRATOR?.orchestrate) {
@@ -2645,8 +2762,8 @@
 
   function bindHeaderButtons() {
     const btnClear = document.getElementById("rcfFactoryAIClearHistory");
-    if (btnClear && !btnClear.__boundClearV431) {
-      btnClear.__boundClearV431 = true;
+    if (btnClear && !btnClear.__boundClearV432) {
+      btnClear.__boundClearV432 = true;
       btnClear.addEventListener("click", () => {
         try {
           const ok = window.confirm("Limpar histórico desta conversa da Factory AI?");
@@ -2663,15 +2780,15 @@
     const attachBtn = document.getElementById("rcfFactoryAIAttachBtn");
     const voiceBtn = document.getElementById("rcfFactoryAIVoiceBtn");
 
-    if (sendBtn && !sendBtn.__boundV431) {
-      sendBtn.__boundV431 = true;
+    if (sendBtn && !sendBtn.__boundV432) {
+      sendBtn.__boundV432 = true;
       sendBtn.addEventListener("click", () => {
         sendPrompt(String(promptEl?.value || "").trim(), "");
       }, { passive: true });
     }
 
-    if (promptEl && !promptEl.__boundInputV431) {
-      promptEl.__boundInputV431 = true;
+    if (promptEl && !promptEl.__boundInputV432) {
+      promptEl.__boundInputV432 = true;
       autoResizePrompt(promptEl);
 
       promptEl.addEventListener("input", () => {
@@ -2688,15 +2805,15 @@
       });
     }
 
-    if (attachBtn && !attachBtn.__boundV431) {
-      attachBtn.__boundV431 = true;
+    if (attachBtn && !attachBtn.__boundV432) {
+      attachBtn.__boundV432 = true;
       attachBtn.addEventListener("click", () => {
         toggleAttachMenu("rcfFactoryAIClipMenuMain");
       }, { passive: true });
     }
 
-    if (voiceBtn && !voiceBtn.__boundV431) {
-      voiceBtn.__boundV431 = true;
+    if (voiceBtn && !voiceBtn.__boundV432) {
+      voiceBtn.__boundV432 = true;
       voiceBtn.addEventListener("click", () => {
         toggleListening();
       }, { passive: true });
@@ -2709,8 +2826,8 @@
     renderAttachments();
     setVoiceBtnState();
 
-    if (!document.__rcfFactoryAIOutsideClickV431) {
-      document.__rcfFactoryAIOutsideClickV431 = true;
+    if (!document.__rcfFactoryAIOutsideClickV432) {
+      document.__rcfFactoryAIOutsideClickV432 = true;
       document.addEventListener("click", (ev) => {
         try {
           const wrap = document.getElementById("rcfFactoryAIAttachWrap");
@@ -2746,7 +2863,7 @@
             </div>
           </div>
           <div class="rcfAiHeadActions">
-            <div class="rcfAiPill">Brain + Orchestrator + runtime local</div>
+            <div class="rcfAiPill">Runtime + OpenAI + bridge supervisionada</div>
             <button class="rcfAiHeadBtn" id="rcfFactoryAIClearHistory" type="button">Limpar</button>
           </div>
         </section>
@@ -2940,8 +3057,8 @@
     bindVisibilityHooksOnce();
 
     try {
-      if (!document.__rcfFactoryAIClickSyncV431) {
-        document.__rcfFactoryAIClickSyncV431 = true;
+      if (!document.__rcfFactoryAIClickSyncV432) {
+        document.__rcfFactoryAIClickSyncV432 = true;
         document.addEventListener("click", () => {
           setTimeout(() => {
             try { syncVisibility(); } catch {}
@@ -2960,6 +3077,7 @@
     __v421: true,
     __v430: true,
     __v431: true,
+    __v432: true,
     version: VERSION,
     mount,
     clearChat,
@@ -2984,6 +3102,7 @@
     __v421_bridge: true,
     __v430_bridge: true,
     __v431_bridge: true,
+    __v432_bridge: true,
     version: VERSION,
     mount,
     clearChat,
