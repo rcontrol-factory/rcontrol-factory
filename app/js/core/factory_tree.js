@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/factory_tree.js
    RControl Factory — Factory Tree Engine
-   v1.3 STABLE / REBUILD MINIMAL
+   v1.3.1 STABLE / REBUILD MINIMAL
 
    Objetivo:
    - registrar estrutura visível da Factory
@@ -10,14 +10,19 @@
    - manter snapshot mais útil no Safari / PWA
    - sincronizar presença com factory_state / module_registry sem dependência rígida
    - funcionar como script clássico
+
+   PATCH v1.3.1:
+   - FIX: detectFromContext agora lê tree.samples por bucket corretamente
+   - FIX: detectFromContext também lê grouped/pathGroups com fallback seguro
+   - ADD: amplia arquivos conhecidos da fase atual da Factory AI
 */
 
 (function (global) {
   "use strict";
 
-  if (global.RCF_FACTORY_TREE && global.RCF_FACTORY_TREE.__v13) return;
+  if (global.RCF_FACTORY_TREE && global.RCF_FACTORY_TREE.__v131) return;
 
-  var VERSION = "v1.3";
+  var VERSION = "v1.3.1";
 
   var BUCKETS = [
     "core",
@@ -303,8 +308,21 @@
       "/app/js/core/factory_tree.js",
       "/app/js/core/doctor_scan.js",
       "/app/js/core/github_sync.js",
+      "/app/js/core/diagnostics.js",
       "/app/js/core/factory_ai_bridge.js",
       "/app/js/core/factory_ai_actions.js",
+      "/app/js/core/factory_ai_orchestrator.js",
+      "/app/js/core/factory_ai_controller.js",
+      "/app/js/core/factory_ai_memory.js",
+      "/app/js/core/factory_ai_policy.js",
+      "/app/js/core/factory_ai_architect.js",
+      "/app/js/core/factory_ai_autoloop.js",
+      "/app/js/core/factory_ai_self_evolution.js",
+      "/app/js/core/factory_ai_execution_gate.js",
+      "/app/js/core/factory_ai_proposal_ui.js",
+      "/app/js/core/factory_ai_focus_engine.js",
+      "/app/js/core/factory_ai_governor.js",
+      "/app/js/core/factory_phase_engine.js",
       "/app/js/core/patch_supervisor.js",
       "/app/js/admin.admin_ai.js",
       "/functions/api/admin-ai.js"
@@ -335,6 +353,10 @@
       if (mods.factoryAI) register("/app/js/admin.admin_ai.js");
       if (mods.github) register("/app/js/core/github_sync.js");
       if (mods.doctor) register("/app/js/core/doctor_scan.js");
+      if (mods.factoryAIBridge) register("/app/js/core/factory_ai_bridge.js");
+      if (mods.factoryAIActions) register("/app/js/core/factory_ai_actions.js");
+      if (mods.factoryAIPlanner) register("/app/js/core/factory_ai_planner.js");
+      if (mods.patchSupervisor) register("/app/js/core/patch_supervisor.js");
     } catch (_) {}
   }
 
@@ -352,14 +374,23 @@
       if (!snap || typeof snap !== "object") return;
 
       var treeBlock = snap.tree || {};
-      registerMany(asArray(treeBlock.samples));
-
+      var samples = treeBlock.samples || {};
+      var grouped = treeBlock.grouped || {};
       var pathGroups = treeBlock.pathGroups || {};
+      var candidateFiles = asArray(snap.candidateFiles);
+
+      Object.keys(samples).forEach(function (k) {
+        registerMany(asArray(samples[k]));
+      });
+
+      Object.keys(grouped).forEach(function (k) {
+        registerMany(asArray(grouped[k]));
+      });
+
       Object.keys(pathGroups).forEach(function (k) {
         registerMany(asArray(pathGroups[k]));
       });
 
-      var candidateFiles = asArray(snap.candidateFiles);
       registerMany(candidateFiles);
     } catch (_) {}
   }
@@ -407,6 +438,7 @@
     __v11: true,
     __v12: true,
     __v13: true,
+    __v131: true,
     version: VERSION,
     register: register,
     registerMany: registerMany,
