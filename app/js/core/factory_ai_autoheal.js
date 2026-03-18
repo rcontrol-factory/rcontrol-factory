@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/factory_ai_autoheal.js
    RControl Factory — Factory AI AutoHeal
-   v1.0.0 SUPERVISED AUTOHEAL ENGINE
+   v1.0.1 SUPERVISED AUTOHEAL ENGINE
 
    Objetivo:
    - transformar diagnóstico em proposta concreta de correção supervisionada
@@ -10,16 +10,24 @@
    - preparar base para proposal ui / autoloop / self evolution
    - NUNCA aplicar patch automático
    - funcionar como script clássico
+
+   PATCH v1.0.1:
+   - FIX: bindEvents usa guarda própria para evitar duplo bind
+   - FIX: adiciona scheduleScan leve para evitar tempestade de scans em cascata
+   - FIX: getPhaseContext mais robusto com fallback para activePhaseId/activePhaseTitle
+   - FIX: getPendingPlan usa fallback seguro para getLastPlan
+   - FIX: hasPendingHumanStep aceita stagedPlanId/planId alternativos do supervisor
 */
 
 ;(function (global) {
   "use strict";
 
-  if (global.RCF_FACTORY_AI_AUTOHEAL && global.RCF_FACTORY_AI_AUTOHEAL.__v100) return;
+  if (global.RCF_FACTORY_AI_AUTOHEAL && global.RCF_FACTORY_AI_AUTOHEAL.__v101) return;
 
-  var VERSION = "v1.0.0";
+  var VERSION = "v1.0.1";
   var STORAGE_KEY = "rcf:factory_ai_autoheal";
   var MAX_HISTORY = 80;
+  var SCAN_DEBOUNCE_MS = 220;
 
   var state = {
     version: VERSION,
@@ -30,6 +38,8 @@
     lastProposal: null,
     history: []
   };
+
+  var __scanTimer = null;
 
   function nowISO() {
     try { return new Date().toISOString(); }
@@ -90,7 +100,15 @@
   function persist() {
     try {
       state.lastUpdate = nowISO();
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        version: state.version,
+        ready: !!state.ready,
+        busy: !!state.busy,
+        lastUpdate: state.lastUpdate,
+        lastRunAt: state.lastRunAt,
+        lastProposal: clone(state.lastProposal || null),
+        history: Array.isArray(state.history) ? state.history.slice(-MAX_HISTORY) : []
+      }));
       return true;
     } catch (_) {
       return false;
@@ -108,7 +126,7 @@
       state.busy = false;
       state.lastUpdate = parsed.lastUpdate || null;
       state.lastRunAt = parsed.lastRunAt || null;
-      state.lastProposal = parsed.lastProposal || null;
+      state.lastProposal = clone(parsed.lastProposal || null);
       state.history = Array.isArray(parsed.history) ? parsed.history.slice(-MAX_HISTORY) : [];
       return true;
     } catch (_) {
@@ -212,13 +230,51 @@
       };
     }
 
-    return clone(api.buildPhaseContext() || {});
+    var ctx = clone(api.buildPhaseContext() || {});
+    var activePhase = clone(safe(function () { return ctx.activePhase; }, null));
+    var activePhaseId =
+      trimText(safe(function () { return ctx.activePhaseId; }, "")) ||
+      trimText(safe(function () { return ctx.phaseId; }, "")) ||
+      trimText(safe(function () { return activePhase.id; }, ""));
+    var activePhaseTitle =
+      trimText(safe(function () { return ctx.activePhaseTitle; }, "")) ||
+      trimText(safe(function () { return activePhase.title; }, ""));
+
+    return {
+      activePhaseId: activePhaseId,
+      activePhaseTitle: activePhaseTitle,
+      activePhase: activePhase,
+      recommendedTargets: clone(safe(function () { return ctx.recommendedTargets; }, []))
+    };
   }
 
   function getPendingPlan() {
     var bridge = getBridge();
-    if (!bridge || typeof bridge.getPendingPlan !== "function") return null;
-    return clone(bridge.getPendingPlan() || null);
+    if (!bridge) return null;
+
+    try {
+      if (typeof bridge.getPendingPlan === "function") {
+        var pending = bridge.getPendingPlan();
+        if (pending && typeof pending === "object") return clone(pending);
+      }
+    } catch (_) {}
+
+    try {
+      if (typeof bridge.getLastPlan === "function") {
+        var last = bridge.getLastPlan();
+        if (
+          last &&
+          typeof last === "object" &&
+          trimText(last.approvalStatus || "") !== "approved" &&
+          trimText(last.approvalStatus || "") !== "consumed" &&
+          trimText(last.approvalStatus || "") !== "rejected"
+        ) {
+          return clone(last);
+        }
+      }
+    } catch (_) {}
+
+    return null;
   }
 
   function getPatchSupervisorStatus() {
@@ -262,8 +318,8 @@
       return {
         blocked: true,
         reason: "já existe staged patch aguardando resolução",
-        planId: trimText(patch.stagedPlanId || ""),
-        targetFile: normalizePath(patch.stagedTargetFile || "")
+        planId: trimText(patch.stagedPlanId || patch.planId || ""),
+        targetFile: normalizePath(patch.stagedTargetFile || patch.targetFile || "")
       };
     }
 
@@ -338,6 +394,7 @@
 
   function buildObjective(report, phaseCtx, targetFile) {
     var phaseTitle =
+      trimText(safe(function () { return phaseCtx.activePhaseTitle; }, "")) ||
       trimText(safe(function () { return phaseCtx.activePhase.title; }, "")) ||
       trimText(safe(function () { return report.phase.activePhaseTitle; }, "")) ||
       "Factory AI supervisionada";
@@ -392,6 +449,7 @@
   function buildNextStep(selection, report, phaseCtx) {
     var targetFile = trimText(selection && selection.targetFile || "");
     var phaseId =
+      trimText(safe(function () { return phaseCtx.activePhaseId; }, "")) ||
       trimText(safe(function () { return phaseCtx.activePhase.id; }, "")) ||
       trimText(safe(function () { return report.phase.activePhaseId; }, ""));
 
@@ -406,6 +464,7 @@
     return uniq([
       "autoheal",
       "self-structure",
+      trimText(safe(function () { return phaseCtx.activePhaseId; }, "")) ||
       trimText(safe(function () { return phaseCtx.activePhase.id; }, "")),
       targetFile ? "targeted" : "untargeted"
     ].filter(Boolean));
@@ -419,10 +478,8 @@
     var positives = asArray(safe(function () { return report.health.positives; }, []));
     var targetFile = normalizePath(selection.targetFile || "");
     var phaseAllow = clone(safe(function () { return phaseCtx.activePhase.allow; }, {}));
-    var risk = normalizeRisk(
-      safe(function () { return report.health.score; }, 0) >= 80 ? "low" :
-      safe(function () { return report.health.score; }, 0) >= 60 ? "medium" : "high"
-    );
+    var score = Number(safe(function () { return report.health.score; }, 0)) || 0;
+    var risk = normalizeRisk(score >= 80 ? "low" : (score >= 60 ? "medium" : "high"));
 
     return {
       id: "autoheal_" + Math.random().toString(36).slice(2, 10) + "_" + Date.now(),
@@ -446,8 +503,12 @@
       blockedTargetFile: normalizePath(humanBlock.targetFile || ""),
       health: clone(report.health || {}),
       phase: {
-        activePhaseId: trimText(safe(function () { return phaseCtx.activePhase.id; }, "")),
-        activePhaseTitle: trimText(safe(function () { return phaseCtx.activePhase.title; }, "")),
+        activePhaseId:
+          trimText(safe(function () { return phaseCtx.activePhaseId; }, "")) ||
+          trimText(safe(function () { return phaseCtx.activePhase.id; }, "")),
+        activePhaseTitle:
+          trimText(safe(function () { return phaseCtx.activePhaseTitle; }, "")) ||
+          trimText(safe(function () { return phaseCtx.activePhase.title; }, "")),
         allow: clone(phaseAllow || {})
       },
       diagnostics: {
@@ -590,6 +651,22 @@
     }
   }
 
+  function scheduleScan(reason) {
+    try {
+      if (__scanTimer) clearTimeout(__scanTimer);
+    } catch (_) {}
+
+    __scanTimer = setTimeout(function () {
+      __scanTimer = null;
+      try {
+        pushLog("INFO", "autoheal scheduled scan", { reason: trimText(reason || "") });
+        scan();
+      } catch (_) {}
+    }, SCAN_DEBOUNCE_MS);
+
+    return true;
+  }
+
   function getLastProposal() {
     return clone(state.lastProposal || null);
   }
@@ -689,38 +766,31 @@
 
   function bindEvents() {
     try {
+      if (global.__RCF_FACTORY_AI_AUTOHEAL_EVENTS_V101) return;
+      global.__RCF_FACTORY_AI_AUTOHEAL_EVENTS_V101 = true;
+
       global.addEventListener("RCF:FACTORY_AI_DIAGNOSTICS_REPORT", function () {
-        try { scan(); } catch (_) {}
+        try { scheduleScan("RCF:FACTORY_AI_DIAGNOSTICS_REPORT"); } catch (_) {}
       }, { passive: true });
-    } catch (_) {}
 
-    try {
       global.addEventListener("RCF:FACTORY_PHASE_CHANGED", function () {
-        try { scan(); } catch (_) {}
+        try { scheduleScan("RCF:FACTORY_PHASE_CHANGED"); } catch (_) {}
       }, { passive: true });
-    } catch (_) {}
 
-    try {
       global.addEventListener("RCF:FACTORY_AI_PLAN_READY", function () {
-        try { scan(); } catch (_) {}
+        try { scheduleScan("RCF:FACTORY_AI_PLAN_READY"); } catch (_) {}
       }, { passive: true });
-    } catch (_) {}
 
-    try {
       global.addEventListener("RCF:PATCH_STAGED", function () {
-        try { scan(); } catch (_) {}
+        try { scheduleScan("RCF:PATCH_STAGED"); } catch (_) {}
       }, { passive: true });
-    } catch (_) {}
 
-    try {
       global.addEventListener("RCF:PATCH_APPLIED", function () {
-        try { scan(); } catch (_) {}
+        try { scheduleScan("RCF:PATCH_APPLIED"); } catch (_) {}
       }, { passive: true });
-    } catch (_) {}
 
-    try {
       global.addEventListener("RCF:PATCH_APPLY_FAILED", function () {
-        try { scan(); } catch (_) {}
+        try { scheduleScan("RCF:PATCH_APPLY_FAILED"); } catch (_) {}
       }, { passive: true });
     } catch (_) {}
   }
@@ -739,10 +809,12 @@
 
   global.RCF_FACTORY_AI_AUTOHEAL = {
     __v100: true,
+    __v101: true,
     version: VERSION,
     init: init,
     status: status,
     scan: scan,
+    scheduleScan: scheduleScan,
     getLastProposal: getLastProposal,
     explainLastProposal: explainLastProposal,
     buildProposalText: buildProposalText,
