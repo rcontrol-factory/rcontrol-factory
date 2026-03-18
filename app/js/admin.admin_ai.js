@@ -1,6 +1,6 @@
 /* FILE: /app/js/admin.admin_ai.js
    RControl Factory — Factory AI
-   v4.3.2 RUNTIME-FIRST ENTRY + OPENAI PATH PRIORITY + LOCAL ACTION BRIDGE + MOUNT GUARD + CHAT SCROLL FIX + HISTORY PERSIST
+   v4.3.3 MOBILE HEADER FIX + COMPOSER FIX + RUNTIME-FIRST ENTRY
 
    - mantém visual chat-first aprovado
    - mantém botão + fora da cápsula
@@ -22,21 +22,22 @@
    - FIX NOVO: reduz sync agressivo
    - ADD NOVO: usa camada supervisionada local (planner/bridge/actions/patch supervisor)
    - ADD NOVO: sobe para runtime antes de brain/orchestrator quando não for ação local direta
-   - ADD v4.3.2: expõe runtimeLayer no snapshot lean
-   - ADD v4.3.2: registra melhor endpoint efetivo usado
+   - ADD v4.3.3: header compacto mobile, sem estourar largura
+   - ADD v4.3.3: composer reforçado para manter botão enviar visível
+   - ADD v4.3.3: overflow lateral bloqueado no card/chat/composer
    - não executa patch automático sem fluxo supervisionado
 */
 
 (() => {
   "use strict";
 
-  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v432) return;
+  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v433) return;
 
-  const VERSION = "v4.3.2";
+  const VERSION = "v4.3.3";
   const BOX_ID = "rcfFactoryAIBox";
   const CHAT_ID = "rcfFactoryAIChat";
-  const STYLE_ID = "rcfFactoryAIStyleV432";
-  const HISTORY_KEY = "rcf:factory_ai_history_v432";
+  const STYLE_ID = "rcfFactoryAIStyleV433";
+  const HISTORY_KEY = "rcf:factory_ai_history_v433";
   const HISTORY_MAX = 80;
 
   const SYNC_INTERVAL_MS = 2200;
@@ -170,9 +171,9 @@
 
   function bindChatScroll() {
     const chat = getChatEl();
-    if (!chat || chat.__rcfBoundScrollV432) return;
+    if (!chat || chat.__rcfBoundScrollV433) return;
 
-    chat.__rcfBoundScrollV432 = true;
+    chat.__rcfBoundScrollV433 = true;
     STATE.pinnedToBottom = true;
 
     chat.addEventListener("scroll", () => {
@@ -840,88 +841,117 @@
   background:linear-gradient(180deg,rgba(255,255,255,.96),rgba(248,250,255,.90));
   box-shadow:0 10px 26px rgba(15,23,42,.05);
   overflow:hidden;
+  overflow-x:hidden;
+  width:100%;
+  max-width:100%;
 }
-#${BOX_ID}.card{padding:0;}
+
+#${BOX_ID},
+#${BOX_ID} *,
+#${CHAT_ID}{
+  box-sizing:border-box;
+}
+
+#${BOX_ID}.card{
+  padding:0;
+  max-width:100%;
+}
 
 #${BOX_ID} .rcfAiShell{
   display:grid;
   grid-template-rows:auto 1fr auto;
   min-height:620px;
+  width:100%;
+  max-width:100%;
+  min-width:0;
+  overflow:hidden;
 }
 
 #${BOX_ID} .rcfAiHead{
-  display:flex;
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
   align-items:center;
-  justify-content:space-between;
-  gap:12px;
-  padding:18px 18px 14px;
+  gap:10px;
+  padding:14px 16px 12px;
   border-bottom:1px solid rgba(31,41,55,.06);
   background:rgba(255,255,255,.72);
+  min-width:0;
+  overflow:hidden;
 }
 
 #${BOX_ID} .rcfAiHeadLeft{
   min-width:0;
   display:flex;
   align-items:center;
-  gap:12px;
+  gap:10px;
+  overflow:hidden;
 }
 
 #${BOX_ID} .rcfAiHeadActions{
+  min-width:0;
   display:flex;
   align-items:center;
+  justify-content:flex-end;
   gap:8px;
-  flex-wrap:wrap;
+  flex-wrap:nowrap;
+  overflow:hidden;
 }
 
 #${BOX_ID} .rcfAiAvatar{
-  width:44px;
-  height:44px;
-  min-width:44px;
-  border-radius:16px;
+  width:36px;
+  height:36px;
+  min-width:36px;
+  border-radius:14px;
   display:flex;
   align-items:center;
   justify-content:center;
-  font-size:20px;
+  font-size:18px;
   border:1px solid rgba(95,115,155,.12);
   background:linear-gradient(180deg,rgba(255,255,255,.98),rgba(239,244,252,.92));
 }
 
 #${BOX_ID} .rcfAiHeadText{
   min-width:0;
+  overflow:hidden;
 }
 
 #${BOX_ID} .rcfAiHeadTitle{
   margin:0;
-  font-size:20px;
+  font-size:18px;
   line-height:1.05;
   font-weight:900;
   color:#202d4d;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
 }
 
 #${BOX_ID} .rcfAiHeadSub{
-  margin:4px 0 0;
-  font-size:13px;
-  line-height:1.35;
-  color:rgba(32,45,77,.72);
+  display:none;
 }
 
 #${BOX_ID} .rcfAiPill{
   display:inline-flex;
   align-items:center;
-  min-height:32px;
-  padding:6px 10px;
+  justify-content:center;
+  min-height:30px;
+  max-width:160px;
+  padding:0 10px;
   border-radius:999px;
   border:1px solid rgba(90,110,150,.12);
   background:rgba(255,255,255,.82);
-  font-size:12px;
+  font-size:11px;
   font-weight:800;
   color:rgba(32,45,77,.76);
   white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
 }
 
 #${BOX_ID} .rcfAiHeadBtn{
-  min-height:32px;
-  padding:0 12px;
+  min-height:30px;
+  height:30px;
+  padding:0 10px;
   border-radius:999px;
   border:1px solid rgba(31,41,55,.08);
   background:rgba(255,255,255,.94);
@@ -929,17 +959,21 @@
   font-size:12px;
   font-weight:800;
   cursor:pointer;
+  flex:0 0 auto;
 }
 
 #${CHAT_ID}{
   min-height:320px;
   max-height:52vh;
   overflow:auto;
-  padding:16px;
+  overflow-x:hidden;
+  padding:14px;
   background:linear-gradient(180deg,rgba(246,248,252,.72),rgba(250,251,255,.62));
   overscroll-behavior:contain;
   -webkit-overflow-scrolling:touch;
   touch-action:pan-y;
+  min-width:0;
+  width:100%;
 }
 
 #${BOX_ID} .rcfAiEmpty{
@@ -958,6 +992,7 @@
   display:flex;
   gap:10px;
   margin-bottom:12px;
+  min-width:0;
 }
 #${BOX_ID} .rcfAiMsgRow.user{
   justify-content:flex-end;
@@ -968,11 +1003,14 @@
 
 #${BOX_ID} .rcfAiBubble{
   width:min(100%, 720px);
+  max-width:100%;
+  min-width:0;
   padding:14px 16px;
   border-radius:20px;
   border:1px solid rgba(31,41,55,.08);
   background:rgba(255,255,255,.92);
   box-shadow:0 2px 10px rgba(15,23,42,.04);
+  overflow:hidden;
 }
 
 #${BOX_ID} .rcfAiBubble.userBubble{
@@ -993,11 +1031,13 @@
   line-height:1.54;
   color:#202d4d;
   font-size:15px;
+  min-width:0;
 }
 
 #${BOX_ID} .rcfAiParagraph{
   white-space:pre-wrap;
   word-break:break-word;
+  overflow-wrap:anywhere;
   margin:0 0 10px 0;
 }
 
@@ -1011,6 +1051,7 @@
   border-radius:16px;
   overflow:hidden;
   background:#0f172a;
+  max-width:100%;
 }
 
 #${BOX_ID} .rcfAiCodeHead{
@@ -1045,6 +1086,7 @@
   line-height:1.5;
   color:#eef4ff;
   white-space:pre;
+  max-width:100%;
 }
 
 #${BOX_ID} .rcfAiMsgTime{
@@ -1080,15 +1122,20 @@
 #${BOX_ID} .rcfAiComposer{
   display:grid;
   gap:10px;
-  padding:14px 16px 16px;
+  padding:12px 14px 14px;
   border-top:1px solid rgba(31,41,55,.06);
   background:rgba(255,255,255,.82);
+  min-width:0;
+  width:100%;
+  max-width:100%;
+  overflow:hidden;
 }
 
 #${BOX_ID} .rcfAiAttachRow{
   display:flex;
   flex-wrap:wrap;
   gap:8px;
+  min-width:0;
 }
 
 #${BOX_ID} .rcfAiAttachmentChip{
@@ -1126,9 +1173,11 @@
 
 #${BOX_ID} .rcfAiInputShell{
   display:grid;
-  grid-template-columns:auto 1fr;
+  grid-template-columns:30px minmax(0,1fr);
   gap:10px;
   align-items:end;
+  min-width:0;
+  width:100%;
 }
 
 #${BOX_ID} .rcfAiAttachWrap{
@@ -1136,9 +1185,10 @@
   display:flex;
   align-items:flex-end;
   justify-content:center;
-  width:32px;
-  min-width:32px;
+  width:30px;
+  min-width:30px;
   padding-bottom:8px;
+  flex:0 0 30px;
 }
 
 #${BOX_ID} .rcfAiAttachBtn{
@@ -1160,19 +1210,24 @@
 
 #${BOX_ID} .rcfAiInputCard{
   display:grid;
-  grid-template-columns:1fr auto auto;
+  grid-template-columns:minmax(0,1fr) 38px 38px;
   align-items:end;
-  gap:8px;
+  gap:6px;
   min-height:54px;
+  min-width:0;
+  width:100%;
+  max-width:100%;
   padding:6px 8px;
   border-radius:18px;
   border:1px solid rgba(31,41,55,.10);
   background:#fff;
   box-shadow:0 1px 0 rgba(255,255,255,.65) inset;
+  overflow:hidden;
 }
 
 #${BOX_ID} .rcfAiPrompt{
   width:100%;
+  min-width:0;
   min-height:28px;
   max-height:88px;
   resize:none;
@@ -1183,6 +1238,7 @@
   color:#18233f;
   font:inherit;
   line-height:1.4;
+  overflow:auto;
 }
 
 #${BOX_ID} .rcfAiPrompt::placeholder{
@@ -1190,9 +1246,9 @@
 }
 
 #${BOX_ID} .rcfAiVoiceBtn{
-  width:34px;
-  height:34px;
-  min-width:34px;
+  width:38px;
+  height:38px;
+  min-width:38px;
   border:none;
   background:transparent;
   color:#7b8ab7;
@@ -1202,6 +1258,7 @@
   align-items:center;
   justify-content:center;
   border-radius:12px;
+  flex:0 0 38px;
 }
 
 #${BOX_ID} .rcfAiVoiceBtn.listening{
@@ -1210,9 +1267,10 @@
 }
 
 #${BOX_ID} .rcfAiSendBtn{
-  min-width:34px;
-  width:34px;
-  height:34px;
+  width:38px;
+  height:38px;
+  min-width:38px;
+  min-height:38px;
   padding:0;
   border-radius:999px;
   border:1px solid rgba(112,152,255,.20);
@@ -1225,6 +1283,7 @@
   display:inline-flex;
   align-items:center;
   justify-content:center;
+  flex:0 0 38px;
 }
 
 #${BOX_ID} .rcfAiMenu{
@@ -1267,6 +1326,7 @@
   align-items:center;
   gap:10px;
   flex-wrap:wrap;
+  min-width:0;
 }
 
 #${BOX_ID} .rcfAiStatus{
@@ -1280,6 +1340,8 @@
   border-radius:18px;
   background:rgba(255,255,255,.72);
   padding:10px 12px;
+  min-width:0;
+  overflow:hidden;
 }
 
 #${BOX_ID} details.rcfAiDetails summary{
@@ -1294,6 +1356,7 @@
   overflow:auto;
   white-space:pre-wrap;
   word-break:break-word;
+  overflow-wrap:anywhere;
 }
 
 #${BOX_ID} .rcfAiHiddenInput{
@@ -1301,22 +1364,120 @@
 }
 
 @media (max-width: 720px){
+  #${BOX_ID}{
+    border-radius:22px;
+  }
+
   #${BOX_ID} .rcfAiShell{
     min-height:560px;
   }
+
   #${BOX_ID} .rcfAiHead{
-    padding:16px 16px 12px;
-    align-items:flex-start;
+    grid-template-columns:minmax(0,1fr);
+    align-items:start;
+    gap:8px;
+    padding:12px 14px 10px;
   }
+
+  #${BOX_ID} .rcfAiHeadLeft{
+    gap:8px;
+  }
+
+  #${BOX_ID} .rcfAiAvatar{
+    width:32px;
+    height:32px;
+    min-width:32px;
+    font-size:16px;
+    border-radius:12px;
+  }
+
   #${BOX_ID} .rcfAiHeadTitle{
-    font-size:18px;
+    font-size:16px;
   }
-  #${BOX_ID} .rcfAiAttachmentName{
-    max-width:110px;
-  }
+
   #${BOX_ID} .rcfAiHeadActions{
     width:100%;
-    justify-content:flex-end;
+    justify-content:space-between;
+    gap:8px;
+  }
+
+  #${BOX_ID} .rcfAiPill{
+    max-width:calc(100% - 84px);
+    font-size:10px;
+    min-height:28px;
+    padding:0 8px;
+  }
+
+  #${CHAT_ID}{
+    padding:12px;
+    max-height:48vh;
+  }
+
+  #${BOX_ID} .rcfAiComposer{
+    padding:10px 12px 12px;
+    gap:8px;
+  }
+
+  #${BOX_ID} .rcfAiInputShell{
+    grid-template-columns:28px minmax(0,1fr);
+    gap:8px;
+  }
+
+  #${BOX_ID} .rcfAiAttachWrap{
+    width:28px;
+    min-width:28px;
+    flex-basis:28px;
+    padding-bottom:7px;
+  }
+
+  #${BOX_ID} .rcfAiAttachBtn{
+    width:26px;
+    height:26px;
+    min-width:26px;
+    font-size:30px;
+  }
+
+  #${BOX_ID} .rcfAiInputCard{
+    grid-template-columns:minmax(0,1fr) 36px 36px;
+    gap:4px;
+    padding:6px 6px;
+    min-height:52px;
+  }
+
+  #${BOX_ID} .rcfAiPrompt{
+    padding:9px 4px;
+    font-size:16px;
+  }
+
+  #${BOX_ID} .rcfAiVoiceBtn{
+    width:36px;
+    height:36px;
+    min-width:36px;
+    font-size:18px;
+  }
+
+  #${BOX_ID} .rcfAiSendBtn{
+    width:36px;
+    height:36px;
+    min-width:36px;
+    min-height:36px;
+    font-size:15px;
+  }
+
+  #${BOX_ID} .rcfAiAttachmentName{
+    max-width:100px;
+  }
+}
+
+@media (max-width: 420px){
+  #${BOX_ID} .rcfAiHeadBtn{
+    min-width:72px;
+    padding:0 8px;
+    font-size:11px;
+  }
+
+  #${BOX_ID} .rcfAiPill{
+    max-width:calc(100% - 78px);
   }
 }
     `.trim();
@@ -2762,8 +2923,8 @@
 
   function bindHeaderButtons() {
     const btnClear = document.getElementById("rcfFactoryAIClearHistory");
-    if (btnClear && !btnClear.__boundClearV432) {
-      btnClear.__boundClearV432 = true;
+    if (btnClear && !btnClear.__boundClearV433) {
+      btnClear.__boundClearV433 = true;
       btnClear.addEventListener("click", () => {
         try {
           const ok = window.confirm("Limpar histórico desta conversa da Factory AI?");
@@ -2780,15 +2941,15 @@
     const attachBtn = document.getElementById("rcfFactoryAIAttachBtn");
     const voiceBtn = document.getElementById("rcfFactoryAIVoiceBtn");
 
-    if (sendBtn && !sendBtn.__boundV432) {
-      sendBtn.__boundV432 = true;
+    if (sendBtn && !sendBtn.__boundV433) {
+      sendBtn.__boundV433 = true;
       sendBtn.addEventListener("click", () => {
         sendPrompt(String(promptEl?.value || "").trim(), "");
       }, { passive: true });
     }
 
-    if (promptEl && !promptEl.__boundInputV432) {
-      promptEl.__boundInputV432 = true;
+    if (promptEl && !promptEl.__boundInputV433) {
+      promptEl.__boundInputV433 = true;
       autoResizePrompt(promptEl);
 
       promptEl.addEventListener("input", () => {
@@ -2805,15 +2966,15 @@
       });
     }
 
-    if (attachBtn && !attachBtn.__boundV432) {
-      attachBtn.__boundV432 = true;
+    if (attachBtn && !attachBtn.__boundV433) {
+      attachBtn.__boundV433 = true;
       attachBtn.addEventListener("click", () => {
         toggleAttachMenu("rcfFactoryAIClipMenuMain");
       }, { passive: true });
     }
 
-    if (voiceBtn && !voiceBtn.__boundV432) {
-      voiceBtn.__boundV432 = true;
+    if (voiceBtn && !voiceBtn.__boundV433) {
+      voiceBtn.__boundV433 = true;
       voiceBtn.addEventListener("click", () => {
         toggleListening();
       }, { passive: true });
@@ -2826,8 +2987,8 @@
     renderAttachments();
     setVoiceBtnState();
 
-    if (!document.__rcfFactoryAIOutsideClickV432) {
-      document.__rcfFactoryAIOutsideClickV432 = true;
+    if (!document.__rcfFactoryAIOutsideClickV433) {
+      document.__rcfFactoryAIOutsideClickV433 = true;
       document.addEventListener("click", (ev) => {
         try {
           const wrap = document.getElementById("rcfFactoryAIAttachWrap");
@@ -2859,11 +3020,11 @@
             <div class="rcfAiAvatar">🤖</div>
             <div class="rcfAiHeadText">
               <h2 class="rcfAiHeadTitle">Factory AI</h2>
-              <p class="rcfAiHeadSub">Chat central da Factory para conversar, analisar, organizar e evoluir a estrutura.</p>
+              <p class="rcfAiHeadSub"></p>
             </div>
           </div>
           <div class="rcfAiHeadActions">
-            <div class="rcfAiPill">Runtime + OpenAI + bridge supervisionada</div>
+            <div class="rcfAiPill" title="Runtime + OpenAI + bridge supervisionada">Runtime + OpenAI</div>
             <button class="rcfAiHeadBtn" id="rcfFactoryAIClearHistory" type="button">Limpar</button>
           </div>
         </section>
@@ -3057,8 +3218,8 @@
     bindVisibilityHooksOnce();
 
     try {
-      if (!document.__rcfFactoryAIClickSyncV432) {
-        document.__rcfFactoryAIClickSyncV432 = true;
+      if (!document.__rcfFactoryAIClickSyncV433) {
+        document.__rcfFactoryAIClickSyncV433 = true;
         document.addEventListener("click", () => {
           setTimeout(() => {
             try { syncVisibility(); } catch {}
@@ -3078,6 +3239,7 @@
     __v430: true,
     __v431: true,
     __v432: true,
+    __v433: true,
     version: VERSION,
     mount,
     clearChat,
@@ -3103,6 +3265,7 @@
     __v430_bridge: true,
     __v431_bridge: true,
     __v432_bridge: true,
+    __v433_bridge: true,
     version: VERSION,
     mount,
     clearChat,
