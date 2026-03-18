@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/factory_ai_runtime.js
    RControl Factory — Factory AI Runtime
-   v1.0.2 SUPERVISED RUNTIME + SAFE FLOW + OPENAI STATUS AWARE
+   v1.0.3 SUPERVISED RUNTIME + SAFE FLOW + OPENAI STATUS AWARE
 
    Objetivo:
    - ligar Factory AI -> API -> bridge -> actions -> patch_supervisor
@@ -11,20 +11,21 @@
    - não aplicar patch automaticamente sem aprovação
    - funcionar como script clássico
 
-   PATCH v1.0.2:
-   - FIX: mantém a base completa do runtime original
+   PATCH v1.0.3:
+   - FIX: mantém base completa do runtime
    - FIX: usa bridge.fromApiResponse() primeiro quando disponível
-   - FIX: salva status de conexão/model/model/provider vindos do backend
-   - FIX: expõe status mais claro para diagnóstico da OpenAI
+   - FIX: salva status de conexão/model/provider vindos do backend
+   - FIX: expõe lastOk em status() para contrato com admin.admin_ai.js
+   - FIX: retorna analysis também no topo do resultado de ask()
    - FIX: melhora persistência do último endpoint/última conexão
 */
 
 ;(function (global) {
   "use strict";
 
-  if (global.RCF_FACTORY_AI_RUNTIME && global.RCF_FACTORY_AI_RUNTIME.__v102) return;
+  if (global.RCF_FACTORY_AI_RUNTIME && global.RCF_FACTORY_AI_RUNTIME.__v103) return;
 
-  var VERSION = "v1.0.2";
+  var VERSION = "v1.0.3";
   var STORAGE_KEY = "rcf:factory_ai_runtime";
   var LAST_RESPONSE_KEY = "rcf:factory_ai_runtime_last_response";
   var MAX_HISTORY = 60;
@@ -41,6 +42,7 @@
     lastApprovedPlanId: "",
     lastExecution: null,
     lastEndpoint: "/api/admin-ai",
+    lastOk: false,
     lastConnection: {
       provider: "",
       configured: false,
@@ -343,6 +345,7 @@
       lastPlanId: state.lastPlanId || "",
       lastApprovedPlanId: state.lastApprovedPlanId || "",
       lastEndpoint: state.lastEndpoint || "/api/admin-ai",
+      lastOk: !!state.lastOk,
       connectionStatus: safe(function () { return state.lastConnection.status; }, "unknown"),
       connectionProvider: safe(function () { return state.lastConnection.provider; }, ""),
       connectionConfigured: !!safe(function () { return state.lastConnection.configured; }, false),
@@ -406,6 +409,7 @@
           connection: failConnection
         };
 
+        state.lastOk = false;
         state.lastConnection = clone(failConnection);
         state.lastResponse = clone(errPayload);
 
@@ -454,6 +458,7 @@
         connection: okConnection
       };
 
+      state.lastOk = true;
       state.lastConnection = clone(okConnection);
       state.lastResponse = clone(responseObj);
       saveLastResponse(responseObj);
@@ -497,6 +502,7 @@
       return {
         ok: true,
         action: req.action,
+        analysis: responseObj.analysis || "",
         endpoint: state.lastEndpoint,
         connection: clone(okConnection),
         response: clone(responseObj),
@@ -504,6 +510,19 @@
       };
     } catch (e) {
       var msg = String(e && e.message || e || "Erro interno");
+      var fallbackConn = clone(state.lastConnection || {
+        provider: "openai",
+        configured: false,
+        attempted: true,
+        status: "internal_error",
+        model: "",
+        upstreamStatus: 0
+      });
+
+      fallbackConn.status = trimText(fallbackConn.status || "internal_error") || "internal_error";
+
+      state.lastOk = false;
+      state.lastConnection = clone(fallbackConn);
       state.lastResponse = {
         ok: false,
         error: msg,
@@ -511,14 +530,7 @@
         prompt: req.prompt,
         ts: nowISO(),
         endpoint: state.lastEndpoint,
-        connection: clone(state.lastConnection || {
-          provider: "openai",
-          configured: false,
-          attempted: true,
-          status: "internal_error",
-          model: "",
-          upstreamStatus: 0
-        })
+        connection: clone(fallbackConn)
       };
 
       rememberHistory({
@@ -726,6 +738,7 @@
     __v100: true,
     __v101: true,
     __v102: true,
+    __v103: true,
     version: VERSION,
     init: init,
     status: status,
