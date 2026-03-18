@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/factory_ai_execution_gate.js
    RControl Factory — Factory AI Execution Gate
-   v1.0.0 SUPERVISED EXECUTION GATE
+   v1.0.1 SUPERVISED EXECUTION GATE / INTEGRATION FIX
 
    Objetivo:
    - transformar aprovação humana em execução real supervisionada
@@ -10,14 +10,20 @@
    - registrar validate -> stage -> apply com rastreabilidade
    - devolver status claro para UI e supervisor
    - funcionar como script clássico
+
+   PATCH v1.0.1:
+   - FIX: approveValidateStage não é mais bloqueado por phase.apply=false
+   - FIX: locked não volta preso após reload
+   - FIX: adiciona lastApprovedPlanId no state persistido
+   - FIX: emite eventos genéricos compatíveis com proposal_ui e demais módulos
 */
 
 ;(function (global) {
   "use strict";
 
-  if (global.RCF_FACTORY_AI_EXECUTION_GATE && global.RCF_FACTORY_AI_EXECUTION_GATE.__v100) return;
+  if (global.RCF_FACTORY_AI_EXECUTION_GATE && global.RCF_FACTORY_AI_EXECUTION_GATE.__v101) return;
 
-  var VERSION = "v1.0.0";
+  var VERSION = "v1.0.1";
   var STORAGE_KEY = "rcf:factory_ai_execution_gate";
   var MAX_HISTORY = 100;
 
@@ -28,6 +34,7 @@
     locked: false,
     lastUpdate: null,
     lastApprovalAt: null,
+    lastApprovedPlanId: "",
     lastPlanId: "",
     lastTargetFile: "",
     lastStatus: "idle",
@@ -86,6 +93,7 @@
         locked: !!state.locked,
         lastUpdate: state.lastUpdate,
         lastApprovalAt: state.lastApprovalAt,
+        lastApprovedPlanId: state.lastApprovedPlanId,
         lastPlanId: state.lastPlanId,
         lastTargetFile: state.lastTargetFile,
         lastStatus: state.lastStatus,
@@ -110,9 +118,10 @@
       state.version = VERSION;
       state.ready = !!parsed.ready;
       state.busy = false;
-      state.locked = !!parsed.locked;
+      state.locked = false;
       state.lastUpdate = parsed.lastUpdate || null;
       state.lastApprovalAt = parsed.lastApprovalAt || null;
+      state.lastApprovedPlanId = trimText(parsed.lastApprovedPlanId || "");
       state.lastPlanId = trimText(parsed.lastPlanId || "");
       state.lastTargetFile = normalizePath(parsed.lastTargetFile || "");
       state.lastStatus = trimText(parsed.lastStatus || "idle");
@@ -170,14 +179,6 @@
 
   function getAutoHeal() {
     return safe(function () { return global.RCF_FACTORY_AI_AUTOHEAL || null; }, null);
-  }
-
-  function getProposalUI() {
-    return safe(function () { return global.RCF_FACTORY_AI_PROPOSAL_UI || null; }, null);
-  }
-
-  function getEvolutionMode() {
-    return safe(function () { return global.RCF_FACTORY_AI_EVOLUTION_MODE || null; }, null);
   }
 
   function getPhaseEngine() {
@@ -337,17 +338,11 @@
       });
     }
 
-    if (!isApplyAllowedByPhase()) {
-      return buildGuardResult(false, "fase atual não permite apply supervisionado ainda", {
-        code: "phase_blocked",
-        planId: targetPlanId
-      });
-    }
-
     return buildGuardResult(true, "execução permitida", {
       code: "ok",
       planId: targetPlanId,
-      targetFile: getCurrentTargetFile()
+      targetFile: getCurrentTargetFile(),
+      applyAllowed: !!isApplyAllowedByPhase()
     });
   }
 
@@ -400,6 +395,12 @@
       });
 
       emit("RCF:FACTORY_AI_EXECUTION_GATE_APPROVED", {
+        planId: targetPlanId,
+        targetFile: normalizePath(summary.targetFile || state.lastTargetFile),
+        result: clone(result || {})
+      });
+
+      emit("RCF:FACTORY_AI_APPROVED", {
         planId: targetPlanId,
         targetFile: normalizePath(summary.targetFile || state.lastTargetFile),
         result: clone(result || {})
@@ -566,6 +567,12 @@
       result: clone(result || {})
     });
 
+    emit("RCF:PATCH_STAGED", {
+      planId: targetPlanId,
+      targetFile: normalizePath(summary.targetFile || state.lastTargetFile),
+      result: clone(result || {})
+    });
+
     pushLog(summary.ok ? "OK" : "WARN", "stageApprovedPlan", {
       planId: targetPlanId,
       ok: summary.ok,
@@ -656,6 +663,13 @@
     emit(summary.ok ? "RCF:FACTORY_AI_EXECUTION_GATE_APPLIED" : "RCF:FACTORY_AI_EXECUTION_GATE_APPLY_FAILED", {
       planId: targetPlanId,
       targetFile: normalizePath(summary.targetFile || state.lastTargetFile),
+      result: clone(result || {})
+    });
+
+    emit(summary.ok ? "RCF:PATCH_APPLIED" : "RCF:PATCH_APPLY_FAILED", {
+      planId: targetPlanId,
+      targetFile: normalizePath(summary.targetFile || state.lastTargetFile),
+      msg: summary.msg,
       result: clone(result || {})
     });
 
@@ -849,6 +863,7 @@
       locked: !!state.locked,
       lastUpdate: state.lastUpdate || null,
       lastApprovalAt: state.lastApprovalAt || null,
+      lastApprovedPlanId: state.lastApprovedPlanId || "",
       lastPlanId: state.lastPlanId || "",
       lastTargetFile: state.lastTargetFile || "",
       lastStatus: state.lastStatus || "idle",
@@ -944,6 +959,7 @@
     state.ready = true;
     state.version = VERSION;
     state.busy = false;
+    state.locked = false;
     persist();
     syncPresence();
     bindEvents();
@@ -954,6 +970,7 @@
 
   global.RCF_FACTORY_AI_EXECUTION_GATE = {
     __v100: true,
+    __v101: true,
     version: VERSION,
     init: init,
     status: status,
