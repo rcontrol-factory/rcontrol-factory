@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/factory_state.js
    RControl Factory — Factory State Engine
-   v1.4.3 SAFE PERSIST GUARD / PATCH MÍNIMO
+   v1.4.4 SAFE PERSIST GUARD / PATCH MÍNIMO
 
    Objetivo:
    - registrar estado operacional mínimo da Factory
@@ -12,15 +12,20 @@
    - manter compatibilidade máxima com Safari / PWA
    - reduzir escrita excessiva em localStorage
    - evitar flood de WARN persist falhou
+
+   PATCH v1.4.4:
+   - ADD: detecta módulos novos da camada Factory AI
+   - FIX: boot heurístico fica mais coerente com a fase atual da Factory
+   - FIX: refreshRuntime sincroniza melhor presença de módulos recentes
 */
 
 ;(function (global) {
   "use strict";
 
-  if (global.RCF_FACTORY_STATE && global.RCF_FACTORY_STATE.__v143) return;
+  if (global.RCF_FACTORY_STATE && global.RCF_FACTORY_STATE.__v144) return;
 
   var STORAGE_KEY = "rcf:factory_state";
-  var VERSION = "v1.4.3";
+  var VERSION = "v1.4.4";
 
   var PERSIST_DEBOUNCE_MS = 220;
   var WARN_THROTTLE_MS = 10000;
@@ -170,7 +175,22 @@
       moduleRegistry: false,
       contextEngine: false,
       factoryTree: false,
-      diagnostics: false
+      diagnostics: false,
+
+      factoryAIPlanner: false,
+      factoryAIBridge: false,
+      factoryAIActions: false,
+      patchSupervisor: false,
+      factoryAIMemory: false,
+      factoryAIAutoLoop: false,
+      factoryAISelfEvolution: false,
+      factoryAIExecutionGate: false,
+      factoryAIProposalUI: false,
+      factoryAIController: false,
+      factoryAIPolicy: false,
+      factoryAIArchitect: false,
+      factoryAIFocusEngine: false,
+      factoryPhaseEngine: false
     };
 
     try { out.logger = !!global.RCF_LOGGER; } catch (_) {}
@@ -184,6 +204,21 @@
     try { out.contextEngine = !!global.RCF_CONTEXT; } catch (_) {}
     try { out.factoryTree = !!global.RCF_FACTORY_TREE; } catch (_) {}
     try { out.diagnostics = !!global.RCF_DIAGNOSTICS; } catch (_) {}
+
+    try { out.factoryAIPlanner = !!global.RCF_FACTORY_AI_PLANNER; } catch (_) {}
+    try { out.factoryAIBridge = !!global.RCF_FACTORY_AI_BRIDGE; } catch (_) {}
+    try { out.factoryAIActions = !!global.RCF_FACTORY_AI_ACTIONS; } catch (_) {}
+    try { out.patchSupervisor = !!global.RCF_PATCH_SUPERVISOR; } catch (_) {}
+    try { out.factoryAIMemory = !!global.RCF_FACTORY_AI_MEMORY; } catch (_) {}
+    try { out.factoryAIAutoLoop = !!global.RCF_FACTORY_AI_AUTOLOOP; } catch (_) {}
+    try { out.factoryAISelfEvolution = !!global.RCF_FACTORY_AI_SELF_EVOLUTION; } catch (_) {}
+    try { out.factoryAIExecutionGate = !!global.RCF_FACTORY_AI_EXECUTION_GATE; } catch (_) {}
+    try { out.factoryAIProposalUI = !!global.RCF_FACTORY_AI_PROPOSAL_UI; } catch (_) {}
+    try { out.factoryAIController = !!global.RCF_FACTORY_AI_CONTROLLER; } catch (_) {}
+    try { out.factoryAIPolicy = !!global.RCF_FACTORY_AI_POLICY; } catch (_) {}
+    try { out.factoryAIArchitect = !!global.RCF_FACTORY_AI_ARCHITECT; } catch (_) {}
+    try { out.factoryAIFocusEngine = !!global.RCF_FACTORY_AI_FOCUS_ENGINE; } catch (_) {}
+    try { out.factoryPhaseEngine = !!global.RCF_FACTORY_PHASE_ENGINE; } catch (_) {}
 
     return out;
   }
@@ -244,7 +279,15 @@
         mods.doctor ||
         mods.contextEngine ||
         mods.factoryTree ||
-        mods.factoryAI
+        mods.factoryAI ||
+        mods.factoryAIPlanner ||
+        mods.factoryAIBridge ||
+        mods.factoryAIActions ||
+        mods.patchSupervisor ||
+        mods.factoryAIMemory ||
+        mods.factoryAIController ||
+        mods.factoryAIPolicy ||
+        mods.factoryPhaseEngine
       ) {
         return "ready";
       }
@@ -643,6 +686,14 @@
         state.modules.contextEngine ||
         state.modules.factoryTree ||
         state.modules.factoryAI ||
+        state.modules.factoryAIPlanner ||
+        state.modules.factoryAIBridge ||
+        state.modules.factoryAIActions ||
+        state.modules.patchSupervisor ||
+        state.modules.factoryAIMemory ||
+        state.modules.factoryAIController ||
+        state.modules.factoryAIPolicy ||
+        state.modules.factoryPhaseEngine ||
         state.activeModules.length > 0
       )
     ) {
@@ -689,6 +740,7 @@
     __v141: true,
     __v142: true,
     __v143: true,
+    __v144: true,
     version: VERSION,
     init: init,
     getState: getState,
