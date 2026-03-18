@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/factory_ai_runtime.js
    RControl Factory — Factory AI Runtime
-   v1.0.3 SUPERVISED RUNTIME + SAFE FLOW + OPENAI STATUS AWARE
+   v1.0.4 SUPERVISED RUNTIME + SAFE FLOW + OPENAI STATUS AWARE STABLE
 
    Objetivo:
    - ligar Factory AI -> API -> bridge -> actions -> patch_supervisor
@@ -11,21 +11,23 @@
    - não aplicar patch automaticamente sem aprovação
    - funcionar como script clássico
 
-   PATCH v1.0.3:
+   PATCH v1.0.4:
    - FIX: mantém base completa do runtime
    - FIX: usa bridge.fromApiResponse() primeiro quando disponível
    - FIX: salva status de conexão/model/provider vindos do backend
    - FIX: expõe lastOk em status() para contrato com admin.admin_ai.js
+   - FIX: expõe lastConnection inteiro em status()
    - FIX: retorna analysis também no topo do resultado de ask()
    - FIX: melhora persistência do último endpoint/última conexão
+   - FIX: normaliza falha por exceção como internal_error quando necessário
 */
 
 ;(function (global) {
   "use strict";
 
-  if (global.RCF_FACTORY_AI_RUNTIME && global.RCF_FACTORY_AI_RUNTIME.__v103) return;
+  if (global.RCF_FACTORY_AI_RUNTIME && global.RCF_FACTORY_AI_RUNTIME.__v104) return;
 
-  var VERSION = "v1.0.3";
+  var VERSION = "v1.0.4";
   var STORAGE_KEY = "rcf:factory_ai_runtime";
   var LAST_RESPONSE_KEY = "rcf:factory_ai_runtime_last_response";
   var MAX_HISTORY = 60;
@@ -217,10 +219,6 @@
     return safe(function () { return global.RCF_FACTORY_AI_BRIDGE || null; }, null);
   }
 
-  function getActions() {
-    return safe(function () { return global.RCF_FACTORY_AI_ACTIONS || null; }, null);
-  }
-
   function getPatchSupervisor() {
     return safe(function () { return global.RCF_PATCH_SUPERVISOR || null; }, null);
   }
@@ -352,6 +350,7 @@
       connectionAttempted: !!safe(function () { return state.lastConnection.attempted; }, false),
       connectionModel: safe(function () { return state.lastConnection.model; }, ""),
       connectionUpstreamStatus: Number(safe(function () { return state.lastConnection.upstreamStatus; }, 0) || 0),
+      lastConnection: clone(state.lastConnection || {}),
       historyCount: Array.isArray(state.history) ? state.history.length : 0
     };
   }
@@ -519,7 +518,8 @@
         upstreamStatus: 0
       });
 
-      fallbackConn.status = trimText(fallbackConn.status || "internal_error") || "internal_error";
+      if (!trimText(fallbackConn.status)) fallbackConn.status = "internal_error";
+      if (fallbackConn.status === "unknown") fallbackConn.status = "internal_error";
 
       state.lastOk = false;
       state.lastConnection = clone(fallbackConn);
@@ -739,6 +739,7 @@
     __v101: true,
     __v102: true,
     __v103: true,
+    __v104: true,
     version: VERSION,
     init: init,
     status: status,
