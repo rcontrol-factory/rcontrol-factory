@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/factory_ai_orchestrator.js
    RControl Factory — Factory AI Orchestrator
-   v1.1.1 ORCHESTRATOR CORE + FACTORY-FOCUSED CHAT POLICY + BACKEND ACTION FIX
+   v1.1.2 ORCHESTRATOR CORE + FACTORY-FOCUSED CHAT POLICY + BACKEND ACTION FIX
 
    Objetivo:
    - atuar como camada central cognitiva da Factory AI
@@ -12,18 +12,19 @@
    - sempre fechar respostas puxando o usuário de volta para a Factory
    - funcionar como script clássico
 
-   PATCH v1.1.1:
-   - FIX: normaliza actions do backend (generate_code -> generate-code)
-   - FIX: backend recebe action compatível com /api/admin-ai
-   - preserva toda a estrutura atual com patch mínimo
+   PATCH v1.1.2:
+   - FIX: normaliza propose_patch -> propose-patch para backend
+   - FIX: normaliza generate_code -> generate-code para backend
+   - FIX: corrige precedência lógica no fallback do backend
+   - mantém toda a estrutura atual com patch mínimo
 */
 
 (function (global) {
   "use strict";
 
-  if (global.RCF_FACTORY_AI_ORCHESTRATOR && global.RCF_FACTORY_AI_ORCHESTRATOR.__v111) return;
+  if (global.RCF_FACTORY_AI_ORCHESTRATOR && global.RCF_FACTORY_AI_ORCHESTRATOR.__v112) return;
 
-  var VERSION = "v1.1.1";
+  var VERSION = "v1.1.2";
 
   function safe(fn, fallback) {
     try {
@@ -206,7 +207,7 @@
       p.indexOf("ajuste") >= 0 ||
       p.indexOf("consertar") >= 0
     ) {
-      return "propose-patch";
+      return "propose_patch";
     }
 
     return "chat";
@@ -217,6 +218,7 @@
     if (!raw) return "chat";
 
     if (raw === "generate_code") return "generate-code";
+    if (raw === "propose_patch") return "propose-patch";
     return raw;
   }
 
@@ -503,10 +505,10 @@
       return result;
     }
 
-    if (intent === "propose-patch" || intent === "generate_code" || intent === "chat") {
-      result = await callBackend(intent, prompt, payload);
+    if (intent === "propose_patch" || intent === "generate_code" || intent === "chat") {
+      result = await callBackend(normalizeBackendAction(intent), prompt, payload);
 
-      if (!result || result.ok === false && !result.analysis && !result.answer && !result.result) {
+      if (!result || (result.ok === false && !result.analysis && !result.answer && !result.result)) {
         result = buildLocalFallback(intent, prompt, payload);
       }
 
@@ -523,7 +525,7 @@
 
     result = await callBackend("chat", prompt, payload);
 
-    if (!result || result.ok === false && !result.analysis && !result.answer && !result.result) {
+    if (!result || (result.ok === false && !result.analysis && !result.answer && !result.result)) {
       result = buildLocalFallback("chat", prompt, payload);
     }
 
@@ -576,6 +578,7 @@
     __v101: true,
     __v110: true,
     __v111: true,
+    __v112: true,
     version: VERSION,
     init: init,
     orchestrate: orchestrate,
