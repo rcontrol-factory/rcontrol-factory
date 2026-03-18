@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/factory_ai_runtime.js
    RControl Factory — Factory AI Runtime
-   v1.0.1 SUPERVISED RUNTIME + SAFE FLOW
+   v1.0.2 SUPERVISED RUNTIME + SAFE FLOW + OPENAI STATUS AWARE
 
    Objetivo:
    - ligar Factory AI -> API -> bridge -> actions -> patch_supervisor
@@ -11,19 +11,20 @@
    - não aplicar patch automaticamente sem aprovação
    - funcionar como script clássico
 
-   PATCH v1.0.1:
-   - FIX: remove dependência de APIs inexistentes (ingestPlan/setPlan/executePlan/queuePlan)
-   - FIX: usa bridge.fromText() como caminho principal de ingestão
-   - FIX: não consome plano antes da hora
-   - FIX: expõe wrappers seguros approve -> validate -> stage -> apply
+   PATCH v1.0.2:
+   - FIX: mantém a base completa do runtime original
+   - FIX: usa bridge.fromApiResponse() primeiro quando disponível
+   - FIX: salva status de conexão/model/model/provider vindos do backend
+   - FIX: expõe status mais claro para diagnóstico da OpenAI
+   - FIX: melhora persistência do último endpoint/última conexão
 */
 
 ;(function (global) {
   "use strict";
 
-  if (global.RCF_FACTORY_AI_RUNTIME && global.RCF_FACTORY_AI_RUNTIME.__v101) return;
+  if (global.RCF_FACTORY_AI_RUNTIME && global.RCF_FACTORY_AI_RUNTIME.__v102) return;
 
-  var VERSION = "v1.0.1";
+  var VERSION = "v1.0.2";
   var STORAGE_KEY = "rcf:factory_ai_runtime";
   var LAST_RESPONSE_KEY = "rcf:factory_ai_runtime_last_response";
   var MAX_HISTORY = 60;
@@ -39,6 +40,15 @@
     lastPlanId: "",
     lastApprovedPlanId: "",
     lastExecution: null,
+    lastEndpoint: "/api/admin-ai",
+    lastConnection: {
+      provider: "",
+      configured: false,
+      attempted: false,
+      status: "unknown",
+      model: "",
+      upstreamStatus: 0
+    },
     history: []
   };
 
@@ -271,11 +281,30 @@
     } catch (_) {}
   }
 
+  function normalizeConnection(info) {
+    var c = info && typeof info === "object" ? info : {};
+    return {
+      provider: trimText(c.provider || ""),
+      configured: !!c.configured,
+      attempted: !!c.attempted,
+      status: trimText(c.status || "unknown") || "unknown",
+      model: trimText(c.model || ""),
+      upstreamStatus: Number(c.upstreamStatus || 0) || 0
+    };
+  }
+
   function ingestToBridge(responseObj) {
     var bridge = getBridge();
     if (!bridge) return null;
 
     try {
+      if (typeof bridge.fromApiResponse === "function") {
+        var planFromApi = bridge.fromApiResponse(responseObj || {});
+        state.lastPlanId = trimText(safe(function () { return planFromApi.id; }, ""));
+        persist();
+        return planFromApi || null;
+      }
+
       if (typeof bridge.ingestResponse === "function") {
         var planA = bridge.ingestResponse(responseObj || {});
         state.lastPlanId = trimText(safe(function () { return planA.id; }, ""));
@@ -313,6 +342,13 @@
       lastPrompt: state.lastPrompt || "",
       lastPlanId: state.lastPlanId || "",
       lastApprovedPlanId: state.lastApprovedPlanId || "",
+      lastEndpoint: state.lastEndpoint || "/api/admin-ai",
+      connectionStatus: safe(function () { return state.lastConnection.status; }, "unknown"),
+      connectionProvider: safe(function () { return state.lastConnection.provider; }, ""),
+      connectionConfigured: !!safe(function () { return state.lastConnection.configured; }, false),
+      connectionAttempted: !!safe(function () { return state.lastConnection.attempted; }, false),
+      connectionModel: safe(function () { return state.lastConnection.model; }, ""),
+      connectionUpstreamStatus: Number(safe(function () { return state.lastConnection.upstreamStatus; }, 0) || 0),
       historyCount: Array.isArray(state.history) ? state.history.length : 0
     };
   }
@@ -336,11 +372,13 @@
     state.busy = true;
     state.lastAction = req.action;
     state.lastPrompt = req.prompt;
+    state.lastEndpoint = getBackendUrl();
     persist();
 
     emit("RCF:FACTORY_AI_RUNTIME_START", {
       action: req.action,
-      prompt: req.prompt
+      prompt: req.prompt,
+      endpoint: state.lastEndpoint
     });
 
     try {
@@ -349,29 +387,58 @@
       var data = result.data || {};
 
       if (!res.ok || !data.ok) {
+        var failConnection = normalizeConnection(data.connection || {
+          provider: "openai",
+          configured: false,
+          attempted: false,
+          status: "request_failed",
+          model: "",
+          upstreamStatus: safe(function () { return res.status; }, 0) || 0
+        });
+
         var errPayload = {
           ok: false,
           action: req.action,
           prompt: req.prompt,
           response: clone(data || {}),
-          status: safe(function () { return res.status; }, 0) || 0
+          status: safe(function () { return res.status; }, 0) || 0,
+          endpoint: state.lastEndpoint,
+          connection: failConnection
         };
 
+        state.lastConnection = clone(failConnection);
         state.lastResponse = clone(errPayload);
+
         rememberHistory({
           ts: nowISO(),
           kind: "error",
           action: req.action,
           prompt: req.prompt,
-          status: errPayload.status
+          status: errPayload.status,
+          endpoint: state.lastEndpoint,
+          connectionStatus: failConnection.status
         });
+
         persist();
 
         emit("RCF:FACTORY_AI_RUNTIME_ERROR", errPayload);
-        log("ERR", "ask fail", { action: req.action, status: errPayload.status });
+        log("ERR", "ask fail", {
+          action: req.action,
+          status: errPayload.status,
+          connectionStatus: failConnection.status
+        });
 
         return errPayload;
       }
+
+      var okConnection = normalizeConnection(data.connection || {
+        provider: "openai",
+        configured: true,
+        attempted: true,
+        status: "connected",
+        model: "",
+        upstreamStatus: safe(function () { return res.status; }, 200) || 200
+      });
 
       var responseObj = {
         ok: true,
@@ -381,9 +448,13 @@
         raw: clone(data.raw || data),
         source: trimText(data.source || req.source),
         version: trimText(data.version || VERSION),
-        ts: nowISO()
+        ts: nowISO(),
+        endpoint: state.lastEndpoint,
+        hints: clone(data.hints || {}),
+        connection: okConnection
       };
 
+      state.lastConnection = clone(okConnection);
       state.lastResponse = clone(responseObj);
       saveLastResponse(responseObj);
 
@@ -396,27 +467,38 @@
         kind: "response",
         action: req.action,
         prompt: req.prompt,
+        endpoint: state.lastEndpoint,
+        connectionStatus: okConnection.status,
+        model: okConnection.model,
         planId: trimText(safe(function () { return plan.id; }, "")),
         targetFile: trimText(safe(function () { return plan.targetFile; }, "")),
         risk: trimText(safe(function () { return plan.risk; }, "unknown"))
       });
 
       persist();
+
       emit("RCF:FACTORY_AI_RUNTIME_DONE", {
         action: req.action,
         prompt: req.prompt,
+        endpoint: state.lastEndpoint,
+        connection: clone(okConnection),
         planId: trimText(safe(function () { return plan.id; }, "")),
         response: clone(responseObj)
       });
 
       log("OK", "ask ok", {
         action: req.action,
+        endpoint: state.lastEndpoint,
+        connectionStatus: okConnection.status,
+        model: okConnection.model,
         planId: trimText(safe(function () { return plan.id; }, ""))
       });
 
       return {
         ok: true,
         action: req.action,
+        endpoint: state.lastEndpoint,
+        connection: clone(okConnection),
         response: clone(responseObj),
         plan: clone(plan || null)
       };
@@ -427,7 +509,16 @@
         error: msg,
         action: req.action,
         prompt: req.prompt,
-        ts: nowISO()
+        ts: nowISO(),
+        endpoint: state.lastEndpoint,
+        connection: clone(state.lastConnection || {
+          provider: "openai",
+          configured: false,
+          attempted: true,
+          status: "internal_error",
+          model: "",
+          upstreamStatus: 0
+        })
       };
 
       rememberHistory({
@@ -435,6 +526,7 @@
         kind: "exception",
         action: req.action,
         prompt: req.prompt,
+        endpoint: state.lastEndpoint,
         error: msg
       });
 
@@ -589,13 +681,15 @@
   }
 
   async function approveValidateStage(planId, meta) {
-    var approved = await approvePlan(planId, meta || {});
+    var targetPlanId = trimText(planId || state.lastApprovedPlanId || getCurrentPlanId());
+
+    var approved = await approvePlan(targetPlanId, meta || {});
     if (!approved || !approved.ok) return approved;
 
-    var validated = await validateApprovedPlan(planId);
+    var validated = await validateApprovedPlan(targetPlanId);
     if (!validated || !validated.ok) return validated;
 
-    return stageApprovedPlan(planId);
+    return stageApprovedPlan(targetPlanId);
   }
 
   function bindEvents() {
@@ -631,6 +725,7 @@
   global.RCF_FACTORY_AI_RUNTIME = {
     __v100: true,
     __v101: true,
+    __v102: true,
     version: VERSION,
     init: init,
     status: status,
