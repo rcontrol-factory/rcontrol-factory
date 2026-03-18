@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/factory_ai_memory.js
    RControl Factory — Factory AI Memory
-   v1.0.1 SUPERVISED MEMORY ENGINE + PHASE AWARE
+   v1.0.2 SUPERVISED MEMORY ENGINE + PHASE AWARE + EVENT DEDUPE
 
    Objetivo:
    - dar memória operacional à Factory AI
@@ -12,22 +12,21 @@
    - NÃO aplicar patch automaticamente
    - funcionar como script clássico
 
-   PATCH v1.0.1:
-   - FIX: corrige eventos reais do patch supervisor
-   - ADD: registra fase ativa da Factory
-   - ADD: registra mudança de fase
-   - ADD: buildMemoryContext inclui contexto de fase
-   - ADD: helper para listar arquivos a evitar por erros recentes
+   PATCH v1.0.2:
+   - FIX: getPhaseContext aceita fallback para activePhaseId/activePhaseTitle
+   - FIX: RCF:FACTORY_PHASE_CHANGED registra mesmo sem activePhase completo
+   - ADD: dedupe leve para evitar poluição por eventos repetidos em sequência
 */
 
 ;(function (global) {
   "use strict";
 
-  if (global.RCF_FACTORY_AI_MEMORY && global.RCF_FACTORY_AI_MEMORY.__v101) return;
+  if (global.RCF_FACTORY_AI_MEMORY && global.RCF_FACTORY_AI_MEMORY.__v102) return;
 
-  var VERSION = "v1.0.1";
+  var VERSION = "v1.0.2";
   var STORAGE_KEY = "rcf:factory_ai_memory";
   var MAX_ITEMS = 240;
+  var DEDUPE_WINDOW_MS = 12000;
 
   var state = {
     version: VERSION,
@@ -49,6 +48,11 @@
   function nowISO() {
     try { return new Date().toISOString(); }
     catch (_) { return ""; }
+  }
+
+  function nowMS() {
+    try { return Date.now(); }
+    catch (_) { return 0; }
   }
 
   function clone(obj) {
@@ -253,9 +257,40 @@
     return true;
   }
 
+  function isDuplicateRecent(item) {
+    var current = normalizeItem(item);
+    if (!current) return false;
+
+    var now = nowMS();
+    var list = asArray(state.items).slice(-20);
+
+    for (var i = list.length - 1; i >= 0; i--) {
+      var prev = list[i] || {};
+      var prevMs = Date.parse(trimText(prev.updatedAt || prev.createdAt || ""));
+      if (!prevMs || !isFinite(prevMs)) continue;
+      if ((now - prevMs) > DEDUPE_WINDOW_MS) break;
+
+      if (
+        trimText(prev.type) === trimText(current.type) &&
+        trimText(prev.title) === trimText(current.title) &&
+        trimText(prev.summary) === trimText(current.summary) &&
+        trimText(prev.targetFile) === trimText(current.targetFile) &&
+        trimText(prev.planId) === trimText(current.planId)
+      ) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   function addItem(input) {
     var item = normalizeItem(input);
     if (!item) return { ok: false, msg: "item inválido" };
+
+    if (isDuplicateRecent(item)) {
+      return { ok: true, duplicated: true, item: clone(item), counters: clone(state.counters) };
+    }
 
     state.items.push(item);
     compactIfNeeded();
@@ -526,11 +561,18 @@
     }
 
     var ctx = safe(function () { return phase.buildPhaseContext(); }, {}) || {};
+    var activePhase = clone(safe(function () { return ctx.activePhase; }, null));
+
     return {
       ready: true,
-      activePhaseId: safe(function () { return ctx.activePhase.id || ""; }, ""),
-      activePhaseTitle: safe(function () { return ctx.activePhase.title || ""; }, ""),
-      activePhase: clone(safe(function () { return ctx.activePhase; }, null)),
+      activePhaseId:
+        trimText(safe(function () { return ctx.activePhaseId; }, "")) ||
+        trimText(safe(function () { return ctx.phaseId; }, "")) ||
+        trimText(safe(function () { return activePhase.id; }, "")),
+      activePhaseTitle:
+        trimText(safe(function () { return ctx.activePhaseTitle; }, "")) ||
+        trimText(safe(function () { return activePhase.title; }, "")),
+      activePhase: activePhase,
       recommendedTargets: clone(safe(function () { return ctx.recommendedTargets || []; }, []))
     };
   }
@@ -695,13 +737,22 @@
       global.addEventListener("RCF:FACTORY_PHASE_CHANGED", function (ev) {
         try {
           var detail = ev && ev.detail ? ev.detail : {};
-          var phase = detail.activePhase || {};
-          if (!phase || !phase.id) return;
+          var activePhase = detail.activePhase || detail.phase || null;
+          var phaseId =
+            trimText(safe(function () { return detail.activePhaseId; }, "")) ||
+            trimText(safe(function () { return detail.phaseId; }, "")) ||
+            trimText(safe(function () { return activePhase.id; }, ""));
+          var phaseTitle =
+            trimText(safe(function () { return detail.activePhaseTitle; }, "")) ||
+            trimText(safe(function () { return activePhase.title; }, "")) ||
+            phaseId;
+
+          if (!phaseId) return;
 
           rememberDecision({
             title: "Mudança de fase",
-            summary: "Fase ativa da Factory atualizada para " + trimText(phase.title || phase.id),
-            tags: ["phase", "phase-change", trimText(phase.id || "")],
+            summary: "Fase ativa da Factory atualizada para " + trimText(phaseTitle || phaseId),
+            tags: ["phase", "phase-change", trimText(phaseId || "")],
             source: "factory_phase_engine",
             meta: clone(detail)
           });
@@ -726,6 +777,7 @@
   global.RCF_FACTORY_AI_MEMORY = {
     __v100: true,
     __v101: true,
+    __v102: true,
     version: VERSION,
     init: init,
     status: status,
