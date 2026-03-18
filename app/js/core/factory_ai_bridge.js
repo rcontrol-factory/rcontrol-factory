@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/factory_ai_bridge.js
    RControl Factory — Factory AI Bridge
-   v1.1.1 SUPERVISED ACTION BRIDGE + STALE PLAN GUARD
+   v1.1.2 SUPERVISED ACTION BRIDGE + STALE PLAN GUARD HARDENED
 
    Objetivo:
    - criar a ponte supervisionada entre resposta da Factory AI e ações futuras da Factory
@@ -11,21 +11,19 @@
    - alinhar compatibilidade com approveLastPlan / rejectLastPlan
    - funcionar como script clássico
 
-   PATCH v1.1.1:
-   - FIX: prioriza plannerPlan quando vier em meta local
-   - FIX: normaliza targetFile/nextFile de forma consistente
-   - FIX: evita overwrite cego por plano mais fraco/stale
-   - FIX: status expõe createdAt/source/nextStep
-   - FIX: getPendingPlan não devolve plano rejeitado
-   - FIX: bindEvents usa guarda própria da versão atual
+   PATCH v1.1.2:
+   - FIX: stale guard mais rígido para evitar overwrite por plano mais fraco/empatado sem ganho real
+   - FIX: ingestResponse não loga sucesso falso quando o plano é ignorado
+   - FIX: load usa fallback de LAST_PLAN_KEY se lastPlan vier vazio/inconsistente
+   - ADD: histórico explícito para approve/reject/clearApproval/consume
 */
 
 ;(function (global) {
   "use strict";
 
-  if (global.RCF_FACTORY_AI_BRIDGE && global.RCF_FACTORY_AI_BRIDGE.__v111) return;
+  if (global.RCF_FACTORY_AI_BRIDGE && global.RCF_FACTORY_AI_BRIDGE.__v112) return;
 
-  var VERSION = "v1.1.1";
+  var VERSION = "v1.1.2";
   var STORAGE_KEY = "rcf:factory_ai_bridge";
   var LAST_PLAN_KEY = "rcf:factory_ai_bridge_last_plan";
   var MAX_HISTORY = 40;
@@ -142,6 +140,9 @@
     if (trimText(plan.targetFile || plan.nextFile || "")) strength += 10;
     if (trimText(plan.nextStep || "")) strength += 4;
     if (Array.isArray(plan.suggestedFiles) && plan.suggestedFiles.length) strength += 4;
+    if (trimText(plan.patchSummary || "")) strength += 3;
+    if (trimText(plan.proposedCode || "")) strength += 6;
+    if (trimText(plan.objective || "")) strength += 2;
 
     return strength;
   }
@@ -169,17 +170,52 @@
     }
   }
 
+  function tryLoadLastPlanFallback() {
+    try {
+      var raw = localStorage.getItem(LAST_PLAN_KEY);
+      if (!raw) return null;
+      var parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object") return null;
+      if (!trimText(parsed.id || "")) return null;
+      return clone(parsed);
+    } catch (_) {
+      return null;
+    }
+  }
+
   function load() {
     try {
       var raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return false;
+      if (!raw) {
+        var onlyLast = tryLoadLastPlanFallback();
+        if (onlyLast) {
+          state.lastPlan = clone(onlyLast);
+          state.lastResponseText = String(onlyLast.rawText || "");
+        }
+        return false;
+      }
+
       var parsed = JSON.parse(raw);
       if (!parsed || typeof parsed !== "object") return false;
       state = merge(clone(state), parsed);
       state.version = VERSION;
       if (!Array.isArray(state.history)) state.history = [];
+
+      if (!state.lastPlan || typeof state.lastPlan !== "object" || !trimText(state.lastPlan.id || "")) {
+        var fallbackPlan = tryLoadLastPlanFallback();
+        if (fallbackPlan) {
+          state.lastPlan = clone(fallbackPlan);
+          state.lastResponseText = String(fallbackPlan.rawText || state.lastResponseText || "");
+        }
+      }
+
       return true;
     } catch (_) {
+      var fallback = tryLoadLastPlanFallback();
+      if (fallback) {
+        state.lastPlan = clone(fallback);
+        state.lastResponseText = String(fallback.rawText || "");
+      }
       return false;
     }
   }
@@ -422,33 +458,48 @@
     };
   }
 
+  function hasMeaningfulGain(currentPlan, nextPlan) {
+    var currentTarget = trimText(currentPlan.targetFile || currentPlan.nextFile || "");
+    var nextTarget = trimText(nextPlan.targetFile || nextPlan.nextFile || "");
+
+    if (!currentTarget && nextTarget) return true;
+    if (currentTarget !== nextTarget && nextTarget) return true;
+
+    if (!trimText(currentPlan.nextStep || "") && trimText(nextPlan.nextStep || "")) return true;
+    if (!trimText(currentPlan.patchSummary || "") && trimText(nextPlan.patchSummary || "")) return true;
+    if (!trimText(currentPlan.proposedCode || "") && trimText(nextPlan.proposedCode || "")) return true;
+
+    var currentFiles = Array.isArray(currentPlan.suggestedFiles) ? currentPlan.suggestedFiles.length : 0;
+    var nextFiles = Array.isArray(nextPlan.suggestedFiles) ? nextPlan.suggestedFiles.length : 0;
+    if (nextFiles > currentFiles) return true;
+
+    return false;
+  }
+
   function shouldReplacePlan(currentPlan, nextPlan) {
     if (!nextPlan || typeof nextPlan !== "object") return false;
     if (!currentPlan || typeof currentPlan !== "object") return true;
 
     var currentTs = parseTime(currentPlan.createdAt || currentPlan.ts || "");
     var nextTs = parseTime(nextPlan.createdAt || nextPlan.ts || "");
-
-    if (nextTs && currentTs) {
-      if (nextTs > currentTs) return true;
-      if (nextTs < currentTs) {
-        var currentStrengthOlder = planStrength(currentPlan);
-        var nextStrengthOlder = planStrength(nextPlan);
-        return nextStrengthOlder > currentStrengthOlder + 20;
-      }
-    }
-
     var currentStrength = planStrength(currentPlan);
     var nextStrength = planStrength(nextPlan);
 
-    if (nextStrength > currentStrength) return true;
+    if (nextTs && currentTs) {
+      if (nextTs > currentTs) {
+        if (nextStrength >= currentStrength) return true;
+        return hasMeaningfulGain(currentPlan, nextPlan);
+      }
+
+      if (nextTs < currentTs) {
+        return nextStrength > currentStrength + 20;
+      }
+    }
+
+    if (nextStrength > currentStrength + 4) return true;
     if (nextStrength < currentStrength) return false;
 
-    var currentTarget = trimText(currentPlan.targetFile || currentPlan.nextFile || "");
-    var nextTarget = trimText(nextPlan.targetFile || nextPlan.nextFile || "");
-
-    if (!currentTarget && nextTarget) return true;
-    return true;
+    return hasMeaningfulGain(currentPlan, nextPlan);
   }
 
   function summarizePlan(plan) {
@@ -465,6 +516,26 @@
       source: p.source || "",
       nextStep: p.nextStep || ""
     };
+  }
+
+  function pushPlanHistory(type, plan) {
+    var p = plan || {};
+    if (!Array.isArray(state.history)) state.history = [];
+    state.history.push({
+      type: trimText(type || "plan"),
+      id: p.id || "",
+      ts: p.createdAt || nowISO(),
+      mode: p.mode || "analysis",
+      targetFile: p.targetFile || p.nextFile || "",
+      risk: p.risk || "unknown",
+      approvalRequired: !!p.approvalRequired,
+      approvalStatus: p.approvalStatus || "",
+      source: p.source || ""
+    });
+
+    if (state.history.length > MAX_HISTORY) {
+      state.history = state.history.slice(-MAX_HISTORY);
+    }
   }
 
   function rememberPlan(plan) {
@@ -488,20 +559,7 @@
       source: plan.source || ""
     };
 
-    if (!Array.isArray(state.history)) state.history = [];
-    state.history.push({
-      id: plan.id,
-      ts: plan.createdAt || nowISO(),
-      mode: plan.mode || "analysis",
-      targetFile: plan.targetFile || plan.nextFile || "",
-      risk: plan.risk || "unknown",
-      approvalRequired: !!plan.approvalRequired,
-      source: plan.source || ""
-    });
-
-    if (state.history.length > MAX_HISTORY) {
-      state.history = state.history.slice(-MAX_HISTORY);
-    }
+    pushPlanHistory("plan", plan);
 
     try {
       localStorage.setItem(LAST_PLAN_KEY, JSON.stringify(plan));
@@ -563,6 +621,7 @@
     state.approvedPlanId = "";
     if (state.lastPlan && typeof state.lastPlan === "object") {
       state.lastPlan.approvalStatus = "pending";
+      pushPlanHistory("approval-reset", state.lastPlan);
     }
     persist();
     emit("RCF:FACTORY_AI_APPROVAL_RESET", { ok: true });
@@ -581,6 +640,7 @@
     state.approvedPlanId = want;
     last.approvalStatus = "approved";
     state.lastPlan = clone(last);
+    pushPlanHistory("approve", last);
     persist();
 
     emit("RCF:FACTORY_AI_APPROVED", {
@@ -610,6 +670,7 @@
     last.approvalStatus = "rejected";
     last.rejectionReason = trimText(reason || "");
     state.lastPlan = clone(last);
+    pushPlanHistory("reject", last);
     persist();
 
     emit("RCF:FACTORY_AI_REJECTED", {
@@ -643,6 +704,7 @@
     state.approvedPlanId = "";
     if (state.lastPlan && typeof state.lastPlan === "object") {
       state.lastPlan.approvalStatus = "consumed";
+      pushPlanHistory("consume", state.lastPlan);
     }
     persist();
 
@@ -673,17 +735,27 @@
       plan = parseStructuredPlan(text, payload);
     }
 
-    rememberPlan(plan);
+    var accepted = rememberPlan(plan);
 
-    pushLog("OK", "response ingested ✅", {
-      mode: plan.mode,
-      targetFile: plan.targetFile || plan.nextFile || "",
-      risk: plan.risk,
-      approvalRequired: plan.approvalRequired,
-      source: plan.source || ""
-    });
+    if (accepted) {
+      pushLog("OK", "response ingested ✅", {
+        mode: plan.mode,
+        targetFile: plan.targetFile || plan.nextFile || "",
+        risk: plan.risk,
+        approvalRequired: plan.approvalRequired,
+        source: plan.source || ""
+      });
+    } else {
+      pushLog("INFO", "response parsed but plan ignored", {
+        mode: plan.mode,
+        targetFile: plan.targetFile || plan.nextFile || "",
+        risk: plan.risk,
+        approvalRequired: plan.approvalRequired,
+        source: plan.source || ""
+      });
+    }
 
-    return clone(plan);
+    return clone(accepted ? plan : (state.lastPlan || plan));
   }
 
   function fromApiResponse(responseObj) {
@@ -753,8 +825,8 @@
 
   function bindEvents() {
     try {
-      if (global.__RCF_FACTORY_AI_BRIDGE_EVENTS_V111) return;
-      global.__RCF_FACTORY_AI_BRIDGE_EVENTS_V111 = true;
+      if (global.__RCF_FACTORY_AI_BRIDGE_EVENTS_V112) return;
+      global.__RCF_FACTORY_AI_BRIDGE_EVENTS_V112 = true;
 
       global.addEventListener("RCF:FACTORY_AI_RESPONSE", function (ev) {
         try {
@@ -783,6 +855,7 @@
     __v100: true,
     __v110: true,
     __v111: true,
+    __v112: true,
     version: VERSION,
     init: init,
     status: status,
