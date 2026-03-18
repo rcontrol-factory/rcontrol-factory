@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/factory_ai_planner.js
    RControl Factory — Factory AI Planner
-   v1.0.3 SUPERVISED EVOLUTION PLANNER
+   v1.0.4 SUPERVISED EVOLUTION PLANNER + PHASE/MEMORY/DIAGNOSTICS AWARE
 
    Objetivo:
    - transformar snapshot/contexto em plano operacional supervisionado
@@ -11,19 +11,21 @@
    - NÃO aplicar patch automaticamente
    - funcionar como script clássico
 
-   PATCH v1.0.3:
-   - corrige goal detection para prompts genéricos de evolução/próximo passo
-   - evita doctor_scan sequestrando prioridade em general-supervision
-   - mantém doctor forte só quando a meta for realmente diagnostics
-   - preserva a estrutura existente com patch mínimo
+   PATCH v1.0.4:
+   - ADD: lê phase engine para respeitar fase ativa e targets recomendados
+   - ADD: lê memory para evitar arquivos em cooldown/erro recente
+   - ADD: lê diagnostics para usar nextFocus e health como insumo real
+   - FIX: reduz retorno burro para tree/state/doctor quando a fase já está avançada
+   - FIX: preenche melhor lastGoal / lastPriority / lastNextFile
+   - mantém estrutura anterior com patch mínimo
 */
 
 ;(function (global) {
   "use strict";
 
-  if (global.RCF_FACTORY_AI_PLANNER && global.RCF_FACTORY_AI_PLANNER.__v103) return;
+  if (global.RCF_FACTORY_AI_PLANNER && global.RCF_FACTORY_AI_PLANNER.__v104) return;
 
-  var VERSION = "v1.0.3";
+  var VERSION = "v1.0.4";
   var STORAGE_KEY = "rcf:factory_ai_planner";
   var MAX_HISTORY = 80;
 
@@ -49,6 +51,14 @@
     registry: "/app/js/core/module_registry.js",
     tree: "/app/js/core/factory_tree.js",
     doctor: "/app/js/core/doctor_scan.js",
+    diagnostics: "/app/js/core/factory_ai_diagnostics.js",
+    autoheal: "/app/js/core/factory_ai_autoheal.js",
+    proposalUI: "/app/js/core/factory_ai_proposal_ui.js",
+    autoLoop: "/app/js/core/factory_ai_autoloop.js",
+    selfEvolution: "/app/js/core/factory_ai_self_evolution.js",
+    evolutionMode: "/app/js/core/factory_ai_evolution_mode.js",
+    executionGate: "/app/js/core/factory_ai_execution_gate.js",
+    focusEngine: "/app/js/core/factory_ai_focus_engine.js",
     app: "/app/app.js"
   };
 
@@ -79,23 +89,34 @@
     return trimText(v).toLowerCase();
   }
 
+  function asArray(value) {
+    return Array.isArray(value) ? value : [];
+  }
+
+  function uniq(arr) {
+    var out = [];
+    var seen = {};
+    asArray(arr).forEach(function (item) {
+      var key = String(item || "");
+      if (!key || seen[key]) return;
+      seen[key] = true;
+      out.push(item);
+    });
+    return out;
+  }
+
+  function normalizePath(path) {
+    var p = trimText(path || "").replace(/\\/g, "/");
+    if (!p) return "";
+    if (p.charAt(0) !== "/") p = "/" + p;
+    p = p.replace(/\/{2,}/g, "/");
+    return p;
+  }
+
   function persist() {
     try {
       state.lastUpdate = nowISO();
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-      return true;
-    } catch (_) {
-      return false;
-    }
-  }
-
-  function load() {
-    try {
-      var raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return false;
-      var parsed = JSON.parse(raw);
-      if (!parsed || typeof parsed !== "object") return false;
-      state = merge(clone(state), parsed);
       return true;
     } catch (_) {
       return false;
@@ -120,6 +141,19 @@
     });
 
     return base;
+  }
+
+  function load() {
+    try {
+      var raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return false;
+      var parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object") return false;
+      state = merge(clone(state), parsed);
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   function pushLog(level, msg, extra) {
@@ -220,32 +254,46 @@
     }, {});
   }
 
-  function asArray(value) {
-    return Array.isArray(value) ? value : [];
+  function getPhaseContext() {
+    return safe(function () {
+      if (global.RCF_FACTORY_PHASE_ENGINE?.buildPhaseContext) {
+        return global.RCF_FACTORY_PHASE_ENGINE.buildPhaseContext();
+      }
+      return {};
+    }, {});
   }
 
-  function uniq(arr) {
-    var out = [];
-    var seen = {};
-    asArray(arr).forEach(function (item) {
-      var key = String(item || "");
-      if (!key || seen[key]) return;
-      seen[key] = true;
-      out.push(item);
+  function getMemoryContext() {
+    return safe(function () {
+      if (global.RCF_FACTORY_AI_MEMORY?.buildMemoryContext) {
+        return global.RCF_FACTORY_AI_MEMORY.buildMemoryContext(20);
+      }
+      return {
+        ok: false,
+        items: [],
+        avoidFiles: [],
+        phase: null
+      };
+    }, {
+      ok: false,
+      items: [],
+      avoidFiles: [],
+      phase: null
     });
-    return out;
+  }
+
+  function getDiagnosticsReport() {
+    return safe(function () {
+      if (global.RCF_FACTORY_AI_DIAGNOSTICS?.getLastReport) {
+        var last = global.RCF_FACTORY_AI_DIAGNOSTICS.getLastReport();
+        if (last) return last;
+      }
+      return {};
+    }, {});
   }
 
   function hasFile(list, file) {
     return asArray(list).indexOf(String(file || "")) >= 0;
-  }
-
-  function normalizePath(path) {
-    var p = trimText(path || "").replace(/\\/g, "/");
-    if (!p) return "";
-    if (p.charAt(0) !== "/") p = "/" + p;
-    p = p.replace(/\/{2,}/g, "/");
-    return p;
   }
 
   function collectKnownFiles(snapshot, tree) {
@@ -262,15 +310,17 @@
       .concat(asArray(groups.ui))
       .concat(asArray(groups.admin))
       .concat(asArray(groups.engine))
+      .concat(asArray(groups.functions))
       .concat(asArray(treeSamples.core))
       .concat(asArray(treeSamples.ui))
       .concat(asArray(treeSamples.admin))
-      .concat(asArray(treeSamples.engine));
+      .concat(asArray(treeSamples.engine))
+      .concat(asArray(treeSamples.functions));
 
     return uniq(out.map(normalizePath).filter(Boolean));
   }
 
-  function detectGoal(input) {
+  function detectGoal(input, phaseCtx, diagnostics) {
     var rawGoal = trimText(
       safe(function () { return input.goal; }, "") ||
       safe(function () { return input.prompt; }, "") ||
@@ -279,8 +329,17 @@
     );
 
     var text = lower(rawGoal);
+    var phaseId = lower(safe(function () { return phaseCtx.activePhase.id; }, "") || safe(function () { return phaseCtx.activePhaseId; }, ""));
+    var diagFocus = lower(safe(function () { return diagnostics.nextFocus.targetFile; }, ""));
 
     if (!text) {
+      if (phaseId.indexOf("autoloop") >= 0) {
+        return {
+          id: "evolve-factory-ai",
+          label: "Evoluir a Factory AI com supervisão",
+          sourceText: rawGoal
+        };
+      }
       return {
         id: "evolve-factory-ai",
         label: "Evoluir a Factory AI com supervisão",
@@ -335,11 +394,35 @@
       };
     }
 
+    if (diagFocus) {
+      return {
+        id: "evolve-factory-ai",
+        label: "Evoluir a Factory AI com supervisão",
+        sourceText: rawGoal
+      };
+    }
+
     return {
       id: "general-supervision",
       label: "Supervisão técnica geral",
       sourceText: rawGoal
     };
+  }
+
+  function getAvoidMap(memoryCtx) {
+    var map = {};
+    asArray(memoryCtx && memoryCtx.avoidFiles).forEach(function (item) {
+      var file = normalizePath(item && item.file || "");
+      if (!file) return;
+      map[file] = trimText(item && item.reason || "arquivo em cooldown");
+    });
+    return map;
+  }
+
+  function fileMatchesRecommendedPhase(file, phaseCtx) {
+    var recommended = asArray(safe(function () { return phaseCtx.recommendedTargets; }, []))
+      .map(normalizePath);
+    return recommended.indexOf(normalizePath(file)) >= 0;
   }
 
   function scoreCandidate(file, ctx) {
@@ -354,38 +437,79 @@
     var patchSupervisor = safe(function () { return ctx.patchSupervisor; }, {});
     var activeModules = asArray(safe(function () { return ctx.moduleSummary.active; }, []));
     var pathsCount = Number(safe(function () { return ctx.snapshot.tree.pathsCount; }, 0) || 0);
+    var phaseCtx = safe(function () { return ctx.phaseCtx; }, {});
+    var diagnostics = safe(function () { return ctx.diagnostics; }, {});
+    var memoryCtx = safe(function () { return ctx.memoryCtx; }, {});
+    var avoidMap = getAvoidMap(memoryCtx);
+    var diagNextFocus = normalizePath(safe(function () { return diagnostics.nextFocus.targetFile; }, ""));
+    var diagScore = Number(safe(function () { return diagnostics.health.score; }, 0) || 0);
+
+    if (avoidMap[f]) {
+      score -= 120;
+      reasons.push("arquivo em cooldown pela memória: " + avoidMap[f]);
+    }
+
+    if (diagNextFocus && diagNextFocus === normalizePath(f)) {
+      score += 110;
+      reasons.push("diagnostics já consolidou esse alvo como nextFocus");
+    }
+
+    if (fileMatchesRecommendedPhase(f, phaseCtx)) {
+      score += 55;
+      reasons.push("arquivo recomendado explicitamente pela fase ativa");
+    }
 
     if (goalId === "evolve-factory-ai") {
       if (f === STRATEGIC_FILES.planner) {
-        score += 100;
-        reasons.push("camada de planejamento estratégico da IA");
+        score += 120;
+        reasons.push("camada central de decisão da Factory AI");
       }
       if (f === STRATEGIC_FILES.actions) {
-        score += 70;
+        score += 75;
         reasons.push("orquestra execução supervisionada");
       }
       if (f === STRATEGIC_FILES.bridge) {
-        score += 60;
+        score += 70;
         reasons.push("transforma resposta em plano operacional");
       }
+      if (f === STRATEGIC_FILES.autoheal) {
+        score += 64;
+        reasons.push("converte diagnóstico em proposta concreta");
+      }
+      if (f === STRATEGIC_FILES.proposalUI) {
+        score += 58;
+        reasons.push("fecha a etapa humana de aprovação supervisionada");
+      }
+      if (f === STRATEGIC_FILES.executionGate) {
+        score += 56;
+        reasons.push("protege a passagem approve -> validate -> stage -> apply");
+      }
       if (f === STRATEGIC_FILES.patchSupervisor) {
-        score += 55;
+        score += 54;
         reasons.push("fecha fluxo approve -> stage -> apply");
       }
       if (f === STRATEGIC_FILES.backend) {
-        score += 48;
+        score += 46;
         reasons.push("qualidade da inteligência do backend");
       }
       if (f === STRATEGIC_FILES.factoryAI) {
-        score += 42;
+        score += 40;
         reasons.push("chat e integração do front");
       }
       if (f === STRATEGIC_FILES.context) {
-        score += 35;
+        score += 30;
         reasons.push("qualidade do snapshot e contexto");
       }
+      if (f === STRATEGIC_FILES.tree) {
+        score -= 20;
+        reasons.push("tree já não deve ser prioridade padrão nesta fase");
+      }
+      if (f === STRATEGIC_FILES.state) {
+        score -= 14;
+        reasons.push("state já não deve sequestrar a prioridade cognitiva");
+      }
       if (f === STRATEGIC_FILES.doctor) {
-        score -= 40;
+        score -= 48;
         reasons.push("doctor não deve sequestrar a prioridade da evolução cognitiva");
       }
     }
@@ -395,8 +519,12 @@
         score += 90;
         reasons.push("fluxo de patch supervisionado");
       }
+      if (f === STRATEGIC_FILES.executionGate) {
+        score += 82;
+        reasons.push("controle de aprovação/validação/stage/apply");
+      }
       if (f === STRATEGIC_FILES.actions) {
-        score += 75;
+        score += 74;
         reasons.push("ações seguras da Factory AI");
       }
       if (f === STRATEGIC_FILES.bridge) {
@@ -410,38 +538,37 @@
     }
 
     if (goalId === "diagnostics") {
+      if (f === STRATEGIC_FILES.diagnostics) {
+        score += 92;
+        reasons.push("diagnóstico consolidado da Factory AI");
+      }
       if (f === STRATEGIC_FILES.doctor) {
-        score += 85;
+        score += 80;
         reasons.push("diagnóstico interno");
       }
       if (f === STRATEGIC_FILES.state) {
-        score += 45;
+        score += 40;
         reasons.push("persistência de diagnóstico");
       }
     }
 
     if (goalId === "general-supervision") {
       if (f === STRATEGIC_FILES.planner) {
-        score += 20;
+        score += 30;
         reasons.push("planejamento ainda é prioridade estrutural");
       }
       if (f === STRATEGIC_FILES.actions) {
-        score += 16;
+        score += 18;
         reasons.push("camada de ações supervisionadas continua prioritária");
       }
       if (f === STRATEGIC_FILES.bridge) {
-        score += 14;
+        score += 16;
         reasons.push("ponte supervisionada ainda precisa amadurecer");
       }
       if (f === STRATEGIC_FILES.doctor) {
         score -= 18;
         reasons.push("doctor não deve assumir prioridade padrão nesta fase");
       }
-    }
-
-    if (f === STRATEGIC_FILES.state && !hasFile(knownFiles, STRATEGIC_FILES.planner)) {
-      score += 8;
-      reasons.push("estado ainda ajuda quando planner não existe");
     }
 
     if (f === STRATEGIC_FILES.tree && pathsCount < 20) {
@@ -473,15 +600,25 @@
       if (
         f === STRATEGIC_FILES.planner ||
         f === STRATEGIC_FILES.actions ||
-        f === STRATEGIC_FILES.bridge
+        f === STRATEGIC_FILES.bridge ||
+        f === STRATEGIC_FILES.autoheal
       ) {
         score += 14;
         reasons.push("núcleo já permite subir para camada cognitiva");
       }
     }
 
+    if (diagScore >= 70 && (
+      f === STRATEGIC_FILES.tree ||
+      f === STRATEGIC_FILES.state ||
+      f === STRATEGIC_FILES.registry
+    )) {
+      score -= 22;
+      reasons.push("com saúde já razoável, não vale regredir para infraestrutura genérica");
+    }
+
     if (!hasFile(knownFiles, f)) {
-      score += 12;
+      score += 8;
       reasons.push("arquivo ainda não visível na árvore atual");
     } else {
       score += 2;
@@ -500,6 +637,9 @@
       STRATEGIC_FILES.planner,
       STRATEGIC_FILES.actions,
       STRATEGIC_FILES.bridge,
+      STRATEGIC_FILES.autoheal,
+      STRATEGIC_FILES.proposalUI,
+      STRATEGIC_FILES.executionGate,
       STRATEGIC_FILES.patchSupervisor,
       STRATEGIC_FILES.backend,
       STRATEGIC_FILES.factoryAI,
@@ -508,6 +648,10 @@
       STRATEGIC_FILES.registry,
       STRATEGIC_FILES.tree,
       STRATEGIC_FILES.doctor,
+      STRATEGIC_FILES.diagnostics,
+      STRATEGIC_FILES.autoLoop,
+      STRATEGIC_FILES.selfEvolution,
+      STRATEGIC_FILES.focusEngine,
       STRATEGIC_FILES.app
     ];
 
@@ -528,37 +672,42 @@
   function buildExecutionLine(nextFile, ctx) {
     var line = [];
     var goalId = safe(function () { return ctx.goal.id; }, "");
+    var phaseCtx = safe(function () { return ctx.phaseCtx; }, {});
+    var recommended = asArray(safe(function () { return phaseCtx.recommendedTargets; }, []));
 
     if (goalId === "evolve-factory-ai") {
-      line.push(STRATEGIC_FILES.planner);
-      line.push(STRATEGIC_FILES.actions);
-      line.push(STRATEGIC_FILES.backend);
-      line.push(STRATEGIC_FILES.factoryAI);
-      line.push(STRATEGIC_FILES.patchSupervisor);
-    } else if (goalId === "supervised-patch-flow") {
-      line.push(STRATEGIC_FILES.patchSupervisor);
+      line.push(nextFile);
       line.push(STRATEGIC_FILES.actions);
       line.push(STRATEGIC_FILES.bridge);
-      line.push(STRATEGIC_FILES.backend);
+      line.push(STRATEGIC_FILES.autoheal);
+      line.push(STRATEGIC_FILES.proposalUI);
+      line.push(STRATEGIC_FILES.executionGate);
+    } else if (goalId === "supervised-patch-flow") {
+      line.push(nextFile);
+      line.push(STRATEGIC_FILES.executionGate);
+      line.push(STRATEGIC_FILES.patchSupervisor);
+      line.push(STRATEGIC_FILES.bridge);
+      line.push(STRATEGIC_FILES.actions);
     } else if (goalId === "diagnostics") {
+      line.push(nextFile);
+      line.push(STRATEGIC_FILES.diagnostics);
       line.push(STRATEGIC_FILES.doctor);
       line.push(STRATEGIC_FILES.state);
-      line.push(STRATEGIC_FILES.registry);
-      line.push(STRATEGIC_FILES.tree);
     } else {
       line.push(nextFile);
       line.push(STRATEGIC_FILES.actions);
-      line.push(STRATEGIC_FILES.backend);
+      line.push(STRATEGIC_FILES.bridge);
+      line.push(STRATEGIC_FILES.autoheal);
     }
 
-    line = uniq([nextFile].concat(line));
+    line = uniq(line.concat(recommended.map(normalizePath)));
     return line.slice(0, 8);
   }
 
   function buildPriorityLabel(score) {
-    if (score >= 90) return "critical-now";
-    if (score >= 70) return "high";
-    if (score >= 45) return "medium";
+    if (score >= 110) return "critical-now";
+    if (score >= 80) return "high";
+    if (score >= 50) return "medium";
     return "low";
   }
 
@@ -576,6 +725,14 @@
     var actionsReady = !!safe(function () { return ctx.actions.ready; }, false);
     var patchReady = !!safe(function () { return ctx.patchSupervisor.ready; }, false);
     var activeModules = asArray(safe(function () { return ctx.moduleSummary.active; }, []));
+    var phaseTitle = trimText(safe(function () { return ctx.phaseCtx.activePhase.title; }, "") || safe(function () { return ctx.phaseCtx.activePhaseTitle; }, ""));
+    var diagNextFocus = trimText(safe(function () { return ctx.diagnostics.nextFocus.targetFile; }, ""));
+    var diagScore = Number(safe(function () { return ctx.diagnostics.health.score; }, 0) || 0);
+    var memoryAvoid = asArray(safe(function () { return ctx.memoryCtx.avoidFiles; }, []));
+
+    if (phaseTitle) {
+      notes.push("Fase ativa considerada: " + phaseTitle + ".");
+    }
 
     if (goalId === "evolve-factory-ai") {
       notes.push("A fase atual pede evolução cognitiva da Factory AI, não retorno ao ciclo genérico de doctor/state/registry/tree.");
@@ -604,6 +761,18 @@
 
     if (nextFile === STRATEGIC_FILES.planner) {
       notes.push("Planner é a peça que transforma snapshot em prioridade real e evita repetição de respostas rasas.");
+    }
+
+    if (diagNextFocus) {
+      notes.push("Diagnostics já apontou foco consolidado em " + diagNextFocus + ".");
+    }
+
+    if (diagScore >= 70) {
+      notes.push("A saúde atual já permite evitar regressão para infraestrutura genérica.");
+    }
+
+    if (memoryAvoid.length) {
+      notes.push("Memory está bloqueando alvos recentes para evitar repetição burra.");
     }
 
     return uniq(notes);
@@ -636,7 +805,10 @@
     var actions = getActionsStatus();
     var patchSupervisor = getPatchSupervisorStatus();
     var doctor = getDoctorState();
-    var goal = detectGoal(input || {});
+    var phaseCtx = getPhaseContext();
+    var memoryCtx = getMemoryContext();
+    var diagnostics = getDiagnosticsReport();
+    var goal = detectGoal(input || {}, phaseCtx, diagnostics);
     var knownFiles = collectKnownFiles(snapshot, treeSummary);
 
     var ctx = {
@@ -650,7 +822,10 @@
       patchSupervisor: clone(patchSupervisor || {}),
       doctor: clone(doctor || {}),
       goal: clone(goal || {}),
-      knownFiles: clone(knownFiles || [])
+      knownFiles: clone(knownFiles || []),
+      phaseCtx: clone(phaseCtx || {}),
+      memoryCtx: clone(memoryCtx || {}),
+      diagnostics: clone(diagnostics || {})
     };
 
     var choice = chooseNextFile(ctx);
@@ -671,7 +846,7 @@
       nextFile: normalizePath(top.file),
 
       mode: "patch",
-      risk: top.score >= 90 ? "medium" : "low",
+      risk: top.score >= 110 ? "medium" : "low",
       approvalRequired: true,
       approvalStatus: "pending",
 
@@ -682,7 +857,7 @@
       suggestedFiles: executionLine.slice(0, 8),
 
       executionLine: executionLine,
-      ranking: choice.ranking.slice(0, 8),
+      ranking: choice.ranking.slice(0, 10),
       notes: notes,
 
       proposedCode: "",
@@ -694,6 +869,22 @@
         engineVersion: trimText(safe(function () { return factoryState.engineVersion; }, "")),
         pathsCount: Number(safe(function () { return snapshot.tree.pathsCount; }, 0) || 0),
         activeModules: asArray(safe(function () { return moduleSummary.active; }, []))
+      },
+
+      phase: {
+        activePhaseId: trimText(safe(function () { return phaseCtx.activePhase.id; }, "") || safe(function () { return phaseCtx.activePhaseId; }, "")),
+        activePhaseTitle: trimText(safe(function () { return phaseCtx.activePhase.title; }, "") || safe(function () { return phaseCtx.activePhaseTitle; }, "")),
+        recommendedTargets: asArray(safe(function () { return phaseCtx.recommendedTargets; }, [])).map(normalizePath)
+      },
+
+      diagnostics: {
+        nextFocus: normalizePath(safe(function () { return diagnostics.nextFocus.targetFile; }, "")),
+        healthScore: Number(safe(function () { return diagnostics.health.score; }, 0) || 0),
+        healthGrade: trimText(safe(function () { return diagnostics.health.grade; }, ""))
+      },
+
+      memory: {
+        avoidFiles: asArray(safe(function () { return memoryCtx.avoidFiles; }, []))
       }
     };
 
@@ -802,6 +993,7 @@
     __v100: true,
     __v101: true,
     __v103: true,
+    __v104: true,
     version: VERSION,
     init: init,
     status: status,
