@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/factory_ai_proposal_ui.js
    RControl Factory — Factory AI Proposal UI
-   v1.0.0 SUPERVISED PROPOSAL PANEL
+   v1.0.1 SUPERVISED PROPOSAL PANEL / SAFE FIX
 
    Objetivo:
    - exibir proposta supervisionada da Factory AI
@@ -10,17 +10,23 @@
    - atualizar UI após proposal / approval / stage / apply
    - NÃO aplicar patch automaticamente
    - funcionar como script clássico
+
+   PATCH v1.0.1:
+   - FIX: fallback correto de risk entre proposal/plan
+   - FIX: visibilitychange ligado no document (não no window)
+   - FIX: apply desabilitado quando proposta estiver bloqueada
+   - mantém estrutura atual com patch mínimo
 */
 
 ;(function (global) {
   "use strict";
 
-  if (global.RCF_FACTORY_AI_PROPOSAL_UI && global.RCF_FACTORY_AI_PROPOSAL_UI.__v100) return;
+  if (global.RCF_FACTORY_AI_PROPOSAL_UI && global.RCF_FACTORY_AI_PROPOSAL_UI.__v101) return;
 
-  var VERSION = "v1.0.0";
+  var VERSION = "v1.0.1";
   var STORAGE_KEY = "rcf:factory_ai_proposal_ui";
   var BOX_ID = "rcfFactoryAIProposalBox";
-  var STYLE_ID = "rcfFactoryAIProposalStyleV100";
+  var STYLE_ID = "rcfFactoryAIProposalStyleV101";
   var MAX_HISTORY = 80;
 
   var state = {
@@ -110,6 +116,16 @@
     if (r.indexOf("low") >= 0 || r.indexOf("baixo") >= 0 || r.indexOf("safe") >= 0 || r.indexOf("seguro") >= 0) return "low";
     if (r.indexOf("medium") >= 0 || r.indexOf("médio") >= 0 || r.indexOf("medio") >= 0) return "medium";
     if (r.indexOf("high") >= 0 || r.indexOf("alto") >= 0 || r.indexOf("crit") >= 0) return "high";
+    return "unknown";
+  }
+
+  function resolveRisk() {
+    var proposalRisk = normalizeRisk(safe(function () { return getAutoHealProposal().risk; }, ""));
+    if (proposalRisk !== "unknown") return proposalRisk;
+
+    var planRisk = normalizeRisk(safe(function () { return getBridgePlan().risk; }, ""));
+    if (planRisk !== "unknown") return planRisk;
+
     return "unknown";
   }
 
@@ -337,10 +353,6 @@
       normalizePath(safe(function () { return plan.nextFile; }, "")) ||
       normalizePath(safe(function () { return diag.nextFocus.targetFile; }, ""));
 
-    var risk =
-      normalizeRisk(safe(function () { return proposal.risk; }, "")) ||
-      normalizeRisk(safe(function () { return plan.risk; }, ""));
-
     var approvalStatus =
       trimText(safe(function () { return plan.approvalStatus; }, "")) ||
       trimText(safe(function () { return proposal.approvalStatus; }, "")) ||
@@ -380,7 +392,7 @@
       proposalId: proposalId,
       objective: objective,
       targetFile: targetFile,
-      risk: risk || "unknown",
+      risk: resolveRisk(),
       approvalStatus: approvalStatus || "pending",
       blocked: blocked,
       blockedReason: blockedReason,
@@ -470,7 +482,7 @@
           '<button type="button" class="rcfProposalBtn primary" id="rcfFactoryAIProposalApprove" ' + (!hasProposal ? 'disabled="disabled"' : '') + '>Aprovar</button>',
           '<button type="button" class="rcfProposalBtn" id="rcfFactoryAIProposalValidate" ' + (!hasProposal ? 'disabled="disabled"' : '') + '>Validar</button>',
           '<button type="button" class="rcfProposalBtn" id="rcfFactoryAIProposalStage" ' + (!hasProposal ? 'disabled="disabled"' : '') + '>Stage</button>',
-          '<button type="button" class="rcfProposalBtn" id="rcfFactoryAIProposalApply" ' + (!hasProposal ? 'disabled="disabled"' : '') + '>Apply</button>',
+          '<button type="button" class="rcfProposalBtn" id="rcfFactoryAIProposalApply" ' + (!hasProposal || model.blocked ? 'disabled="disabled"' : '') + '>Apply</button>',
           '<button type="button" class="rcfProposalBtn danger" id="rcfFactoryAIProposalReject" ' + (!hasProposal ? 'disabled="disabled"' : '') + '>Rejeitar</button>',
         '</div>',
 
@@ -740,43 +752,43 @@
     var applyBtn = document.getElementById("rcfFactoryAIProposalApply");
     var rejectBtn = document.getElementById("rcfFactoryAIProposalReject");
 
-    if (refreshBtn && !refreshBtn.__boundV100) {
-      refreshBtn.__boundV100 = true;
+    if (refreshBtn && !refreshBtn.__boundV101) {
+      refreshBtn.__boundV101 = true;
       refreshBtn.addEventListener("click", function () {
         refreshProposal();
       }, { passive: true });
     }
 
-    if (approveBtn && !approveBtn.__boundV100) {
-      approveBtn.__boundV100 = true;
+    if (approveBtn && !approveBtn.__boundV101) {
+      approveBtn.__boundV101 = true;
       approveBtn.addEventListener("click", function () {
         runAction("approve", model.proposalId);
       }, { passive: true });
     }
 
-    if (validateBtn && !validateBtn.__boundV100) {
-      validateBtn.__boundV100 = true;
+    if (validateBtn && !validateBtn.__boundV101) {
+      validateBtn.__boundV101 = true;
       validateBtn.addEventListener("click", function () {
         runAction("validate", model.proposalId);
       }, { passive: true });
     }
 
-    if (stageBtn && !stageBtn.__boundV100) {
-      stageBtn.__boundV100 = true;
+    if (stageBtn && !stageBtn.__boundV101) {
+      stageBtn.__boundV101 = true;
       stageBtn.addEventListener("click", function () {
         runAction("stage", model.proposalId);
       }, { passive: true });
     }
 
-    if (applyBtn && !applyBtn.__boundV100) {
-      applyBtn.__boundV100 = true;
+    if (applyBtn && !applyBtn.__boundV101) {
+      applyBtn.__boundV101 = true;
       applyBtn.addEventListener("click", function () {
         runAction("apply", model.proposalId);
       }, { passive: true });
     }
 
-    if (rejectBtn && !rejectBtn.__boundV100) {
-      rejectBtn.__boundV100 = true;
+    if (rejectBtn && !rejectBtn.__boundV101) {
+      rejectBtn.__boundV101 = true;
       rejectBtn.addEventListener("click", function () {
         runAction("reject", model.proposalId);
       }, { passive: true });
@@ -873,11 +885,13 @@
     } catch (_) {}
 
     try {
-      global.addEventListener("visibilitychange", function () {
-        try {
-          if (document.visibilityState === "visible") render();
-        } catch (_) {}
-      }, { passive: true });
+      if (global.document && global.document.addEventListener) {
+        global.document.addEventListener("visibilitychange", function () {
+          try {
+            if (global.document.visibilityState === "visible") render();
+          } catch (_) {}
+        }, { passive: true });
+      }
     } catch (_) {}
 
     try {
@@ -916,6 +930,7 @@
 
   global.RCF_FACTORY_AI_PROPOSAL_UI = {
     __v100: true,
+    __v101: true,
     version: VERSION,
     init: init,
     status: status,
