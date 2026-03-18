@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/factory_ai_actions.js
    RControl Factory — Factory AI Actions
-   v1.1.1 ACTION ORCHESTRATOR + PLANNER PRIORITY FIX
+   v1.1.2 ACTION ORCHESTRATOR + SAFE PLAN PICK
 
    Objetivo:
    - centralizar ações inteligentes da Factory AI
@@ -11,19 +11,19 @@
    - expor ações seguras e reutilizáveis via window.RCF_FACTORY_AI_ACTIONS
    - funcionar como script clássico
 
-   PATCH v1.1.1:
-   - FIX: prioriza planner.lastPlan antes de bridge.lastPlan
-   - FIX: evita sugestão stale herdada do bridge
-   - FIX: aceita planner.buildPlan() e planner.planFromRuntime()
-   - FIX: só usa bridge.lastPlan como fallback seguro
+   PATCH v1.1.2:
+   - FIX: approveLastPlan prioriza pendingPlan antes de lastPlan
+   - FIX: aceita meta.planId explicitamente
+   - FIX: validate/stage/apply usam resolved current plan id com fallback seguro
+   - FIX: evita atuar em plano stale/rejeitado/consumido quando houver pendingPlan melhor
 */
 
 ;(function (global) {
   "use strict";
 
-  if (global.RCF_FACTORY_AI_ACTIONS && global.RCF_FACTORY_AI_ACTIONS.__v111) return;
+  if (global.RCF_FACTORY_AI_ACTIONS && global.RCF_FACTORY_AI_ACTIONS.__v112) return;
 
-  var VERSION = "v1.1.1";
+  var VERSION = "v1.1.2";
   var STORAGE_KEY = "rcf:factory_ai_actions";
   var MAX_HISTORY = 100;
 
@@ -444,6 +444,28 @@
     return true;
   }
 
+  function getPendingBridgePlanNormalized() {
+    var bridge = getBridge();
+    if (!bridge || typeof bridge.getPendingPlan !== "function") return null;
+    return normalizeBridgePlan(bridge.getPendingPlan());
+  }
+
+  function resolveCurrentBridgePlanId(preferredPlanId) {
+    var wanted = trimText(preferredPlanId || "");
+    var pending = getPendingBridgePlanNormalized();
+    var last = getLastBridgePlanNormalized();
+
+    if (wanted) {
+      if (pending && pending.id === wanted) return wanted;
+      if (last && last.id === wanted) return wanted;
+      return wanted;
+    }
+
+    if (pending && pending.id) return pending.id;
+    if (last && last.id) return last.id;
+    return "";
+  }
+
   function buildNextFileSuggestionFromPlan() {
     var plannerPlan = getLastPlannerPlanNormalized();
     var bridgePlan = getLastBridgePlanNormalized();
@@ -559,15 +581,17 @@
       return fail;
     }
 
-    var last = typeof bridge.getLastPlan === "function" ? bridge.getLastPlan() : null;
-    if (!last || !last.id) {
+    var requestedPlanId = trimText(safe(function () { return meta.planId; }, ""));
+    var targetPlanId = resolveCurrentBridgePlanId(requestedPlanId);
+
+    if (!targetPlanId) {
       var failLast = { ok: false, msg: "Nenhum plano pendente para aprovar." };
       markAction("approveLastPlan", meta, failLast);
       return failLast;
     }
 
-    var result = bridge.approvePlan(last.id, meta || {});
-    markAction("approveLastPlan", { planId: last.id, meta: clone(meta || {}) }, result);
+    var result = bridge.approvePlan(targetPlanId, meta || {});
+    markAction("approveLastPlan", { planId: targetPlanId, meta: clone(meta || {}) }, result);
 
     if (result && result.ok) {
       emit("RCF:FACTORY_AI_ACTION_APPROVED", {
@@ -582,79 +606,60 @@
     return result;
   }
 
-  async function validateLastApprovedPlan() {
-    var bridge = getBridge();
+  async function validateLastApprovedPlan(meta) {
     var supervisor = getPatchSupervisor();
-
-    if (!bridge || typeof bridge.getLastPlan !== "function") {
-      var failBridge = { ok: false, msg: "Factory AI Bridge indisponível." };
-      markAction("validateLastApprovedPlan", {}, failBridge);
-      return failBridge;
-    }
+    var planId = resolveCurrentBridgePlanId(trimText(safe(function () { return meta.planId; }, "")));
 
     if (!supervisor || typeof supervisor.validateApprovedPlan !== "function") {
       var failSup = { ok: false, msg: "Patch Supervisor indisponível." };
-      markAction("validateLastApprovedPlan", {}, failSup);
+      markAction("validateLastApprovedPlan", meta || {}, failSup);
       return failSup;
     }
 
-    var plan = bridge.getLastPlan();
-    if (!plan || !plan.id) {
+    if (!planId) {
       var failPlan = { ok: false, msg: "Nenhum plano atual para validar." };
-      markAction("validateLastApprovedPlan", {}, failPlan);
+      markAction("validateLastApprovedPlan", meta || {}, failPlan);
       return failPlan;
     }
 
-    var validation = supervisor.validateApprovedPlan(plan.id);
+    var validation = supervisor.validateApprovedPlan(planId);
     var result = {
       ok: !!validation.ok,
-      planId: String(plan.id || ""),
+      planId: String(planId || ""),
       validation: clone(validation)
     };
 
-    markAction("validateLastApprovedPlan", { planId: plan.id }, result);
+    markAction("validateLastApprovedPlan", { planId: planId, meta: clone(meta || {}) }, result);
     pushLog(result.ok ? "OK" : "WARN", "validateLastApprovedPlan", result);
     return result;
   }
 
-  async function stageLastApprovedPlan() {
-    var bridge = getBridge();
+  async function stageLastApprovedPlan(meta) {
     var supervisor = getPatchSupervisor();
-
-    if (!bridge || typeof bridge.getLastPlan !== "function") {
-      var failBridge = { ok: false, msg: "Factory AI Bridge indisponível." };
-      markAction("stageLastApprovedPlan", {}, failBridge);
-      return failBridge;
-    }
+    var planId = resolveCurrentBridgePlanId(trimText(safe(function () { return meta.planId; }, "")));
 
     if (!supervisor || typeof supervisor.stageApprovedPlan !== "function") {
       var failSup = { ok: false, msg: "Patch Supervisor indisponível." };
-      markAction("stageLastApprovedPlan", {}, failSup);
+      markAction("stageLastApprovedPlan", meta || {}, failSup);
       return failSup;
     }
 
-    var plan = bridge.getLastPlan();
-    if (!plan || !plan.id) {
+    if (!planId) {
       var failPlan = { ok: false, msg: "Nenhum plano atual para stage." };
-      markAction("stageLastApprovedPlan", {}, failPlan);
+      markAction("stageLastApprovedPlan", meta || {}, failPlan);
       return failPlan;
     }
 
-    var result = await supervisor.stageApprovedPlan(plan.id);
-    markAction("stageLastApprovedPlan", { planId: plan.id }, result);
+    var result = await supervisor.stageApprovedPlan(planId);
+    markAction("stageLastApprovedPlan", { planId: planId, meta: clone(meta || {}) }, result);
     pushLog(result.ok ? "OK" : "WARN", "stageLastApprovedPlan", result);
     return result;
   }
 
   async function applyLastApprovedPlan(opts) {
-    var bridge = getBridge();
     var supervisor = getPatchSupervisor();
-
-    if (!bridge || typeof bridge.getLastPlan !== "function") {
-      var failBridge = { ok: false, msg: "Factory AI Bridge indisponível." };
-      markAction("applyLastApprovedPlan", opts, failBridge);
-      return failBridge;
-    }
+    var requestedPlanId = trimText(safe(function () { return opts.planId; }, ""));
+    var planId = resolveCurrentBridgePlanId(requestedPlanId);
 
     if (!supervisor || typeof supervisor.applyApprovedPlan !== "function") {
       var failSup = { ok: false, msg: "Patch Supervisor indisponível." };
@@ -662,15 +667,19 @@
       return failSup;
     }
 
-    var plan = bridge.getLastPlan();
-    if (!plan || !plan.id) {
+    if (!planId) {
       var failPlan = { ok: false, msg: "Nenhum plano atual para apply." };
       markAction("applyLastApprovedPlan", opts, failPlan);
       return failPlan;
     }
 
-    var result = await supervisor.applyApprovedPlan(plan.id, opts || {});
-    markAction("applyLastApprovedPlan", { planId: plan.id, opts: clone(opts || {}) }, result);
+    var cleanOpts = clone(opts || {});
+    if (cleanOpts && typeof cleanOpts === "object" && Object.prototype.hasOwnProperty.call(cleanOpts, "planId")) {
+      delete cleanOpts.planId;
+    }
+
+    var result = await supervisor.applyApprovedPlan(planId, cleanOpts || {});
+    markAction("applyLastApprovedPlan", { planId: planId, opts: clone(cleanOpts || {}) }, result);
     pushLog(result.ok ? "OK" : "WARN", "applyLastApprovedPlan", result);
     return result;
   }
@@ -747,7 +756,8 @@
       bridge: {
         ready: !!bridge,
         version: safe(function () { return bridge.version; }, "unknown"),
-        lastPlan: safe(function () { return bridge.getLastPlan ? bridge.getLastPlan() : null; }, null)
+        lastPlan: safe(function () { return bridge.getLastPlan ? bridge.getLastPlan() : null; }, null),
+        pendingPlan: safe(function () { return bridge.getPendingPlan ? bridge.getPendingPlan() : null; }, null)
       },
       patchSupervisor: {
         ready: !!supervisor,
@@ -789,8 +799,8 @@
 
     if (intent === "plan") return planFromCurrentRuntime(req);
     if (intent === "approve_patch") return approveLastPlan(req.meta || {});
-    if (intent === "validate_patch") return validateLastApprovedPlan();
-    if (intent === "stage_patch") return stageLastApprovedPlan();
+    if (intent === "validate_patch") return validateLastApprovedPlan(req.meta || {});
+    if (intent === "stage_patch") return stageLastApprovedPlan(req.meta || {});
     if (intent === "apply_patch") return applyLastApprovedPlan(req.opts || {});
     if (intent === "run_doctor") return runDoctor();
     if (intent === "collect_logs") return collectLogs(req.limit || 30);
@@ -854,6 +864,7 @@
     __v100: true,
     __v110: true,
     __v111: true,
+    __v112: true,
     version: VERSION,
     init: init,
     status: status,
