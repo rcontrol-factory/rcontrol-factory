@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/factory_phase_engine.js
    RControl Factory — Factory Phase Engine
-   v1.0.0 SUPERVISED PHASE ORCHESTRATOR
+   v1.0.1 SUPERVISED PHASE ORCHESTRATOR / SAFE RECOMMENDATION
 
    Objetivo:
    - organizar a evolução da Factory por fases supervisionadas
@@ -9,15 +9,22 @@
    - servir de referência para planner / memory / autoloop / admin ui
    - manter autonomia gradual, nunca brusca
    - funcionar como script clássico
+
+   PATCH v1.0.1:
+   - FIX: recommendNextPhase não persiste mais em toda leitura indireta
+   - FIX: buildPhaseContext/explainCurrentPhase usam cálculo sem efeito colateral
+   - FIX: readiness de actions aceita ready/plannerReady
+   - FIX: persist limita history de forma consistente
 */
 
 ;(function (global) {
   "use strict";
 
-  if (global.RCF_FACTORY_PHASE_ENGINE && global.RCF_FACTORY_PHASE_ENGINE.__v100) return;
+  if (global.RCF_FACTORY_PHASE_ENGINE && global.RCF_FACTORY_PHASE_ENGINE.__v101) return;
 
-  var VERSION = "v1.0.0";
+  var VERSION = "v1.0.1";
   var STORAGE_KEY = "rcf:factory_phase_engine";
+  var MAX_HISTORY = 80;
 
   var DEFAULT_PHASE = "factory-ai-supervised";
 
@@ -217,7 +224,14 @@
   function persist() {
     try {
       state.lastUpdate = nowISO();
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        version: state.version,
+        ready: !!state.ready,
+        lastUpdate: state.lastUpdate,
+        currentPhaseId: state.currentPhaseId,
+        history: Array.isArray(state.history) ? state.history.slice(-MAX_HISTORY) : [],
+        lastRecommendation: clone(state.lastRecommendation || null)
+      }));
       return true;
     } catch (_) {
       return false;
@@ -235,7 +249,7 @@
       state.ready = !!parsed.ready;
       state.lastUpdate = parsed.lastUpdate || null;
       state.currentPhaseId = trimText(parsed.currentPhaseId || DEFAULT_PHASE) || DEFAULT_PHASE;
-      state.history = Array.isArray(parsed.history) ? parsed.history.slice(-80) : [];
+      state.history = Array.isArray(parsed.history) ? parsed.history.slice(-MAX_HISTORY) : [];
       state.lastRecommendation = parsed.lastRecommendation || null;
       return true;
     } catch (_) {
@@ -270,8 +284,8 @@
       ts: nowISO(),
       detail: clone(detail || {})
     });
-    if (state.history.length > 80) {
-      state.history = state.history.slice(-80);
+    if (state.history.length > MAX_HISTORY) {
+      state.history = state.history.slice(-MAX_HISTORY);
     }
     persist();
   }
@@ -333,6 +347,11 @@
     };
   }
 
+  function actionsReadyValue(actions) {
+    var st = actions || {};
+    return !!(st.ready || st.plannerReady);
+  }
+
   function evaluateReadiness() {
     var planner = getPlannerStatus();
     var bridge = getBridgeStatus();
@@ -344,7 +363,7 @@
     return {
       plannerReady: !!planner.ready,
       bridgeReady: !!bridge.ready,
-      actionsReady: !!actions.ready,
+      actionsReady: !!actionsReadyValue(actions),
       patchSupervisorReady: !!patchSupervisor.ready,
       memoryReady: !!memory.ready,
       autoloopReady: !!autoloop.ready,
@@ -413,7 +432,7 @@
     };
   }
 
-  function recommendNextPhase() {
+  function computeRecommendation(writeBack) {
     var current = getCurrentPhase();
     var currentIdx = getPhaseIndex(current && current.id);
     var rec = {
@@ -427,8 +446,10 @@
     if (currentIdx < 0) {
       rec.to = DEFAULT_PHASE;
       rec.reason = "Fase atual inválida; voltar para fase base supervisionada.";
-      state.lastRecommendation = clone(rec);
-      persist();
+      if (writeBack) {
+        state.lastRecommendation = clone(rec);
+        persist();
+      }
       return rec;
     }
 
@@ -439,16 +460,26 @@
         rec.to = target.id;
         rec.reason = "Próxima fase liberada com base na prontidão atual dos módulos.";
         rec.check = check;
-        state.lastRecommendation = clone(rec);
-        persist();
+        if (writeBack) {
+          state.lastRecommendation = clone(rec);
+          persist();
+        }
         return rec;
       }
     }
 
     rec.check = canMoveTo(current.id);
-    state.lastRecommendation = clone(rec);
-    persist();
+
+    if (writeBack) {
+      state.lastRecommendation = clone(rec);
+      persist();
+    }
+
     return rec;
+  }
+
+  function recommendNextPhase() {
+    return computeRecommendation(true);
   }
 
   function setPhase(phaseId, meta) {
@@ -471,6 +502,7 @@
 
     state.currentPhaseId = phase.id;
     persist();
+
     rememberHistory("phase:set", {
       phaseId: phase.id,
       meta: clone(meta || {})
@@ -525,7 +557,7 @@
 
   function buildPhaseContext() {
     var phase = getCurrentPhase();
-    var rec = recommendNextPhase();
+    var rec = computeRecommendation(false);
     var runtime = buildRuntimeSnapshot();
     var recommendedTargets = [];
 
@@ -587,7 +619,7 @@
 
   function explainCurrentPhase() {
     var phase = getCurrentPhase();
-    var rec = recommendNextPhase();
+    var rec = computeRecommendation(false);
 
     return {
       ok: true,
@@ -610,7 +642,7 @@
       currentPhase: clone(getCurrentPhase() || null),
       lastUpdate: state.lastUpdate || null,
       historyCount: Array.isArray(state.history) ? state.history.length : 0,
-      lastRecommendation: clone(state.lastRecommendation || null)
+      lastRecommendation: clone(state.lastRecommendation || computeRecommendation(false) || null)
     };
   }
 
@@ -655,6 +687,7 @@
 
   global.RCF_FACTORY_PHASE_ENGINE = {
     __v100: true,
+    __v101: true,
     version: VERSION,
     init: init,
     status: status,
