@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/factory_ai_actions.js
    RControl Factory — Factory AI Actions
-   v1.1.2 ACTION ORCHESTRATOR + SAFE PLAN PICK
+   v1.1.3 ACTION ORCHESTRATOR + SAFE PLAN PICK + REQUESTED PLAN ID FIX
 
    Objetivo:
    - centralizar ações inteligentes da Factory AI
@@ -11,19 +11,19 @@
    - expor ações seguras e reutilizáveis via window.RCF_FACTORY_AI_ACTIONS
    - funcionar como script clássico
 
-   PATCH v1.1.2:
-   - FIX: approveLastPlan prioriza pendingPlan antes de lastPlan
-   - FIX: aceita meta.planId explicitamente
-   - FIX: validate/stage/apply usam resolved current plan id com fallback seguro
-   - FIX: evita atuar em plano stale/rejeitado/consumido quando houver pendingPlan melhor
+   PATCH v1.1.3:
+   - FIX: resolve planId pedido a partir de req.planId / req.meta.planId / req.opts.planId
+   - FIX: dispatch de apply_patch preserva planId explícito mesmo quando vier fora de opts
+   - FIX: validate/stage/apply usam input normalizado com fallback seguro
+   - mantém estrutura atual com patch mínimo
 */
 
 ;(function (global) {
   "use strict";
 
-  if (global.RCF_FACTORY_AI_ACTIONS && global.RCF_FACTORY_AI_ACTIONS.__v112) return;
+  if (global.RCF_FACTORY_AI_ACTIONS && global.RCF_FACTORY_AI_ACTIONS.__v113) return;
 
-  var VERSION = "v1.1.2";
+  var VERSION = "v1.1.3";
   var STORAGE_KEY = "rcf:factory_ai_actions";
   var MAX_HISTORY = 100;
 
@@ -450,6 +450,15 @@
     return normalizeBridgePlan(bridge.getPendingPlan());
   }
 
+  function resolveRequestedPlanId(input) {
+    var req = input && typeof input === "object" ? input : {};
+    return trimText(
+      safe(function () { return req.planId; }, "") ||
+      safe(function () { return req.meta.planId; }, "") ||
+      safe(function () { return req.opts.planId; }, "")
+    );
+  }
+
   function resolveCurrentBridgePlanId(preferredPlanId) {
     var wanted = trimText(preferredPlanId || "");
     var pending = getPendingBridgePlanNormalized();
@@ -581,7 +590,7 @@
       return fail;
     }
 
-    var requestedPlanId = trimText(safe(function () { return meta.planId; }, ""));
+    var requestedPlanId = resolveRequestedPlanId({ meta: clone(meta || {}) });
     var targetPlanId = resolveCurrentBridgePlanId(requestedPlanId);
 
     if (!targetPlanId) {
@@ -608,7 +617,8 @@
 
   async function validateLastApprovedPlan(meta) {
     var supervisor = getPatchSupervisor();
-    var planId = resolveCurrentBridgePlanId(trimText(safe(function () { return meta.planId; }, "")));
+    var requestedPlanId = resolveRequestedPlanId({ meta: clone(meta || {}) });
+    var planId = resolveCurrentBridgePlanId(requestedPlanId);
 
     if (!supervisor || typeof supervisor.validateApprovedPlan !== "function") {
       var failSup = { ok: false, msg: "Patch Supervisor indisponível." };
@@ -636,7 +646,8 @@
 
   async function stageLastApprovedPlan(meta) {
     var supervisor = getPatchSupervisor();
-    var planId = resolveCurrentBridgePlanId(trimText(safe(function () { return meta.planId; }, "")));
+    var requestedPlanId = resolveRequestedPlanId({ meta: clone(meta || {}) });
+    var planId = resolveCurrentBridgePlanId(requestedPlanId);
 
     if (!supervisor || typeof supervisor.stageApprovedPlan !== "function") {
       var failSup = { ok: false, msg: "Patch Supervisor indisponível." };
@@ -658,7 +669,7 @@
 
   async function applyLastApprovedPlan(opts) {
     var supervisor = getPatchSupervisor();
-    var requestedPlanId = trimText(safe(function () { return opts.planId; }, ""));
+    var requestedPlanId = resolveRequestedPlanId({ opts: clone(opts || {}) });
     var planId = resolveCurrentBridgePlanId(requestedPlanId);
 
     if (!supervisor || typeof supervisor.applyApprovedPlan !== "function") {
@@ -796,12 +807,21 @@
     var action = trimText(req.action || "");
     var prompt = trimText(req.prompt || "");
     var intent = action || detectIntent(prompt);
+    var requestedPlanId = resolveRequestedPlanId(req);
 
     if (intent === "plan") return planFromCurrentRuntime(req);
-    if (intent === "approve_patch") return approveLastPlan(req.meta || {});
-    if (intent === "validate_patch") return validateLastApprovedPlan(req.meta || {});
-    if (intent === "stage_patch") return stageLastApprovedPlan(req.meta || {});
-    if (intent === "apply_patch") return applyLastApprovedPlan(req.opts || {});
+    if (intent === "approve_patch") {
+      return approveLastPlan(merge(clone(req.meta || {}), requestedPlanId ? { planId: requestedPlanId } : {}));
+    }
+    if (intent === "validate_patch") {
+      return validateLastApprovedPlan(merge(clone(req.meta || {}), requestedPlanId ? { planId: requestedPlanId } : {}));
+    }
+    if (intent === "stage_patch") {
+      return stageLastApprovedPlan(merge(clone(req.meta || {}), requestedPlanId ? { planId: requestedPlanId } : {}));
+    }
+    if (intent === "apply_patch") {
+      return applyLastApprovedPlan(merge(clone(req.opts || {}), requestedPlanId ? { planId: requestedPlanId } : {}));
+    }
     if (intent === "run_doctor") return runDoctor();
     if (intent === "collect_logs") return collectLogs(req.limit || 30);
     if (intent === "snapshot" || intent === "autonomy") return getAutonomySnapshot();
@@ -865,6 +885,7 @@
     __v110: true,
     __v111: true,
     __v112: true,
+    __v113: true,
     version: VERSION,
     init: init,
     status: status,
