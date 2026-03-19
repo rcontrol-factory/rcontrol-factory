@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/context_engine.js
    RControl Factory — Context Engine
-   v1.6.4 SNAPSHOT CONSOLIDATED / FULL CURRENT STACK
+   v1.6.5 SNAPSHOT CONSOLIDATED / FULL CURRENT STACK + SUPERVISOR + RUNTIME CONNECTION
 
    Objetivo:
    - consolidar snapshot estrutural mais confiável
@@ -12,19 +12,22 @@
    - incluir camada supervisionada completa da Factory AI
    - funcionar como script clássico
 
-   PATCH v1.6.4:
-   - FIX: inclui stack atual completa da Factory AI no snapshot
-   - FIX: corrige diagnostics para RCF_FACTORY_AI_DIAGNOSTICS
-   - FIX: adiciona memory/phase/autoloop/runtime/orchestrator/proposalUI/selfEvolution/autoheal/evolutionMode/governor/controller
-   - FIX: fortalece flags, semantics e candidateFiles
+   PATCH v1.6.5:
+   - KEEP: stack atual completa da Factory AI no snapshot
+   - KEEP: diagnostics em RCF_FACTORY_AI_DIAGNOSTICS
+   - KEEP: memory/phase/autoloop/runtime/orchestrator/proposalUI/selfEvolution/autoheal/evolutionMode/governor/controller
+   - ADD: factoryAISupervisor no snapshot/flags/semantics/candidateFiles/summary
+   - ADD: runtime connection fields completos vindos do runtime v1.0.5+
+   - ADD: actions expõe runtimeReady e lastRuntimeCall
+   - FIX: snapshot fica mais alinhado com a trilha real backend/runtime/front
 */
 
 (function (global) {
   "use strict";
 
-  if (global.RCF_CONTEXT && global.RCF_CONTEXT.__v164) return;
+  if (global.RCF_CONTEXT && global.RCF_CONTEXT.__v165) return;
 
-  var VERSION = "v1.6.4";
+  var VERSION = "v1.6.5";
 
   function safe(fn, fallback) {
     try {
@@ -260,7 +263,9 @@
       lastAction: safe(function () { return st.lastAction && st.lastAction.name; }, "") || "",
       plannerReady: !!st.plannerReady,
       bridgeReady: !!st.bridgeReady,
-      patchSupervisorReady: !!st.patchSupervisorReady
+      patchSupervisorReady: !!st.patchSupervisorReady,
+      runtimeReady: !!st.runtimeReady,
+      lastRuntimeCall: clone(st.lastRuntimeCall || null)
     };
   }
 
@@ -277,6 +282,23 @@
       stagedPlanId: st.stagedPlanId || "",
       stagedTargetFile: st.stagedTargetFile || "",
       lastApplyOk: !!st.lastApplyOk
+    };
+  }
+
+  function getSupervisorInfo() {
+    var api = global.RCF_FACTORY_AI_SUPERVISOR || null;
+    var st = safe(function () {
+      return api && typeof api.status === "function" ? api.status() : {};
+    }, {});
+
+    return {
+      ready: !!api,
+      version: safe(function () { return api && api.version; }, "unknown"),
+      busy: !!st.busy,
+      lastRun: st.lastRun || null,
+      lastAction: st.lastAction || "",
+      lastPlanId: st.lastPlanId || "",
+      lastTargetFile: st.lastTargetFile || ""
     };
   }
 
@@ -341,7 +363,19 @@
       busy: !!st.busy,
       lastAction: st.lastAction || "",
       lastPlanId: st.lastPlanId || "",
-      lastApprovedPlanId: st.lastApprovedPlanId || ""
+      lastApprovedPlanId: st.lastApprovedPlanId || "",
+      lastEndpoint: st.lastEndpoint || "",
+      lastOk: !!st.lastOk,
+      connectionStatus: st.connectionStatus || "unknown",
+      connectionProvider: st.connectionProvider || "",
+      connectionConfigured: !!st.connectionConfigured,
+      connectionAttempted: !!st.connectionAttempted,
+      connectionModel: st.connectionModel || "",
+      connectionUpstreamStatus: Number(st.connectionUpstreamStatus || 0) || 0,
+      connectionEndpoint: st.connectionEndpoint || "",
+      connectionResponseStatus: st.connectionResponseStatus || "",
+      connectionIncomplete: !!st.connectionIncomplete,
+      connectionIncompleteReason: st.connectionIncompleteReason || ""
     };
   }
 
@@ -547,6 +581,7 @@
       hasFactoryAIBridge: !!global.RCF_FACTORY_AI_BRIDGE,
       hasFactoryAIActions: !!global.RCF_FACTORY_AI_ACTIONS,
       hasPatchSupervisor: !!global.RCF_PATCH_SUPERVISOR,
+      hasFactoryAISupervisor: !!global.RCF_FACTORY_AI_SUPERVISOR,
       hasFactoryAIMemory: !!global.RCF_FACTORY_AI_MEMORY,
       hasFactoryPhaseEngine: !!global.RCF_FACTORY_PHASE_ENGINE,
       hasFactoryAIAutoLoop: !!global.RCF_FACTORY_AI_AUTOLOOP,
@@ -678,6 +713,7 @@
     var bridge = safeObj(snapshot && snapshot.factoryAIBridge);
     var actions = safeObj(snapshot && snapshot.factoryAIActions);
     var patchSupervisor = safeObj(snapshot && snapshot.patchSupervisor);
+    var supervisor = safeObj(snapshot && snapshot.factoryAISupervisor);
     var memory = safeObj(snapshot && snapshot.factoryAIMemory);
     var phase = safeObj(snapshot && snapshot.factoryPhaseEngine);
     var autoloop = safeObj(snapshot && snapshot.factoryAIAutoLoop);
@@ -806,7 +842,8 @@
             lastAction: actions.lastAction || "",
             plannerReady: !!actions.plannerReady,
             bridgeReady: !!actions.bridgeReady,
-            patchSupervisorReady: !!actions.patchSupervisorReady
+            patchSupervisorReady: !!actions.patchSupervisorReady,
+            runtimeReady: !!actions.runtimeReady
           }
         }),
         patchSupervisor: buildModuleSemantic("patchSupervisor", {
@@ -817,6 +854,17 @@
             hasStagedPatch: !!patchSupervisor.hasStagedPatch,
             stagedTargetFile: patchSupervisor.stagedTargetFile || "",
             lastApplyOk: !!patchSupervisor.lastApplyOk
+          }
+        }),
+        factoryAISupervisor: buildModuleSemantic("factoryAISupervisor", {
+          presence: !!flags.hasFactoryAISupervisor,
+          ready: !!supervisor.ready,
+          active: !!firstDefined(moduleMap.factoryAISupervisor, activeList.indexOf("factoryAISupervisor") >= 0),
+          extra: {
+            busy: !!supervisor.busy,
+            lastAction: supervisor.lastAction || "",
+            lastPlanId: supervisor.lastPlanId || "",
+            lastTargetFile: supervisor.lastTargetFile || ""
           }
         }),
         factoryAIMemory: buildModuleSemantic("factoryAIMemory", {
@@ -852,7 +900,12 @@
           active: !!firstDefined(moduleMap.factoryAIRuntime, activeList.indexOf("factoryAIRuntime") >= 0),
           extra: {
             busy: !!runtime.busy,
-            lastPlanId: runtime.lastPlanId || ""
+            lastPlanId: runtime.lastPlanId || "",
+            lastOk: !!runtime.lastOk,
+            connectionStatus: runtime.connectionStatus || "",
+            connectionConfigured: !!runtime.connectionConfigured,
+            connectionAttempted: !!runtime.connectionAttempted,
+            connectionModel: runtime.connectionModel || ""
           }
         }),
         factoryAIOrchestrator: buildModuleSemantic("factoryAIOrchestrator", {
@@ -936,6 +989,7 @@
     var planner = safeObj(snapshot && snapshot.factoryAIPlanner);
     var bridge = safeObj(snapshot && snapshot.factoryAIBridge);
     var actions = safeObj(snapshot && snapshot.factoryAIActions);
+    var supervisor = safeObj(snapshot && snapshot.factoryAISupervisor);
     var patchSupervisor = safeObj(snapshot && snapshot.patchSupervisor);
     var diagnostics = safeObj(snapshot && snapshot.factoryAIDiagnostics);
     var memory = safeObj(snapshot && snapshot.factoryAIMemory);
@@ -958,6 +1012,7 @@
     push("/app/js/core/factory_ai_planner.js");
     push("/app/js/core/factory_ai_bridge.js");
     push("/app/js/core/factory_ai_actions.js");
+    push("/app/js/core/factory_ai_supervisor.js");
     push("/app/js/core/patch_supervisor.js");
     push("/app/js/core/factory_ai_diagnostics.js");
     push("/app/js/core/factory_ai_memory.js");
@@ -976,6 +1031,7 @@
 
     if (planner.lastNextFile) push(planner.lastNextFile);
     if (bridge.targetFile) push(bridge.targetFile);
+    if (supervisor.lastTargetFile) push(supervisor.lastTargetFile);
     if (patchSupervisor.stagedTargetFile) push(patchSupervisor.stagedTargetFile);
     if (diagnostics.lastNextFocus) push(diagnostics.lastNextFocus);
     if (autoLoop.lastTargetFile) push(autoLoop.lastTargetFile);
@@ -998,6 +1054,7 @@
     if (active.indexOf("factoryAIPlanner") >= 0 || planner.ready) push("/app/js/core/factory_ai_planner.js");
     if (active.indexOf("factoryAIBridge") >= 0 || bridge.ready) push("/app/js/core/factory_ai_bridge.js");
     if (active.indexOf("factoryAIActions") >= 0 || actions.ready) push("/app/js/core/factory_ai_actions.js");
+    if (active.indexOf("factoryAISupervisor") >= 0 || supervisor.ready) push("/app/js/core/factory_ai_supervisor.js");
     if (active.indexOf("patchSupervisor") >= 0 || patchSupervisor.ready) push("/app/js/core/patch_supervisor.js");
     if (active.indexOf("factoryAIDiagnostics") >= 0 || diagnostics.ready) push("/app/js/core/factory_ai_diagnostics.js");
     if (active.indexOf("factoryAIMemory") >= 0 || memory.ready) push("/app/js/core/factory_ai_memory.js");
@@ -1080,6 +1137,7 @@
     var planner = getPlannerInfo();
     var bridge = getFactoryAIBridgeInfo();
     var actions = getFactoryAIActionsInfo();
+    var supervisor = getSupervisorInfo();
     var patchSupervisor = getPatchSupervisorInfo();
     var diagnostics = getDiagnosticsInfo();
     var memory = getMemoryInfo();
@@ -1124,6 +1182,7 @@
         factoryAIPlanner: !!safe(function () { return modules.modules.factoryAIPlanner; }, false),
         factoryAIBridge: !!safe(function () { return modules.modules.factoryAIBridge; }, false),
         factoryAIActions: !!safe(function () { return modules.modules.factoryAIActions; }, false),
+        factoryAISupervisor: !!safe(function () { return modules.modules.factoryAISupervisor; }, false),
         patchSupervisor: !!safe(function () { return modules.modules.patchSupervisor; }, false),
         factoryAIMemory: !!safe(function () { return modules.modules.factoryAIMemory; }, false),
         factoryPhaseEngine: !!safe(function () { return modules.modules.factoryPhaseEngine; }, false),
@@ -1152,6 +1211,7 @@
       factoryAIPlanner: planner,
       factoryAIBridge: bridge,
       factoryAIActions: actions,
+      factoryAISupervisor: supervisor,
       patchSupervisor: patchSupervisor,
       factoryAIDiagnostics: diagnostics,
       factoryAIMemory: memory,
@@ -1210,6 +1270,7 @@
       bridgeReady: !!safe(function () { return ctx.factoryAIBridge.ready; }, false),
       bridgeTargetFile: safe(function () { return ctx.factoryAIBridge.targetFile; }, "") || "",
       actionsReady: !!safe(function () { return ctx.factoryAIActions.ready; }, false),
+      supervisorReady: !!safe(function () { return ctx.factoryAISupervisor.ready; }, false),
       patchSupervisorReady: !!safe(function () { return ctx.patchSupervisor.ready; }, false),
       stagedTargetFile: safe(function () { return ctx.patchSupervisor.stagedTargetFile; }, "") || "",
       diagnosticsReady: !!safe(function () { return ctx.factoryAIDiagnostics.ready; }, false),
@@ -1218,6 +1279,11 @@
       phaseReady: !!safe(function () { return ctx.factoryPhaseEngine.ready; }, false),
       autoLoopReady: !!safe(function () { return ctx.factoryAIAutoLoop.ready; }, false),
       runtimeReady: !!safe(function () { return ctx.factoryAIRuntime.ready; }, false),
+      runtimeLastOk: !!safe(function () { return ctx.factoryAIRuntime.lastOk; }, false),
+      runtimeConnectionStatus: safe(function () { return ctx.factoryAIRuntime.connectionStatus; }, "") || "",
+      runtimeConnectionConfigured: !!safe(function () { return ctx.factoryAIRuntime.connectionConfigured; }, false),
+      runtimeConnectionAttempted: !!safe(function () { return ctx.factoryAIRuntime.connectionAttempted; }, false),
+      runtimeConnectionModel: safe(function () { return ctx.factoryAIRuntime.connectionModel; }, "") || "",
       orchestratorReady: !!safe(function () { return ctx.factoryAIOrchestrator.ready; }, false),
       selfEvolutionReady: !!safe(function () { return ctx.factoryAISelfEvolution.ready; }, false),
       autohealReady: !!safe(function () { return ctx.factoryAIAutoHeal.ready; }, false),
@@ -1240,6 +1306,7 @@
     __v162: true,
     __v163: true,
     __v164: true,
+    __v165: true,
     version: VERSION,
     getContext: getContext,
     getSnapshot: getSnapshot,
