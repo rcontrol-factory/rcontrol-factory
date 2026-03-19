@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/factory_ai_planner.js
    RControl Factory — Factory AI Planner
-   v1.0.4 SUPERVISED EVOLUTION PLANNER + PHASE/MEMORY/DIAGNOSTICS AWARE
+   v1.0.5 SUPERVISED EVOLUTION PLANNER + RUNTIME CONNECTED AWARE + ANTI SELF-LOOP
 
    Objetivo:
    - transformar snapshot/contexto em plano operacional supervisionado
@@ -11,21 +11,20 @@
    - NÃO aplicar patch automaticamente
    - funcionar como script clássico
 
-   PATCH v1.0.4:
-   - ADD: lê phase engine para respeitar fase ativa e targets recomendados
-   - ADD: lê memory para evitar arquivos em cooldown/erro recente
-   - ADD: lê diagnostics para usar nextFocus e health como insumo real
-   - FIX: reduz retorno burro para tree/state/doctor quando a fase já está avançada
-   - FIX: preenche melhor lastGoal / lastPriority / lastNextFile
+   PATCH v1.0.5:
+   - ADD: lê runtime status real para saber se OpenAI já está conectada
+   - FIX: evita self-loop do planner quando ele já foi o último alvo
+   - FIX: reduz prioridade de backend/runtime/front OpenAI quando conexão já está OK
+   - FIX: melhora goal openai-connectivity para não ficar preso em backend já resolvido
    - mantém estrutura anterior com patch mínimo
 */
 
 ;(function (global) {
   "use strict";
 
-  if (global.RCF_FACTORY_AI_PLANNER && global.RCF_FACTORY_AI_PLANNER.__v104) return;
+  if (global.RCF_FACTORY_AI_PLANNER && global.RCF_FACTORY_AI_PLANNER.__v105) return;
 
-  var VERSION = "v1.0.4";
+  var VERSION = "v1.0.5";
   var STORAGE_KEY = "rcf:factory_ai_planner";
   var MAX_HISTORY = 80;
 
@@ -43,6 +42,7 @@
     planner: "/app/js/core/factory_ai_planner.js",
     bridge: "/app/js/core/factory_ai_bridge.js",
     actions: "/app/js/core/factory_ai_actions.js",
+    runtime: "/app/js/core/factory_ai_runtime.js",
     patchSupervisor: "/app/js/core/patch_supervisor.js",
     backend: "/functions/api/admin-ai.js",
     factoryAI: "/app/js/admin.admin_ai.js",
@@ -237,6 +237,53 @@
     }, {});
   }
 
+  function getRuntimeStatus() {
+    return safe(function () {
+      if (!global.RCF_FACTORY_AI_RUNTIME) {
+        return {
+          available: false,
+          ready: false,
+          lastEndpoint: "",
+          lastOk: false,
+          connectionStatus: "unknown",
+          connectionProvider: "",
+          connectionConfigured: false,
+          connectionAttempted: false,
+          connectionModel: "",
+          connectionUpstreamStatus: 0
+        };
+      }
+
+      var st = typeof global.RCF_FACTORY_AI_RUNTIME.status === "function"
+        ? (global.RCF_FACTORY_AI_RUNTIME.status() || {})
+        : {};
+
+      return {
+        available: true,
+        ready: !!st.ready,
+        lastEndpoint: trimText(st.lastEndpoint || ""),
+        lastOk: !!st.lastOk,
+        connectionStatus: trimText(st.connectionStatus || "unknown"),
+        connectionProvider: trimText(st.connectionProvider || ""),
+        connectionConfigured: !!st.connectionConfigured,
+        connectionAttempted: !!st.connectionAttempted,
+        connectionModel: trimText(st.connectionModel || ""),
+        connectionUpstreamStatus: Number(st.connectionUpstreamStatus || 0) || 0
+      };
+    }, {
+      available: false,
+      ready: false,
+      lastEndpoint: "",
+      lastOk: false,
+      connectionStatus: "unknown",
+      connectionProvider: "",
+      connectionConfigured: false,
+      connectionAttempted: false,
+      connectionModel: "",
+      connectionUpstreamStatus: 0
+    });
+  }
+
   function getDoctorState() {
     return safe(function () {
       if (global.RCF_DOCTOR_SCAN) {
@@ -320,7 +367,17 @@
     return uniq(out.map(normalizePath).filter(Boolean));
   }
 
-  function detectGoal(input, phaseCtx, diagnostics) {
+  function runtimeConnected(runtimeStatus) {
+    return !!(
+      runtimeStatus &&
+      runtimeStatus.available &&
+      runtimeStatus.ready &&
+      runtimeStatus.lastOk &&
+      lower(runtimeStatus.connectionStatus) === "connected"
+    );
+  }
+
+  function detectGoal(input, phaseCtx, diagnostics, runtimeStatus) {
     var rawGoal = trimText(
       safe(function () { return input.goal; }, "") ||
       safe(function () { return input.prompt; }, "") ||
@@ -331,6 +388,7 @@
     var text = lower(rawGoal);
     var phaseId = lower(safe(function () { return phaseCtx.activePhase.id; }, "") || safe(function () { return phaseCtx.activePhaseId; }, ""));
     var diagFocus = lower(safe(function () { return diagnostics.nextFocus.targetFile; }, ""));
+    var isRuntimeConnected = runtimeConnected(runtimeStatus);
 
     if (!text) {
       if (phaseId.indexOf("autoloop") >= 0) {
@@ -343,6 +401,29 @@
       return {
         id: "evolve-factory-ai",
         label: "Evoluir a Factory AI com supervisão",
+        sourceText: rawGoal
+      };
+    }
+
+    if (
+      text.indexOf("openai") >= 0 ||
+      text.indexOf("conexão") >= 0 ||
+      text.indexOf("conexao") >= 0 ||
+      text.indexOf("endpoint") >= 0 ||
+      text.indexOf("backend") >= 0 ||
+      text.indexOf("runtime") >= 0 ||
+      text.indexOf("api key") >= 0
+    ) {
+      if (isRuntimeConnected) {
+        return {
+          id: "evolve-factory-ai",
+          label: "Evoluir a Factory AI com supervisão",
+          sourceText: rawGoal
+        };
+      }
+      return {
+        id: "openai-connectivity",
+        label: "Conectividade OpenAI / runtime",
         sourceText: rawGoal
       };
     }
@@ -425,6 +506,20 @@
     return recommended.indexOf(normalizePath(file)) >= 0;
   }
 
+  function wasRecentlyPicked(file) {
+    var target = normalizePath(file);
+    var lastPlanFile = normalizePath(safe(function () { return state.lastPlan.targetFile; }, "") || safe(function () { return state.lastPlan.nextFile; }, ""));
+    if (target && lastPlanFile && target === lastPlanFile) return true;
+
+    var recent = asArray(state.history).slice(-3);
+    for (var i = 0; i < recent.length; i++) {
+      var item = recent[i] || {};
+      var nextFile = normalizePath(item.nextFile || "");
+      if (nextFile && nextFile === target) return true;
+    }
+    return false;
+  }
+
   function scoreCandidate(file, ctx) {
     var score = 0;
     var reasons = [];
@@ -435,6 +530,7 @@
     var bridge = safe(function () { return ctx.bridge; }, {});
     var actions = safe(function () { return ctx.actions; }, {});
     var patchSupervisor = safe(function () { return ctx.patchSupervisor; }, {});
+    var runtime = safe(function () { return ctx.runtimeStatus; }, {});
     var activeModules = asArray(safe(function () { return ctx.moduleSummary.active; }, []));
     var pathsCount = Number(safe(function () { return ctx.snapshot.tree.pathsCount; }, 0) || 0);
     var phaseCtx = safe(function () { return ctx.phaseCtx; }, {});
@@ -443,6 +539,8 @@
     var avoidMap = getAvoidMap(memoryCtx);
     var diagNextFocus = normalizePath(safe(function () { return diagnostics.nextFocus.targetFile; }, ""));
     var diagScore = Number(safe(function () { return diagnostics.health.score; }, 0) || 0);
+    var isRuntimeConnected = runtimeConnected(runtime);
+    var recentlyPicked = wasRecentlyPicked(f);
 
     if (avoidMap[f]) {
       score -= 120;
@@ -457,6 +555,36 @@
     if (fileMatchesRecommendedPhase(f, phaseCtx)) {
       score += 55;
       reasons.push("arquivo recomendado explicitamente pela fase ativa");
+    }
+
+    if (goalId === "openai-connectivity") {
+      if (f === STRATEGIC_FILES.backend) {
+        score += 120;
+        reasons.push("backend real da conexão com OpenAI");
+      }
+      if (f === STRATEGIC_FILES.runtime) {
+        score += 98;
+        reasons.push("runtime expõe status real da conexão");
+      }
+      if (f === STRATEGIC_FILES.factoryAI) {
+        score += 72;
+        reasons.push("front precisa refletir status/runtime");
+      }
+      if (f === STRATEGIC_FILES.planner) {
+        score -= 26;
+        reasons.push("planner não é o primeiro gargalo da conectividade");
+      }
+
+      if (isRuntimeConnected) {
+        if (f === STRATEGIC_FILES.backend || f === STRATEGIC_FILES.runtime || f === STRATEGIC_FILES.factoryAI) {
+          score -= 120;
+          reasons.push("trilha OpenAI já conectada; não vale repetir alvo resolvido");
+        }
+        if (f === STRATEGIC_FILES.actions || f === STRATEGIC_FILES.bridge || f === STRATEGIC_FILES.autoheal) {
+          score += 40;
+          reasons.push("com OpenAI já conectada, a próxima etapa é estruturar a camada cognitiva");
+        }
+      }
     }
 
     if (goalId === "evolve-factory-ai") {
@@ -511,6 +639,17 @@
       if (f === STRATEGIC_FILES.doctor) {
         score -= 48;
         reasons.push("doctor não deve sequestrar a prioridade da evolução cognitiva");
+      }
+
+      if (isRuntimeConnected) {
+        if (f === STRATEGIC_FILES.backend || f === STRATEGIC_FILES.runtime || f === STRATEGIC_FILES.factoryAI) {
+          score -= 70;
+          reasons.push("OpenAI/runtime já conectados nesta fase");
+        }
+        if (f === STRATEGIC_FILES.actions || f === STRATEGIC_FILES.bridge || f === STRATEGIC_FILES.autoheal || f === STRATEGIC_FILES.executionGate) {
+          score += 22;
+          reasons.push("agora a prioridade é estruturar a inteligência supervisionada");
+        }
       }
     }
 
@@ -625,6 +764,16 @@
       reasons.push("arquivo já conhecido na estrutura");
     }
 
+    if (recentlyPicked) {
+      if (f === STRATEGIC_FILES.planner) {
+        score -= 55;
+        reasons.push("evita self-loop do planner como próximo alvo repetido");
+      } else {
+        score -= 24;
+        reasons.push("arquivo acabou de ser priorizado recentemente");
+      }
+    }
+
     return {
       file: f,
       score: score,
@@ -637,6 +786,7 @@
       STRATEGIC_FILES.planner,
       STRATEGIC_FILES.actions,
       STRATEGIC_FILES.bridge,
+      STRATEGIC_FILES.runtime,
       STRATEGIC_FILES.autoheal,
       STRATEGIC_FILES.proposalUI,
       STRATEGIC_FILES.executionGate,
@@ -664,7 +814,7 @@
     });
 
     return {
-      nextFile: scored[0] ? scored[0].file : STRATEGIC_FILES.planner,
+      nextFile: scored[0] ? scored[0].file : STRATEGIC_FILES.actions,
       ranking: scored
     };
   }
@@ -693,6 +843,11 @@
       line.push(STRATEGIC_FILES.diagnostics);
       line.push(STRATEGIC_FILES.doctor);
       line.push(STRATEGIC_FILES.state);
+    } else if (goalId === "openai-connectivity") {
+      line.push(nextFile);
+      line.push(STRATEGIC_FILES.runtime);
+      line.push(STRATEGIC_FILES.factoryAI);
+      line.push(STRATEGIC_FILES.actions);
     } else {
       line.push(nextFile);
       line.push(STRATEGIC_FILES.actions);
@@ -724,11 +879,13 @@
     var bridgeReady = !!safe(function () { return ctx.bridge.ready; }, false);
     var actionsReady = !!safe(function () { return ctx.actions.ready; }, false);
     var patchReady = !!safe(function () { return ctx.patchSupervisor.ready; }, false);
+    var runtime = safe(function () { return ctx.runtimeStatus; }, {});
     var activeModules = asArray(safe(function () { return ctx.moduleSummary.active; }, []));
     var phaseTitle = trimText(safe(function () { return ctx.phaseCtx.activePhase.title; }, "") || safe(function () { return ctx.phaseCtx.activePhaseTitle; }, ""));
     var diagNextFocus = trimText(safe(function () { return ctx.diagnostics.nextFocus.targetFile; }, ""));
     var diagScore = Number(safe(function () { return ctx.diagnostics.health.score; }, 0) || 0);
     var memoryAvoid = asArray(safe(function () { return ctx.memoryCtx.avoidFiles; }, []));
+    var isRuntimeConnected = runtimeConnected(runtime);
 
     if (phaseTitle) {
       notes.push("Fase ativa considerada: " + phaseTitle + ".");
@@ -737,6 +894,10 @@
     if (goalId === "evolve-factory-ai") {
       notes.push("A fase atual pede evolução cognitiva da Factory AI, não retorno ao ciclo genérico de doctor/state/registry/tree.");
       notes.push("O próximo arquivo deve aumentar capacidade de planejamento, decisão e sequência supervisionada.");
+    }
+
+    if (goalId === "openai-connectivity" && isRuntimeConnected) {
+      notes.push("A trilha runtime -> backend -> OpenAI já está conectada; a prioridade agora é subir a inteligência supervisionada.");
     }
 
     if (!doctorLastRun) {
@@ -755,12 +916,20 @@
       notes.push("Patch Supervisor ainda não está consolidado no runtime atual.");
     }
 
+    if (isRuntimeConnected) {
+      notes.push("Runtime/OpenAI já confirmados como conectados.");
+    }
+
     if (activeModules.indexOf("factoryAI") >= 0 && activeModules.indexOf("contextEngine") >= 0) {
       notes.push("Factory AI + Context Engine já ativos permitem subir para camada de planner/orquestração.");
     }
 
     if (nextFile === STRATEGIC_FILES.planner) {
       notes.push("Planner é a peça que transforma snapshot em prioridade real e evita repetição de respostas rasas.");
+    }
+
+    if (nextFile === STRATEGIC_FILES.actions) {
+      notes.push("Actions é a próxima camada lógica para transformar inteligência conectada em execução supervisionada real.");
     }
 
     if (diagNextFocus) {
@@ -803,12 +972,13 @@
     var treeSummary = getTreeSummary();
     var bridge = getBridgeStatus();
     var actions = getActionsStatus();
+    var runtimeStatus = getRuntimeStatus();
     var patchSupervisor = getPatchSupervisorStatus();
     var doctor = getDoctorState();
     var phaseCtx = getPhaseContext();
     var memoryCtx = getMemoryContext();
     var diagnostics = getDiagnosticsReport();
-    var goal = detectGoal(input || {}, phaseCtx, diagnostics);
+    var goal = detectGoal(input || {}, phaseCtx, diagnostics, runtimeStatus);
     var knownFiles = collectKnownFiles(snapshot, treeSummary);
 
     var ctx = {
@@ -819,6 +989,7 @@
       treeSummary: clone(treeSummary || {}),
       bridge: clone(bridge || {}),
       actions: clone(actions || {}),
+      runtimeStatus: clone(runtimeStatus || {}),
       patchSupervisor: clone(patchSupervisor || {}),
       doctor: clone(doctor || {}),
       goal: clone(goal || {}),
@@ -829,7 +1000,7 @@
     };
 
     var choice = chooseNextFile(ctx);
-    var top = choice.ranking[0] || { file: STRATEGIC_FILES.planner, score: 0, reasons: [] };
+    var top = choice.ranking[0] || { file: STRATEGIC_FILES.actions, score: 0, reasons: [] };
     var executionLine = buildExecutionLine(top.file, ctx);
     var notes = buildNotes(ctx, top.file);
     var reason = buildReasonText(top);
@@ -868,7 +1039,13 @@
         activeView: trimText(safe(function () { return factoryState.activeView; }, "")),
         engineVersion: trimText(safe(function () { return factoryState.engineVersion; }, "")),
         pathsCount: Number(safe(function () { return snapshot.tree.pathsCount; }, 0) || 0),
-        activeModules: asArray(safe(function () { return moduleSummary.active; }, []))
+        activeModules: asArray(safe(function () { return moduleSummary.active; }, [])),
+        runtimeReady: !!runtimeStatus.ready,
+        runtimeConnected: runtimeConnected(runtimeStatus),
+        runtimeEndpoint: trimText(runtimeStatus.lastEndpoint || ""),
+        connectionStatus: trimText(runtimeStatus.connectionStatus || "unknown"),
+        connectionProvider: trimText(runtimeStatus.connectionProvider || ""),
+        connectionModel: trimText(runtimeStatus.connectionModel || "")
       },
 
       phase: {
@@ -909,7 +1086,8 @@
     pushLog("OK", "plan built ✅", {
       goal: goal.id,
       targetFile: plan.targetFile,
-      priority: plan.priority
+      priority: plan.priority,
+      runtimeConnected: runtimeConnected(runtimeStatus)
     });
 
     return clone(plan);
@@ -994,6 +1172,7 @@
     __v101: true,
     __v103: true,
     __v104: true,
+    __v105: true,
     version: VERSION,
     init: init,
     status: status,
