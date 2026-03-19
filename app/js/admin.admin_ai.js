@@ -1,6 +1,6 @@
 /* FILE: /app/js/admin.admin_ai.js
    RControl Factory — Factory AI
-   v4.3.4 OPENAI STATUS ROUTE FIX + RUNTIME PAYLOAD FIX
+   v4.3.5 HYBRID CHAT ROUTE FIX + RUNTIME PAYLOAD KEEP
 
    - mantém visual chat-first aprovado
    - mantém botão + fora da cápsula
@@ -25,21 +25,22 @@
    - ADD v4.3.3: header compacto mobile, sem estourar largura
    - ADD v4.3.3: composer reforçado para manter botão enviar visível
    - ADD v4.3.3: overflow lateral bloqueado no card/chat/composer
-   - FIX v4.3.4: pergunta sobre OpenAI/runtime/backend agora cai em ação local openai_status
    - FIX v4.3.4: runRuntimePrompt envia payload lean completo para runtime.ask()
+   - FIX v4.3.5: perguntas normais sobre OpenAI/runtime/backend NÃO caem mais em ação local
+   - FIX v4.3.5: ação local fica só para fluxo supervisionado explícito
    - não executa patch automático sem fluxo supervisionado
 */
 
 (() => {
   "use strict";
 
-  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v434) return;
+  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v435) return;
 
-  const VERSION = "v4.3.4";
+  const VERSION = "v4.3.5";
   const BOX_ID = "rcfFactoryAIBox";
   const CHAT_ID = "rcfFactoryAIChat";
-  const STYLE_ID = "rcfFactoryAIStyleV434";
-  const HISTORY_KEY = "rcf:factory_ai_history_v434";
+  const STYLE_ID = "rcfFactoryAIStyleV435";
+  const HISTORY_KEY = "rcf:factory_ai_history_v435";
   const HISTORY_MAX = 80;
 
   const SYNC_INTERVAL_MS = 2200;
@@ -173,9 +174,9 @@
 
   function bindChatScroll() {
     const chat = getChatEl();
-    if (!chat || chat.__rcfBoundScrollV434) return;
+    if (!chat || chat.__rcfBoundScrollV435) return;
 
-    chat.__rcfBoundScrollV434 = true;
+    chat.__rcfBoundScrollV435 = true;
     STATE.pinnedToBottom = true;
 
     chat.addEventListener("scroll", () => {
@@ -1799,18 +1800,6 @@
     if (!p) return "";
 
     if (
-      p.includes("openai") ||
-      p.includes("api key") ||
-      p.includes("backend") ||
-      p.includes("endpoint") ||
-      p.includes("runtime") ||
-      p.includes("conexão") ||
-      p.includes("conexao") ||
-      p.includes("teste real") ||
-      p.includes("status real")
-    ) return "openai_status";
-
-    if (
       (p.includes("aprovar") || p.includes("aprova")) &&
       p.includes("patch")
     ) return "approve_patch";
@@ -2110,52 +2099,12 @@
     ].join("\n");
   }
 
-  function formatOpenAIStatusResult(result) {
-    const runtime = result?.runtime || {};
-    const diagnosis = result?.diagnosis || {};
-    const probe = result?.probe || {};
-    const adminFront = result?.adminFront || {};
-
-    return [
-      "1. Fatos confirmados",
-      `- Runtime disponível: ${!!runtime.available}`,
-      `- Runtime pronto: ${!!runtime.ready}`,
-      `- Último endpoint: ${runtime.lastEndpoint || adminFront.lastEndpoint || "dado ausente"}`,
-      `- Último OK: ${!!runtime.lastOk}`,
-      `- Connection status: ${runtime.connectionStatus || "unknown"}`,
-      `- Provider: ${runtime.connectionProvider || diagnosis.provider || "dado ausente"}`,
-      `- Model: ${runtime.connectionModel || diagnosis.model || "dado ausente"}`,
-      "",
-      "2. Dados ausentes ou mal consolidados",
-      `- Upstream status: ${runtime.connectionUpstreamStatus || "dado ausente"}`,
-      `- Connection configured: ${typeof runtime.connectionConfigured === "boolean" ? String(runtime.connectionConfigured) : "dado ausente"}`,
-      `- Connection attempted: ${typeof runtime.connectionAttempted === "boolean" ? String(runtime.connectionAttempted) : "dado ausente"}`,
-      "",
-      "3. Inferências prováveis",
-      `- Conectado agora: ${!!diagnosis.connected}`,
-      probe && typeof probe === "object" && Object.keys(probe).length
-        ? `- Probe status: ${probe?.connection?.status || (probe.ok ? "connected" : "failed")}`
-        : "- Probe real não executado nesta rodada.",
-      "",
-      "4. Próximo passo mínimo recomendado",
-      diagnosis.connected
-        ? "- A trilha runtime -> backend -> OpenAI está funcional. Pode testar prompt real."
-        : "- Se continuar false, revisar backend /functions/api/admin-ai.js e depois runtime.",
-      "",
-      "5. Arquivos mais prováveis de ajuste",
-      "- /functions/api/admin-ai.js",
-      "- /app/js/core/factory_ai_runtime.js",
-      "- /app/js/admin.admin_ai.js"
-    ].join("\n");
-  }
-
   function formatLocalActionResult(action, result) {
     if (action === "plan") return formatPlanResult(result);
     if (action === "next_file") return formatNextFileResult(result);
     if (action === "validate_patch") return formatValidationResult(result);
     if (action === "stage_patch") return formatStageOrApplyResult("Stage", result);
     if (action === "apply_patch") return formatStageOrApplyResult("Apply", result);
-    if (action === "openai_status") return formatOpenAIStatusResult(result);
     if (action === "approve_patch") return [
       "1. Fatos confirmados",
       `- Aprovação executada: ${!!result?.ok}`,
@@ -2197,8 +2146,7 @@
       run_doctor: { action: "run_doctor", prompt },
       collect_logs: { action: "collect_logs", prompt, limit: 40 },
       snapshot: { action: "snapshot", prompt },
-      next_file: { action: "next_file", prompt },
-      openai_status: { action: "openai_status", prompt, probe: true }
+      next_file: { action: "next_file", prompt }
     };
 
     const req = map[localAction];
@@ -3000,8 +2948,8 @@
 
   function bindHeaderButtons() {
     const btnClear = document.getElementById("rcfFactoryAIClearHistory");
-    if (btnClear && !btnClear.__boundClearV434) {
-      btnClear.__boundClearV434 = true;
+    if (btnClear && !btnClear.__boundClearV435) {
+      btnClear.__boundClearV435 = true;
       btnClear.addEventListener("click", () => {
         try {
           const ok = window.confirm("Limpar histórico desta conversa da Factory AI?");
@@ -3018,15 +2966,15 @@
     const attachBtn = document.getElementById("rcfFactoryAIAttachBtn");
     const voiceBtn = document.getElementById("rcfFactoryAIVoiceBtn");
 
-    if (sendBtn && !sendBtn.__boundV434) {
-      sendBtn.__boundV434 = true;
+    if (sendBtn && !sendBtn.__boundV435) {
+      sendBtn.__boundV435 = true;
       sendBtn.addEventListener("click", () => {
         sendPrompt(String(promptEl?.value || "").trim(), "");
       }, { passive: true });
     }
 
-    if (promptEl && !promptEl.__boundInputV434) {
-      promptEl.__boundInputV434 = true;
+    if (promptEl && !promptEl.__boundInputV435) {
+      promptEl.__boundInputV435 = true;
       autoResizePrompt(promptEl);
 
       promptEl.addEventListener("input", () => {
@@ -3043,15 +2991,15 @@
       });
     }
 
-    if (attachBtn && !attachBtn.__boundV434) {
-      attachBtn.__boundV434 = true;
+    if (attachBtn && !attachBtn.__boundV435) {
+      attachBtn.__boundV435 = true;
       attachBtn.addEventListener("click", () => {
         toggleAttachMenu("rcfFactoryAIClipMenuMain");
       }, { passive: true });
     }
 
-    if (voiceBtn && !voiceBtn.__boundV434) {
-      voiceBtn.__boundV434 = true;
+    if (voiceBtn && !voiceBtn.__boundV435) {
+      voiceBtn.__boundV435 = true;
       voiceBtn.addEventListener("click", () => {
         toggleListening();
       }, { passive: true });
@@ -3064,8 +3012,8 @@
     renderAttachments();
     setVoiceBtnState();
 
-    if (!document.__rcfFactoryAIOutsideClickV434) {
-      document.__rcfFactoryAIOutsideClickV434 = true;
+    if (!document.__rcfFactoryAIOutsideClickV435) {
+      document.__rcfFactoryAIOutsideClickV435 = true;
       document.addEventListener("click", (ev) => {
         try {
           const wrap = document.getElementById("rcfFactoryAIAttachWrap");
@@ -3295,8 +3243,8 @@
     bindVisibilityHooksOnce();
 
     try {
-      if (!document.__rcfFactoryAIClickSyncV434) {
-        document.__rcfFactoryAIClickSyncV434 = true;
+      if (!document.__rcfFactoryAIClickSyncV435) {
+        document.__rcfFactoryAIClickSyncV435 = true;
         document.addEventListener("click", () => {
           setTimeout(() => {
             try { syncVisibility(); } catch {}
@@ -3318,6 +3266,7 @@
     __v432: true,
     __v433: true,
     __v434: true,
+    __v435: true,
     version: VERSION,
     mount,
     clearChat,
@@ -3345,6 +3294,7 @@
     __v432_bridge: true,
     __v433_bridge: true,
     __v434_bridge: true,
+    __v435_bridge: true,
     version: VERSION,
     mount,
     clearChat,
