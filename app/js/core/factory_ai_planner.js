@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/factory_ai_planner.js
    RControl Factory — Factory AI Planner
-   v1.0.5 SUPERVISED EVOLUTION PLANNER + RUNTIME CONNECTED AWARE + ANTI SELF-LOOP
+   v1.0.6 SUPERVISED EVOLUTION PLANNER + RUNTIME CONNECTED AWARE + ANTI SELF-LOOP HARDENED
 
    Objetivo:
    - transformar snapshot/contexto em plano operacional supervisionado
@@ -11,20 +11,22 @@
    - NÃO aplicar patch automaticamente
    - funcionar como script clássico
 
-   PATCH v1.0.5:
-   - ADD: lê runtime status real para saber se OpenAI já está conectada
-   - FIX: evita self-loop do planner quando ele já foi o último alvo
-   - FIX: reduz prioridade de backend/runtime/front OpenAI quando conexão já está OK
-   - FIX: melhora goal openai-connectivity para não ficar preso em backend já resolvido
+   PATCH v1.0.6:
+   - KEEP: leitura de runtime status real para saber se OpenAI já está conectada
+   - KEEP: anti self-loop do planner
+   - FIX: runtime status agora lê endpoint/responseStatus/incomplete/incompleteReason
+   - FIX: openai-connectivity não volta para backend/runtime já resolvidos
+   - FIX: prioridade sobe para actions/bridge/executionGate/autoheal quando OpenAI já está OK
+   - ADD: status() expõe runtimeConnected para melhor contrato com outros módulos
    - mantém estrutura anterior com patch mínimo
 */
 
 ;(function (global) {
   "use strict";
 
-  if (global.RCF_FACTORY_AI_PLANNER && global.RCF_FACTORY_AI_PLANNER.__v105) return;
+  if (global.RCF_FACTORY_AI_PLANNER && global.RCF_FACTORY_AI_PLANNER.__v106) return;
 
-  var VERSION = "v1.0.5";
+  var VERSION = "v1.0.6";
   var STORAGE_KEY = "rcf:factory_ai_planner";
   var MAX_HISTORY = 80;
 
@@ -150,6 +152,10 @@
       var parsed = JSON.parse(raw);
       if (!parsed || typeof parsed !== "object") return false;
       state = merge(clone(state), parsed);
+      if (!Array.isArray(state.history)) state.history = [];
+      if (state.history.length > MAX_HISTORY) {
+        state.history = state.history.slice(-MAX_HISTORY);
+      }
       return true;
     } catch (_) {
       return false;
@@ -250,7 +256,11 @@
           connectionConfigured: false,
           connectionAttempted: false,
           connectionModel: "",
-          connectionUpstreamStatus: 0
+          connectionUpstreamStatus: 0,
+          connectionEndpoint: "",
+          connectionResponseStatus: "",
+          connectionIncomplete: false,
+          connectionIncompleteReason: ""
         };
       }
 
@@ -268,7 +278,11 @@
         connectionConfigured: !!st.connectionConfigured,
         connectionAttempted: !!st.connectionAttempted,
         connectionModel: trimText(st.connectionModel || ""),
-        connectionUpstreamStatus: Number(st.connectionUpstreamStatus || 0) || 0
+        connectionUpstreamStatus: Number(st.connectionUpstreamStatus || 0) || 0,
+        connectionEndpoint: trimText(st.connectionEndpoint || ""),
+        connectionResponseStatus: trimText(st.connectionResponseStatus || ""),
+        connectionIncomplete: !!st.connectionIncomplete,
+        connectionIncompleteReason: trimText(st.connectionIncompleteReason || "")
       };
     }, {
       available: false,
@@ -280,7 +294,11 @@
       connectionConfigured: false,
       connectionAttempted: false,
       connectionModel: "",
-      connectionUpstreamStatus: 0
+      connectionUpstreamStatus: 0,
+      connectionEndpoint: "",
+      connectionResponseStatus: "",
+      connectionIncomplete: false,
+      connectionIncompleteReason: ""
     });
   }
 
@@ -348,7 +366,6 @@
     var candidateFiles = safe(function () { return snapshot.candidateFiles; }, []);
     var groups = safe(function () { return snapshot.tree.pathGroups; }, {});
     var samples = safe(function () { return snapshot.tree.samples; }, []);
-    var treeSamples = safe(function () { return tree.samples; }, {});
 
     out = out
       .concat(asArray(candidateFiles))
@@ -357,12 +374,7 @@
       .concat(asArray(groups.ui))
       .concat(asArray(groups.admin))
       .concat(asArray(groups.engine))
-      .concat(asArray(groups.functions))
-      .concat(asArray(treeSamples.core))
-      .concat(asArray(treeSamples.ui))
-      .concat(asArray(treeSamples.admin))
-      .concat(asArray(treeSamples.engine))
-      .concat(asArray(treeSamples.functions));
+      .concat(asArray(groups.functions));
 
     return uniq(out.map(normalizePath).filter(Boolean));
   }
@@ -508,15 +520,20 @@
 
   function wasRecentlyPicked(file) {
     var target = normalizePath(file);
-    var lastPlanFile = normalizePath(safe(function () { return state.lastPlan.targetFile; }, "") || safe(function () { return state.lastPlan.nextFile; }, ""));
+    var lastPlanFile = normalizePath(
+      safe(function () { return state.lastPlan.targetFile; }, "") ||
+      safe(function () { return state.lastPlan.nextFile; }, "")
+    );
+
     if (target && lastPlanFile && target === lastPlanFile) return true;
 
-    var recent = asArray(state.history).slice(-3);
+    var recent = asArray(state.history).slice(-4);
     for (var i = 0; i < recent.length; i++) {
       var item = recent[i] || {};
       var nextFile = normalizePath(item.nextFile || "");
       if (nextFile && nextFile === target) return true;
     }
+
     return false;
   }
 
@@ -577,12 +594,18 @@
 
       if (isRuntimeConnected) {
         if (f === STRATEGIC_FILES.backend || f === STRATEGIC_FILES.runtime || f === STRATEGIC_FILES.factoryAI) {
-          score -= 120;
+          score -= 140;
           reasons.push("trilha OpenAI já conectada; não vale repetir alvo resolvido");
         }
-        if (f === STRATEGIC_FILES.actions || f === STRATEGIC_FILES.bridge || f === STRATEGIC_FILES.autoheal) {
-          score += 40;
-          reasons.push("com OpenAI já conectada, a próxima etapa é estruturar a camada cognitiva");
+        if (
+          f === STRATEGIC_FILES.actions ||
+          f === STRATEGIC_FILES.bridge ||
+          f === STRATEGIC_FILES.executionGate ||
+          f === STRATEGIC_FILES.autoheal ||
+          f === STRATEGIC_FILES.proposalUI
+        ) {
+          score += 46;
+          reasons.push("com OpenAI já conectada, a próxima etapa é estruturar a camada cognitiva e supervisionada");
         }
       }
     }
@@ -593,23 +616,23 @@
         reasons.push("camada central de decisão da Factory AI");
       }
       if (f === STRATEGIC_FILES.actions) {
-        score += 75;
+        score += 82;
         reasons.push("orquestra execução supervisionada");
       }
       if (f === STRATEGIC_FILES.bridge) {
-        score += 70;
+        score += 76;
         reasons.push("transforma resposta em plano operacional");
       }
       if (f === STRATEGIC_FILES.autoheal) {
-        score += 64;
+        score += 68;
         reasons.push("converte diagnóstico em proposta concreta");
       }
       if (f === STRATEGIC_FILES.proposalUI) {
-        score += 58;
+        score += 60;
         reasons.push("fecha a etapa humana de aprovação supervisionada");
       }
       if (f === STRATEGIC_FILES.executionGate) {
-        score += 56;
+        score += 58;
         reasons.push("protege a passagem approve -> validate -> stage -> apply");
       }
       if (f === STRATEGIC_FILES.patchSupervisor) {
@@ -617,11 +640,11 @@
         reasons.push("fecha fluxo approve -> stage -> apply");
       }
       if (f === STRATEGIC_FILES.backend) {
-        score += 46;
+        score += 44;
         reasons.push("qualidade da inteligência do backend");
       }
       if (f === STRATEGIC_FILES.factoryAI) {
-        score += 40;
+        score += 38;
         reasons.push("chat e integração do front");
       }
       if (f === STRATEGIC_FILES.context) {
@@ -643,11 +666,17 @@
 
       if (isRuntimeConnected) {
         if (f === STRATEGIC_FILES.backend || f === STRATEGIC_FILES.runtime || f === STRATEGIC_FILES.factoryAI) {
-          score -= 70;
+          score -= 80;
           reasons.push("OpenAI/runtime já conectados nesta fase");
         }
-        if (f === STRATEGIC_FILES.actions || f === STRATEGIC_FILES.bridge || f === STRATEGIC_FILES.autoheal || f === STRATEGIC_FILES.executionGate) {
-          score += 22;
+        if (
+          f === STRATEGIC_FILES.actions ||
+          f === STRATEGIC_FILES.bridge ||
+          f === STRATEGIC_FILES.autoheal ||
+          f === STRATEGIC_FILES.executionGate ||
+          f === STRATEGIC_FILES.proposalUI
+        ) {
+          score += 24;
           reasons.push("agora a prioridade é estruturar a inteligência supervisionada");
         }
       }
@@ -766,7 +795,7 @@
 
     if (recentlyPicked) {
       if (f === STRATEGIC_FILES.planner) {
-        score -= 55;
+        score -= 65;
         reasons.push("evita self-loop do planner como próximo alvo repetido");
       } else {
         score -= 24;
@@ -1045,7 +1074,10 @@
         runtimeEndpoint: trimText(runtimeStatus.lastEndpoint || ""),
         connectionStatus: trimText(runtimeStatus.connectionStatus || "unknown"),
         connectionProvider: trimText(runtimeStatus.connectionProvider || ""),
-        connectionModel: trimText(runtimeStatus.connectionModel || "")
+        connectionModel: trimText(runtimeStatus.connectionModel || ""),
+        connectionResponseStatus: trimText(runtimeStatus.connectionResponseStatus || ""),
+        connectionIncomplete: !!runtimeStatus.connectionIncomplete,
+        connectionIncompleteReason: trimText(runtimeStatus.connectionIncompleteReason || "")
       },
 
       phase: {
@@ -1128,6 +1160,7 @@
   }
 
   function status() {
+    var runtimeStatus = getRuntimeStatus();
     return {
       version: VERSION,
       ready: !!state.ready,
@@ -1136,6 +1169,7 @@
       lastPriority: state.lastPriority || "",
       hasPlan: !!state.lastPlan,
       lastNextFile: safe(function () { return state.lastPlan.targetFile || state.lastPlan.nextFile; }, ""),
+      runtimeConnected: runtimeConnected(runtimeStatus),
       historyCount: Array.isArray(state.history) ? state.history.length : 0
     };
   }
@@ -1173,6 +1207,7 @@
     __v103: true,
     __v104: true,
     __v105: true,
+    __v106: true,
     version: VERSION,
     init: init,
     status: status,
