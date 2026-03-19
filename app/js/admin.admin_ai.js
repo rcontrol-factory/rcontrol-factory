@@ -1,6 +1,6 @@
 /* FILE: /app/js/admin.admin_ai.js
    RControl Factory — Factory AI
-   v4.3.5 HYBRID CHAT ROUTE FIX + RUNTIME PAYLOAD KEEP
+   v4.3.6 HYBRID CHAT ROUTE FIX + RUNTIME TEXT RESCUE + OPENAI STATUS ROUTE
 
    - mantém visual chat-first aprovado
    - mantém botão + fora da cápsula
@@ -28,19 +28,22 @@
    - FIX v4.3.4: runRuntimePrompt envia payload lean completo para runtime.ask()
    - FIX v4.3.5: perguntas normais sobre OpenAI/runtime/backend NÃO caem mais em ação local
    - FIX v4.3.5: ação local fica só para fluxo supervisionado explícito
+   - FIX v4.3.6: prompts de OpenAI/runtime/backend sobem como openai_status
+   - FIX v4.3.6: resgata response.analysis mesmo em falha do runtime
+   - FIX v4.3.6: reduz sequestro indevido da ação local snapshot
    - não executa patch automático sem fluxo supervisionado
 */
 
 (() => {
   "use strict";
 
-  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v435) return;
+  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v436) return;
 
-  const VERSION = "v4.3.5";
+  const VERSION = "v4.3.6";
   const BOX_ID = "rcfFactoryAIBox";
   const CHAT_ID = "rcfFactoryAIChat";
-  const STYLE_ID = "rcfFactoryAIStyleV435";
-  const HISTORY_KEY = "rcf:factory_ai_history_v435";
+  const STYLE_ID = "rcfFactoryAIStyleV436";
+  const HISTORY_KEY = "rcf:factory_ai_history_v436";
   const HISTORY_MAX = 80;
 
   const SYNC_INTERVAL_MS = 2200;
@@ -100,7 +103,7 @@
   }
 
   function esc(s) {
-    return String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({
+    return String(s == null ? "" : "").replace(/[&<>"]/g, (c) => ({
       "&": "&amp;",
       "<": "&lt;",
       ">": "&gt;",
@@ -116,6 +119,10 @@
   function clone(obj) {
     try { return JSON.parse(JSON.stringify(obj)); }
     catch { return obj || {}; }
+  }
+
+  function trim(v) {
+    return String(v == null ? "" : v).trim();
   }
 
   function safeHistoryItem(item) {
@@ -174,9 +181,9 @@
 
   function bindChatScroll() {
     const chat = getChatEl();
-    if (!chat || chat.__rcfBoundScrollV435) return;
+    if (!chat || chat.__rcfBoundScrollV436) return;
 
-    chat.__rcfBoundScrollV435 = true;
+    chat.__rcfBoundScrollV436 = true;
     STATE.pinnedToBottom = true;
 
     chat.addEventListener("scroll", () => {
@@ -864,18 +871,15 @@
   width:100%;
   max-width:100%;
 }
-
 #${BOX_ID},
 #${BOX_ID} *,
 #${CHAT_ID}{
   box-sizing:border-box;
 }
-
 #${BOX_ID}.card{
   padding:0;
   max-width:100%;
 }
-
 #${BOX_ID} .rcfAiShell{
   display:grid;
   grid-template-rows:auto 1fr auto;
@@ -885,7 +889,6 @@
   min-width:0;
   overflow:hidden;
 }
-
 #${BOX_ID} .rcfAiHead{
   display:grid;
   grid-template-columns:minmax(0,1fr) auto;
@@ -897,7 +900,6 @@
   min-width:0;
   overflow:hidden;
 }
-
 #${BOX_ID} .rcfAiHeadLeft{
   min-width:0;
   display:flex;
@@ -905,7 +907,6 @@
   gap:10px;
   overflow:hidden;
 }
-
 #${BOX_ID} .rcfAiHeadActions{
   min-width:0;
   display:flex;
@@ -915,7 +916,6 @@
   flex-wrap:nowrap;
   overflow:hidden;
 }
-
 #${BOX_ID} .rcfAiAvatar{
   width:36px;
   height:36px;
@@ -928,12 +928,10 @@
   border:1px solid rgba(95,115,155,.12);
   background:linear-gradient(180deg,rgba(255,255,255,.98),rgba(239,244,252,.92));
 }
-
 #${BOX_ID} .rcfAiHeadText{
   min-width:0;
   overflow:hidden;
 }
-
 #${BOX_ID} .rcfAiHeadTitle{
   margin:0;
   font-size:18px;
@@ -944,11 +942,9 @@
   overflow:hidden;
   text-overflow:ellipsis;
 }
-
 #${BOX_ID} .rcfAiHeadSub{
   display:none;
 }
-
 #${BOX_ID} .rcfAiPill{
   display:inline-flex;
   align-items:center;
@@ -966,7 +962,6 @@
   overflow:hidden;
   text-overflow:ellipsis;
 }
-
 #${BOX_ID} .rcfAiHeadBtn{
   min-height:30px;
   height:30px;
@@ -980,7 +975,6 @@
   cursor:pointer;
   flex:0 0 auto;
 }
-
 #${CHAT_ID}{
   min-height:320px;
   max-height:52vh;
@@ -994,7 +988,6 @@
   min-width:0;
   width:100%;
 }
-
 #${BOX_ID} .rcfAiEmpty{
   display:flex;
   align-items:center;
@@ -1006,7 +999,6 @@
   line-height:1.45;
   padding:18px;
 }
-
 #${BOX_ID} .rcfAiMsgRow{
   display:flex;
   gap:10px;
@@ -1019,7 +1011,6 @@
 #${BOX_ID} .rcfAiMsgRow.assistant{
   justify-content:flex-start;
 }
-
 #${BOX_ID} .rcfAiBubble{
   width:min(100%, 720px);
   max-width:100%;
@@ -1031,12 +1022,10 @@
   box-shadow:0 2px 10px rgba(15,23,42,.04);
   overflow:hidden;
 }
-
 #${BOX_ID} .rcfAiBubble.userBubble{
   background:linear-gradient(180deg,rgba(112,152,255,.16),rgba(112,152,255,.09));
   border-color:rgba(112,152,255,.20);
 }
-
 #${BOX_ID} .rcfAiMsgLabel{
   font-size:12px;
   font-weight:900;
@@ -1045,25 +1034,21 @@
   opacity:.60;
   margin-bottom:8px;
 }
-
 #${BOX_ID} .rcfAiMsgText{
   line-height:1.54;
   color:#202d4d;
   font-size:15px;
   min-width:0;
 }
-
 #${BOX_ID} .rcfAiParagraph{
   white-space:pre-wrap;
   word-break:break-word;
   overflow-wrap:anywhere;
   margin:0 0 10px 0;
 }
-
 #${BOX_ID} .rcfAiParagraph:last-child{
   margin-bottom:0;
 }
-
 #${BOX_ID} .rcfAiCodeWrap{
   margin:10px 0;
   border:1px solid rgba(31,41,55,.08);
@@ -1072,7 +1057,6 @@
   background:#0f172a;
   max-width:100%;
 }
-
 #${BOX_ID} .rcfAiCodeHead{
   display:flex;
   align-items:center;
@@ -1084,7 +1068,6 @@
   font-size:12px;
   font-weight:800;
 }
-
 #${BOX_ID} .rcfAiCodeBtn{
   min-width:70px;
   height:28px;
@@ -1096,7 +1079,6 @@
   font-weight:800;
   cursor:pointer;
 }
-
 #${BOX_ID} .rcfAiCodePre{
   margin:0;
   padding:12px;
@@ -1107,13 +1089,11 @@
   white-space:pre;
   max-width:100%;
 }
-
 #${BOX_ID} .rcfAiMsgTime{
   margin-top:8px;
   font-size:11px;
   opacity:.56;
 }
-
 #${BOX_ID} .rcfAiMsgTools{
   display:flex;
   justify-content:flex-end;
@@ -1121,7 +1101,6 @@
   margin-top:8px;
   flex-wrap:wrap;
 }
-
 #${BOX_ID} .rcfAiMiniBtn{
   min-width:34px;
   height:34px;
@@ -1137,7 +1116,6 @@
   padding:0 10px;
   font-weight:800;
 }
-
 #${BOX_ID} .rcfAiComposer{
   display:grid;
   gap:10px;
@@ -1149,14 +1127,12 @@
   max-width:100%;
   overflow:hidden;
 }
-
 #${BOX_ID} .rcfAiAttachRow{
   display:flex;
   flex-wrap:wrap;
   gap:8px;
   min-width:0;
 }
-
 #${BOX_ID} .rcfAiAttachmentChip{
   display:inline-flex;
   align-items:center;
@@ -1171,14 +1147,12 @@
   font-weight:800;
   max-width:100%;
 }
-
 #${BOX_ID} .rcfAiAttachmentName{
   max-width:140px;
   overflow:hidden;
   text-overflow:ellipsis;
   white-space:nowrap;
 }
-
 #${BOX_ID} .rcfAiAttachmentRemove{
   width:20px;
   height:20px;
@@ -1189,7 +1163,6 @@
   font-weight:900;
   cursor:pointer;
 }
-
 #${BOX_ID} .rcfAiInputShell{
   display:grid;
   grid-template-columns:30px minmax(0,1fr);
@@ -1198,7 +1171,6 @@
   min-width:0;
   width:100%;
 }
-
 #${BOX_ID} .rcfAiAttachWrap{
   position:relative;
   display:flex;
@@ -1209,7 +1181,6 @@
   padding-bottom:8px;
   flex:0 0 30px;
 }
-
 #${BOX_ID} .rcfAiAttachBtn{
   width:28px;
   height:28px;
@@ -1226,7 +1197,6 @@
   align-items:center;
   justify-content:center;
 }
-
 #${BOX_ID} .rcfAiInputCard{
   display:grid;
   grid-template-columns:minmax(0,1fr) 38px 38px;
@@ -1243,7 +1213,6 @@
   box-shadow:0 1px 0 rgba(255,255,255,.65) inset;
   overflow:hidden;
 }
-
 #${BOX_ID} .rcfAiPrompt{
   width:100%;
   min-width:0;
@@ -1259,11 +1228,9 @@
   line-height:1.4;
   overflow:auto;
 }
-
 #${BOX_ID} .rcfAiPrompt::placeholder{
   color:rgba(24,35,63,.38);
 }
-
 #${BOX_ID} .rcfAiVoiceBtn{
   width:38px;
   height:38px;
@@ -1279,12 +1246,10 @@
   border-radius:12px;
   flex:0 0 38px;
 }
-
 #${BOX_ID} .rcfAiVoiceBtn.listening{
   background:rgba(112,152,255,.12);
   color:#26407a;
 }
-
 #${BOX_ID} .rcfAiSendBtn{
   width:38px;
   height:38px;
@@ -1304,7 +1269,6 @@
   justify-content:center;
   flex:0 0 38px;
 }
-
 #${BOX_ID} .rcfAiMenu{
   position:absolute;
   left:-4px;
@@ -1318,12 +1282,10 @@
   background:rgba(255,255,255,.98);
   box-shadow:0 12px 26px rgba(15,23,42,.10);
 }
-
 #${BOX_ID} .rcfAiMenu.open{
   display:grid;
   gap:6px;
 }
-
 #${BOX_ID} .rcfAiMenuItem{
   display:flex;
   align-items:center;
@@ -1338,7 +1300,6 @@
   font-weight:800;
   cursor:pointer;
 }
-
 #${BOX_ID} .rcfAiBottom{
   display:flex;
   justify-content:space-between;
@@ -1347,13 +1308,11 @@
   flex-wrap:wrap;
   min-width:0;
 }
-
 #${BOX_ID} .rcfAiStatus{
   font-size:13px;
   font-weight:800;
   color:rgba(32,45,77,.80);
 }
-
 #${BOX_ID} details.rcfAiDetails{
   border:1px solid rgba(31,41,55,.08);
   border-radius:18px;
@@ -1362,13 +1321,11 @@
   min-width:0;
   overflow:hidden;
 }
-
 #${BOX_ID} details.rcfAiDetails summary{
   cursor:pointer;
   font-weight:900;
   color:#202d4d;
 }
-
 #${BOX_ID} .rcfAiPre{
   margin-top:6px;
   max-height:18vh;
@@ -1377,104 +1334,74 @@
   word-break:break-word;
   overflow-wrap:anywhere;
 }
-
 #${BOX_ID} .rcfAiHiddenInput{
   display:none;
 }
-
 @media (max-width: 720px){
-  #${BOX_ID}{
-    border-radius:22px;
-  }
-
-  #${BOX_ID} .rcfAiShell{
-    min-height:560px;
-  }
-
+  #${BOX_ID}{ border-radius:22px; }
+  #${BOX_ID} .rcfAiShell{ min-height:560px; }
   #${BOX_ID} .rcfAiHead{
     grid-template-columns:minmax(0,1fr);
     align-items:start;
     gap:8px;
     padding:12px 14px 10px;
   }
-
-  #${BOX_ID} .rcfAiHeadLeft{
-    gap:8px;
-  }
-
+  #${BOX_ID} .rcfAiHeadLeft{ gap:8px; }
   #${BOX_ID} .rcfAiAvatar{
-    width:32px;
-    height:32px;
-    min-width:32px;
-    font-size:16px;
-    border-radius:12px;
+    width:32px;height:32px;min-width:32px;font-size:16px;border-radius:12px;
   }
-
-  #${BOX_ID} .rcfAiHeadTitle{
-    font-size:16px;
-  }
-
+  #${BOX_ID} .rcfAiHeadTitle{ font-size:16px; }
   #${BOX_ID} .rcfAiHeadActions{
     width:100%;
     justify-content:space-between;
     gap:8px;
   }
-
   #${BOX_ID} .rcfAiPill{
     max-width:calc(100% - 84px);
     font-size:10px;
     min-height:28px;
     padding:0 8px;
   }
-
   #${CHAT_ID}{
     padding:12px;
     max-height:48vh;
   }
-
   #${BOX_ID} .rcfAiComposer{
     padding:10px 12px 12px;
     gap:8px;
   }
-
   #${BOX_ID} .rcfAiInputShell{
     grid-template-columns:28px minmax(0,1fr);
     gap:8px;
   }
-
   #${BOX_ID} .rcfAiAttachWrap{
     width:28px;
     min-width:28px;
     flex-basis:28px;
     padding-bottom:7px;
   }
-
   #${BOX_ID} .rcfAiAttachBtn{
     width:26px;
     height:26px;
     min-width:26px;
     font-size:30px;
   }
-
   #${BOX_ID} .rcfAiInputCard{
     grid-template-columns:minmax(0,1fr) 36px 36px;
     gap:4px;
     padding:6px 6px;
     min-height:52px;
   }
-
   #${BOX_ID} .rcfAiPrompt{
     padding:9px 4px;
     font-size:16px;
   }
-
   #${BOX_ID} .rcfAiVoiceBtn{
     width:36px;
     height:36px;
     min-width:36px;
     font-size:18px;
   }
-
   #${BOX_ID} .rcfAiSendBtn{
     width:36px;
     height:36px;
@@ -1482,24 +1409,20 @@
     min-height:36px;
     font-size:15px;
   }
-
   #${BOX_ID} .rcfAiAttachmentName{
     max-width:100px;
   }
 }
-
 @media (max-width: 420px){
   #${BOX_ID} .rcfAiHeadBtn{
     min-width:72px;
     padding:0 8px;
     font-size:11px;
   }
-
   #${BOX_ID} .rcfAiPill{
     max-width:calc(100% - 78px);
   }
-}
-    `.trim();
+}`.trim();
 
     document.head.appendChild(st);
   }
@@ -1513,9 +1436,7 @@
 
     while ((match = regex.exec(src))) {
       const before = src.slice(lastIndex, match.index);
-      if (before) {
-        blocks.push({ type: "text", value: before });
-      }
+      if (before) blocks.push({ type: "text", value: before });
 
       blocks.push({
         type: "code",
@@ -1527,22 +1448,15 @@
     }
 
     const tail = src.slice(lastIndex);
-    if (tail) {
-      blocks.push({ type: "text", value: tail });
-    }
-
-    if (!blocks.length) {
-      blocks.push({ type: "text", value: src });
-    }
+    if (tail) blocks.push({ type: "text", value: tail });
+    if (!blocks.length) blocks.push({ type: "text", value: src });
 
     return blocks;
   }
 
   function renderTextBlock(text) {
     const parts = String(text || "").split(/\n{2,}/);
-    return parts.map(part => {
-      return `<p class="rcfAiParagraph">${esc(part)}</p>`;
-    }).join("");
+    return parts.map(part => `<p class="rcfAiParagraph">${esc(part)}</p>`).join("");
   }
 
   function renderCodeBlock(code, lang, idx, codeIdx) {
@@ -1721,6 +1635,19 @@
     if (!p) return "chat";
 
     if (
+      p.includes("openai") ||
+      p.includes("api key") ||
+      p.includes("status real") ||
+      p.includes("teste real") ||
+      p.includes("runtime") ||
+      p.includes("backend") ||
+      p.includes("endpoint") ||
+      p.includes("conexão") ||
+      p.includes("conexao") ||
+      p.includes("/api/admin-ai")
+    ) return "openai_status";
+
+    if (
       p.includes("log") ||
       p.includes("erro") ||
       p.includes("error") ||
@@ -1832,10 +1759,10 @@
     ) return "next_file";
 
     if (
-      p.includes("autonomia") ||
-      p.includes("snapshot") ||
-      p.includes("estado atual da factory") ||
-      p.includes("estado da factory")
+      p.includes("snapshot local") ||
+      p.includes("snapshot do runtime") ||
+      p.includes("mostrar snapshot") ||
+      p.includes("estado local")
     ) return "snapshot";
 
     if (
@@ -1908,6 +1835,69 @@
       size: item.size || 0,
       summary: item.summary || ""
     }));
+  }
+
+  function appendRuntimeMetaNote(text, result) {
+    const base = trim(text);
+    const hints = result?.response?.hints || result?.hints || {};
+    const connection = result?.connection || result?.response?.connection || {};
+    const incomplete = !!hints.incomplete;
+    const responseStatus = trim(hints.responseStatus || "");
+    const incompleteReason = trim(hints.incompleteReason || "");
+    const connStatus = trim(connection.status || "");
+
+    if (!base) return "";
+
+    if (!incomplete && responseStatus !== "incomplete" && connStatus !== "partial") {
+      return base;
+    }
+
+    const noteParts = [];
+    if (responseStatus) noteParts.push(`responseStatus=${responseStatus}`);
+    if (incompleteReason) noteParts.push(`motivo=${incompleteReason}`);
+    if (connStatus) noteParts.push(`connection=${connStatus}`);
+
+    if (!noteParts.length) return base;
+
+    return [
+      base,
+      "",
+      "Observação do runtime:",
+      `- saída parcial detectada (${noteParts.join(" | ")})`
+    ].join("\n");
+  }
+
+  function extractRuntimeMessage(result) {
+    const direct =
+      trim(result?.analysis) ||
+      trim(result?.answer) ||
+      trim(result?.result);
+
+    if (direct) return appendRuntimeMetaNote(direct, result);
+
+    const responseAnalysis =
+      trim(result?.response?.analysis) ||
+      trim(result?.response?.answer) ||
+      trim(result?.response?.result);
+
+    if (responseAnalysis) return appendRuntimeMetaNote(responseAnalysis, result);
+
+    const nestedError =
+      trim(result?.error) ||
+      trim(result?.response?.error);
+
+    if (nestedError) {
+      const analysisFallback =
+        trim(result?.response?.details?.analysis) ||
+        trim(result?.response?.details?.answer) ||
+        trim(result?.response?.details?.result);
+
+      if (analysisFallback) return appendRuntimeMetaNote(analysisFallback, result);
+
+      return nestedError;
+    }
+
+    return pretty(result || { ok: false, msg: "sem resposta do runtime" });
   }
 
   function formatPlanResult(planResult) {
@@ -2229,30 +2219,22 @@
         attachments: getAttachmentPayload()
       });
 
+      const text = extractRuntimeMessage(result);
+
       if (!result || result.ok === false) {
-        const msg = pretty(result || { ok: false, msg: "sem resposta do runtime" });
         setComposerStatus("falha runtime");
-        setTechResult(msg);
+        setTechResult(text);
 
         pushHistory({
           role: "assistant",
-          text: msg,
+          text,
           ts: new Date().toISOString()
         });
 
         renderChat({ forceBottom: true });
         log("WARN", "runtime falhou");
-        return result || { ok: false, msg };
+        return result || { ok: false, msg: text };
       }
-
-      const text =
-        (typeof result.analysis === "string" && result.analysis.trim())
-          ? result.analysis
-          : (typeof result.answer === "string" && result.answer.trim())
-            ? result.answer
-            : (typeof result.result === "string" && result.result.trim())
-              ? result.result
-              : pretty(result);
 
       setComposerStatus("concluído runtime");
       setTechResult(text);
@@ -2459,12 +2441,17 @@
       const { res, data } = result;
 
       if (!res.ok || !data.ok) {
-        const msg = pretty(data || { error: "Erro ao chamar endpoint IA" });
+        const text =
+          trim(data?.analysis) ||
+          trim(data?.answer) ||
+          trim(data?.result) ||
+          pretty(data || { error: "Erro ao chamar endpoint IA" });
+
         setComposerStatus("erro");
-        setTechResult(msg);
+        setTechResult(text);
         pushHistory({
           role: "assistant",
-          text: msg,
+          text,
           ts: new Date().toISOString()
         });
         renderChat({ forceBottom: true });
@@ -2948,8 +2935,8 @@
 
   function bindHeaderButtons() {
     const btnClear = document.getElementById("rcfFactoryAIClearHistory");
-    if (btnClear && !btnClear.__boundClearV435) {
-      btnClear.__boundClearV435 = true;
+    if (btnClear && !btnClear.__boundClearV436) {
+      btnClear.__boundClearV436 = true;
       btnClear.addEventListener("click", () => {
         try {
           const ok = window.confirm("Limpar histórico desta conversa da Factory AI?");
@@ -2966,15 +2953,15 @@
     const attachBtn = document.getElementById("rcfFactoryAIAttachBtn");
     const voiceBtn = document.getElementById("rcfFactoryAIVoiceBtn");
 
-    if (sendBtn && !sendBtn.__boundV435) {
-      sendBtn.__boundV435 = true;
+    if (sendBtn && !sendBtn.__boundV436) {
+      sendBtn.__boundV436 = true;
       sendBtn.addEventListener("click", () => {
         sendPrompt(String(promptEl?.value || "").trim(), "");
       }, { passive: true });
     }
 
-    if (promptEl && !promptEl.__boundInputV435) {
-      promptEl.__boundInputV435 = true;
+    if (promptEl && !promptEl.__boundInputV436) {
+      promptEl.__boundInputV436 = true;
       autoResizePrompt(promptEl);
 
       promptEl.addEventListener("input", () => {
@@ -2991,15 +2978,15 @@
       });
     }
 
-    if (attachBtn && !attachBtn.__boundV435) {
-      attachBtn.__boundV435 = true;
+    if (attachBtn && !attachBtn.__boundV436) {
+      attachBtn.__boundV436 = true;
       attachBtn.addEventListener("click", () => {
         toggleAttachMenu("rcfFactoryAIClipMenuMain");
       }, { passive: true });
     }
 
-    if (voiceBtn && !voiceBtn.__boundV435) {
-      voiceBtn.__boundV435 = true;
+    if (voiceBtn && !voiceBtn.__boundV436) {
+      voiceBtn.__boundV436 = true;
       voiceBtn.addEventListener("click", () => {
         toggleListening();
       }, { passive: true });
@@ -3012,8 +2999,8 @@
     renderAttachments();
     setVoiceBtnState();
 
-    if (!document.__rcfFactoryAIOutsideClickV435) {
-      document.__rcfFactoryAIOutsideClickV435 = true;
+    if (!document.__rcfFactoryAIOutsideClickV436) {
+      document.__rcfFactoryAIOutsideClickV436 = true;
       document.addEventListener("click", (ev) => {
         try {
           const wrap = document.getElementById("rcfFactoryAIAttachWrap");
@@ -3243,8 +3230,8 @@
     bindVisibilityHooksOnce();
 
     try {
-      if (!document.__rcfFactoryAIClickSyncV435) {
-        document.__rcfFactoryAIClickSyncV435 = true;
+      if (!document.__rcfFactoryAIClickSyncV436) {
+        document.__rcfFactoryAIClickSyncV436 = true;
         document.addEventListener("click", () => {
           setTimeout(() => {
             try { syncVisibility(); } catch {}
@@ -3267,6 +3254,7 @@
     __v433: true,
     __v434: true,
     __v435: true,
+    __v436: true,
     version: VERSION,
     mount,
     clearChat,
@@ -3295,6 +3283,7 @@
     __v433_bridge: true,
     __v434_bridge: true,
     __v435_bridge: true,
+    __v436_bridge: true,
     version: VERSION,
     mount,
     clearChat,
