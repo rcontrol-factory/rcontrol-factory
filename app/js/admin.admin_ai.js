@@ -103,7 +103,7 @@
   }
 
   function esc(s) {
-    return String(s == null ? "" : "").replace(/[&<>"]/g, (c) => ({
+    return String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({
       "&": "&amp;",
       "<": "&lt;",
       ">": "&gt;",
