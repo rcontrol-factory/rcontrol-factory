@@ -1,12 +1,11 @@
 /* FILE: /functions/api/admin-ai.js
    RControl Factory — Factory AI API
-   v3.5.2 CHAT COPILOT BACKEND + DETERMINISTIC PLANNER HINT + OPENAI STATUS FIX HARDENED
+   v3.5.3 CHAT COPILOT BACKEND + DETERMINISTIC PLANNER HINT + OPENAI STATUS FIX HARDENED
 
-   PATCH v3.5.2:
-   - FIX: normaliza OPENAI_BASE_URL para evitar erro quando vier base sem /v1/responses
-   - FIX: padroniza bloco connection em todas as respostas
-   - FIX: melhora diagnóstico de upstream/network/internal error
-   - FIX: reduz desvio genérico para planner quando o pedido for sobre conexão OpenAI/runtime/backend
+   PATCH v3.5.3:
+   - FIX: inclui /app/js/core/factory_ai_runtime.js no ranking real de conectividade OpenAI
+   - FIX: endurece normalizeOpenAIUrl para bases com slash/path parcial
+   - FIX: mantém bloco connection padronizado
    - FIX: mantém compatibilidade total com o fluxo atual
    - FIX: não muda arquitetura central, apenas fortalece diagnóstico e resposta
 */
@@ -22,6 +21,9 @@ export async function onRequestPost(context) {
   const { request, env } = context;
 
   try {
+    const model = String(env?.OPENAI_MODEL || "gpt-4.1-mini").trim() || "gpt-4.1-mini";
+    const upstreamUrl = normalizeOpenAIUrl(env?.OPENAI_BASE_URL);
+
     if (!env || !env.OPENAI_API_KEY) {
       return json({
         ok: false,
@@ -31,9 +33,9 @@ export async function onRequestPost(context) {
           configured: false,
           attempted: false,
           status: "missing_api_key",
-          model: String(env?.OPENAI_MODEL || "gpt-4.1-mini").trim() || "gpt-4.1-mini",
+          model,
           upstreamStatus: 0,
-          endpoint: normalizeOpenAIUrl(env?.OPENAI_BASE_URL)
+          endpoint: upstreamUrl
         })
       }, 500);
     }
@@ -48,9 +50,9 @@ export async function onRequestPost(context) {
           configured: true,
           attempted: false,
           status: "invalid_json",
-          model: String(env.OPENAI_MODEL || "gpt-4.1-mini").trim() || "gpt-4.1-mini",
+          model,
           upstreamStatus: 0,
-          endpoint: normalizeOpenAIUrl(env.OPENAI_BASE_URL)
+          endpoint: upstreamUrl
         })
       }, 400);
     }
@@ -86,9 +88,9 @@ export async function onRequestPost(context) {
           configured: true,
           attempted: false,
           status: "blocked_action",
-          model: String(env.OPENAI_MODEL || "gpt-4.1-mini").trim() || "gpt-4.1-mini",
+          model,
           upstreamStatus: 0,
-          endpoint: normalizeOpenAIUrl(env.OPENAI_BASE_URL)
+          endpoint: upstreamUrl
         })
       }, 400);
     }
@@ -102,9 +104,6 @@ export async function onRequestPost(context) {
       source,
       version
     });
-
-    const model = String(env.OPENAI_MODEL || "gpt-4.1-mini").trim() || "gpt-4.1-mini";
-    const upstreamUrl = normalizeOpenAIUrl(env.OPENAI_BASE_URL);
 
     const upstream = await postToOpenAI({
       url: upstreamUrl,
@@ -228,15 +227,22 @@ function normalizeOpenAIUrl(value) {
 
   if (!raw) return fallback;
 
-  if (/\/v1\/responses\/?$/i.test(raw)) return raw.replace(/\/+$/, "");
-  if (/\/v1\/?$/i.test(raw)) return raw.replace(/\/+$/, "") + "/responses";
-  if (/api\.openai\.com\/?$/i.test(raw)) return raw.replace(/\/+$/, "") + "/v1/responses";
+  const cleaned = raw.replace(/\/+$/, "");
 
-  if (/^https?:\/\/[^/]+$/i.test(raw)) {
-    return raw.replace(/\/+$/, "") + "/v1/responses";
+  if (/\/v1\/responses$/i.test(cleaned)) return cleaned;
+  if (/\/v1$/i.test(cleaned)) return cleaned + "/responses";
+  if (/api\.openai\.com$/i.test(cleaned)) return cleaned + "/v1/responses";
+
+  if (/^https?:\/\/[^/]+$/i.test(cleaned)) {
+    return cleaned + "/v1/responses";
   }
 
-  return raw;
+  if (/^https?:\/\/[^/]+\/v1\/[^/]+$/i.test(cleaned)) {
+    if (/\/v1\/responses$/i.test(cleaned)) return cleaned;
+    return fallback;
+  }
+
+  return cleaned;
 }
 
 function buildConnectionMeta(info) {
@@ -771,6 +777,7 @@ function rankStrategicFiles({ goal, activeModules, candidateFiles, flags, snapsh
     "/app/js/core/factory_ai_bridge.js",
     "/app/js/core/patch_supervisor.js",
     "/functions/api/admin-ai.js",
+    "/app/js/core/factory_ai_runtime.js",
     "/app/js/admin.admin_ai.js",
     "/app/js/core/context_engine.js",
     "/app/js/core/factory_state.js",
@@ -933,7 +940,8 @@ function rankStrategicFiles({ goal, activeModules, candidateFiles, flags, snapsh
         file === "/app/js/core/factory_ai_planner.js" ||
         file === "/app/js/core/factory_ai_actions.js" ||
         file === "/app/js/core/factory_ai_bridge.js" ||
-        file === "/functions/api/admin-ai.js"
+        file === "/functions/api/admin-ai.js" ||
+        file === "/app/js/core/factory_ai_runtime.js"
       ) {
         score += 14;
         reasons.push("núcleo ativo já permite subir para camada cognitiva mais forte");
