@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/factory_ai_bridge.js
    RControl Factory — Factory AI Bridge
-   v1.1.3 SUPERVISED ACTION BRIDGE + API RESPONSE/HINT HARDENED
+   v1.1.4 SUPERVISED ACTION BRIDGE + API RESPONSE/HINT HARDENED + CONNECTION META FULL
 
    Objetivo:
    - criar a ponte supervisionada entre resposta da Factory AI e ações futuras da Factory
@@ -11,21 +11,21 @@
    - alinhar compatibilidade com approveLastPlan / rejectLastPlan
    - funcionar como script clássico
 
-   PATCH v1.1.3:
-   - FIX: bridge passa a ler melhor resposta real do backend /api/admin-ai
-   - FIX: usa hints.targetFile / nextFileCandidate / risk quando o texto vier genérico
-   - FIX: usa plannerPlan/meta/planner_hint como fonte forte de targetFile
-   - FIX: preserva status de conexão OpenAI retornado pelo backend
-   - FIX: fromApiResponse normaliza action/analysis/hints/connection/raw sem depender só de textão
-   - FIX: status expõe melhor última conexão e origem do último plano
+   PATCH v1.1.4:
+   - KEEP: leitura forte de hints.targetFile / nextFileCandidate / risk
+   - KEEP: plannerPlan/meta/planner_hint como fonte forte de targetFile
+   - ADD: preserva endpoint/responseStatus/incomplete/incompleteReason da conexão
+   - ADD: fromApiResponse lê melhor response/raw/payload/plannerPlan
+   - ADD: status expõe metadados completos da última conexão
+   - FIX: fallback de analysis/rawText mais estável para runtime/backend novos
 */
 
 ;(function (global) {
   "use strict";
 
-  if (global.RCF_FACTORY_AI_BRIDGE && global.RCF_FACTORY_AI_BRIDGE.__v113) return;
+  if (global.RCF_FACTORY_AI_BRIDGE && global.RCF_FACTORY_AI_BRIDGE.__v114) return;
 
-  var VERSION = "v1.1.3";
+  var VERSION = "v1.1.4";
   var STORAGE_KEY = "rcf:factory_ai_bridge";
   var LAST_PLAN_KEY = "rcf:factory_ai_bridge_last_plan";
   var MAX_HISTORY = 40;
@@ -149,6 +149,8 @@
     if (trimText(plan.proposedCode || "")) strength += 6;
     if (trimText(plan.objective || "")) strength += 2;
     if (safe(function () { return plan.connection.status; }, "")) strength += 2;
+    if (safe(function () { return plan.connection.endpoint; }, "")) strength += 1;
+    if (safe(function () { return plan.connection.responseStatus; }, "")) strength += 1;
 
     return strength;
   }
@@ -374,7 +376,11 @@
       attempted: !!connection.attempted,
       status: trimText(connection.status || ""),
       model: trimText(connection.model || ""),
-      upstreamStatus: Number(connection.upstreamStatus || 0) || 0
+      upstreamStatus: Number(connection.upstreamStatus || 0) || 0,
+      endpoint: trimText(connection.endpoint || ""),
+      responseStatus: trimText(connection.responseStatus || ""),
+      incomplete: !!connection.incomplete,
+      incompleteReason: trimText(connection.incompleteReason || "")
     };
   }
 
@@ -382,6 +388,8 @@
     var plannerHint =
       safe(function () { return raw.payload.__planner_hint; }, null) ||
       safe(function () { return raw.raw.__planner_hint; }, null) ||
+      safe(function () { return raw.response.payload.__planner_hint; }, null) ||
+      safe(function () { return raw.response.raw.__planner_hint; }, null) ||
       safe(function () { return raw.__planner_hint; }, null);
 
     return plannerHint && typeof plannerHint === "object" ? clone(plannerHint) : null;
@@ -392,15 +400,36 @@
       safe(function () { return raw.hints.targetFile; }, "") ||
       safe(function () { return raw.hints.nextFileCandidate; }, "") ||
       safe(function () { return raw.hints.nextFile; }, "") ||
-      safe(function () { return raw.connection.targetFile; }, "")
+      safe(function () { return raw.response.hints.targetFile; }, "") ||
+      safe(function () { return raw.response.hints.nextFileCandidate; }, "") ||
+      safe(function () { return raw.response.hints.nextFile; }, "") ||
+      safe(function () { return raw.connection.targetFile; }, "") ||
+      safe(function () { return raw.response.connection.targetFile; }, "")
     );
   }
 
   function extractHintRisk(raw) {
     return normalizeRisk(
       safe(function () { return raw.hints.risk; }, "") ||
-      safe(function () { return raw.connection.risk; }, ""),
+      safe(function () { return raw.response.hints.risk; }, "") ||
+      safe(function () { return raw.connection.risk; }, "") ||
+      safe(function () { return raw.response.connection.risk; }, ""),
       ""
+    );
+  }
+
+  function extractAnalysisText(raw) {
+    return trimText(
+      safe(function () { return raw.analysis; }, "") ||
+      safe(function () { return raw.answer; }, "") ||
+      safe(function () { return raw.result; }, "") ||
+      safe(function () { return raw.text; }, "") ||
+      safe(function () { return raw.response.analysis; }, "") ||
+      safe(function () { return raw.response.answer; }, "") ||
+      safe(function () { return raw.response.result; }, "") ||
+      safe(function () { return raw.response.text; }, "") ||
+      safe(function () { return raw.raw.output_text; }, "") ||
+      safe(function () { return raw.response.raw.output_text; }, "")
     );
   }
 
@@ -413,7 +442,9 @@
     var plannerHint = extractPlannerHint(raw || {});
     var hintedTarget = extractHintTarget(raw || {});
     var hintedRisk = extractHintRisk(raw || {});
-    var connection = normalizeConnection(safe(function () { return raw.connection; }, null));
+    var connection =
+      normalizeConnection(safe(function () { return raw.connection; }, null)) ||
+      normalizeConnection(safe(function () { return raw.response.connection; }, null));
 
     for (var i = 0; i < lines.length; i++) {
       if (looksLikeRisk(lines[i])) {
@@ -426,6 +457,7 @@
       findSection(src, ["1. objetivo", "objetivo"]) ||
       extractFirstNonEmptyLine(src) ||
       trimText(safe(function () { return raw.action; }, "")) ||
+      trimText(safe(function () { return raw.response.action; }, "")) ||
       "Análise supervisionada da Factory AI";
 
     var targetFile =
@@ -447,7 +479,8 @@
     var nextStep =
       findSection(src, ["4. próximo passo mínimo recomendado", "proximo passo minimo recomendado", "próximo passo", "proximo passo"]) ||
       trimText(safe(function () { return plannerHint.executionLine[0]; }, "")) ||
-      trimText(safe(function () { return raw.action; }, ""));
+      trimText(safe(function () { return raw.action; }, "")) ||
+      trimText(safe(function () { return raw.response.action; }, ""));
 
     var suggestedFilesSection =
       findSection(src, ["5. arquivos mais prováveis de ajuste", "arquivos mais provaveis de ajuste", "arquivos mais úteis para próxima análise", "arquivos mais uteis para proxima analise"]) ||
@@ -473,7 +506,7 @@
       id: buildPlanId(),
       createdAt: nowISO(),
       source: "factory_ai_bridge.api_response",
-      action: trimText(safe(function () { return raw.action; }, "")),
+      action: trimText(safe(function () { return raw.action; }, "") || safe(function () { return raw.response.action; }, "")),
       mode: proposedCode ? "code" : (patchSummary ? "patch" : "analysis"),
       objective: trimText(objective),
       targetFile: normalizedTarget,
@@ -509,7 +542,7 @@
       id: trimText(plan.id || "") || buildPlanId(),
       createdAt: trimText(plan.createdAt || plan.ts || nowISO()),
       source: "planner.plan",
-      action: trimText(safe(function () { return raw.action; }, "")),
+      action: trimText(safe(function () { return raw.action; }, "") || safe(function () { return raw.response.action; }, "")),
       mode: trimText(plan.mode || "patch") || "patch",
       objective: trimText(plan.objective || plan.reason || ""),
       targetFile: targetFile,
@@ -524,7 +557,9 @@
       proposedLang: trimText(plan.proposedLang || ""),
       approvalRequired: !!plan.approvalRequired,
       approvalStatus: trimText(plan.approvalStatus || "pending") || "pending",
-      connection: normalizeConnection(safe(function () { return raw.connection; }, null)),
+      connection:
+        normalizeConnection(safe(function () { return raw.connection; }, null)) ||
+        normalizeConnection(safe(function () { return raw.response.connection; }, null)),
       plannerHint: clone(extractPlannerHint(raw || {}) || null),
       rawText: String(rawText || ""),
       raw: clone(raw || {})
@@ -542,6 +577,8 @@
     if (!trimText(currentPlan.patchSummary || "") && trimText(nextPlan.patchSummary || "")) return true;
     if (!trimText(currentPlan.proposedCode || "") && trimText(nextPlan.proposedCode || "")) return true;
     if (!safe(function () { return currentPlan.connection.status; }, "") && safe(function () { return nextPlan.connection.status; }, "")) return true;
+    if (!safe(function () { return currentPlan.connection.responseStatus; }, "") && safe(function () { return nextPlan.connection.responseStatus; }, "")) return true;
+    if (!safe(function () { return currentPlan.connection.endpoint; }, "") && safe(function () { return nextPlan.connection.endpoint; }, "")) return true;
 
     var currentFiles = Array.isArray(currentPlan.suggestedFiles) ? currentPlan.suggestedFiles.length : 0;
     var nextFiles = Array.isArray(nextPlan.suggestedFiles) ? nextPlan.suggestedFiles.length : 0;
@@ -590,6 +627,10 @@
       source: p.source || "",
       nextStep: p.nextStep || "",
       connectionStatus: safe(function () { return p.connection.status; }, ""),
+      connectionModel: safe(function () { return p.connection.model; }, ""),
+      connectionEndpoint: safe(function () { return p.connection.endpoint; }, ""),
+      responseStatus: safe(function () { return p.connection.responseStatus; }, ""),
+      incomplete: !!safe(function () { return p.connection.incomplete; }, false),
       action: p.action || ""
     };
   }
@@ -607,7 +648,10 @@
       approvalRequired: !!p.approvalRequired,
       approvalStatus: p.approvalStatus || "",
       source: p.source || "",
-      connectionStatus: safe(function () { return p.connection.status; }, "")
+      connectionStatus: safe(function () { return p.connection.status; }, ""),
+      connectionEndpoint: safe(function () { return p.connection.endpoint; }, ""),
+      responseStatus: safe(function () { return p.connection.responseStatus; }, ""),
+      incomplete: !!safe(function () { return p.connection.incomplete; }, false)
     });
 
     if (state.history.length > MAX_HISTORY) {
@@ -635,7 +679,10 @@
       risk: plan.risk || "unknown",
       createdAt: plan.createdAt || nowISO(),
       source: plan.source || "",
-      connectionStatus: safe(function () { return plan.connection.status; }, "")
+      connectionStatus: safe(function () { return plan.connection.status; }, ""),
+      connectionEndpoint: safe(function () { return plan.connection.endpoint; }, ""),
+      responseStatus: safe(function () { return plan.connection.responseStatus; }, ""),
+      incomplete: !!safe(function () { return plan.connection.incomplete; }, false)
     };
 
     pushPlanHistory("plan", plan);
@@ -801,18 +848,13 @@
 
   function ingestResponse(input) {
     var payload = clone(input || {});
-    var text =
-      trimText(payload.analysis) ||
-      trimText(payload.answer) ||
-      trimText(payload.result) ||
-      trimText(payload.text) ||
-      trimText(safe(function () { return payload.raw.output_text; }, "")) ||
-      "";
-
+    var text = extractAnalysisText(payload);
     var plan = null;
 
     if (payload && payload.plannerPlan && typeof payload.plannerPlan === "object") {
       plan = normalizePlannerPlan(payload.plannerPlan, text, payload);
+    } else if (payload && payload.response && payload.response.plannerPlan && typeof payload.response.plannerPlan === "object") {
+      plan = normalizePlannerPlan(payload.response.plannerPlan, text, payload);
     }
 
     if (!plan) {
@@ -828,7 +870,8 @@
         risk: plan.risk,
         approvalRequired: plan.approvalRequired,
         source: plan.source || "",
-        connectionStatus: safe(function () { return plan.connection.status; }, "")
+        connectionStatus: safe(function () { return plan.connection.status; }, ""),
+        responseStatus: safe(function () { return plan.connection.responseStatus; }, "")
       });
     } else {
       pushLog("INFO", "response parsed but plan ignored", {
@@ -837,7 +880,8 @@
         risk: plan.risk,
         approvalRequired: plan.approvalRequired,
         source: plan.source || "",
-        connectionStatus: safe(function () { return plan.connection.status; }, "")
+        connectionStatus: safe(function () { return plan.connection.status; }, ""),
+        responseStatus: safe(function () { return plan.connection.responseStatus; }, "")
       });
     }
 
@@ -848,13 +892,14 @@
     var raw = clone(responseObj || {});
     return ingestResponse({
       action: trimText(raw.action || ""),
-      analysis: trimText(raw.analysis || ""),
-      hints: clone(raw.hints || {}),
-      connection: clone(raw.connection || {}),
-      raw: clone(raw.raw || {}),
-      payload: clone(raw.payload || {}),
-      plannerPlan: clone(raw.plannerPlan || null),
-      source: trimText(raw.source || "factory_ai_bridge.fromApiResponse")
+      analysis: extractAnalysisText(raw),
+      hints: clone(raw.hints || safe(function () { return raw.response.hints; }, {}) || {}),
+      connection: clone(raw.connection || safe(function () { return raw.response.connection; }, {}) || {}),
+      raw: clone(raw.raw || safe(function () { return raw.response.raw; }, {}) || {}),
+      payload: clone(raw.payload || safe(function () { return raw.response.payload; }, {}) || {}),
+      plannerPlan: clone(raw.plannerPlan || safe(function () { return raw.response.plannerPlan; }, null)),
+      response: clone(raw.response || null),
+      source: trimText(raw.source || safe(function () { return raw.response.source; }, "") || "factory_ai_bridge.fromApiResponse")
     });
   }
 
@@ -918,14 +963,22 @@
       createdAt: p.createdAt || "",
       connectionStatus: safe(function () { return state.lastConnection.status; }, ""),
       connectionModel: safe(function () { return state.lastConnection.model; }, ""),
+      connectionProvider: safe(function () { return state.lastConnection.provider; }, ""),
+      connectionConfigured: !!safe(function () { return state.lastConnection.configured; }, false),
+      connectionAttempted: !!safe(function () { return state.lastConnection.attempted; }, false),
+      connectionUpstreamStatus: Number(safe(function () { return state.lastConnection.upstreamStatus; }, 0) || 0),
+      connectionEndpoint: safe(function () { return state.lastConnection.endpoint; }, ""),
+      connectionResponseStatus: safe(function () { return state.lastConnection.responseStatus; }, ""),
+      connectionIncomplete: !!safe(function () { return state.lastConnection.incomplete; }, false),
+      connectionIncompleteReason: safe(function () { return state.lastConnection.incompleteReason; }, ""),
       historyCount: Array.isArray(state.history) ? state.history.length : 0
     };
   }
 
   function bindEvents() {
     try {
-      if (global.__RCF_FACTORY_AI_BRIDGE_EVENTS_V113) return;
-      global.__RCF_FACTORY_AI_BRIDGE_EVENTS_V113 = true;
+      if (global.__RCF_FACTORY_AI_BRIDGE_EVENTS_V114) return;
+      global.__RCF_FACTORY_AI_BRIDGE_EVENTS_V114 = true;
 
       global.addEventListener("RCF:FACTORY_AI_RESPONSE", function (ev) {
         try {
@@ -956,6 +1009,7 @@
     __v111: true,
     __v112: true,
     __v113: true,
+    __v114: true,
     version: VERSION,
     init: init,
     status: status,
