@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/factory_ai_supervisor.js
    RControl Factory — Factory AI Supervisor
-   v1.0.1 SUPERVISED EXECUTION CONTROLLER + HUMAN STEP GUARD
+   v1.0.2 SUPERVISED EXECUTION CONTROLLER + HUMAN STEP GUARD + PLANNER HOOK
 
    Objetivo:
    - coordenar execução dos módulos da Factory AI
@@ -9,19 +9,24 @@
    - garantir fluxo supervisionado
    - impedir execução desnecessária repetitiva
 
-   PATCH v1.0.1:
-   - FIX: pausa também quando houver plano pendente no bridge
-   - FIX: suporta scan síncrono/assíncrono em diagnostics e autoheal
-   - FIX: adiciona cooldown curto para evitar ciclo duplicado em cascata
-   - ADD: syncPresence com factory_state / module_registry
+   PATCH v1.0.2:
+   - KEEP: pausa também quando houver plano pendente no bridge
+   - KEEP: suporta scan síncrono/assíncrono em diagnostics e autoheal
+   - KEEP: cooldown curto para evitar ciclo duplicado em cascata
+   - KEEP: syncPresence com factory_state / module_registry
+   - ADD: integração real com planner
+   - ADD: proposal mode agora tenta gerar plano supervisionado
+   - ADD: supervised_loop agora pode seguir diagnostics -> autoheal -> planner
+   - ADD: bind guard para evitar listeners duplicados
+   - ADD: status expõe lastPlanId e lastTargetFile
 */
 
 ;(function (global) {
   "use strict";
 
-  if (global.RCF_FACTORY_AI_SUPERVISOR && global.RCF_FACTORY_AI_SUPERVISOR.__v101) return;
+  if (global.RCF_FACTORY_AI_SUPERVISOR && global.RCF_FACTORY_AI_SUPERVISOR.__v102) return;
 
-  var VERSION = "1.0.1";
+  var VERSION = "1.0.2";
   var STORAGE_KEY = "rcf:factory_ai_supervisor";
   var MAX_HISTORY = 60;
   var MIN_CYCLE_GAP_MS = 1200;
@@ -32,6 +37,8 @@
     busy: false,
     lastRun: null,
     lastAction: "",
+    lastPlanId: "",
+    lastTargetFile: "",
     history: []
   };
 
@@ -54,6 +61,14 @@
     return String(v == null ? "" : v).trim();
   }
 
+  function normalizePath(v){
+    var s = trimText(v || "").replace(/\\/g,"/");
+    if(!s) return "";
+    if(s.charAt(0) !== "/") s = "/" + s;
+    s = s.replace(/\/{2,}/g,"/");
+    return s;
+  }
+
   function safe(fn,fallback){
     try{
       var v = fn();
@@ -71,6 +86,8 @@
         busy: false,
         lastRun: state.lastRun || null,
         lastAction: state.lastAction || "",
+        lastPlanId: state.lastPlanId || "",
+        lastTargetFile: state.lastTargetFile || "",
         history: Array.isArray(state.history) ? state.history.slice(-MAX_HISTORY) : []
       }));
     }catch(_){}
@@ -89,6 +106,8 @@
       state.busy = false;
       state.lastRun = parsed.lastRun || null;
       state.lastAction = trimText(parsed.lastAction || "");
+      state.lastPlanId = trimText(parsed.lastPlanId || "");
+      state.lastTargetFile = normalizePath(parsed.lastTargetFile || "");
       state.history = Array.isArray(parsed.history) ? parsed.history.slice(-MAX_HISTORY) : [];
 
     }catch(_){}
@@ -131,6 +150,47 @@
 
   function getPatchSupervisor(){
     return global.RCF_PATCH_SUPERVISOR || null;
+  }
+
+  function getPlanner(){
+    return global.RCF_FACTORY_AI_PLANNER || null;
+  }
+
+  function getContextSnapshot(){
+    try{
+      if(global.RCF_CONTEXT?.getSnapshot) return global.RCF_CONTEXT.getSnapshot() || {};
+      if(global.RCF_CONTEXT?.getContext) return global.RCF_CONTEXT.getContext() || {};
+    }catch(_){}
+    return {};
+  }
+
+  function getFactoryState(){
+    try{
+      if(global.RCF_FACTORY_STATE?.getState) return global.RCF_FACTORY_STATE.getState() || {};
+      if(global.RCF_FACTORY_STATE?.status) return global.RCF_FACTORY_STATE.status() || {};
+    }catch(_){}
+    return {};
+  }
+
+  function getModuleSummary(){
+    try{
+      if(global.RCF_MODULE_REGISTRY?.summary) return global.RCF_MODULE_REGISTRY.summary() || {};
+    }catch(_){}
+    return {};
+  }
+
+  function getTreeSummary(){
+    try{
+      if(global.RCF_FACTORY_TREE?.summary) return global.RCF_FACTORY_TREE.summary() || {};
+    }catch(_){}
+    return {};
+  }
+
+  function getRuntimeStatus(){
+    try{
+      if(global.RCF_FACTORY_AI_RUNTIME?.status) return global.RCF_FACTORY_AI_RUNTIME.status() || {};
+    }catch(_){}
+    return {};
   }
 
   function hasPendingHumanStep(){
@@ -220,6 +280,64 @@
     return true;
   }
 
+  function buildPlannerInput(mode){
+    return {
+      reason: "factory_ai_supervisor." + trimText(mode || "cycle"),
+      prompt: "Gerar próximo plano supervisionado com base no snapshot atual da Factory.",
+      snapshot: {
+        context: clone(getContextSnapshot() || {}),
+        factoryState: clone(getFactoryState() || {}),
+        moduleSummary: clone(getModuleSummary() || {}),
+        tree: clone(getTreeSummary() || {}),
+        runtime: clone(getRuntimeStatus() || {})
+      }
+    };
+  }
+
+  async function runPlanner(mode){
+    var planner = getPlanner();
+    if(!planner) return { ok:false, msg:"planner indisponível" };
+
+    var input = buildPlannerInput(mode);
+    var plan = null;
+
+    log("running planner",{mode:mode});
+
+    try{
+      if(typeof planner.planFromRuntime === "function"){
+        plan = planner.planFromRuntime(input);
+      }else if(typeof planner.buildPlan === "function"){
+        plan = planner.buildPlan(input);
+      }
+    }catch(e){
+      return {
+        ok:false,
+        msg:String(e?.message || e || "falha ao rodar planner")
+      };
+    }
+
+    if(!plan || typeof plan !== "object"){
+      return {
+        ok:false,
+        msg:"planner não retornou plano válido"
+      };
+    }
+
+    state.lastAction = "planner";
+    state.lastPlanId = trimText(plan.id || "");
+    state.lastTargetFile = normalizePath(plan.targetFile || plan.nextFile || "");
+
+    emit("RCF:FACTORY_AI_SUPERVISOR_PLAN",{
+      mode: mode,
+      plan: clone(plan)
+    });
+
+    return {
+      ok:true,
+      plan: clone(plan)
+    };
+  }
+
   function isCoolingDown(){
     var last = trimText(state.lastRun || "");
     if (!last) return false;
@@ -281,20 +399,23 @@
 
       if(mode === "diagnostic"){
         await runDiagnostics();
-      }
-
-      if(mode === "autoheal"){
+      } else if(mode === "autoheal"){
         await runAutoheal();
-      }
-
-      if(mode === "proposal"){
-        log("proposal mode active");
-        state.lastAction = "proposal";
-      }
-
-      if(mode === "supervised_loop"){
+      } else if(mode === "proposal"){
+        var proposalResult = await runPlanner(mode);
+        if(!proposalResult.ok){
+          log("proposal mode planner failed", proposalResult);
+        }
+      } else if(mode === "supervised_loop"){
         await runDiagnostics();
         await runAutoheal();
+
+        var loopPlan = await runPlanner(mode);
+        if(!loopPlan.ok){
+          log("supervised_loop planner failed", loopPlan);
+        }
+      } else {
+        state.lastAction = "idle:" + trimText(mode || "unknown");
       }
 
       state.lastRun = nowISO();
@@ -302,18 +423,24 @@
       pushHistory({
         ts:state.lastRun,
         mode:mode,
-        action:state.lastAction
+        action:state.lastAction,
+        planId: state.lastPlanId || "",
+        targetFile: state.lastTargetFile || ""
       });
 
       emit("RCF:FACTORY_AI_SUPERVISOR_CYCLE",{
         mode:mode,
-        action:state.lastAction
+        action:state.lastAction,
+        planId: state.lastPlanId || "",
+        targetFile: state.lastTargetFile || ""
       });
 
       return {
         ok:true,
         mode:mode,
-        action:state.lastAction
+        action:state.lastAction,
+        planId: state.lastPlanId || "",
+        targetFile: state.lastTargetFile || ""
       };
 
     }catch(e){
@@ -335,6 +462,8 @@
       busy:state.busy,
       lastRun:state.lastRun,
       lastAction:state.lastAction,
+      lastPlanId: state.lastPlanId || "",
+      lastTargetFile: state.lastTargetFile || "",
       historyCount:Array.isArray(state.history) ? state.history.length : 0
     };
   }
@@ -362,6 +491,11 @@
   }
 
   function bindEvents(){
+    try{
+      if(global.__RCF_FACTORY_AI_SUPERVISOR_EVENTS_V102) return;
+      global.__RCF_FACTORY_AI_SUPERVISOR_EVENTS_V102 = true;
+    }catch(_){}
+
     try{
       global.addEventListener("RCF:UI_READY",function(){
         setTimeout(function(){
@@ -391,6 +525,18 @@
         },250);
       },{passive:true});
     }catch(_){}
+
+    try{
+      global.addEventListener("RCF:FACTORY_AI_PLAN_READY",function(ev){
+        try{
+          var detail = ev && ev.detail ? ev.detail : {};
+          var plan = detail.plan || {};
+          state.lastPlanId = trimText(plan.id || "");
+          state.lastTargetFile = normalizePath(plan.targetFile || plan.nextFile || "");
+          persist();
+        }catch(_){}
+      },{passive:true});
+    }catch(_){}
   }
 
   function init(){
@@ -412,6 +558,7 @@
   global.RCF_FACTORY_AI_SUPERVISOR = {
     __v100:true,
     __v101:true,
+    __v102:true,
     version:VERSION,
     init:init,
     status:status,
