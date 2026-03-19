@@ -1,16 +1,16 @@
 /* FILE: /functions/api/admin-ai.js
    RControl Factory — Factory AI API
-   v3.5.4 CHAT COPILOT BACKEND + CONNECTIVITY HARDENED + RESPONSES TEXT FIX
+   v3.5.5 CHAT COPILOT BACKEND + CONNECTIVITY HARDENED + RESPONSES TEXT FIX + TRUNCATION GUARD
 
-   PATCH v3.5.4:
-   - FIX: inclui openai_status como action permitida
-   - FIX: melhora normalizeOpenAIUrl para evitar endpoints inválidos
-   - FIX: endurece fallback para /v1/responses
-   - FIX: melhora extractText para formatos variados da Responses API
-   - FIX: melhora resposta de conectividade e hints
-   - FIX: mantém bloco connection padronizado
-   - FIX: mantém compatibilidade total com runtime/admin atuais
-   - FIX: não altera a arquitetura central, só fortalece backend e diagnóstico
+   PATCH v3.5.5:
+   - KEEP: openai_status como action permitida
+   - KEEP: normalizeOpenAIUrl endurecido
+   - KEEP: extractText ampliado para formatos variados
+   - ADD: max_output_tokens explícito para reduzir corte imprevisível
+   - ADD: leitura de status/incomplete_details da Responses API
+   - ADD: fallback textual quando a API retorna sem output_text consolidado
+   - ADD: hints/status melhores para resposta parcial/incompleta
+   - FIX: não altera arquitetura central; apenas fortalece backend, conectividade e saída textual
 */
 
 export async function onRequestOptions() {
@@ -26,6 +26,7 @@ export async function onRequestPost(context) {
   try {
     const model = String(env?.OPENAI_MODEL || "gpt-4.1-mini").trim() || "gpt-4.1-mini";
     const upstreamUrl = normalizeOpenAIUrl(env?.OPENAI_BASE_URL);
+    const maxOutputTokens = normalizeMaxOutputTokens(env?.OPENAI_MAX_OUTPUT_TOKENS, 1400);
 
     if (!env || !env.OPENAI_API_KEY) {
       return json({
@@ -103,7 +104,8 @@ export async function onRequestPost(context) {
       const probe = await probeOpenAI({
         url: upstreamUrl,
         apiKey: env.OPENAI_API_KEY,
-        model
+        model,
+        maxOutputTokens: 120
       });
 
       return json({
@@ -121,7 +123,9 @@ export async function onRequestPost(context) {
           mentionsOpenAIFlow: true,
           nextFileCandidate: probe.ok ? "/app/js/core/factory_ai_runtime.js" : "/functions/api/admin-ai.js",
           plannerHintUsed: false,
-          promptClass: "openai-connectivity"
+          promptClass: "openai-connectivity",
+          responseStatus: String(probe.responseStatus || ""),
+          incomplete: !!probe.incomplete
         },
         raw: probe.raw || {},
         connection: buildConnectionMeta({
@@ -150,7 +154,8 @@ export async function onRequestPost(context) {
       url: upstreamUrl,
       apiKey: env.OPENAI_API_KEY,
       model,
-      input
+      input,
+      maxOutputTokens
     });
 
     if (!upstream.ok) {
@@ -166,9 +171,11 @@ export async function onRequestPost(context) {
                 ? "forbidden"
                 : upstreamStatus === 404
                   ? "invalid_endpoint"
-                  : upstreamStatus === 429
-                    ? "rate_limited"
-                    : "upstream_error";
+                  : upstreamStatus === 408
+                    ? "timeout"
+                    : upstreamStatus === 429
+                      ? "rate_limited"
+                      : "upstream_error";
 
       return json({
         ok: false,
@@ -188,22 +195,36 @@ export async function onRequestPost(context) {
     }
 
     const data = upstream.data || {};
+    const responseMeta = extractResponseMeta(data);
     const text = extractText(data);
-    const derived = deriveResponseHints(text, payload, action, prompt);
+    const finalText = text || buildEmptyTextFallback({
+      action,
+      prompt,
+      responseMeta,
+      model,
+      endpoint: upstreamUrl
+    });
+
+    const derived = deriveResponseHints(finalText, payload, action, prompt);
 
     return json({
       ok: true,
       action,
       source,
       version,
-      analysis: text || "(sem texto retornado)",
-      hints: derived,
+      analysis: finalText,
+      hints: {
+        ...derived,
+        responseStatus: responseMeta.status || "",
+        incomplete: !!responseMeta.incomplete,
+        incompleteReason: responseMeta.incompleteReason || ""
+      },
       raw: data,
       connection: buildConnectionMeta({
         provider: "openai",
         configured: true,
         attempted: true,
-        status: "connected",
+        status: responseMeta.incomplete ? "partial" : "connected",
         model,
         upstreamStatus: Number(upstream.status || 200) || 200,
         endpoint: upstreamUrl
@@ -226,7 +247,7 @@ export async function onRequestPost(context) {
   }
 }
 
-async function postToOpenAI({ url, apiKey, model, input }) {
+async function postToOpenAI({ url, apiKey, model, input, maxOutputTokens }) {
   const controller = new AbortController();
   const timeout = setTimeout(() => {
     try { controller.abort(); } catch (_) {}
@@ -241,7 +262,8 @@ async function postToOpenAI({ url, apiKey, model, input }) {
       },
       body: JSON.stringify({
         model,
-        input
+        input,
+        max_output_tokens: normalizeMaxOutputTokens(maxOutputTokens, 1400)
       }),
       signal: controller.signal
     });
@@ -266,7 +288,7 @@ async function postToOpenAI({ url, apiKey, model, input }) {
   }
 }
 
-async function probeOpenAI({ url, apiKey, model }) {
+async function probeOpenAI({ url, apiKey, model, maxOutputTokens = 120 }) {
   const controller = new AbortController();
   const timeout = setTimeout(() => {
     try { controller.abort(); } catch (_) {}
@@ -281,13 +303,15 @@ async function probeOpenAI({ url, apiKey, model }) {
       },
       body: JSON.stringify({
         model,
-        input: "Responda apenas com a palavra OK."
+        input: "Responda apenas com a palavra OK.",
+        max_output_tokens: normalizeMaxOutputTokens(maxOutputTokens, 120)
       }),
       signal: controller.signal
     });
 
     const data = await upstream.json().catch(() => ({}));
     const text = extractText(data);
+    const meta = extractResponseMeta(data);
 
     if (!upstream.ok) {
       return {
@@ -318,7 +342,9 @@ async function probeOpenAI({ url, apiKey, model }) {
           : upstream.status === 403 ? "forbidden"
           : upstream.status === 404 ? "invalid_endpoint"
           : upstream.status === 429 ? "rate_limited"
-          : "upstream_error"
+          : "upstream_error",
+        responseStatus: meta.status || "",
+        incomplete: !!meta.incomplete
       };
     }
 
@@ -332,13 +358,19 @@ async function probeOpenAI({ url, apiKey, model }) {
         `- Texto retornado: ${text || "OK upstream sem texto legível"}`,
         "",
         "2. Dados ausentes ou mal consolidados",
-        "- Nenhuma ausência crítica nesta rodada.",
+        meta.incomplete
+          ? `- A resposta veio incompleta: ${meta.incompleteReason || "motivo não informado"}.`
+          : "- Nenhuma ausência crítica nesta rodada.",
         "",
         "3. Inferências prováveis",
-        "- A conexão backend -> OpenAI está operacional.",
+        meta.incomplete
+          ? "- A conexão backend -> OpenAI está operacional, mas a saída pode estar sendo limitada."
+          : "- A conexão backend -> OpenAI está operacional.",
         "",
         "4. Próximo passo mínimo recomendado",
-        "- Validar consumo dessa conexão no runtime e no front.",
+        meta.incomplete
+          ? "- Validar limite de saída no backend/runtime e depois testar no front."
+          : "- Validar consumo dessa conexão no runtime e no front.",
         "",
         "5. Arquivos mais prováveis de ajuste",
         "- /app/js/core/factory_ai_runtime.js",
@@ -346,7 +378,10 @@ async function probeOpenAI({ url, apiKey, model }) {
       ].join("\n"),
       raw: data,
       upstreamStatus: Number(upstream.status || 200) || 200,
-      connectionStatus: "connected"
+      connectionStatus: meta.incomplete ? "partial" : "connected",
+      responseStatus: meta.status || "",
+      incomplete: !!meta.incomplete,
+      incompleteReason: meta.incompleteReason || ""
     };
   } catch (err) {
     return {
@@ -372,7 +407,10 @@ async function probeOpenAI({ url, apiKey, model }) {
         error: String(err?.message || err || "erro de rede")
       },
       upstreamStatus: 0,
-      connectionStatus: "network_error"
+      connectionStatus: "network_error",
+      responseStatus: "",
+      incomplete: false,
+      incompleteReason: ""
     };
   } finally {
     clearTimeout(timeout);
@@ -403,6 +441,12 @@ function normalizeOpenAIUrl(value) {
   if (/\/responses$/i.test(cleaned)) return cleaned;
 
   return fallback;
+}
+
+function normalizeMaxOutputTokens(value, fallback) {
+  const n = Number(value || 0) || 0;
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return Math.max(64, Math.min(4000, Math.floor(n)));
 }
 
 function buildConnectionMeta(info) {
@@ -1601,6 +1645,22 @@ function extractRisk(text) {
   return "unknown";
 }
 
+function extractResponseMeta(data) {
+  const status = String(data?.status || "").trim();
+  const incompleteReason =
+    String(
+      data?.incomplete_details?.reason ||
+      data?.response?.incomplete_details?.reason ||
+      ""
+    ).trim();
+
+  return {
+    status,
+    incomplete: status === "incomplete" || !!incompleteReason,
+    incompleteReason
+  };
+}
+
 function extractText(data) {
   if (typeof data?.output_text === "string" && data.output_text.trim()) {
     return data.output_text.trim();
@@ -1658,7 +1718,43 @@ function extractText(data) {
     }
   } catch {}
 
+  try {
+    if (typeof data?.text === "string" && data.text.trim()) {
+      return data.text.trim();
+    }
+  } catch {}
+
   return "";
+}
+
+function buildEmptyTextFallback({ action, prompt, responseMeta, model, endpoint }) {
+  return [
+    "1. Fatos confirmados",
+    "- O backend recebeu resposta da OpenAI, mas sem texto consolidado legível.",
+    `- action: ${action || "dado ausente"}`,
+    `- model: ${model || "dado ausente"}`,
+    `- endpoint: ${endpoint || "dado ausente"}`,
+    "",
+    "2. Dados ausentes ou mal consolidados",
+    `- response.status: ${responseMeta?.status || "dado ausente"}`,
+    `- incomplete_reason: ${responseMeta?.incompleteReason || "dado ausente"}`,
+    "",
+    "3. Inferências prováveis",
+    responseMeta?.incomplete
+      ? "- A resposta provavelmente foi limitada antes de consolidar todo o texto."
+      : "- O formato retornado não veio no padrão textual esperado pelo backend.",
+    "",
+    "4. Próximo passo mínimo recomendado",
+    "- Validar limite de saída, formato retornado e consumo no runtime/front.",
+    "",
+    "5. Arquivos mais prováveis de ajuste",
+    "- /functions/api/admin-ai.js",
+    "- /app/js/core/factory_ai_runtime.js",
+    "- /app/js/admin.admin_ai.js",
+    "",
+    "Prompt atual:",
+    prompt || "(nenhum)"
+  ].join("\n");
 }
 
 async function safeJson(request) {
