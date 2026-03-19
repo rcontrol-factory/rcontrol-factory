@@ -1,29 +1,32 @@
 /* FILE: /app/js/core/factory_ai_actions.js
    RControl Factory — Factory AI Actions
-   v1.1.3 ACTION ORCHESTRATOR + SAFE PLAN PICK + REQUESTED PLAN ID FIX
+   v1.1.4 ACTION ORCHESTRATOR + SAFE PLAN PICK + REQUESTED PLAN ID FIX + RUNTIME BRIDGE
 
    Objetivo:
    - centralizar ações inteligentes da Factory AI
-   - ligar Factory AI Planner + Factory AI Bridge + Patch Supervisor + módulos core
+   - ligar Factory AI Planner + Factory AI Bridge + Patch Supervisor + Runtime + módulos core
    - evitar lógica solta espalhada no admin.admin_ai.js
    - permitir fluxo supervisionado:
        analisar -> planejar -> aprovar -> validar -> stage -> apply
    - expor ações seguras e reutilizáveis via window.RCF_FACTORY_AI_ACTIONS
    - funcionar como script clássico
 
-   PATCH v1.1.3:
-   - FIX: resolve planId pedido a partir de req.planId / req.meta.planId / req.opts.planId
-   - FIX: dispatch de apply_patch preserva planId explícito mesmo quando vier fora de opts
-   - FIX: validate/stage/apply usam input normalizado com fallback seguro
-   - mantém estrutura atual com patch mínimo
+   PATCH v1.1.4:
+   - FIX: mantém base completa da v1.1.3
+   - ADD: runtime bridge real para prompts técnicos / OpenAI / backend / conexão
+   - ADD: ação openai_status para diagnosticar cadeia runtime -> backend
+   - ADD: ação ask_runtime para centralizar consulta remota via runtime
+   - FIX: dispatch para de cair em fallback genérico quando pedido for de OpenAI/runtime/backend
+   - FIX: snapshot/autonomy passa a expor status do runtime/admin/front
+   - FIX: syncPresence reforça refresh do state/registry quando disponível
 */
 
 ;(function (global) {
   "use strict";
 
-  if (global.RCF_FACTORY_AI_ACTIONS && global.RCF_FACTORY_AI_ACTIONS.__v113) return;
+  if (global.RCF_FACTORY_AI_ACTIONS && global.RCF_FACTORY_AI_ACTIONS.__v114) return;
 
-  var VERSION = "v1.1.3";
+  var VERSION = "v1.1.4";
   var STORAGE_KEY = "rcf:factory_ai_actions";
   var MAX_HISTORY = 100;
 
@@ -34,6 +37,7 @@
     lastAction: null,
     lastResult: null,
     lastPlanSummary: null,
+    lastRuntimeCall: null,
     history: []
   };
 
@@ -171,6 +175,14 @@
     return safe(function () { return global.RCF_PATCH_SUPERVISOR || null; }, null);
   }
 
+  function getRuntime() {
+    return safe(function () { return global.RCF_FACTORY_AI_RUNTIME || null; }, null);
+  }
+
+  function getAdminFront() {
+    return safe(function () { return global.RCF_ADMIN_AI || global.RCF_FACTORY_AI || null; }, null);
+  }
+
   function getFactoryState() {
     return safe(function () {
       if (global.RCF_FACTORY_STATE?.getState) return global.RCF_FACTORY_STATE.getState();
@@ -272,6 +284,18 @@
     if (p.indexOf("planejar") >= 0 || p.indexOf("plano") >= 0) return "plan";
     if (p.indexOf("próximo arquivo") >= 0 || p.indexOf("proximo arquivo") >= 0) return "next_file";
     if (p.indexOf("autonomia") >= 0) return "autonomy";
+
+    if (
+      p.indexOf("openai") >= 0 ||
+      p.indexOf("api key") >= 0 ||
+      p.indexOf("backend") >= 0 ||
+      p.indexOf("endpoint") >= 0 ||
+      p.indexOf("runtime") >= 0 ||
+      p.indexOf("conexão") >= 0 ||
+      p.indexOf("conexao") >= 0 ||
+      p.indexOf("falcon") >= 0
+    ) return "openai_status";
+
     return "chat";
   }
 
@@ -284,6 +308,54 @@
       doctor: clone(getDoctorState() || {}),
       tree: clone(getTreeSummary() || {}),
       loggerTail: getLoggerTail(20)
+    };
+  }
+
+  function getRuntimeStatusSafe() {
+    var runtime = getRuntime();
+    if (!runtime || typeof runtime.status !== "function") {
+      return {
+        ready: false,
+        available: false,
+        version: "unknown",
+        lastEndpoint: "",
+        lastOk: false,
+        connectionStatus: "runtime_unavailable",
+        connectionProvider: "",
+        connectionConfigured: false,
+        connectionAttempted: false,
+        connectionModel: "",
+        connectionUpstreamStatus: 0
+      };
+    }
+
+    var st = clone(runtime.status() || {});
+    return {
+      ready: !!st.ready,
+      available: true,
+      version: trimText(st.version || runtime.version || "unknown"),
+      busy: !!st.busy,
+      lastEndpoint: trimText(st.lastEndpoint || ""),
+      lastOk: !!st.lastOk,
+      lastAction: trimText(st.lastAction || ""),
+      lastPrompt: trimText(st.lastPrompt || ""),
+      connectionStatus: trimText(st.connectionStatus || "unknown"),
+      connectionProvider: trimText(st.connectionProvider || ""),
+      connectionConfigured: !!st.connectionConfigured,
+      connectionAttempted: !!st.connectionAttempted,
+      connectionModel: trimText(st.connectionModel || ""),
+      connectionUpstreamStatus: Number(st.connectionUpstreamStatus || 0) || 0,
+      historyCount: Number(st.historyCount || 0) || 0
+    };
+  }
+
+  function getAdminFrontStatusSafe() {
+    var api = getAdminFront();
+    return {
+      available: !!api,
+      version: trimText(safe(function () { return api.version; }, "unknown")),
+      lastEndpoint: trimText(safe(function () { return api.getLastEndpoint ? api.getLastEndpoint() : ""; }, "")),
+      mounted: !!safe(function () { return api.mount; }, null)
     };
   }
 
@@ -498,8 +570,8 @@
     }
 
     return {
-      nextFile: "/app/js/core/factory_tree.js",
-      reason: "Sem plano consolidado ainda. O próximo passo seguro continua sendo consolidar árvore, estado e fluxo supervisionado.",
+      nextFile: "/functions/api/admin-ai.js",
+      reason: "Sem plano consolidado ainda. O próximo passo seguro continua sendo consolidar backend/runtime da IA antes de expandir outros fluxos.",
       source: "fallback",
       risk: "low"
     };
@@ -749,11 +821,135 @@
     return result;
   }
 
+  async function askRuntime(req) {
+    var runtime = getRuntime();
+    var input = clone(req || {});
+    var prompt = trimText(input.prompt || "");
+    var action = trimText(input.action || "");
+
+    if (!runtime || typeof runtime.ask !== "function") {
+      var fail = {
+        ok: false,
+        msg: "Factory AI Runtime indisponível.",
+        runtime: getRuntimeStatusSafe()
+      };
+      markAction("askRuntime", input, fail);
+      pushLog("WARN", "askRuntime runtime indisponível", fail);
+      return fail;
+    }
+
+    if (!prompt) {
+      var failPrompt = {
+        ok: false,
+        msg: "Prompt vazio para runtime.ask().",
+        runtime: getRuntimeStatusSafe()
+      };
+      markAction("askRuntime", input, failPrompt);
+      pushLog("WARN", "askRuntime prompt vazio", failPrompt);
+      return failPrompt;
+    }
+
+    try {
+      var result = await runtime.ask({
+        action: action || "chat",
+        prompt: prompt,
+        payload: input.payload || null,
+        history: Array.isArray(input.history) ? clone(input.history) : undefined,
+        attachments: Array.isArray(input.attachments) ? clone(input.attachments) : undefined,
+        source: trimText(input.source || "factory_ai_actions"),
+        version: trimText(input.version || VERSION)
+      });
+
+      state.lastRuntimeCall = {
+        ts: nowISO(),
+        action: action || "chat",
+        prompt: prompt,
+        ok: !!safe(function () { return result.ok; }, false),
+        endpoint: trimText(safe(function () { return result.endpoint; }, "")),
+        connectionStatus: trimText(safe(function () { return result.connection.status; }, "")),
+        model: trimText(safe(function () { return result.connection.model; }, ""))
+      };
+      persist();
+
+      markAction("askRuntime", input, result);
+      pushLog(result && result.ok ? "OK" : "WARN", "askRuntime concluído", {
+        ok: !!safe(function () { return result.ok; }, false),
+        endpoint: trimText(safe(function () { return result.endpoint; }, "")),
+        connectionStatus: trimText(safe(function () { return result.connection.status; }, ""))
+      });
+
+      return result;
+    } catch (e) {
+      var failErr = {
+        ok: false,
+        msg: String(e && e.message || e || "Falha ao consultar runtime."),
+        runtime: getRuntimeStatusSafe()
+      };
+      markAction("askRuntime", input, failErr);
+      pushLog("ERR", "askRuntime exception", failErr);
+      return failErr;
+    }
+  }
+
+  async function getOpenAIStatus(input) {
+    var req = clone(input || {});
+    var runtimeStatus = getRuntimeStatusSafe();
+    var adminFront = getAdminFrontStatusSafe();
+    var snapshot = buildRuntimeSnapshot();
+
+    var result = {
+      ok: true,
+      ts: nowISO(),
+      runtime: runtimeStatus,
+      adminFront: adminFront,
+      bridgeReady: !!getBridge(),
+      plannerReady: !!getPlanner(),
+      patchSupervisorReady: !!getPatchSupervisor(),
+      snapshot: snapshot,
+      diagnosis: {
+        connected: runtimeStatus.connectionStatus === "connected" && !!runtimeStatus.lastOk,
+        runtimeReady: !!runtimeStatus.ready,
+        provider: runtimeStatus.connectionProvider || "",
+        model: runtimeStatus.connectionModel || "",
+        endpoint: runtimeStatus.lastEndpoint || adminFront.lastEndpoint || ""
+      }
+    };
+
+    if (req.probe === true || trimText(req.prompt || "").length) {
+      var probePrompt = trimText(req.prompt || "Teste de conectividade OpenAI da Factory AI. Responda somente: conexão recebida.");
+      var probe = await askRuntime({
+        action: "chat",
+        prompt: probePrompt,
+        source: "factory_ai_actions.openai_status",
+        version: VERSION
+      });
+
+      result.probe = clone(probe || {});
+      result.diagnosis.connected =
+        !!safe(function () { return probe.ok; }, false) &&
+        trimText(safe(function () { return probe.connection.status; }, "")) === "connected";
+      result.diagnosis.provider = trimText(safe(function () { return probe.connection.provider; }, result.diagnosis.provider));
+      result.diagnosis.model = trimText(safe(function () { return probe.connection.model; }, result.diagnosis.model));
+      result.diagnosis.endpoint = trimText(safe(function () { return probe.endpoint; }, result.diagnosis.endpoint));
+    }
+
+    markAction("getOpenAIStatus", req, result);
+    pushLog("OK", "getOpenAIStatus", {
+      connected: !!result.diagnosis.connected,
+      runtimeReady: !!result.diagnosis.runtimeReady,
+      status: runtimeStatus.connectionStatus
+    });
+
+    return result;
+  }
+
   function getAutonomySnapshot() {
     var snapshot = buildRuntimeSnapshot();
     var bridge = getBridge();
     var supervisor = getPatchSupervisor();
     var planner = getPlanner();
+    var runtimeStatus = getRuntimeStatusSafe();
+    var adminFront = getAdminFrontStatusSafe();
 
     var result = {
       ok: true,
@@ -775,6 +971,8 @@
         version: safe(function () { return supervisor.version; }, "unknown"),
         status: safe(function () { return supervisor.status ? supervisor.status() : {}; }, {})
       },
+      runtimeLayer: clone(runtimeStatus),
+      adminFront: clone(adminFront),
       nextFile: buildNextFileSuggestionFromPlan()
     };
 
@@ -782,7 +980,9 @@
     pushLog("OK", "getAutonomySnapshot", {
       plannerReady: result.planner.ready,
       bridgeReady: result.bridge.ready,
-      supervisorReady: result.patchSupervisor.ready
+      supervisorReady: result.patchSupervisor.ready,
+      runtimeReady: result.runtimeLayer.ready,
+      lastOk: result.runtimeLayer.lastOk
     });
 
     return result;
@@ -826,6 +1026,31 @@
     if (intent === "collect_logs") return collectLogs(req.limit || 30);
     if (intent === "snapshot" || intent === "autonomy") return getAutonomySnapshot();
     if (intent === "next_file") return getNextFileSuggestion();
+    if (intent === "openai_status") return getOpenAIStatus(req);
+
+    if (intent === "chat") {
+      if (
+        prompt &&
+        (
+          lower(prompt).indexOf("openai") >= 0 ||
+          lower(prompt).indexOf("runtime") >= 0 ||
+          lower(prompt).indexOf("backend") >= 0 ||
+          lower(prompt).indexOf("endpoint") >= 0 ||
+          lower(prompt).indexOf("conexão") >= 0 ||
+          lower(prompt).indexOf("conexao") >= 0
+        )
+      ) {
+        return askRuntime({
+          action: req.remoteAction || "chat",
+          prompt: prompt,
+          payload: req.payload || null,
+          history: req.history,
+          attachments: req.attachments,
+          source: trimText(req.source || "factory_ai_actions.dispatch"),
+          version: trimText(req.version || VERSION)
+        });
+      }
+    }
 
     var fallback = {
       ok: true,
@@ -853,6 +1078,18 @@
         global.RCF_MODULE_REGISTRY.register("factoryAIActions");
       }
     } catch (_) {}
+
+    try {
+      if (global.RCF_FACTORY_STATE?.refreshRuntime) {
+        global.RCF_FACTORY_STATE.refreshRuntime();
+      }
+    } catch (_) {}
+
+    try {
+      if (global.RCF_MODULE_REGISTRY?.refresh) {
+        global.RCF_MODULE_REGISTRY.refresh();
+      }
+    } catch (_) {}
   }
 
   function status() {
@@ -865,7 +1102,10 @@
       plannerReady: !!getPlanner(),
       bridgeReady: !!getBridge(),
       patchSupervisorReady: !!getPatchSupervisor(),
-      lastPlanSummary: clone(state.lastPlanSummary || null)
+      runtimeReady: !!getRuntime(),
+      lastPlanSummary: clone(state.lastPlanSummary || null),
+      lastRuntimeCall: clone(state.lastRuntimeCall || null),
+      runtimeStatus: clone(getRuntimeStatusSafe())
     };
   }
 
@@ -886,6 +1126,7 @@
     __v111: true,
     __v112: true,
     __v113: true,
+    __v114: true,
     version: VERSION,
     init: init,
     status: status,
@@ -897,6 +1138,8 @@
     applyLastApprovedPlan: applyLastApprovedPlan,
     runDoctor: runDoctor,
     collectLogs: collectLogs,
+    askRuntime: askRuntime,
+    getOpenAIStatus: getOpenAIStatus,
     getAutonomySnapshot: getAutonomySnapshot,
     getNextFileSuggestion: getNextFileSuggestion,
     getState: function () { return clone(state); }
