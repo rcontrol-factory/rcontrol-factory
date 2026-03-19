@@ -1,10 +1,10 @@
 /* FILE: /app/js/core/factory_ai_actions.js
    RControl Factory — Factory AI Actions
-   v1.1.4 ACTION ORCHESTRATOR + OPENAI STATUS ACTION + SAFE PLAN PICK
+   v1.1.4 ACTION ORCHESTRATOR + SAFE PLAN PICK + REQUESTED PLAN ID FIX + STALE BRIDGE GUARD
 
    Objetivo:
    - centralizar ações inteligentes da Factory AI
-   - ligar Factory AI Planner + Factory AI Bridge + Patch Supervisor + Runtime + módulos core
+   - ligar Factory AI Planner + Factory AI Bridge + Patch Supervisor + módulos core
    - evitar lógica solta espalhada no admin.admin_ai.js
    - permitir fluxo supervisionado:
        analisar -> planejar -> aprovar -> validar -> stage -> apply
@@ -12,11 +12,11 @@
    - funcionar como script clássico
 
    PATCH v1.1.4:
-   - FIX: adiciona ação local openai_status
-   - FIX: detectIntent reconhece OpenAI/runtime/backend/endpoint/api key
-   - FIX: dispatch trata openai_status sem cair em fallback chat
-   - FIX: consulta runtime.status() e opcionalmente faz probe real via runtime.ask()
-   - FIX: status() expõe runtimeReady e lastRuntimeCall
+   - FIX: next_file agora tenta recalcular plano real pelo planner antes de confiar no bridge.lastPlan
+   - FIX: evita sugerir backend/runtime/front OpenAI quando runtime já está conectado
+   - FIX: bloqueia plano stale do bridge para /functions/api/admin-ai.js após conexão confirmada
+   - ADD: suporte real à action local openai_status
+   - ADD: status expõe runtimeReady e lastRuntimeCall
    - mantém estrutura atual com patch mínimo
 */
 
@@ -28,6 +28,12 @@
   var VERSION = "v1.1.4";
   var STORAGE_KEY = "rcf:factory_ai_actions";
   var MAX_HISTORY = 100;
+
+  var OPENAI_FLOW_FILES = [
+    "/functions/api/admin-ai.js",
+    "/app/js/core/factory_ai_runtime.js",
+    "/app/js/admin.admin_ai.js"
+  ];
 
   var state = {
     version: VERSION,
@@ -43,6 +49,11 @@
   function nowISO() {
     try { return new Date().toISOString(); }
     catch (_) { return ""; }
+  }
+
+  function nowMS() {
+    try { return Date.now(); }
+    catch (_) { return 0; }
   }
 
   function clone(obj) {
@@ -63,6 +74,10 @@
     return String(v == null ? "" : v).trim();
   }
 
+  function lower(v) {
+    return trimText(v).toLowerCase();
+  }
+
   function persist() {
     try {
       state.lastUpdate = nowISO();
@@ -80,8 +95,6 @@
       var parsed = JSON.parse(raw);
       if (!parsed || typeof parsed !== "object") return false;
       state = merge(clone(state), clone(parsed));
-      if (!Array.isArray(state.history)) state.history = [];
-      if (state.history.length > MAX_HISTORY) state.history = state.history.slice(-MAX_HISTORY);
       return true;
     } catch (_) {
       return false;
@@ -250,6 +263,61 @@
     }, []);
   }
 
+  function getRuntimeStatus() {
+    return safe(function () {
+      var api = getRuntime();
+      if (!api || typeof api.status !== "function") {
+        return {
+          available: false,
+          ready: false,
+          lastEndpoint: "",
+          lastOk: false,
+          connectionStatus: "unknown",
+          connectionProvider: "",
+          connectionConfigured: false,
+          connectionAttempted: false,
+          connectionModel: "",
+          connectionUpstreamStatus: 0
+        };
+      }
+
+      var st = api.status() || {};
+      return {
+        available: true,
+        ready: !!st.ready,
+        lastEndpoint: trimText(st.lastEndpoint || ""),
+        lastOk: !!st.lastOk,
+        connectionStatus: trimText(st.connectionStatus || "unknown"),
+        connectionProvider: trimText(st.connectionProvider || ""),
+        connectionConfigured: !!st.connectionConfigured,
+        connectionAttempted: !!st.connectionAttempted,
+        connectionModel: trimText(st.connectionModel || ""),
+        connectionUpstreamStatus: Number(st.connectionUpstreamStatus || 0) || 0
+      };
+    }, {
+      available: false,
+      ready: false,
+      lastEndpoint: "",
+      lastOk: false,
+      connectionStatus: "unknown",
+      connectionProvider: "",
+      connectionConfigured: false,
+      connectionAttempted: false,
+      connectionModel: "",
+      connectionUpstreamStatus: 0
+    });
+  }
+
+  function isRuntimeConnected(runtimeStatus) {
+    var rt = runtimeStatus || getRuntimeStatus();
+    return !!(
+      rt.available &&
+      rt.ready &&
+      rt.lastOk &&
+      lower(rt.connectionStatus) === "connected"
+    );
+  }
+
   function normalizeFilePath(path) {
     var p = trimText(path || "").replace(/\\/g, "/");
     if (!p) return "";
@@ -262,17 +330,7 @@
     var p = trimText(prompt || "").toLowerCase();
 
     if (!p) return "chat";
-    if (
-      p.indexOf("openai") >= 0 ||
-      p.indexOf("api key") >= 0 ||
-      p.indexOf("backend") >= 0 ||
-      p.indexOf("endpoint") >= 0 ||
-      p.indexOf("runtime") >= 0 ||
-      p.indexOf("conexão") >= 0 ||
-      p.indexOf("conexao") >= 0 ||
-      p.indexOf("status real") >= 0 ||
-      p.indexOf("teste real") >= 0
-    ) return "openai_status";
+    if (p.indexOf("openai") >= 0 || p.indexOf("runtime") >= 0 || p.indexOf("backend") >= 0 || p.indexOf("endpoint") >= 0 || p.indexOf("conexão") >= 0 || p.indexOf("conexao") >= 0 || p.indexOf("status real") >= 0) return "openai_status";
     if (p.indexOf("aprovar") >= 0 && p.indexOf("patch") >= 0) return "approve_patch";
     if (p.indexOf("validar") >= 0 && p.indexOf("patch") >= 0) return "validate_patch";
     if (p.indexOf("stage") >= 0 && p.indexOf("patch") >= 0) return "stage_patch";
@@ -294,6 +352,7 @@
       context: clone(getContextSnapshot() || {}),
       doctor: clone(getDoctorState() || {}),
       tree: clone(getTreeSummary() || {}),
+      runtime: clone(getRuntimeStatus() || {}),
       loggerTail: getLoggerTail(20)
     };
   }
@@ -486,15 +545,64 @@
     return "";
   }
 
+  function isOpenAIFlowFile(file) {
+    var target = normalizeFilePath(file);
+    return OPENAI_FLOW_FILES.indexOf(target) >= 0;
+  }
+
+  function isStaleBridgePlanForCurrentPhase(plan) {
+    if (!plan || !plan.targetFile) return false;
+
+    var runtime = getRuntimeStatus();
+    var connected = isRuntimeConnected(runtime);
+    var target = normalizeFilePath(plan.targetFile);
+
+    if (connected && isOpenAIFlowFile(target)) return true;
+    return false;
+  }
+
+  function recalcPlannerNextFile(reasonText) {
+    var planner = getPlanner();
+    if (!planner) return null;
+
+    try {
+      var input = buildDefaultPlanInput({
+        reason: reasonText || "actions.recalc",
+        prompt: "calcular próximo arquivo real após status atual do runtime/openai"
+      });
+
+      var plan = null;
+
+      if (typeof planner.planFromRuntime === "function") {
+        plan = planner.planFromRuntime(input);
+      } else if (typeof planner.buildPlan === "function") {
+        plan = planner.buildPlan(input);
+      }
+
+      if (!plan || !plan.targetFile) return null;
+      return normalizePlannerPlan(plan);
+    } catch (_) {
+      return null;
+    }
+  }
+
   function buildNextFileSuggestionFromPlan() {
-    var plannerPlan = getLastPlannerPlanNormalized();
+    var runtime = getRuntimeStatus();
+    var connected = isRuntimeConnected(runtime);
+
+    var freshPlannerPlan = recalcPlannerNextFile("actions.getNextFileSuggestion");
+    var plannerPlan = freshPlannerPlan || getLastPlannerPlanNormalized();
     var bridgePlan = getLastBridgePlanNormalized();
 
-    if (shouldPreferPlannerPlan(plannerPlan, bridgePlan) && plannerPlan) {
+    if (bridgePlan && isStaleBridgePlanForCurrentPhase(bridgePlan)) {
+      bridgePlan = null;
+    }
+
+    if (plannerPlan && shouldPreferPlannerPlan(plannerPlan, bridgePlan)) {
       return {
         nextFile: normalizeFilePath(plannerPlan.targetFile),
         reason: trimText(plannerPlan.nextStep || plannerPlan.objective || plannerPlan.reason || "Arquivo alvo vindo do planner atual."),
-        source: "planner.lastPlan",
+        source: freshPlannerPlan ? "planner.recalculated" : "planner.lastPlan",
         risk: trimText(plannerPlan.risk || "unknown")
       };
     }
@@ -508,63 +616,511 @@
       };
     }
 
+    if (connected) {
+      return {
+        nextFile: "/app/js/core/factory_ai_actions.js",
+        reason: "OpenAI/runtime já estão conectados; o próximo passo seguro é fortalecer a camada de ações supervisionadas e parar de depender de plano stale do bridge.",
+        source: "runtime.connected.fallback",
+        risk: "low"
+      };
+    }
+
     return {
       nextFile: "/functions/api/admin-ai.js",
-      reason: "Sem plano consolidado ainda. Para OpenAI, o próximo passo seguro continua sendo backend e runtime.",
+      reason: "Sem plano consolidado ainda e sem conexão confirmada; o próximo passo seguro continua sendo consolidar a trilha real do backend OpenAI.",
       source: "fallback",
       risk: "low"
     };
   }
 
-  function buildOpenAIStatusDiagnosis(runtimeStatus, probeResult) {
-    var rs = runtimeStatus && typeof runtimeStatus === "object" ? runtimeStatus : {};
-    var pr = probeResult && typeof probeResult === "object" ? probeResult : {};
+  async function planFromCurrentRuntime(meta) {
+    var planner = getPlanner();
+    var bridge = getBridge();
 
-    var connection = pr.connection || pr.response?.connection || {};
-    var connected =
-      !!rs.lastOk ||
-      trimText(rs.connectionStatus || "") === "connected" ||
-      trimText(connection.status || "") === "connected";
+    if (!planner || (typeof planner.planFromRuntime !== "function" && typeof planner.buildPlan !== "function")) {
+      var fail = { ok: false, msg: "Factory AI Planner indisponível." };
+      markAction("planFromCurrentRuntime", meta, fail);
+      pushLog("WARN", "planner indisponível", fail);
+      return fail;
+    }
 
-    return {
-      connected: !!connected,
-      provider: trimText(connection.provider || rs.connectionProvider || ""),
-      model: trimText(connection.model || rs.connectionModel || ""),
-      status: trimText(connection.status || rs.connectionStatus || "unknown") || "unknown",
-      configured: typeof connection.configured === "boolean"
-        ? !!connection.configured
-        : !!rs.connectionConfigured,
-      attempted: typeof connection.attempted === "boolean"
-        ? !!connection.attempted
-        : !!rs.connectionAttempted,
-      upstreamStatus: Number(connection.upstreamStatus || rs.connectionUpstreamStatus || 0) || 0
+    var plannerInput = buildDefaultPlanInput(meta);
+    var plan = null;
+
+    if (typeof planner.planFromRuntime === "function") {
+      plan = planner.planFromRuntime(plannerInput);
+    } else if (typeof planner.buildPlan === "function") {
+      plan = planner.buildPlan(plannerInput);
+    }
+
+    if (!plan || !plan.id) {
+      var failPlan = { ok: false, msg: "Planner não retornou plano válido." };
+      markAction("planFromCurrentRuntime", meta, failPlan);
+      pushLog("WARN", "planner sem plano válido", failPlan);
+      return failPlan;
+    }
+
+    if (bridge && typeof bridge.fromText === "function") {
+      var text = [
+        "1. Objetivo",
+        plan.objective || plan.reason || "",
+        "",
+        "2. Arquivo alvo",
+        plan.targetFile || plan.nextFile || "",
+        "",
+        "3. Risco",
+        plan.risk || plan.priority || "unknown",
+        "",
+        "4. Próximo passo mínimo recomendado",
+        plan.nextStep || plan.reason || "",
+        "",
+        "5. Arquivos mais prováveis de ajuste",
+        (Array.isArray(plan.suggestedFiles)
+          ? plan.suggestedFiles
+          : (Array.isArray(plan.executionLine) ? plan.executionLine : [])
+        ).map(function (x) { return "- " + x; }).join("\n"),
+        "",
+        "6. Patch mínimo sugerido",
+        plan.patchSummary || ""
+      ].join("\n");
+
+      try {
+        bridge.fromText(text, {
+          source: "factory_ai_actions.planFromCurrentRuntime",
+          plannerPlan: clone(plan),
+          plannerTs: nowISO()
+        });
+      } catch (_) {}
+    }
+
+    var result = {
+      ok: true,
+      msg: "Plano consolidado ✅",
+      plan: clone(plan),
+      summary: rememberPlan(plan, "planner.planFromRuntime")
     };
+
+    markAction("planFromCurrentRuntime", meta, result);
+    emit("RCF:FACTORY_AI_PLAN_READY", clone(result));
+    pushLog("OK", "planFromCurrentRuntime ✅", {
+      targetFile: plan.targetFile || plan.nextFile || "",
+      risk: plan.risk || plan.priority || "unknown"
+    });
+
+    return result;
   }
 
-  async function getOpenAIStatus(input) {
-    var req = input && typeof input === "object" ? clone(input) : {};
-    var runtime = getRuntime();
-    var runtimeStatus = runtime && typeof runtime.status === "function"
-      ? clone(runtime.status() || {})
-      : {};
+  async function approveLastPlan(meta) {
+    var bridge = getBridge();
+    if (!bridge || typeof bridge.approvePlan !== "function") {
+      var fail = { ok: false, msg: "Factory AI Bridge indisponível para aprovação." };
+      markAction("approveLastPlan", meta, fail);
+      return fail;
+    }
+
+    var requestedPlanId = resolveRequestedPlanId({ meta: clone(meta || {}) });
+    var targetPlanId = resolveCurrentBridgePlanId(requestedPlanId);
+
+    if (!targetPlanId) {
+      var failLast = { ok: false, msg: "Nenhum plano pendente para aprovar." };
+      markAction("approveLastPlan", meta, failLast);
+      return failLast;
+    }
+
+    var result = bridge.approvePlan(targetPlanId, meta || {});
+    markAction("approveLastPlan", { planId: targetPlanId, meta: clone(meta || {}) }, result);
+
+    if (result && result.ok) {
+      emit("RCF:FACTORY_AI_ACTION_APPROVED", {
+        ts: nowISO(),
+        result: clone(result)
+      });
+      pushLog("OK", "approveLastPlan ✅", result);
+    } else {
+      pushLog("WARN", "approveLastPlan falhou", result);
+    }
+
+    return result;
+  }
+
+  async function validateLastApprovedPlan(meta) {
+    var supervisor = getPatchSupervisor();
+    var requestedPlanId = resolveRequestedPlanId({ meta: clone(meta || {}) });
+    var planId = resolveCurrentBridgePlanId(requestedPlanId);
+
+    if (!supervisor || typeof supervisor.validateApprovedPlan !== "function") {
+      var failSup = { ok: false, msg: "Patch Supervisor indisponível." };
+      markAction("validateLastApprovedPlan", meta || {}, failSup);
+      return failSup;
+    }
+
+    if (!planId) {
+      var failPlan = { ok: false, msg: "Nenhum plano atual para validar." };
+      markAction("validateLastApprovedPlan", meta || {}, failPlan);
+      return failPlan;
+    }
+
+    var validation = supervisor.validateApprovedPlan(planId);
+    var result = {
+      ok: !!validation.ok,
+      planId: String(planId || ""),
+      validation: clone(validation)
+    };
+
+    markAction("validateLastApprovedPlan", { planId: planId, meta: clone(meta || {}) }, result);
+    pushLog(result.ok ? "OK" : "WARN", "validateLastApprovedPlan", result);
+    return result;
+  }
+
+  async function stageLastApprovedPlan(meta) {
+    var supervisor = getPatchSupervisor();
+    var requestedPlanId = resolveRequestedPlanId({ meta: clone(meta || {}) });
+    var planId = resolveCurrentBridgePlanId(requestedPlanId);
+
+    if (!supervisor || typeof supervisor.stageApprovedPlan !== "function") {
+      var failSup = { ok: false, msg: "Patch Supervisor indisponível." };
+      markAction("stageLastApprovedPlan", meta || {}, failSup);
+      return failSup;
+    }
+
+    if (!planId) {
+      var failPlan = { ok: false, msg: "Nenhum plano atual para stage." };
+      markAction("stageLastApprovedPlan", meta || {}, failPlan);
+      return failPlan;
+    }
+
+    var result = await supervisor.stageApprovedPlan(planId);
+    markAction("stageLastApprovedPlan", { planId: planId, meta: clone(meta || {}) }, result);
+    pushLog(result.ok ? "OK" : "WARN", "stageLastApprovedPlan", result);
+    return result;
+  }
+
+  async function applyLastApprovedPlan(opts) {
+    var supervisor = getPatchSupervisor();
+    var requestedPlanId = resolveRequestedPlanId({ opts: clone(opts || {}) });
+    var planId = resolveCurrentBridgePlanId(requestedPlanId);
+
+    if (!supervisor || typeof supervisor.applyApprovedPlan !== "function") {
+      var failSup = { ok: false, msg: "Patch Supervisor indisponível." };
+      markAction("applyLastApprovedPlan", opts, failSup);
+      return failSup;
+    }
+
+    if (!planId) {
+      var failPlan = { ok: false, msg: "Nenhum plano atual para apply." };
+      markAction("applyLastApprovedPlan", opts, failPlan);
+      return failPlan;
+    }
+
+    var cleanOpts = clone(opts || {});
+    if (cleanOpts && typeof cleanOpts === "object" && Object.prototype.hasOwnProperty.call(cleanOpts, "planId")) {
+      delete cleanOpts.planId;
+    }
+
+    var result = await supervisor.applyApprovedPlan(planId, cleanOpts || {});
+    markAction("applyLastApprovedPlan", { planId: planId, opts: clone(cleanOpts || {}) }, result);
+    pushLog(result.ok ? "OK" : "WARN", "applyLastApprovedPlan", result);
+    return result;
+  }
+
+  async function runDoctor() {
+    var result = { ok: false, msg: "Doctor indisponível." };
+
+    try {
+      if (global.RCF_DOCTOR_SCAN?.open) {
+        await global.RCF_DOCTOR_SCAN.open();
+        result = {
+          ok: true,
+          mode: "doctor_scan.open",
+          lastRun: clone(global.RCF_DOCTOR_SCAN.lastRun || null)
+        };
+      } else if (global.RCF_DOCTOR_SCAN?.scan) {
+        var report = await global.RCF_DOCTOR_SCAN.scan();
+        result = {
+          ok: true,
+          mode: "doctor_scan.scan",
+          reportLength: String(report || "").length,
+          lastRun: clone(global.RCF_DOCTOR_SCAN.lastRun || null)
+        };
+      } else if (global.RCF_DOCTOR?.open) {
+        await global.RCF_DOCTOR.open();
+        result = { ok: true, mode: "doctor.open" };
+      } else if (global.RCF_DOCTOR?.run) {
+        var data = await global.RCF_DOCTOR.run();
+        result = {
+          ok: true,
+          mode: "doctor.run",
+          data: clone(data || {})
+        };
+      }
+    } catch (e) {
+      result = {
+        ok: false,
+        msg: String(e && e.message || e || "Falha ao rodar doctor.")
+      };
+    }
+
+    markAction("runDoctor", {}, result);
+    pushLog(result.ok ? "OK" : "WARN", "runDoctor", result);
+    return result;
+  }
+
+  function collectLogs(limit) {
+    var result = {
+      ok: true,
+      limit: Math.max(1, Number(limit || 30)),
+      logs: getLoggerTail(limit || 30)
+    };
+
+    markAction("collectLogs", { limit: result.limit }, result);
+    pushLog("OK", "collectLogs", { count: result.logs.length });
+    return result;
+  }
+
+  function getAutonomySnapshot() {
+    var snapshot = buildRuntimeSnapshot();
+    var bridge = getBridge();
+    var supervisor = getPatchSupervisor();
+    var planner = getPlanner();
+    var runtime = getRuntimeStatus();
 
     var result = {
       ok: true,
       ts: nowISO(),
-      runtime: {
-        available: !!runtime,
-        ready: !!runtimeStatus.ready,
-        version: trimText(runtimeStatus.version || "unknown"),
-        lastEndpoint: trimText(runtimeStatus.lastEndpoint || ""),
-        lastAction: trimText(runtimeStatus.lastAction || ""),
-        lastOk: !!runtimeStatus.lastOk,
-        connectionStatus: trimText(runtimeStatus.connectionStatus || "unknown") || "unknown",
-        connectionProvider: trimText(runtimeStatus.connectionProvider || ""),
-        connectionConfigured: !!runtimeStatus.connectionConfigured,
-        connectionAttempted: !!runtimeStatus.connectionAttempted,
-        connectionModel: trimText(runtimeStatus.connectionModel || ""),
-        connectionUpstreamStatus: Number(runtimeStatus.connectionUpstreamStatus || 0) || 0
+      runtime: snapshot,
+      runtimeLayer: clone(runtime),
+      planner: {
+        ready: !!planner,
+        version: safe(function () { return planner.version; }, "unknown"),
+        lastPlan: safe(function () { return planner.getLastPlan ? planner.getLastPlan() : null; }, null)
       },
+      bridge: {
+        ready: !!bridge,
+        version: safe(function () { return bridge.version; }, "unknown"),
+        lastPlan: safe(function () { return bridge.getLastPlan ? bridge.getLastPlan() : null; }, null),
+        pendingPlan: safe(function () { return bridge.getPendingPlan ? bridge.getPendingPlan() : null; }, null)
+      },
+      patchSupervisor: {
+        ready: !!supervisor,
+        version: safe(function () { return supervisor.version; }, "unknown"),
+        status: safe(function () { return supervisor.status ? supervisor.status() : {}; }, {})
+      },
+      adminFront: {
+        lastEndpoint: safe(function () { return global.RCF_FACTORY_AI.getLastEndpoint(); }, "")
+      },
+      nextFile: buildNextFileSuggestionFromPlan()
+    };
+
+    markAction("getAutonomySnapshot", {}, result);
+    pushLog("OK", "getAutonomySnapshot", {
+      plannerReady: result.planner.ready,
+      bridgeReady: result.bridge.ready,
+      supervisorReady: result.patchSupervisor.ready,
+      runtimeReady: result.runtimeLayer.ready
+    });
+
+    return result;
+  }
+
+  function getNextFileSuggestion() {
+    var result = {
+      ok: true,
+      suggestion: buildNextFileSuggestionFromPlan()
+    };
+
+    markAction("getNextFileSuggestion", {}, result);
+    pushLog("OK", "getNextFileSuggestion", result.suggestion);
+    return result;
+  }
+
+  async function getOpenAIStatus(req) {
+    var runtime = getRuntimeStatus();
+    var probe = {};
+    var connected = isRuntimeConnected(runtime);
+
+    state.lastRuntimeCall = {
+      ts: nowISO(),
+      action: "openai_status",
+      endpoint: trimText(runtime.lastEndpoint || ""),
+      connected: !!connected
+    };
+    persist();
+
+    if (!connected && req && req.probe) {
+      var runtimeApi = getRuntime();
+      if (runtimeApi && typeof runtimeApi.ask === "function") {
+        try {
+          probe = await runtimeApi.ask({
+            action: "chat",
+            prompt: "Faça um teste mínimo de conectividade e responda apenas confirmando status de conexão.",
+            payload: {
+              snapshot: buildRuntimeSnapshot()
+            },
+            history: [],
+            attachments: [],
+            source: "factory_ai_actions.openai_status",
+            version: VERSION
+          }) || {};
+
+          runtime = getRuntimeStatus();
+          connected = isRuntimeConnected(runtime);
+
+          state.lastRuntimeCall = {
+            ts: nowISO(),
+            action: "openai_status_probe",
+            endpoint: trimText(runtime.lastEndpoint || ""),
+            connected: !!connected
+          };
+          persist();
+        } catch (_) {}
+      }
+    }
+
+    var result = {
+      ok: true,
+      runtime: {
+        available: !!runtime.available,
+        ready: !!runtime.ready,
+        lastEndpoint: runtime.lastEndpoint || "",
+        lastOk: !!runtime.lastOk,
+        connectionStatus: runtime.connectionStatus || "unknown",
+        connectionProvider: runtime.connectionProvider || "",
+        connectionConfigured: !!runtime.connectionConfigured,
+        connectionAttempted: !!runtime.connectionAttempted,
+        connectionModel: runtime.connectionModel || "",
+        connectionUpstreamStatus: Number(runtime.connectionUpstreamStatus || 0) || 0
+      },
+      diagnosis: {
+        connected: !!connected,
+        provider: runtime.connectionProvider || "",
+        model: runtime.connectionModel || ""
+      },
+      probe: clone(probe || {}),
+      adminFront: {
+        lastEndpoint: safe(function () { return global.RCF_FACTORY_AI.getLastEndpoint(); }, "")
+      }
+    };
+
+    markAction("getOpenAIStatus", req || {}, result);
+    pushLog("OK", "getOpenAIStatus", {
+      connected: connected,
+      endpoint: runtime.lastEndpoint || ""
+    });
+
+    return result;
+  }
+
+  async function dispatch(input) {
+    var req = (input && typeof input === "object")
+      ? clone(input)
+      : { prompt: String(input || "") };
+
+    var action = trimText(req.action || "");
+    var prompt = trimText(req.prompt || "");
+    var intent = action || detectIntent(prompt);
+    var requestedPlanId = resolveRequestedPlanId(req);
+
+    if (intent === "plan") return planFromCurrentRuntime(req);
+    if (intent === "approve_patch") {
+      return approveLastPlan(merge(clone(req.meta || {}), requestedPlanId ? { planId: requestedPlanId } : {}));
+    }
+    if (intent === "validate_patch") {
+      return validateLastApprovedPlan(merge(clone(req.meta || {}), requestedPlanId ? { planId: requestedPlanId } : {}));
+    }
+    if (intent === "stage_patch") {
+      return stageLastApprovedPlan(merge(clone(req.meta || {}), requestedPlanId ? { planId: requestedPlanId } : {}));
+    }
+    if (intent === "apply_patch") {
+      return applyLastApprovedPlan(merge(clone(req.opts || {}), requestedPlanId ? { planId: requestedPlanId } : {}));
+    }
+    if (intent === "run_doctor") return runDoctor();
+    if (intent === "collect_logs") return collectLogs(req.limit || 30);
+    if (intent === "snapshot" || intent === "autonomy") return getAutonomySnapshot();
+    if (intent === "next_file") return getNextFileSuggestion();
+    if (intent === "openai_status") return getOpenAIStatus(req);
+
+    var fallback = {
+      ok: true,
+      mode: "chat",
+      intent: intent,
+      snapshot: getAutonomySnapshot()
+    };
+
+    markAction("dispatch", req, fallback);
+    pushLog("INFO", "dispatch chat/fallback", { intent: intent });
+    return fallback;
+  }
+
+  function syncPresence() {
+    try {
+      if (global.RCF_FACTORY_STATE?.registerModule) {
+        global.RCF_FACTORY_STATE.registerModule("factoryAIActions");
+      } else if (global.RCF_FACTORY_STATE?.setModule) {
+        global.RCF_FACTORY_STATE.setModule("factoryAIActions", true);
+      }
+    } catch (_) {}
+
+    try {
+      if (global.RCF_MODULE_REGISTRY?.register) {
+        global.RCF_MODULE_REGISTRY.register("factoryAIActions");
+      }
+    } catch (_) {}
+  }
+
+  function status() {
+    return {
+      version: VERSION,
+      ready: !!state.ready,
+      lastUpdate: state.lastUpdate || null,
+      lastAction: clone(state.lastAction || null),
+      historyCount: Array.isArray(state.history) ? state.history.length : 0,
+      plannerReady: !!getPlanner(),
+      bridgeReady: !!getBridge(),
+      patchSupervisorReady: !!getPatchSupervisor(),
+      runtimeReady: !!(getRuntimeStatus().ready),
+      lastRuntimeCall: clone(state.lastRuntimeCall || null),
+      lastPlanSummary: clone(state.lastPlanSummary || null)
+    };
+  }
+
+  function init() {
+    load();
+    state.ready = true;
+    state.version = VERSION;
+    state.lastUpdate = nowISO();
+    persist();
+    syncPresence();
+    pushLog("OK", "factory_ai_actions ready ✅ " + VERSION);
+    return status();
+  }
+
+  global.RCF_FACTORY_AI_ACTIONS = {
+    __v100: true,
+    __v110: true,
+    __v111: true,
+    __v112: true,
+    __v113: true,
+    __v114: true,
+    version: VERSION,
+    init: init,
+    status: status,
+    dispatch: dispatch,
+    planFromCurrentRuntime: planFromCurrentRuntime,
+    approveLastPlan: approveLastPlan,
+    validateLastApprovedPlan: validateLastApprovedPlan,
+    stageLastApprovedPlan: stageLastApprovedPlan,
+    applyLastApprovedPlan: applyLastApprovedPlan,
+    runDoctor: runDoctor,
+    collectLogs: collectLogs,
+    getAutonomySnapshot: getAutonomySnapshot,
+    getNextFileSuggestion: getNextFileSuggestion,
+    getOpenAIStatus: getOpenAIStatus,
+    getState: function () { return clone(state); }
+  };
+
+  try { init(); } catch (_) {}
+
+})(window);
       diagnosis: {
         connected: false,
         provider: "",
