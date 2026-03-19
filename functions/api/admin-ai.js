@@ -1,16 +1,18 @@
 /* FILE: /functions/api/admin-ai.js
    RControl Factory — Factory AI API
-   v3.5.5 CHAT COPILOT BACKEND + CONNECTIVITY HARDENED + RESPONSES TEXT FIX + TRUNCATION GUARD
+   v3.5.6 CHAT COPILOT BACKEND + CONNECTIVITY HARDENED + TEXT FORMAT + INPUT COMPACT GUARD
 
-   PATCH v3.5.5:
+   PATCH v3.5.6:
    - KEEP: openai_status como action permitida
    - KEEP: normalizeOpenAIUrl endurecido
-   - KEEP: extractText ampliado para formatos variados
-   - ADD: max_output_tokens explícito para reduzir corte imprevisível
-   - ADD: leitura de status/incomplete_details da Responses API
-   - ADD: fallback textual quando a API retorna sem output_text consolidado
-   - ADD: hints/status melhores para resposta parcial/incompleta
-   - FIX: não altera arquitetura central; apenas fortalece backend, conectividade e saída textual
+   - KEEP: extractText ampliado
+   - KEEP: max_output_tokens explícito
+   - ADD: text.format.type="text" para favorecer output_text consolidado
+   - ADD: compactação do input para reduzir corte por texto grande
+   - ADD: truncation guard em prompt/history/attachments/payload
+   - ADD: fallback mais robusto quando a Responses API vem sem texto final
+   - FIX: mantém compatibilidade com runtime/admin atuais
+   - FIX: não altera a arquitetura central; apenas fortalece backend, conectividade e saída textual
 */
 
 export async function onRequestOptions() {
@@ -62,7 +64,7 @@ export async function onRequestPost(context) {
     }
 
     const action = normalizeAction(body.action, body.prompt);
-    const prompt = String(body.prompt || "").trim();
+    const prompt = clampText(String(body.prompt || "").trim(), 6000);
     const history = normalizeHistory(body.history);
     const attachments = normalizeAttachments(body.attachments);
     const source = String(body.source || "factory-ai").trim();
@@ -263,7 +265,12 @@ async function postToOpenAI({ url, apiKey, model, input, maxOutputTokens }) {
       body: JSON.stringify({
         model,
         input,
-        max_output_tokens: normalizeMaxOutputTokens(maxOutputTokens, 1400)
+        max_output_tokens: normalizeMaxOutputTokens(maxOutputTokens, 1400),
+        text: {
+          format: {
+            type: "text"
+          }
+        }
       }),
       signal: controller.signal
     });
@@ -304,7 +311,12 @@ async function probeOpenAI({ url, apiKey, model, maxOutputTokens = 120 }) {
       body: JSON.stringify({
         model,
         input: "Responda apenas com a palavra OK.",
-        max_output_tokens: normalizeMaxOutputTokens(maxOutputTokens, 120)
+        max_output_tokens: normalizeMaxOutputTokens(maxOutputTokens, 120),
+        text: {
+          format: {
+            type: "text"
+          }
+        }
       }),
       signal: controller.signal
     });
@@ -584,10 +596,10 @@ function normalizeHistory(value) {
   if (!Array.isArray(value)) return [];
 
   return value
-    .slice(-12)
+    .slice(-8)
     .map((item) => {
       const role = String(item?.role || "user").trim().toLowerCase();
-      const text = String(item?.text || item?.content || "").trim();
+      const text = clampText(String(item?.text || item?.content || "").trim(), 1200);
 
       if (!text) return null;
 
@@ -603,12 +615,12 @@ function normalizeAttachments(value) {
   if (!Array.isArray(value)) return [];
 
   return value
-    .slice(0, 12)
+    .slice(0, 8)
     .map((item) => {
-      const name = String(item?.name || "").trim();
-      const kind = String(item?.kind || "unknown").trim();
-      const mime = String(item?.mime || "").trim();
-      const summary = String(item?.summary || "").trim();
+      const name = clampText(String(item?.name || "").trim(), 180);
+      const kind = clampText(String(item?.kind || "unknown").trim(), 40);
+      const mime = clampText(String(item?.mime || "").trim(), 120);
+      const summary = clampText(String(item?.summary || "").trim(), 260);
       const size = Number(item?.size || 0) || 0;
 
       if (!name && !summary) return null;
@@ -640,7 +652,7 @@ function preparePayloadForModel(payload, prompt = "", action = "chat") {
   if (planner) out.__planner_context = planner;
   if (deterministic) out.__planner_hint = deterministic;
 
-  return out;
+  return compactPayloadForModel(out);
 }
 
 function buildSnapshotSemanticSummary(payload) {
@@ -845,7 +857,7 @@ function buildPlannerContext(payload, prompt = "", action = "chat") {
         "dar preferência a planner/bridge/actions/backend/chat supervisionado quando a meta for inteligência da Factory"
       ],
       action,
-      prompt: String(prompt || ""),
+      prompt: clampText(String(prompt || ""), 1400),
       activeModules,
       candidateFiles,
       pathGroups: {
@@ -1415,6 +1427,11 @@ function buildGroundedPrompt({ action, payload, prompt, history, attachments, so
 
   const task = buildTaskText(action, prompt, payload);
 
+  const payloadText = stringify(payload);
+  const compactPayloadText = clampText(payloadText, 24000);
+  const historyText = clampText(historyToText(history), 9000);
+  const attachmentsText = clampText(attachmentsToText(attachments), 3000);
+
   return [
     system,
     "",
@@ -1434,16 +1451,16 @@ function buildGroundedPrompt({ action, payload, prompt, history, attachments, so
     stringify(plannerHint || "(ausente)"),
     "",
     "Histórico recente:",
-    historyToText(history),
+    historyText,
     "",
     "Anexos recebidos (metadados):",
-    attachmentsToText(attachments),
+    attachmentsText,
     "",
     "Prompt atual do usuário:",
     prompt || "(nenhum)",
     "",
     "Payload recebido:",
-    stringify(payload)
+    compactPayloadText
   ].join("\n");
 }
 
@@ -1552,7 +1569,7 @@ function buildTaskText(action, prompt = "", payload = null) {
     }
 
     if (prompt) {
-      lines.push("Pedido atual: " + prompt);
+      lines.push("Pedido atual: " + clampText(prompt, 1200));
     }
 
     return lines.join(" ");
@@ -1567,7 +1584,7 @@ function historyToText(history) {
   }
 
   return history
-    .map((item, idx) => `${idx + 1}. [${item.role}] ${item.text}`)
+    .map((item, idx) => `${idx + 1}. [${item.role}] ${clampText(item.text, 1200)}`)
     .join("\n");
 }
 
@@ -1580,11 +1597,11 @@ function attachmentsToText(attachments) {
     .map((item, idx) => {
       return [
         `${idx + 1}.`,
-        `name=${item.name || "(sem nome)"}`,
-        `kind=${item.kind || "unknown"}`,
-        `mime=${item.mime || "(sem mime)"}`,
+        `name=${clampText(item.name || "(sem nome)", 180)}`,
+        `kind=${clampText(item.kind || "unknown", 40)}`,
+        `mime=${clampText(item.mime || "(sem mime)", 120)}`,
         `size=${item.size || 0}`,
-        `summary=${item.summary || "(sem resumo)"}`
+        `summary=${clampText(item.summary || "(sem resumo)", 260)}`
       ].join(" ");
     })
     .join("\n");
@@ -1671,6 +1688,10 @@ function extractText(data) {
     const output = Array.isArray(data?.output) ? data.output : [];
 
     for (const item of output) {
+      if (typeof item?.text === "string" && item.text.trim()) {
+        chunks.push(item.text.trim());
+      }
+
       const content = Array.isArray(item?.content) ? item.content : [];
 
       for (const c of content) {
@@ -1691,11 +1712,18 @@ function extractText(data) {
 
         if (typeof c?.text === "string" && c.text.trim()) {
           chunks.push(c.text.trim());
+          continue;
+        }
+
+        if (typeof c?.value === "string" && c.value.trim()) {
+          chunks.push(c.value.trim());
         }
       }
     }
 
-    if (chunks.length) return chunks.join("\n").trim();
+    if (chunks.length) {
+      return dedupeStrings(chunks).join("\n").trim();
+    }
   } catch {}
 
   try {
@@ -1704,11 +1732,12 @@ function extractText(data) {
         .map((x) => {
           if (typeof x?.text === "string") return x.text.trim();
           if (typeof x?.value === "string") return x.value.trim();
+          if (x?.text && typeof x.text?.value === "string") return x.text.value.trim();
           return "";
         })
         .filter(Boolean);
 
-      if (parts.length) return parts.join("\n").trim();
+      if (parts.length) return dedupeStrings(parts).join("\n").trim();
     }
   } catch {}
 
@@ -1753,8 +1782,44 @@ function buildEmptyTextFallback({ action, prompt, responseMeta, model, endpoint 
     "- /app/js/admin.admin_ai.js",
     "",
     "Prompt atual:",
-    prompt || "(nenhum)"
+    clampText(prompt || "(nenhum)", 1000)
   ].join("\n");
+}
+
+function compactPayloadForModel(value, depth = 0) {
+  if (depth > 6) return "[truncated:depth]";
+  if (value == null) return value;
+
+  if (typeof value === "string") {
+    return clampText(value, 1800);
+  }
+
+  if (typeof value === "number" || typeof value === "boolean") {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.slice(0, 24).map((item) => compactPayloadForModel(item, depth + 1));
+  }
+
+  if (typeof value === "object") {
+    const out = {};
+    const keys = Object.keys(value).slice(0, 40);
+
+    for (const key of keys) {
+      out[key] = compactPayloadForModel(value[key], depth + 1);
+    }
+
+    return out;
+  }
+
+  return String(value);
+}
+
+function clampText(value, max = 1000) {
+  const text = String(value || "");
+  if (text.length <= max) return text;
+  return text.slice(0, max) + ` …[truncated ${text.length - max} chars]`;
 }
 
 async function safeJson(request) {
