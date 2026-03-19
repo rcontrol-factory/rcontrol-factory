@@ -1,17 +1,17 @@
 /* FILE: app/app.js
-   RControl Factory - /app/app.js - V8.0.9 LEAN ORCHESTRATOR
+   RControl Factory - /app/app.js - V8.1.0 LEAN ORCHESTRATOR
    - Arquivo completo (1 peca) pra copiar/colar
    - Objetivo: app.js como ORQUESTRADOR LEVE REAL
    - Mantém: boot lock, state, storage, logger, watchdog, diagnostics, SW, VFS, injector safe, agent CLI
    - Prioriza: ui_shell / ui_runtime / ui_state / ui_views / ui_router / ui_events / módulos UI
    - PATCH: carrega cadeia supervisionada da Factory AI
-   - ADD: planner + bridge + patch supervisor + actions
+   - ADD: planner + bridge + runtime + patch supervisor + actions
    - Fallback: ultra mínimo de sobrevivência
 */
 (() => {
   "use strict";
 
-  try { console.info("[RCF] /app/app.js BUILD=V8.0.9_LEAN_ORCHESTRATOR"); } catch {}
+  try { console.info("[RCF] /app/app.js BUILD=V8.1.0_LEAN_ORCHESTRATOR"); } catch {}
 
   // =========================================================
   // GLOBAL LOG ALIAS
@@ -41,7 +41,7 @@
     if (st.booted === true) return;
     if (st.booting === true && (now - (st.ts || 0)) < 8000) return;
 
-    window[__BOOT_KEY] = { booting: true, booted: false, ts: now, ver: "v8.0.9" };
+    window[__BOOT_KEY] = { booting: true, booted: false, ts: now, ver: "v8.1.0" };
   } catch {
     if (window.__RCF_BOOTED__) return;
     window.__RCF_BOOTED__ = true;
@@ -430,12 +430,14 @@
     __factoryAICorePromise = (async () => {
       await loadScriptOnce("./js/core/factory_ai_planner.js", "data-rcf-fai-planner");
       await loadScriptOnce("./js/core/factory_ai_bridge.js", "data-rcf-fai-bridge");
+      await loadScriptOnce("./js/core/factory_ai_runtime.js", "data-rcf-fai-runtime");
       await loadScriptOnce("./js/core/patch_supervisor.js", "data-rcf-patch-supervisor");
       await loadScriptOnce("./js/core/factory_ai_actions.js", "data-rcf-fai-actions");
 
       return {
         planner: window.RCF_FACTORY_AI_PLANNER || null,
         bridge: window.RCF_FACTORY_AI_BRIDGE || null,
+        runtime: window.RCF_FACTORY_AI_RUNTIME || null,
         supervisor: window.RCF_PATCH_SUPERVISOR || null,
         actions: window.RCF_FACTORY_AI_ACTIONS || null
       };
@@ -453,6 +455,7 @@
       window.RCF_FACTORY_IA.getActions = () => window.RCF_FACTORY_AI_ACTIONS || null;
       window.RCF_FACTORY_IA.getPlanner = () => window.RCF_FACTORY_AI_PLANNER || null;
       window.RCF_FACTORY_IA.getBridge = () => window.RCF_FACTORY_AI_BRIDGE || null;
+      window.RCF_FACTORY_IA.getRuntime = () => window.RCF_FACTORY_AI_RUNTIME || null;
       window.RCF_FACTORY_IA.getPatchSupervisor = () => window.RCF_PATCH_SUPERVISOR || null;
     } catch {}
   }
@@ -470,6 +473,7 @@
         getFactoryAIActions: () => window.RCF_FACTORY_AI_ACTIONS || null,
         getFactoryAIPlanner: () => window.RCF_FACTORY_AI_PLANNER || null,
         getFactoryAIBridge: () => window.RCF_FACTORY_AI_BRIDGE || null,
+        getFactoryAIRuntime: () => window.RCF_FACTORY_AI_RUNTIME || null,
         getPatchSupervisor: () => window.RCF_PATCH_SUPERVISOR || null
       },
       helpers: { $, $$, uiMsg, bindTap, textContentSafe, slugify, escapeHtml, escapeAttr, normalizeViewName },
@@ -1015,7 +1019,7 @@
     push("TEST_IMPORTS", !!window.RCF_LOGGER && !!window.RCF && !!window.RCF.state, "globals");
     push("TEST_STATE_INIT", !!State && Array.isArray(State.apps) && !!State.active && typeof State.cfg === "object", "state");
     push("TEST_UI_REGISTRY", !!window.RCF_UI && typeof window.RCF_UI.getSlot === "function", "RCF_UI");
-    push("TEST_FACTORY_AI_CHAIN", !!window.RCF_FACTORY_AI_BRIDGE && !!window.RCF_PATCH_SUPERVISOR && !!window.RCF_FACTORY_AI_ACTIONS, "factory ai supervised chain");
+    push("TEST_FACTORY_AI_CHAIN", !!window.RCF_FACTORY_AI_BRIDGE && !!window.RCF_FACTORY_AI_RUNTIME && !!window.RCF_PATCH_SUPERVISOR && !!window.RCF_FACTORY_AI_ACTIONS, "factory ai supervised chain");
     const pass = results.filter(r => r.pass).length;
     return { ok: pass === results.length, pass, total: results.length, results };
   }
@@ -1310,6 +1314,13 @@
     }
 
     try {
+      const runtime = window.RCF_FACTORY_AI_RUNTIME;
+      if (runtime && typeof runtime.init === "function") runtime.init();
+    } catch (e) {
+      Logger.write("factory_ai_runtime init err:", e?.message || e);
+    }
+
+    try {
       const planner = window.RCF_FACTORY_AI_PLANNER;
       if (planner && typeof planner.init === "function") planner.init();
     } catch (e) {
@@ -1324,7 +1335,7 @@
     }
 
     try {
-      Logger.write("factory ai chain:", "planner/bridge/supervisor/actions ready ✅");
+      Logger.write("factory ai chain:", "planner/bridge/runtime/supervisor/actions ready ✅");
     } catch {}
   }
 
