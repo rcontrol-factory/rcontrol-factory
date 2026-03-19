@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/factory_ai_runtime.js
    RControl Factory — Factory AI Runtime
-   v1.0.4 SUPERVISED RUNTIME + SAFE FLOW + OPENAI STATUS AWARE STABLE
+   v1.0.5 SUPERVISED RUNTIME + OPENAI ROUTE FIX + BACKEND ANALYSIS PRESERVE
 
    Objetivo:
    - ligar Factory AI -> API -> bridge -> actions -> patch_supervisor
@@ -11,23 +11,21 @@
    - não aplicar patch automaticamente sem aprovação
    - funcionar como script clássico
 
-   PATCH v1.0.4:
-   - FIX: mantém base completa do runtime
-   - FIX: usa bridge.fromApiResponse() primeiro quando disponível
-   - FIX: salva status de conexão/model/provider vindos do backend
-   - FIX: expõe lastOk em status() para contrato com admin.admin_ai.js
-   - FIX: expõe lastConnection inteiro em status()
-   - FIX: retorna analysis também no topo do resultado de ask()
-   - FIX: melhora persistência do último endpoint/última conexão
-   - FIX: normaliza falha por exceção como internal_error quando necessário
+   PATCH v1.0.5:
+   - FIX: detecta prompt OpenAI/runtime/backend e sobe como action=openai_status
+   - FIX: preserva analysis textual do backend mesmo quando res.ok/data.ok falham
+   - FIX: salva endpoint/responseStatus/incomplete na conexão normalizada
+   - FIX: melhora persistência da última resposta também em erro
+   - FIX: expõe connectionEndpoint/connectionResponseStatus/connectionIncomplete em status()
+   - FIX: mantém compatibilidade com admin-ai backend v3.5.5
 */
 
 ;(function (global) {
   "use strict";
 
-  if (global.RCF_FACTORY_AI_RUNTIME && global.RCF_FACTORY_AI_RUNTIME.__v104) return;
+  if (global.RCF_FACTORY_AI_RUNTIME && global.RCF_FACTORY_AI_RUNTIME.__v105) return;
 
-  var VERSION = "v1.0.4";
+  var VERSION = "v1.0.5";
   var STORAGE_KEY = "rcf:factory_ai_runtime";
   var LAST_RESPONSE_KEY = "rcf:factory_ai_runtime_last_response";
   var MAX_HISTORY = 60;
@@ -51,7 +49,11 @@
       attempted: false,
       status: "unknown",
       model: "",
-      upstreamStatus: 0
+      upstreamStatus: 0,
+      endpoint: "",
+      responseStatus: "",
+      incomplete: false,
+      incompleteReason: ""
     },
     history: []
   };
@@ -156,13 +158,35 @@
     } catch (_) {}
   }
 
+  function isOpenAIConnectivityPrompt(prompt) {
+    var p = trimText(prompt).toLowerCase();
+    if (!p) return false;
+
+    return (
+      p.indexOf("openai") >= 0 ||
+      p.indexOf("api key") >= 0 ||
+      p.indexOf("endpoint") >= 0 ||
+      p.indexOf("runtime") >= 0 ||
+      p.indexOf("backend") >= 0 ||
+      p.indexOf("/api/admin-ai") >= 0 ||
+      p.indexOf("conexão") >= 0 ||
+      p.indexOf("conexao") >= 0 ||
+      p.indexOf("status real") >= 0 ||
+      p.indexOf("teste real") >= 0
+    );
+  }
+
   function normalizeAction(value, prompt) {
     var raw = trimText(value).toLowerCase();
     var p = trimText(prompt).toLowerCase();
 
-    if (raw) return raw;
+    if (raw) {
+      if (raw === "chat" && isOpenAIConnectivityPrompt(prompt)) return "openai_status";
+      return raw;
+    }
 
     if (!p) return "chat";
+    if (isOpenAIConnectivityPrompt(prompt)) return "openai_status";
     if (p.indexOf("diagnóstico") >= 0 || p.indexOf("diagnostico") >= 0 || p.indexOf("doctor") >= 0) return "factory_diagnosis";
     if (p.indexOf("log") >= 0 || p.indexOf("erro") >= 0 || p.indexOf("falha") >= 0) return "analyze-logs";
     if (p.indexOf("arquitetura") >= 0 || p.indexOf("estrutura") >= 0) return "analyze-architecture";
@@ -226,17 +250,19 @@
   function buildRequest(input) {
     var prompt = trimText(safe(function () { return input.prompt; }, ""));
     var action = normalizeAction(safe(function () { return input.action; }, ""), prompt);
+    var payload = safe(function () { return input.payload; }, null);
 
     return {
       action: action,
       prompt: prompt,
-      payload: safe(function () { return input.payload; }, null) || {
+      payload: payload || {
         snapshot: getFactorySnapshot()
       },
       history: Array.isArray(input.history) ? clone(input.history).slice(-12) : getHistoryFromFactoryAI(),
       attachments: Array.isArray(input.attachments) ? clone(input.attachments).slice(0, 12) : getAttachmentsFromFactoryAI(),
       source: trimText(safe(function () { return input.source; }, "")) || "factory-ai-runtime",
-      version: VERSION
+      version: VERSION,
+      probe: !!safe(function () { return input.probe; }, false)
     };
   }
 
@@ -289,8 +315,35 @@
       attempted: !!c.attempted,
       status: trimText(c.status || "unknown") || "unknown",
       model: trimText(c.model || ""),
-      upstreamStatus: Number(c.upstreamStatus || 0) || 0
+      upstreamStatus: Number(c.upstreamStatus || 0) || 0,
+      endpoint: trimText(c.endpoint || ""),
+      responseStatus: trimText(c.responseStatus || ""),
+      incomplete: !!c.incomplete,
+      incompleteReason: trimText(c.incompleteReason || "")
     };
+  }
+
+  function buildFailureAnalysis(data, fallbackMessage) {
+    var analysis = trimText(safe(function () { return data.analysis; }, ""));
+    if (analysis) return analysis;
+
+    var error = trimText(safe(function () { return data.error; }, ""));
+    var details = safe(function () { return data.details; }, null);
+    var status = Number(safe(function () { return data.status; }, 0) || 0);
+
+    if (error || details || status) {
+      try {
+        return JSON.stringify({
+          ok: false,
+          error: error || fallbackMessage || "Falha no backend",
+          status: status || 0,
+          details: details || null,
+          connection: safe(function () { return data.connection; }, null)
+        }, null, 2);
+      } catch (_) {}
+    }
+
+    return trimText(fallbackMessage || "Falha no backend");
   }
 
   function ingestToBridge(responseObj) {
@@ -350,6 +403,10 @@
       connectionAttempted: !!safe(function () { return state.lastConnection.attempted; }, false),
       connectionModel: safe(function () { return state.lastConnection.model; }, ""),
       connectionUpstreamStatus: Number(safe(function () { return state.lastConnection.upstreamStatus; }, 0) || 0),
+      connectionEndpoint: safe(function () { return state.lastConnection.endpoint; }, ""),
+      connectionResponseStatus: safe(function () { return state.lastConnection.responseStatus; }, ""),
+      connectionIncomplete: !!safe(function () { return state.lastConnection.incomplete; }, false),
+      connectionIncompleteReason: safe(function () { return state.lastConnection.incompleteReason; }, ""),
       lastConnection: clone(state.lastConnection || {}),
       historyCount: Array.isArray(state.history) ? state.history.length : 0
     };
@@ -395,13 +452,21 @@
           attempted: false,
           status: "request_failed",
           model: "",
-          upstreamStatus: safe(function () { return res.status; }, 0) || 0
+          upstreamStatus: safe(function () { return res.status; }, 0) || 0,
+          endpoint: state.lastEndpoint,
+          responseStatus: trimText(safe(function () { return data.hints && data.hints.responseStatus; }, "")),
+          incomplete: !!safe(function () { return data.hints && data.hints.incomplete; }, false),
+          incompleteReason: trimText(safe(function () { return data.hints && data.hints.incompleteReason; }, ""))
         });
+
+        var errAnalysis = buildFailureAnalysis(data, "Falha ao chamar backend da Factory AI.");
 
         var errPayload = {
           ok: false,
           action: req.action,
           prompt: req.prompt,
+          analysis: errAnalysis,
+          error: trimText(safe(function () { return data.error; }, "")) || errAnalysis,
           response: clone(data || {}),
           status: safe(function () { return res.status; }, 0) || 0,
           endpoint: state.lastEndpoint,
@@ -411,6 +476,7 @@
         state.lastOk = false;
         state.lastConnection = clone(failConnection);
         state.lastResponse = clone(errPayload);
+        saveLastResponse(errPayload);
 
         rememberHistory({
           ts: nowISO(),
@@ -419,7 +485,9 @@
           prompt: req.prompt,
           status: errPayload.status,
           endpoint: state.lastEndpoint,
-          connectionStatus: failConnection.status
+          connectionStatus: failConnection.status,
+          responseStatus: failConnection.responseStatus,
+          incomplete: !!failConnection.incomplete
         });
 
         persist();
@@ -440,7 +508,11 @@
         attempted: true,
         status: "connected",
         model: "",
-        upstreamStatus: safe(function () { return res.status; }, 200) || 200
+        upstreamStatus: safe(function () { return res.status; }, 200) || 200,
+        endpoint: state.lastEndpoint,
+        responseStatus: trimText(safe(function () { return data.hints && data.hints.responseStatus; }, "")),
+        incomplete: !!safe(function () { return data.hints && data.hints.incomplete; }, false),
+        incompleteReason: trimText(safe(function () { return data.hints && data.hints.incompleteReason; }, ""))
       });
 
       var responseObj = {
@@ -474,6 +546,8 @@
         endpoint: state.lastEndpoint,
         connectionStatus: okConnection.status,
         model: okConnection.model,
+        responseStatus: okConnection.responseStatus,
+        incomplete: !!okConnection.incomplete,
         planId: trimText(safe(function () { return plan.id; }, "")),
         targetFile: trimText(safe(function () { return plan.targetFile; }, "")),
         risk: trimText(safe(function () { return plan.risk; }, "unknown"))
@@ -515,23 +589,31 @@
         attempted: true,
         status: "internal_error",
         model: "",
-        upstreamStatus: 0
+        upstreamStatus: 0,
+        endpoint: state.lastEndpoint,
+        responseStatus: "",
+        incomplete: false,
+        incompleteReason: ""
       });
 
       if (!trimText(fallbackConn.status)) fallbackConn.status = "internal_error";
       if (fallbackConn.status === "unknown") fallbackConn.status = "internal_error";
+      if (!trimText(fallbackConn.endpoint)) fallbackConn.endpoint = state.lastEndpoint;
 
       state.lastOk = false;
       state.lastConnection = clone(fallbackConn);
       state.lastResponse = {
         ok: false,
         error: msg,
+        analysis: msg,
         action: req.action,
         prompt: req.prompt,
         ts: nowISO(),
         endpoint: state.lastEndpoint,
         connection: clone(fallbackConn)
       };
+
+      saveLastResponse(state.lastResponse);
 
       rememberHistory({
         ts: nowISO(),
@@ -740,6 +822,7 @@
     __v102: true,
     __v103: true,
     __v104: true,
+    __v105: true,
     version: VERSION,
     init: init,
     status: status,
