@@ -1,13 +1,16 @@
 /* FILE: /functions/api/admin-ai.js
    RControl Factory — Factory AI API
-   v3.5.3 CHAT COPILOT BACKEND + DETERMINISTIC PLANNER HINT + OPENAI STATUS FIX HARDENED
+   v3.5.4 CHAT COPILOT BACKEND + CONNECTIVITY HARDENED + RESPONSES TEXT FIX
 
-   PATCH v3.5.3:
-   - FIX: inclui /app/js/core/factory_ai_runtime.js no ranking real de conectividade OpenAI
-   - FIX: endurece normalizeOpenAIUrl para bases com slash/path parcial
+   PATCH v3.5.4:
+   - FIX: inclui openai_status como action permitida
+   - FIX: melhora normalizeOpenAIUrl para evitar endpoints inválidos
+   - FIX: endurece fallback para /v1/responses
+   - FIX: melhora extractText para formatos variados da Responses API
+   - FIX: melhora resposta de conectividade e hints
    - FIX: mantém bloco connection padronizado
-   - FIX: mantém compatibilidade total com o fluxo atual
-   - FIX: não muda arquitetura central, apenas fortalece diagnóstico e resposta
+   - FIX: mantém compatibilidade total com runtime/admin atuais
+   - FIX: não altera a arquitetura central, só fortalece backend e diagnóstico
 */
 
 export async function onRequestOptions() {
@@ -75,6 +78,7 @@ export async function onRequestPost(context) {
       "propose-patch",
       "generate-code",
       "ingest-context",
+      "openai_status",
       "chat"
     ]);
 
@@ -93,6 +97,43 @@ export async function onRequestPost(context) {
           endpoint: upstreamUrl
         })
       }, 400);
+    }
+
+    if (action === "openai_status") {
+      const probe = await probeOpenAI({
+        url: upstreamUrl,
+        apiKey: env.OPENAI_API_KEY,
+        model
+      });
+
+      return json({
+        ok: !!probe.ok,
+        action,
+        source,
+        version,
+        analysis: probe.analysis,
+        hints: {
+          mode: "analysis",
+          targetFile: "/functions/api/admin-ai.js",
+          risk: probe.ok ? "low" : "medium",
+          hasCodeBlock: false,
+          mentionsPlannerFlow: false,
+          mentionsOpenAIFlow: true,
+          nextFileCandidate: probe.ok ? "/app/js/core/factory_ai_runtime.js" : "/functions/api/admin-ai.js",
+          plannerHintUsed: false,
+          promptClass: "openai-connectivity"
+        },
+        raw: probe.raw || {},
+        connection: buildConnectionMeta({
+          provider: "openai",
+          configured: !!env.OPENAI_API_KEY,
+          attempted: true,
+          status: probe.connectionStatus,
+          model,
+          upstreamStatus: Number(probe.upstreamStatus || 0) || 0,
+          endpoint: upstreamUrl
+        })
+      }, probe.ok ? 200 : 502);
     }
 
     const input = buildGroundedPrompt({
@@ -117,13 +158,17 @@ export async function onRequestPost(context) {
       const failureStatus =
         upstreamStatus === 0
           ? "network_error"
-          : upstreamStatus === 401
-            ? "invalid_api_key"
-            : upstreamStatus === 403
-              ? "forbidden"
-              : upstreamStatus === 429
-                ? "rate_limited"
-                : "upstream_error";
+          : upstreamStatus === 400
+            ? "bad_request"
+            : upstreamStatus === 401
+              ? "invalid_api_key"
+              : upstreamStatus === 403
+                ? "forbidden"
+                : upstreamStatus === 404
+                  ? "invalid_endpoint"
+                  : upstreamStatus === 429
+                    ? "rate_limited"
+                    : "upstream_error";
 
       return json({
         ok: false,
@@ -221,28 +266,143 @@ async function postToOpenAI({ url, apiKey, model, input }) {
   }
 }
 
+async function probeOpenAI({ url, apiKey, model }) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    try { controller.abort(); } catch (_) {}
+  }, 20000);
+
+  try {
+    const upstream = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model,
+        input: "Responda apenas com a palavra OK."
+      }),
+      signal: controller.signal
+    });
+
+    const data = await upstream.json().catch(() => ({}));
+    const text = extractText(data);
+
+    if (!upstream.ok) {
+      return {
+        ok: false,
+        analysis: [
+          "1. Fatos confirmados",
+          `- Backend respondeu com status upstream ${Number(upstream.status || 0) || 0}`,
+          `- Endpoint usado: ${url}`,
+          `- Modelo: ${model}`,
+          "",
+          "2. Dados ausentes ou mal consolidados",
+          "- O texto final da resposta não pôde ser confirmado como sucesso.",
+          "",
+          "3. Inferências prováveis",
+          "- A conexão com OpenAI não está operacional nesta rodada.",
+          "",
+          "4. Próximo passo mínimo recomendado",
+          "- Revisar endpoint, chave e payload enviados ao backend.",
+          "",
+          "5. Arquivos mais prováveis de ajuste",
+          "- /functions/api/admin-ai.js",
+          "- /app/js/core/factory_ai_runtime.js"
+        ].join("\n"),
+        raw: data,
+        upstreamStatus: Number(upstream.status || 0) || 0,
+        connectionStatus:
+          upstream.status === 401 ? "invalid_api_key"
+          : upstream.status === 403 ? "forbidden"
+          : upstream.status === 404 ? "invalid_endpoint"
+          : upstream.status === 429 ? "rate_limited"
+          : "upstream_error"
+      };
+    }
+
+    return {
+      ok: true,
+      analysis: [
+        "1. Fatos confirmados",
+        "- Probe real executado com sucesso.",
+        `- Endpoint usado: ${url}`,
+        `- Modelo: ${model}`,
+        `- Texto retornado: ${text || "OK upstream sem texto legível"}`,
+        "",
+        "2. Dados ausentes ou mal consolidados",
+        "- Nenhuma ausência crítica nesta rodada.",
+        "",
+        "3. Inferências prováveis",
+        "- A conexão backend -> OpenAI está operacional.",
+        "",
+        "4. Próximo passo mínimo recomendado",
+        "- Validar consumo dessa conexão no runtime e no front.",
+        "",
+        "5. Arquivos mais prováveis de ajuste",
+        "- /app/js/core/factory_ai_runtime.js",
+        "- /app/js/admin.admin_ai.js"
+      ].join("\n"),
+      raw: data,
+      upstreamStatus: Number(upstream.status || 200) || 200,
+      connectionStatus: "connected"
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      analysis: [
+        "1. Fatos confirmados",
+        "- O probe real falhou por exceção de rede ou abort.",
+        "",
+        "2. Dados ausentes ou mal consolidados",
+        `- detalhe: ${String(err?.message || err || "erro de rede")}`,
+        "",
+        "3. Inferências prováveis",
+        "- A chamada backend -> OpenAI não foi concluída nesta rodada.",
+        "",
+        "4. Próximo passo mínimo recomendado",
+        "- Revisar rede, endpoint e chave no backend.",
+        "",
+        "5. Arquivos mais prováveis de ajuste",
+        "- /functions/api/admin-ai.js",
+        "- /app/js/core/factory_ai_runtime.js"
+      ].join("\n"),
+      raw: {
+        error: String(err?.message || err || "erro de rede")
+      },
+      upstreamStatus: 0,
+      connectionStatus: "network_error"
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function normalizeOpenAIUrl(value) {
   const raw = String(value || "").trim();
   const fallback = "https://api.openai.com/v1/responses";
 
   if (!raw) return fallback;
 
-  const cleaned = raw.replace(/\/+$/, "");
+  let cleaned = raw.replace(/\/+$/, "");
+
+  if (!/^https?:\/\//i.test(cleaned)) return fallback;
 
   if (/\/v1\/responses$/i.test(cleaned)) return cleaned;
   if (/\/v1$/i.test(cleaned)) return cleaned + "/responses";
-  if (/api\.openai\.com$/i.test(cleaned)) return cleaned + "/v1/responses";
+  if (/^https?:\/\/api\.openai\.com$/i.test(cleaned)) return cleaned + "/v1/responses";
+  if (/^https?:\/\/[^/]+$/i.test(cleaned)) return cleaned + "/v1/responses";
 
-  if (/^https?:\/\/[^/]+$/i.test(cleaned)) {
-    return cleaned + "/v1/responses";
-  }
-
-  if (/^https?:\/\/[^/]+\/v1\/[^/]+$/i.test(cleaned)) {
+  if (/\/v1\/[^/]+$/i.test(cleaned)) {
     if (/\/v1\/responses$/i.test(cleaned)) return cleaned;
     return fallback;
   }
 
-  return cleaned;
+  if (/\/v1\/.+\/.+$/i.test(cleaned)) return fallback;
+  if (/\/responses$/i.test(cleaned)) return cleaned;
+
+  return fallback;
 }
 
 function buildConnectionMeta(info) {
@@ -272,6 +432,7 @@ function normalizeAction(value, promptValue = "") {
     if (raw === "propose-patch") return "propose-patch";
     if (raw === "generate-code") return "generate-code";
     if (raw === "ingest-context") return "ingest-context";
+    if (raw === "openai_status") return "openai_status";
     if (raw === "zip-readiness") return "ingest-context";
 
     if (
@@ -296,6 +457,20 @@ function normalizeAction(value, promptValue = "") {
 
     if (raw === "chat") return "chat";
     return raw;
+  }
+
+  if (
+    prompt.includes("status real") ||
+    prompt.includes("teste real") ||
+    prompt.includes("openai") ||
+    prompt.includes("api key") ||
+    prompt.includes("endpoint") ||
+    prompt.includes("runtime") ||
+    prompt.includes("backend") ||
+    prompt.includes("conexão") ||
+    prompt.includes("conexao")
+  ) {
+    return "openai_status";
   }
 
   if (
@@ -714,6 +889,7 @@ function detectBackendGoal(prompt, action) {
   if (action === "generate-code") return "generate-code";
   if (action === "propose-patch") return "propose-patch";
   if (action === "factory_diagnosis") return "diagnostics";
+  if (action === "openai_status") return "openai-connectivity";
 
   if (
     prompt.includes("openai") ||
@@ -1161,7 +1337,7 @@ function buildGroundedPrompt({ action, payload, prompt, history, attachments, so
     "",
     "Formato de resposta por action:",
     "",
-    "Se action=factory_diagnosis, analyze-architecture, analyze-logs, summarize-structure ou suggest-improvement:",
+    "Se action=factory_diagnosis, analyze-architecture, analyze-logs, summarize-structure, suggest-improvement ou openai_status:",
     "1. Fatos confirmados",
     "2. Dados ausentes ou mal consolidados",
     "3. Inferências prováveis",
@@ -1303,6 +1479,10 @@ function buildTaskText(action, prompt = "", payload = null) {
     return "Explique como a Factory deve aproveitar os anexos descritos e o contexto recebido sem fingir leitura binária real dos arquivos.";
   }
 
+  if (action === "openai_status") {
+    return "Diagnostique especificamente a trilha backend -> OpenAI, mostrando se há conexão real, endpoint válido, chave configurada e qual é o próximo arquivo mínimo da cadeia.";
+  }
+
   if (action === "chat") {
     const lines = [
       "Responda como o chat técnico oficial da Factory, de forma natural, objetiva e útil, ajudando a estruturar a própria Factory primeiro.",
@@ -1432,17 +1612,53 @@ function extractText(data) {
 
     for (const item of output) {
       const content = Array.isArray(item?.content) ? item.content : [];
+
       for (const c of content) {
-        if (c?.type === "output_text" && typeof c?.text === "string") {
-          chunks.push(c.text);
+        if (c?.type === "output_text" && typeof c?.text === "string" && c.text.trim()) {
+          chunks.push(c.text.trim());
+          continue;
+        }
+
+        if (c?.type === "text" && typeof c?.text === "string" && c.text.trim()) {
+          chunks.push(c.text.trim());
+          continue;
+        }
+
+        if (c?.type === "text" && c?.text && typeof c.text?.value === "string" && c.text.value.trim()) {
+          chunks.push(c.text.value.trim());
+          continue;
+        }
+
+        if (typeof c?.text === "string" && c.text.trim()) {
+          chunks.push(c.text.trim());
         }
       }
     }
 
-    return chunks.join("\n").trim();
-  } catch {
-    return "";
-  }
+    if (chunks.length) return chunks.join("\n").trim();
+  } catch {}
+
+  try {
+    if (Array.isArray(data?.content)) {
+      const parts = data.content
+        .map((x) => {
+          if (typeof x?.text === "string") return x.text.trim();
+          if (typeof x?.value === "string") return x.value.trim();
+          return "";
+        })
+        .filter(Boolean);
+
+      if (parts.length) return parts.join("\n").trim();
+    }
+  } catch {}
+
+  try {
+    if (typeof data?.response?.output_text === "string" && data.response.output_text.trim()) {
+      return data.response.output_text.trim();
+    }
+  } catch {}
+
+  return "";
 }
 
 async function safeJson(request) {
