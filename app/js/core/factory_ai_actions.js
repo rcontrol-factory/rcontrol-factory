@@ -1,31 +1,32 @@
 /* FILE: /app/js/core/factory_ai_actions.js
    RControl Factory — Factory AI Actions
-   v1.1.4 ACTION ORCHESTRATOR + SAFE PLAN PICK + REQUESTED PLAN ID FIX + STALE BRIDGE GUARD
+   v1.2.0 ACTION ORCHESTRATOR + READER INTEGRATION + CORRUPTION FIX
 
    Objetivo:
    - centralizar ações inteligentes da Factory AI
-   - ligar Factory AI Planner + Factory AI Bridge + Patch Supervisor + módulos core
+   - ligar Factory AI Planner + Factory AI Bridge + Patch Supervisor + Reader + módulos core
    - evitar lógica solta espalhada no admin.admin_ai.js
    - permitir fluxo supervisionado:
        analisar -> planejar -> aprovar -> validar -> stage -> apply
    - expor ações seguras e reutilizáveis via window.RCF_FACTORY_AI_ACTIONS
+   - adicionar leitura interna real read-only para a Factory AI
    - funcionar como script clássico
 
-   PATCH v1.1.4:
-   - FIX: next_file agora tenta recalcular plano real pelo planner antes de confiar no bridge.lastPlan
-   - FIX: evita sugerir backend/runtime/front OpenAI quando runtime já está conectado
-   - FIX: bloqueia plano stale do bridge para /functions/api/admin-ai.js após conexão confirmada
-   - ADD: suporte real à action local openai_status
-   - ADD: status expõe runtimeReady e lastRuntimeCall
-   - mantém estrutura atual com patch mínimo
+   PATCH v1.2.0:
+   - FIX: remove corrupção/duplicação no final do arquivo
+   - FIX: mantém suporte real à action local openai_status
+   - ADD: integração com RCF_FACTORY_AI_READER
+   - ADD: actions locais list_files / file_exists / read_file / summarize_file / inspect_file / summarize_many
+   - ADD: status expõe readerReady
+   - mantém compatibilidade com planner / bridge / patch_supervisor / runtime
 */
 
 ;(function (global) {
   "use strict";
 
-  if (global.RCF_FACTORY_AI_ACTIONS && global.RCF_FACTORY_AI_ACTIONS.__v114) return;
+  if (global.RCF_FACTORY_AI_ACTIONS && global.RCF_FACTORY_AI_ACTIONS.__v120) return;
 
-  var VERSION = "v1.1.4";
+  var VERSION = "v1.2.0";
   var STORAGE_KEY = "rcf:factory_ai_actions";
   var MAX_HISTORY = 100;
 
@@ -51,11 +52,6 @@
     catch (_) { return ""; }
   }
 
-  function nowMS() {
-    try { return Date.now(); }
-    catch (_) { return 0; }
-  }
-
   function clone(obj) {
     try { return JSON.parse(JSON.stringify(obj)); }
     catch (_) { return obj || {}; }
@@ -78,6 +74,30 @@
     return trimText(v).toLowerCase();
   }
 
+  function asArray(v) {
+    return Array.isArray(v) ? v : [];
+  }
+
+  function uniq(arr) {
+    var out = [];
+    var seen = {};
+    asArray(arr).forEach(function (item) {
+      var key = String(item || "");
+      if (!key || seen[key]) return;
+      seen[key] = true;
+      out.push(item);
+    });
+    return out;
+  }
+
+  function normalizeFilePath(path) {
+    var p = trimText(path || "").replace(/\\/g, "/");
+    if (!p) return "";
+    if (p.indexOf("/") !== 0) p = "/" + p;
+    p = p.replace(/\/{2,}/g, "/");
+    return p;
+  }
+
   function persist() {
     try {
       state.lastUpdate = nowISO();
@@ -95,6 +115,10 @@
       var parsed = JSON.parse(raw);
       if (!parsed || typeof parsed !== "object") return false;
       state = merge(clone(state), clone(parsed));
+      if (!Array.isArray(state.history)) state.history = [];
+      if (state.history.length > MAX_HISTORY) {
+        state.history = state.history.slice(-MAX_HISTORY);
+      }
       return true;
     } catch (_) {
       return false;
@@ -182,6 +206,10 @@
 
   function getRuntime() {
     return safe(function () { return global.RCF_FACTORY_AI_RUNTIME || null; }, null);
+  }
+
+  function getReader() {
+    return safe(function () { return global.RCF_FACTORY_AI_READER || null; }, null);
   }
 
   function getFactoryState() {
@@ -318,14 +346,6 @@
     );
   }
 
-  function normalizeFilePath(path) {
-    var p = trimText(path || "").replace(/\\/g, "/");
-    if (!p) return "";
-    if (p.indexOf("/") !== 0) p = "/" + p;
-    p = p.replace(/\/{2,}/g, "/");
-    return p;
-  }
-
   function detectIntent(prompt) {
     var p = trimText(prompt || "").toLowerCase();
 
@@ -341,6 +361,12 @@
     if (p.indexOf("planejar") >= 0 || p.indexOf("plano") >= 0) return "plan";
     if (p.indexOf("próximo arquivo") >= 0 || p.indexOf("proximo arquivo") >= 0) return "next_file";
     if (p.indexOf("autonomia") >= 0) return "autonomy";
+    if (p.indexOf("listar arquivos") >= 0 || p.indexOf("list files") >= 0) return "list_files";
+    if (p.indexOf("arquivo existe") >= 0 || p.indexOf("file exists") >= 0 || p.indexOf("exists ") >= 0) return "file_exists";
+    if (p.indexOf("ler arquivo") >= 0 || p.indexOf("read file") >= 0) return "read_file";
+    if (p.indexOf("resumir arquivo") >= 0 || p.indexOf("summarize file") >= 0) return "summarize_file";
+    if (p.indexOf("inspecionar arquivo") >= 0 || p.indexOf("inspect file") >= 0) return "inspect_file";
+    if (p.indexOf("resumir vários") >= 0 || p.indexOf("resumir varios") >= 0 || p.indexOf("summarize many") >= 0) return "summarize_many";
     return "chat";
   }
 
@@ -380,15 +406,7 @@
       .map(function (p) { return normalizeFilePath(p); })
       .filter(Boolean);
 
-    var uniq = [];
-    var seen = {};
-    out.forEach(function (p) {
-      if (seen[p]) return;
-      seen[p] = true;
-      uniq.push(p);
-    });
-
-    return uniq;
+    return uniq(out);
   }
 
   function buildDefaultPlanInput(meta) {
@@ -446,9 +464,7 @@
   function normalizePlannerPlan(plan) {
     if (!plan || typeof plan !== "object") return null;
 
-    var nextFile =
-      normalizeFilePath(plan.nextFile || plan.targetFile || "");
-
+    var nextFile = normalizeFilePath(plan.nextFile || plan.targetFile || "");
     if (!nextFile) return null;
 
     return {
@@ -882,13 +898,13 @@
     var bridge = getBridge();
     var supervisor = getPatchSupervisor();
     var planner = getPlanner();
-    var runtime = getRuntimeStatus();
+    var runtime = getRuntime();
+    var reader = getReader();
 
     var result = {
       ok: true,
       ts: nowISO(),
       runtime: snapshot,
-      runtimeLayer: clone(runtime),
       planner: {
         ready: !!planner,
         version: safe(function () { return planner.version; }, "unknown"),
@@ -900,13 +916,23 @@
         lastPlan: safe(function () { return bridge.getLastPlan ? bridge.getLastPlan() : null; }, null),
         pendingPlan: safe(function () { return bridge.getPendingPlan ? bridge.getPendingPlan() : null; }, null)
       },
+      runtimeLayer: {
+        ready: !!runtime,
+        status: safe(function () { return runtime.status ? runtime.status() : {}; }, {})
+      },
+      readerLayer: {
+        ready: !!reader,
+        status: safe(function () { return reader.status ? reader.status() : {}; }, {})
+      },
       patchSupervisor: {
         ready: !!supervisor,
         version: safe(function () { return supervisor.version; }, "unknown"),
         status: safe(function () { return supervisor.status ? supervisor.status() : {}; }, {})
       },
       adminFront: {
-        lastEndpoint: safe(function () { return global.RCF_FACTORY_AI.getLastEndpoint(); }, "")
+        lastEndpoint: trimText(safe(function () {
+          return global.RCF_FACTORY_AI?.getLastEndpoint?.() || "";
+        }, ""))
       },
       nextFile: buildNextFileSuggestionFromPlan()
     };
@@ -916,7 +942,8 @@
       plannerReady: result.planner.ready,
       bridgeReady: result.bridge.ready,
       supervisorReady: result.patchSupervisor.ready,
-      runtimeReady: result.runtimeLayer.ready
+      runtimeReady: result.runtimeLayer.ready,
+      readerReady: result.readerLayer.ready
     });
 
     return result;
@@ -934,14 +961,15 @@
   }
 
   async function getOpenAIStatus(req) {
-    var runtime = getRuntimeStatus();
+    var runtimeStatus = getRuntimeStatus();
+    var runtime = runtimeStatus;
     var probe = {};
-    var connected = isRuntimeConnected(runtime);
+    var connected = isRuntimeConnected(runtimeStatus);
 
     state.lastRuntimeCall = {
       ts: nowISO(),
       action: "openai_status",
-      endpoint: trimText(runtime.lastEndpoint || ""),
+      endpoint: trimText(runtimeStatus.lastEndpoint || ""),
       connected: !!connected
     };
     persist();
@@ -1010,6 +1038,134 @@
     return result;
   }
 
+  async function listFilesAction(req) {
+    var reader = getReader();
+    if (!reader || typeof reader.listFiles !== "function") {
+      var fail = { ok: false, msg: "RCF_FACTORY_AI_READER indisponível." };
+      markAction("listFilesAction", req, fail);
+      return fail;
+    }
+
+    var result = reader.listFiles({
+      prefix: trimText(req.prefix || ""),
+      contains: trimText(req.contains || ""),
+      limit: Math.max(1, Number(req.limit || 120) || 120)
+    });
+
+    markAction("listFilesAction", req, result);
+    pushLog(result.ok ? "OK" : "WARN", "listFilesAction", { count: result.count || 0 });
+    return result;
+  }
+
+  async function fileExistsAction(req) {
+    var reader = getReader();
+    if (!reader || typeof reader.exists !== "function") {
+      var fail = { ok: false, msg: "RCF_FACTORY_AI_READER indisponível." };
+      markAction("fileExistsAction", req, fail);
+      return fail;
+    }
+
+    var path = normalizeFilePath(req.path || req.targetFile || req.file || "");
+    var result = await reader.exists(path);
+
+    markAction("fileExistsAction", { path: path }, result);
+    pushLog(result.ok ? "OK" : "WARN", "fileExistsAction", result);
+    return result;
+  }
+
+  async function readFileAction(req) {
+    var reader = getReader();
+    if (!reader || typeof reader.readFile !== "function") {
+      var fail = { ok: false, msg: "RCF_FACTORY_AI_READER indisponível." };
+      markAction("readFileAction", req, fail);
+      return fail;
+    }
+
+    var path = normalizeFilePath(req.path || req.targetFile || req.file || "");
+    var result = await reader.readFile(path, {
+      cache: req.cache !== false,
+      limit: Math.max(0, Number(req.limit || 120000) || 120000)
+    });
+
+    markAction("readFileAction", { path: path }, result);
+    pushLog(result.ok ? "OK" : "WARN", "readFileAction", {
+      path: path,
+      source: result.source || ""
+    });
+    return result;
+  }
+
+  async function summarizeFileAction(req) {
+    var reader = getReader();
+    if (!reader || typeof reader.summarizeFile !== "function") {
+      var fail = { ok: false, msg: "RCF_FACTORY_AI_READER indisponível." };
+      markAction("summarizeFileAction", req, fail);
+      return fail;
+    }
+
+    var path = normalizeFilePath(req.path || req.targetFile || req.file || "");
+    var result = await reader.summarizeFile(path, {
+      cache: req.cache !== false
+    });
+
+    markAction("summarizeFileAction", { path: path }, result);
+    pushLog(result.ok ? "OK" : "WARN", "summarizeFileAction", {
+      path: path,
+      lines: safe(function () { return result.summary.lines; }, 0)
+    });
+    return result;
+  }
+
+  async function inspectFileAction(req) {
+    var reader = getReader();
+    if (!reader || typeof reader.inspectTarget !== "function") {
+      var fail = { ok: false, msg: "RCF_FACTORY_AI_READER indisponível." };
+      markAction("inspectFileAction", req, fail);
+      return fail;
+    }
+
+    var path = normalizeFilePath(req.path || req.targetFile || req.file || "");
+    var result = await reader.inspectTarget(path, {
+      cache: req.cache !== false
+    });
+
+    markAction("inspectFileAction", { path: path }, result);
+    pushLog(result.ok ? "OK" : "WARN", "inspectFileAction", {
+      path: path,
+      apiSurfaceCount: safe(function () { return result.summary.apiSurface.length; }, 0)
+    });
+    return result;
+  }
+
+  async function summarizeManyAction(req) {
+    var reader = getReader();
+    if (!reader || typeof reader.summarizeMany !== "function") {
+      var fail = { ok: false, msg: "RCF_FACTORY_AI_READER indisponível." };
+      markAction("summarizeManyAction", req, fail);
+      return fail;
+    }
+
+    var paths = asArray(req.paths)
+      .concat(asArray(req.files))
+      .map(normalizeFilePath)
+      .filter(Boolean);
+
+    if (!paths.length) {
+      paths = getCandidateFilesFromContext().slice(0, 6);
+    }
+
+    var result = await reader.summarizeMany(paths, {
+      limit: Math.max(1, Number(req.limit || 6) || 6),
+      cache: req.cache !== false
+    });
+
+    markAction("summarizeManyAction", { paths: paths.slice(0, 12) }, result);
+    pushLog(result.ok ? "OK" : "WARN", "summarizeManyAction", {
+      count: result.count || 0
+    });
+    return result;
+  }
+
   async function dispatch(input) {
     var req = (input && typeof input === "object")
       ? clone(input)
@@ -1021,6 +1177,7 @@
     var requestedPlanId = resolveRequestedPlanId(req);
 
     if (intent === "plan") return planFromCurrentRuntime(req);
+    if (intent === "openai_status") return getOpenAIStatus(req);
     if (intent === "approve_patch") {
       return approveLastPlan(merge(clone(req.meta || {}), requestedPlanId ? { planId: requestedPlanId } : {}));
     }
@@ -1037,7 +1194,12 @@
     if (intent === "collect_logs") return collectLogs(req.limit || 30);
     if (intent === "snapshot" || intent === "autonomy") return getAutonomySnapshot();
     if (intent === "next_file") return getNextFileSuggestion();
-    if (intent === "openai_status") return getOpenAIStatus(req);
+    if (intent === "list_files") return listFilesAction(req);
+    if (intent === "file_exists") return fileExistsAction(req);
+    if (intent === "read_file") return readFileAction(req);
+    if (intent === "summarize_file") return summarizeFileAction(req);
+    if (intent === "inspect_file") return inspectFileAction(req);
+    if (intent === "summarize_many") return summarizeManyAction(req);
 
     var fallback = {
       ok: true,
@@ -1063,6 +1225,12 @@
     try {
       if (global.RCF_MODULE_REGISTRY?.register) {
         global.RCF_MODULE_REGISTRY.register("factoryAIActions");
+      }
+    } catch (_) {}
+
+    try {
+      if (global.RCF_FACTORY_STATE?.refreshRuntime) {
+        global.RCF_FACTORY_STATE.refreshRuntime();
       }
     } catch (_) {}
   }
@@ -1078,6 +1246,7 @@
       bridgeReady: !!getBridge(),
       patchSupervisorReady: !!getPatchSupervisor(),
       runtimeReady: !!(getRuntimeStatus().ready),
+      readerReady: !!getReader(),
       lastRuntimeCall: clone(state.lastRuntimeCall || null),
       lastPlanSummary: clone(state.lastPlanSummary || null)
     };
@@ -1101,506 +1270,7 @@
     __v112: true,
     __v113: true,
     __v114: true,
-    version: VERSION,
-    init: init,
-    status: status,
-    dispatch: dispatch,
-    planFromCurrentRuntime: planFromCurrentRuntime,
-    approveLastPlan: approveLastPlan,
-    validateLastApprovedPlan: validateLastApprovedPlan,
-    stageLastApprovedPlan: stageLastApprovedPlan,
-    applyLastApprovedPlan: applyLastApprovedPlan,
-    runDoctor: runDoctor,
-    collectLogs: collectLogs,
-    getAutonomySnapshot: getAutonomySnapshot,
-    getNextFileSuggestion: getNextFileSuggestion,
-    getOpenAIStatus: getOpenAIStatus,
-    getState: function () { return clone(state); }
-  };
-
-  try { init(); } catch (_) {}
-
-})(window);
-      diagnosis: {
-        connected: false,
-        provider: "",
-        model: "",
-        status: "unknown",
-        configured: false,
-        attempted: false,
-        upstreamStatus: 0
-      },
-      probe: null,
-      adminFront: {
-        lastEndpoint: trimText(safe(function () {
-          return global.RCF_FACTORY_AI?.getLastEndpoint?.() || "";
-        }, ""))
-      }
-    };
-
-    if (!runtime || typeof runtime.ask !== "function") {
-      result.ok = false;
-      result.msg = "RCF_FACTORY_AI_RUNTIME indisponível.";
-      result.diagnosis = buildOpenAIStatusDiagnosis(runtimeStatus, null);
-      markAction("getOpenAIStatus", req, result);
-      pushLog("WARN", "openai_status sem runtime", result);
-      return result;
-    }
-
-    if (req.probe) {
-      try {
-        var probePayload = {
-          snapshot: buildRuntimeSnapshot(),
-          attachments: []
-        };
-
-        var probe = await runtime.ask({
-          action: "chat",
-          prompt: "Teste técnico curto: responda somente com status resumido da conexão OpenAI e runtime.",
-          payload: probePayload,
-          history: [],
-          attachments: [],
-          source: "factory_ai_actions.openai_status",
-          version: VERSION
-        });
-
-        result.probe = clone(probe || null);
-        state.lastRuntimeCall = {
-          ts: nowISO(),
-          action: "openai_status",
-          ok: !!probe?.ok,
-          endpoint: trimText(probe?.endpoint || runtimeStatus.lastEndpoint || ""),
-          connectionStatus: trimText(
-            probe?.connection?.status ||
-            probe?.response?.connection?.status ||
-            runtimeStatus.connectionStatus ||
-            "unknown"
-          )
-        };
-      } catch (e) {
-        result.probe = {
-          ok: false,
-          error: String(e && e.message || e || "Falha no probe OpenAI.")
-        };
-        state.lastRuntimeCall = {
-          ts: nowISO(),
-          action: "openai_status",
-          ok: false,
-          endpoint: trimText(runtimeStatus.lastEndpoint || ""),
-          connectionStatus: "probe_exception"
-        };
-      }
-    }
-
-    result.diagnosis = buildOpenAIStatusDiagnosis(runtimeStatus, result.probe);
-
-    markAction("getOpenAIStatus", req, result);
-    pushLog(result.diagnosis.connected ? "OK" : "WARN", "openai_status", {
-      connected: result.diagnosis.connected,
-      status: result.diagnosis.status,
-      endpoint: result.runtime.lastEndpoint || ""
-    });
-    persist();
-
-    return result;
-  }
-
-  async function planFromCurrentRuntime(meta) {
-    var planner = getPlanner();
-    var bridge = getBridge();
-
-    if (!planner || (typeof planner.planFromRuntime !== "function" && typeof planner.buildPlan !== "function")) {
-      var fail = { ok: false, msg: "Factory AI Planner indisponível." };
-      markAction("planFromCurrentRuntime", meta, fail);
-      pushLog("WARN", "planner indisponível", fail);
-      return fail;
-    }
-
-    var plannerInput = buildDefaultPlanInput(meta);
-    var plan = null;
-
-    if (typeof planner.planFromRuntime === "function") {
-      plan = planner.planFromRuntime(plannerInput);
-    } else if (typeof planner.buildPlan === "function") {
-      plan = planner.buildPlan(plannerInput);
-    }
-
-    if (!plan || !plan.id) {
-      var failPlan = { ok: false, msg: "Planner não retornou plano válido." };
-      markAction("planFromCurrentRuntime", meta, failPlan);
-      pushLog("WARN", "planner sem plano válido", failPlan);
-      return failPlan;
-    }
-
-    if (bridge && typeof bridge.fromText === "function") {
-      var text = [
-        "1. Objetivo",
-        plan.objective || plan.reason || "",
-        "",
-        "2. Arquivo alvo",
-        plan.targetFile || plan.nextFile || "",
-        "",
-        "3. Risco",
-        plan.risk || plan.priority || "unknown",
-        "",
-        "4. Próximo passo mínimo recomendado",
-        plan.nextStep || plan.reason || "",
-        "",
-        "5. Arquivos mais prováveis de ajuste",
-        (Array.isArray(plan.suggestedFiles)
-          ? plan.suggestedFiles
-          : (Array.isArray(plan.executionLine) ? plan.executionLine : [])
-        ).map(function (x) { return "- " + x; }).join("\n"),
-        "",
-        "6. Patch mínimo sugerido",
-        plan.patchSummary || ""
-      ].join("\n");
-
-      try {
-        bridge.fromText(text, {
-          source: "factory_ai_actions.planFromCurrentRuntime",
-          plannerPlan: clone(plan),
-          plannerTs: nowISO()
-        });
-      } catch (_) {}
-    }
-
-    var result = {
-      ok: true,
-      msg: "Plano consolidado ✅",
-      plan: clone(plan),
-      summary: rememberPlan(plan, "planner.planFromRuntime")
-    };
-
-    markAction("planFromCurrentRuntime", meta, result);
-    emit("RCF:FACTORY_AI_PLAN_READY", clone(result));
-    pushLog("OK", "planFromCurrentRuntime ✅", {
-      targetFile: plan.targetFile || plan.nextFile || "",
-      risk: plan.risk || plan.priority || "unknown"
-    });
-
-    return result;
-  }
-
-  async function approveLastPlan(meta) {
-    var bridge = getBridge();
-    if (!bridge || typeof bridge.approvePlan !== "function") {
-      var fail = { ok: false, msg: "Factory AI Bridge indisponível para aprovação." };
-      markAction("approveLastPlan", meta, fail);
-      return fail;
-    }
-
-    var requestedPlanId = resolveRequestedPlanId({ meta: clone(meta || {}) });
-    var targetPlanId = resolveCurrentBridgePlanId(requestedPlanId);
-
-    if (!targetPlanId) {
-      var failLast = { ok: false, msg: "Nenhum plano pendente para aprovar." };
-      markAction("approveLastPlan", meta, failLast);
-      return failLast;
-    }
-
-    var result = bridge.approvePlan(targetPlanId, meta || {});
-    markAction("approveLastPlan", { planId: targetPlanId, meta: clone(meta || {}) }, result);
-
-    if (result && result.ok) {
-      emit("RCF:FACTORY_AI_ACTION_APPROVED", {
-        ts: nowISO(),
-        result: clone(result)
-      });
-      pushLog("OK", "approveLastPlan ✅", result);
-    } else {
-      pushLog("WARN", "approveLastPlan falhou", result);
-    }
-
-    return result;
-  }
-
-  async function validateLastApprovedPlan(meta) {
-    var supervisor = getPatchSupervisor();
-    var requestedPlanId = resolveRequestedPlanId({ meta: clone(meta || {}) });
-    var planId = resolveCurrentBridgePlanId(requestedPlanId);
-
-    if (!supervisor || typeof supervisor.validateApprovedPlan !== "function") {
-      var failSup = { ok: false, msg: "Patch Supervisor indisponível." };
-      markAction("validateLastApprovedPlan", meta || {}, failSup);
-      return failSup;
-    }
-
-    if (!planId) {
-      var failPlan = { ok: false, msg: "Nenhum plano atual para validar." };
-      markAction("validateLastApprovedPlan", meta || {}, failPlan);
-      return failPlan;
-    }
-
-    var validation = supervisor.validateApprovedPlan(planId);
-    var result = {
-      ok: !!validation.ok,
-      planId: String(planId || ""),
-      validation: clone(validation)
-    };
-
-    markAction("validateLastApprovedPlan", { planId: planId, meta: clone(meta || {}) }, result);
-    pushLog(result.ok ? "OK" : "WARN", "validateLastApprovedPlan", result);
-    return result;
-  }
-
-  async function stageLastApprovedPlan(meta) {
-    var supervisor = getPatchSupervisor();
-    var requestedPlanId = resolveRequestedPlanId({ meta: clone(meta || {}) });
-    var planId = resolveCurrentBridgePlanId(requestedPlanId);
-
-    if (!supervisor || typeof supervisor.stageApprovedPlan !== "function") {
-      var failSup = { ok: false, msg: "Patch Supervisor indisponível." };
-      markAction("stageLastApprovedPlan", meta || {}, failSup);
-      return failSup;
-    }
-
-    if (!planId) {
-      var failPlan = { ok: false, msg: "Nenhum plano atual para stage." };
-      markAction("stageLastApprovedPlan", meta || {}, failPlan);
-      return failPlan;
-    }
-
-    var result = await supervisor.stageApprovedPlan(planId);
-    markAction("stageLastApprovedPlan", { planId: planId, meta: clone(meta || {}) }, result);
-    pushLog(result.ok ? "OK" : "WARN", "stageLastApprovedPlan", result);
-    return result;
-  }
-
-  async function applyLastApprovedPlan(opts) {
-    var supervisor = getPatchSupervisor();
-    var requestedPlanId = resolveRequestedPlanId({ opts: clone(opts || {}) });
-    var planId = resolveCurrentBridgePlanId(requestedPlanId);
-
-    if (!supervisor || typeof supervisor.applyApprovedPlan !== "function") {
-      var failSup = { ok: false, msg: "Patch Supervisor indisponível." };
-      markAction("applyLastApprovedPlan", opts, failSup);
-      return failSup;
-    }
-
-    if (!planId) {
-      var failPlan = { ok: false, msg: "Nenhum plano atual para apply." };
-      markAction("applyLastApprovedPlan", opts, failPlan);
-      return failPlan;
-    }
-
-    var cleanOpts = clone(opts || {});
-    if (cleanOpts && typeof cleanOpts === "object" && Object.prototype.hasOwnProperty.call(cleanOpts, "planId")) {
-      delete cleanOpts.planId;
-    }
-
-    var result = await supervisor.applyApprovedPlan(planId, cleanOpts || {});
-    markAction("applyLastApprovedPlan", { planId: planId, opts: clone(cleanOpts || {}) }, result);
-    pushLog(result.ok ? "OK" : "WARN", "applyLastApprovedPlan", result);
-    return result;
-  }
-
-  async function runDoctor() {
-    var result = { ok: false, msg: "Doctor indisponível." };
-
-    try {
-      if (global.RCF_DOCTOR_SCAN?.open) {
-        await global.RCF_DOCTOR_SCAN.open();
-        result = {
-          ok: true,
-          mode: "doctor_scan.open",
-          lastRun: clone(global.RCF_DOCTOR_SCAN.lastRun || null)
-        };
-      } else if (global.RCF_DOCTOR_SCAN?.scan) {
-        var report = await global.RCF_DOCTOR_SCAN.scan();
-        result = {
-          ok: true,
-          mode: "doctor_scan.scan",
-          reportLength: String(report || "").length,
-          lastRun: clone(global.RCF_DOCTOR_SCAN.lastRun || null)
-        };
-      } else if (global.RCF_DOCTOR?.open) {
-        await global.RCF_DOCTOR.open();
-        result = { ok: true, mode: "doctor.open" };
-      } else if (global.RCF_DOCTOR?.run) {
-        var data = await global.RCF_DOCTOR.run();
-        result = {
-          ok: true,
-          mode: "doctor.run",
-          data: clone(data || {})
-        };
-      }
-    } catch (e) {
-      result = {
-        ok: false,
-        msg: String(e && e.message || e || "Falha ao rodar doctor.")
-      };
-    }
-
-    markAction("runDoctor", {}, result);
-    pushLog(result.ok ? "OK" : "WARN", "runDoctor", result);
-    return result;
-  }
-
-  function collectLogs(limit) {
-    var result = {
-      ok: true,
-      limit: Math.max(1, Number(limit || 30)),
-      logs: getLoggerTail(limit || 30)
-    };
-
-    markAction("collectLogs", { limit: result.limit }, result);
-    pushLog("OK", "collectLogs", { count: result.logs.length });
-    return result;
-  }
-
-  function getAutonomySnapshot() {
-    var snapshot = buildRuntimeSnapshot();
-    var bridge = getBridge();
-    var supervisor = getPatchSupervisor();
-    var planner = getPlanner();
-    var runtime = getRuntime();
-
-    var result = {
-      ok: true,
-      ts: nowISO(),
-      runtime: snapshot,
-      planner: {
-        ready: !!planner,
-        version: safe(function () { return planner.version; }, "unknown"),
-        lastPlan: safe(function () { return planner.getLastPlan ? planner.getLastPlan() : null; }, null)
-      },
-      bridge: {
-        ready: !!bridge,
-        version: safe(function () { return bridge.version; }, "unknown"),
-        lastPlan: safe(function () { return bridge.getLastPlan ? bridge.getLastPlan() : null; }, null),
-        pendingPlan: safe(function () { return bridge.getPendingPlan ? bridge.getPendingPlan() : null; }, null)
-      },
-      runtimeLayer: {
-        ready: !!runtime,
-        status: safe(function () { return runtime.status ? runtime.status() : {}; }, {})
-      },
-      patchSupervisor: {
-        ready: !!supervisor,
-        version: safe(function () { return supervisor.version; }, "unknown"),
-        status: safe(function () { return supervisor.status ? supervisor.status() : {}; }, {})
-      },
-      adminFront: {
-        lastEndpoint: trimText(safe(function () {
-          return global.RCF_FACTORY_AI?.getLastEndpoint?.() || "";
-        }, ""))
-      },
-      nextFile: buildNextFileSuggestionFromPlan()
-    };
-
-    markAction("getAutonomySnapshot", {}, result);
-    pushLog("OK", "getAutonomySnapshot", {
-      plannerReady: result.planner.ready,
-      bridgeReady: result.bridge.ready,
-      supervisorReady: result.patchSupervisor.ready,
-      runtimeReady: result.runtimeLayer.ready
-    });
-
-    return result;
-  }
-
-  function getNextFileSuggestion() {
-    var result = {
-      ok: true,
-      suggestion: buildNextFileSuggestionFromPlan()
-    };
-
-    markAction("getNextFileSuggestion", {}, result);
-    pushLog("OK", "getNextFileSuggestion", result.suggestion);
-    return result;
-  }
-
-  async function dispatch(input) {
-    var req = (input && typeof input === "object")
-      ? clone(input)
-      : { prompt: String(input || "") };
-
-    var action = trimText(req.action || "");
-    var prompt = trimText(req.prompt || "");
-    var intent = action || detectIntent(prompt);
-    var requestedPlanId = resolveRequestedPlanId(req);
-
-    if (intent === "plan") return planFromCurrentRuntime(req);
-    if (intent === "openai_status") return getOpenAIStatus(req);
-    if (intent === "approve_patch") {
-      return approveLastPlan(merge(clone(req.meta || {}), requestedPlanId ? { planId: requestedPlanId } : {}));
-    }
-    if (intent === "validate_patch") {
-      return validateLastApprovedPlan(merge(clone(req.meta || {}), requestedPlanId ? { planId: requestedPlanId } : {}));
-    }
-    if (intent === "stage_patch") {
-      return stageLastApprovedPlan(merge(clone(req.meta || {}), requestedPlanId ? { planId: requestedPlanId } : {}));
-    }
-    if (intent === "apply_patch") {
-      return applyLastApprovedPlan(merge(clone(req.opts || {}), requestedPlanId ? { planId: requestedPlanId } : {}));
-    }
-    if (intent === "run_doctor") return runDoctor();
-    if (intent === "collect_logs") return collectLogs(req.limit || 30);
-    if (intent === "snapshot" || intent === "autonomy") return getAutonomySnapshot();
-    if (intent === "next_file") return getNextFileSuggestion();
-
-    var fallback = {
-      ok: true,
-      mode: "chat",
-      intent: intent,
-      snapshot: getAutonomySnapshot()
-    };
-
-    markAction("dispatch", req, fallback);
-    pushLog("INFO", "dispatch chat/fallback", { intent: intent });
-    return fallback;
-  }
-
-  function syncPresence() {
-    try {
-      if (global.RCF_FACTORY_STATE?.registerModule) {
-        global.RCF_FACTORY_STATE.registerModule("factoryAIActions");
-      } else if (global.RCF_FACTORY_STATE?.setModule) {
-        global.RCF_FACTORY_STATE.setModule("factoryAIActions", true);
-      }
-    } catch (_) {}
-
-    try {
-      if (global.RCF_MODULE_REGISTRY?.register) {
-        global.RCF_MODULE_REGISTRY.register("factoryAIActions");
-      }
-    } catch (_) {}
-  }
-
-  function status() {
-    return {
-      version: VERSION,
-      ready: !!state.ready,
-      lastUpdate: state.lastUpdate || null,
-      lastAction: clone(state.lastAction || null),
-      historyCount: Array.isArray(state.history) ? state.history.length : 0,
-      plannerReady: !!getPlanner(),
-      bridgeReady: !!getBridge(),
-      patchSupervisorReady: !!getPatchSupervisor(),
-      runtimeReady: !!getRuntime(),
-      lastRuntimeCall: clone(state.lastRuntimeCall || null),
-      lastPlanSummary: clone(state.lastPlanSummary || null)
-    };
-  }
-
-  function init() {
-    load();
-    state.ready = true;
-    state.version = VERSION;
-    state.lastUpdate = nowISO();
-    persist();
-    syncPresence();
-    pushLog("OK", "factory_ai_actions ready ✅ " + VERSION);
-    return status();
-  }
-
-  global.RCF_FACTORY_AI_ACTIONS = {
-    __v100: true,
-    __v110: true,
-    __v111: true,
-    __v112: true,
-    __v113: true,
-    __v114: true,
+    __v120: true,
     version: VERSION,
     init: init,
     status: status,
@@ -1615,6 +1285,12 @@
     collectLogs: collectLogs,
     getAutonomySnapshot: getAutonomySnapshot,
     getNextFileSuggestion: getNextFileSuggestion,
+    listFilesAction: listFilesAction,
+    fileExistsAction: fileExistsAction,
+    readFileAction: readFileAction,
+    summarizeFileAction: summarizeFileAction,
+    inspectFileAction: inspectFileAction,
+    summarizeManyAction: summarizeManyAction,
     getState: function () { return clone(state); }
   };
 
