@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/factory_ai_actions.js
    RControl Factory — Factory AI Actions
-   v1.2.0 ACTION ORCHESTRATOR + READER INTEGRATION + CORRUPTION FIX
+   v1.2.1 ACTION ORCHESTRATOR + READER INTEGRATION + READER ALIAS FIX
 
    Objetivo:
    - centralizar ações inteligentes da Factory AI
@@ -12,21 +12,18 @@
    - adicionar leitura interna real read-only para a Factory AI
    - funcionar como script clássico
 
-   PATCH v1.2.0:
-   - FIX: remove corrupção/duplicação no final do arquivo
-   - FIX: mantém suporte real à action local openai_status
-   - ADD: integração com RCF_FACTORY_AI_READER
-   - ADD: actions locais list_files / file_exists / read_file / summarize_file / inspect_file / summarize_many
-   - ADD: status expõe readerReady
+   PATCH v1.2.1:
+   - FIX: aceita RCF_FACTORY_AI_READER e RCF_FACTORY_AI_CODE_READER
+   - ADD: status expõe readerName para diagnóstico rápido
    - mantém compatibilidade com planner / bridge / patch_supervisor / runtime
 */
 
 ;(function (global) {
   "use strict";
 
-  if (global.RCF_FACTORY_AI_ACTIONS && global.RCF_FACTORY_AI_ACTIONS.__v120) return;
+  if (global.RCF_FACTORY_AI_ACTIONS && global.RCF_FACTORY_AI_ACTIONS.__v121) return;
 
-  var VERSION = "v1.2.0";
+  var VERSION = "v1.2.1";
   var STORAGE_KEY = "rcf:factory_ai_actions";
   var MAX_HISTORY = 100;
 
@@ -209,7 +206,17 @@
   }
 
   function getReader() {
-    return safe(function () { return global.RCF_FACTORY_AI_READER || null; }, null);
+    return safe(function () {
+      return global.RCF_FACTORY_AI_READER || global.RCF_FACTORY_AI_CODE_READER || null;
+    }, null);
+  }
+
+  function getReaderName() {
+    return safe(function () {
+      if (global.RCF_FACTORY_AI_READER) return "RCF_FACTORY_AI_READER";
+      if (global.RCF_FACTORY_AI_CODE_READER) return "RCF_FACTORY_AI_CODE_READER";
+      return "";
+    }, "");
   }
 
   function getFactoryState() {
@@ -922,6 +929,7 @@
       },
       readerLayer: {
         ready: !!reader,
+        name: getReaderName(),
         status: safe(function () { return reader.status ? reader.status() : {}; }, {})
       },
       patchSupervisor: {
@@ -1041,7 +1049,7 @@
   async function listFilesAction(req) {
     var reader = getReader();
     if (!reader || typeof reader.listFiles !== "function") {
-      var fail = { ok: false, msg: "RCF_FACTORY_AI_READER indisponível." };
+      var fail = { ok: false, msg: "RCF_FACTORY_AI_READER/RCF_FACTORY_AI_CODE_READER indisponível." };
       markAction("listFilesAction", req, fail);
       return fail;
     }
@@ -1060,7 +1068,7 @@
   async function fileExistsAction(req) {
     var reader = getReader();
     if (!reader || typeof reader.exists !== "function") {
-      var fail = { ok: false, msg: "RCF_FACTORY_AI_READER indisponível." };
+      var fail = { ok: false, msg: "RCF_FACTORY_AI_READER/RCF_FACTORY_AI_CODE_READER indisponível." };
       markAction("fileExistsAction", req, fail);
       return fail;
     }
@@ -1076,7 +1084,7 @@
   async function readFileAction(req) {
     var reader = getReader();
     if (!reader || typeof reader.readFile !== "function") {
-      var fail = { ok: false, msg: "RCF_FACTORY_AI_READER indisponível." };
+      var fail = { ok: false, msg: "RCF_FACTORY_AI_READER/RCF_FACTORY_AI_CODE_READER indisponível." };
       markAction("readFileAction", req, fail);
       return fail;
     }
@@ -1098,7 +1106,7 @@
   async function summarizeFileAction(req) {
     var reader = getReader();
     if (!reader || typeof reader.summarizeFile !== "function") {
-      var fail = { ok: false, msg: "RCF_FACTORY_AI_READER indisponível." };
+      var fail = { ok: false, msg: "RCF_FACTORY_AI_READER/RCF_FACTORY_AI_CODE_READER indisponível." };
       markAction("summarizeFileAction", req, fail);
       return fail;
     }
@@ -1119,7 +1127,7 @@
   async function inspectFileAction(req) {
     var reader = getReader();
     if (!reader || typeof reader.inspectTarget !== "function") {
-      var fail = { ok: false, msg: "RCF_FACTORY_AI_READER indisponível." };
+      var fail = { ok: false, msg: "RCF_FACTORY_AI_READER/RCF_FACTORY_AI_CODE_READER indisponível." };
       markAction("inspectFileAction", req, fail);
       return fail;
     }
@@ -1140,7 +1148,7 @@
   async function summarizeManyAction(req) {
     var reader = getReader();
     if (!reader || typeof reader.summarizeMany !== "function") {
-      var fail = { ok: false, msg: "RCF_FACTORY_AI_READER indisponível." };
+      var fail = { ok: false, msg: "RCF_FACTORY_AI_READER/RCF_FACTORY_AI_CODE_READER indisponível." };
       markAction("summarizeManyAction", req, fail);
       return fail;
     }
@@ -1247,6 +1255,7 @@
       patchSupervisorReady: !!getPatchSupervisor(),
       runtimeReady: !!(getRuntimeStatus().ready),
       readerReady: !!getReader(),
+      readerName: getReaderName(),
       lastRuntimeCall: clone(state.lastRuntimeCall || null),
       lastPlanSummary: clone(state.lastPlanSummary || null)
     };
@@ -1271,6 +1280,7 @@
     __v113: true,
     __v114: true,
     __v120: true,
+    __v121: true,
     version: VERSION,
     init: init,
     status: status,
