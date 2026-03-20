@@ -1,81 +1,46 @@
-/* FILE: /app/js/core/factory_ai_code_reader.js
-   RControl Factory — Factory AI Code Reader
-   v1.0.0 SAFE INTERNAL READER + STRUCTURE MAP + READ ONLY
+/* FILE: /app/js/core/factory_ai_actions.js
+   RControl Factory — Factory AI Actions
+   v1.2.1 ACTION ORCHESTRATOR + READER INTEGRATION + READER ALIAS FIX
 
    Objetivo:
-   - dar à Factory AI leitura interna real da própria estrutura
-   - mapear arquivos conhecidos da Factory
-   - ler conteúdo de arquivos por múltiplos adaptadores seguros
-   - extrair visão estrutural básica: funções, classes, exports, imports e tamanho
-   - ajudar planner/actions/context a decidir com base em leitura real
-   - NÃO escrever
-   - NÃO aplicar patch
-   - NÃO alterar arquivos
+   - centralizar ações inteligentes da Factory AI
+   - ligar Factory AI Planner + Factory AI Bridge + Patch Supervisor + Reader + módulos core
+   - evitar lógica solta espalhada no admin.admin_ai.js
+   - permitir fluxo supervisionado:
+       analisar -> planejar -> aprovar -> validar -> stage -> apply
+   - expor ações seguras e reutilizáveis via window.RCF_FACTORY_AI_ACTIONS
+   - adicionar leitura interna real read-only para a Factory AI
    - funcionar como script clássico
 
-   Escopo desta v1.0.0:
-   - leitura read-only
-   - scan sob demanda
-   - cache leve em memória + localStorage
-   - integração com factory_state / module_registry
-   - compatível com tree/context atuais
+   PATCH v1.2.1:
+   - FIX: aceita RCF_FACTORY_AI_READER e RCF_FACTORY_AI_CODE_READER
+   - ADD: status expõe readerName para diagnóstico rápido
+   - mantém compatibilidade com planner / bridge / patch_supervisor / runtime
 */
 
 ;(function (global) {
   "use strict";
 
-  if (global.RCF_FACTORY_AI_CODE_READER && global.RCF_FACTORY_AI_CODE_READER.__v100) return;
+  if (global.RCF_FACTORY_AI_ACTIONS && global.RCF_FACTORY_AI_ACTIONS.__v121) return;
 
-  var VERSION = "v1.0.0";
-  var STORAGE_KEY = "rcf:factory_ai_code_reader";
-  var MAX_HISTORY = 80;
-  var MAX_CACHE_FILES = 120;
-  var MAX_TEXT_PREVIEW = 2400;
+  var VERSION = "v1.2.1";
+  var STORAGE_KEY = "rcf:factory_ai_actions";
+  var MAX_HISTORY = 100;
 
-  var STRATEGIC_FILES = [
-    "/app/app.js",
-    "/app/index.html",
-    "/app/js/admin.admin_ai.js",
-    "/app/js/core/context_engine.js",
-    "/app/js/core/factory_state.js",
-    "/app/js/core/module_registry.js",
-    "/app/js/core/factory_tree.js",
-    "/app/js/core/logger.js",
-    "/app/js/core/doctor_scan.js",
-    "/app/js/core/factory_ai_planner.js",
-    "/app/js/core/factory_ai_bridge.js",
-    "/app/js/core/factory_ai_actions.js",
+  var OPENAI_FLOW_FILES = [
+    "/functions/api/admin-ai.js",
     "/app/js/core/factory_ai_runtime.js",
-    "/app/js/core/factory_ai_supervisor.js",
-    "/app/js/core/patch_supervisor.js",
-    "/app/js/core/factory_ai_diagnostics.js",
-    "/app/js/core/factory_ai_memory.js",
-    "/app/js/core/factory_phase_engine.js",
-    "/app/js/core/factory_ai_autoloop.js",
-    "/app/js/core/factory_ai_orchestrator.js",
-    "/app/js/core/factory_ai_proposal_ui.js",
-    "/app/js/core/factory_ai_self_evolution.js",
-    "/app/js/core/factory_ai_autoheal.js",
-    "/app/js/core/factory_ai_evolution_mode.js",
-    "/app/js/core/factory_ai_governor.js",
-    "/app/js/core/factory_ai_controller.js",
-    "/app/js/core/factory_ai_code_reader.js",
-    "/functions/api/admin-ai.js"
+    "/app/js/admin.admin_ai.js"
   ];
 
   var state = {
     version: VERSION,
     ready: false,
-    busy: false,
     lastUpdate: null,
-    lastScanAt: null,
-    lastScanReason: "",
-    lastReadFile: "",
-    lastReadOk: false,
-    lastError: "",
-    knownFiles: [],
-    cache: {},
-    lastSummary: null,
+    lastAction: null,
+    lastResult: null,
+    lastPlanSummary: null,
+    lastRuntimeCall: null,
     history: []
   };
 
@@ -89,14 +54,6 @@
     catch (_) { return obj || {}; }
   }
 
-  function trimText(v) {
-    return String(v == null ? "" : v).trim();
-  }
-
-  function lower(v) {
-    return trimText(v).toLowerCase();
-  }
-
   function safe(fn, fallback) {
     try {
       var v = fn();
@@ -104,6 +61,14 @@
     } catch (_) {
       return fallback;
     }
+  }
+
+  function trimText(v) {
+    return String(v == null ? "" : v).trim();
+  }
+
+  function lower(v) {
+    return trimText(v).toLowerCase();
   }
 
   function asArray(v) {
@@ -117,15 +82,15 @@
       var key = String(item || "");
       if (!key || seen[key]) return;
       seen[key] = true;
-      out.push(key);
+      out.push(item);
     });
     return out;
   }
 
-  function normalizePath(path) {
+  function normalizeFilePath(path) {
     var p = trimText(path || "").replace(/\\/g, "/");
     if (!p) return "";
-    if (p.charAt(0) !== "/") p = "/" + p;
+    if (p.indexOf("/") !== 0) p = "/" + p;
     p = p.replace(/\/{2,}/g, "/");
     return p;
   }
@@ -133,41 +98,24 @@
   function persist() {
     try {
       state.lastUpdate = nowISO();
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
 
-      var compactCache = {};
-      var keys = Object.keys(state.cache || {}).slice(-MAX_CACHE_FILES);
-      keys.forEach(function (k) {
-        var item = state.cache[k];
-        if (!item || typeof item !== "object") return;
-
-        compactCache[k] = {
-          path: item.path || "",
-          ts: item.ts || "",
-          ok: !!item.ok,
-          source: item.source || "",
-          size: Number(item.size || 0) || 0,
-          ext: item.ext || "",
-          kind: item.kind || "",
-          preview: trimText(item.preview || "").slice(0, MAX_TEXT_PREVIEW),
-          analysis: clone(item.analysis || {})
-        };
-      });
-
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({
-        version: VERSION,
-        ready: !!state.ready,
-        lastUpdate: state.lastUpdate || null,
-        lastScanAt: state.lastScanAt || null,
-        lastScanReason: state.lastScanReason || "",
-        lastReadFile: state.lastReadFile || "",
-        lastReadOk: !!state.lastReadOk,
-        lastError: state.lastError || "",
-        knownFiles: asArray(state.knownFiles).slice(0, 200),
-        cache: compactCache,
-        lastSummary: clone(state.lastSummary || null),
-        history: asArray(state.history).slice(-MAX_HISTORY)
-      }));
-
+  function load() {
+    try {
+      var raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return false;
+      var parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object") return false;
+      state = merge(clone(state), clone(parsed));
+      if (!Array.isArray(state.history)) state.history = [];
+      if (state.history.length > MAX_HISTORY) {
+        state.history = state.history.slice(-MAX_HISTORY);
+      }
       return true;
     } catch (_) {
       return false;
@@ -194,37 +142,16 @@
     return base;
   }
 
-  function load() {
-    try {
-      var raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return false;
-
-      var parsed = JSON.parse(raw);
-      if (!parsed || typeof parsed !== "object") return false;
-
-      state = merge(clone(state), parsed);
-
-      if (!Array.isArray(state.knownFiles)) state.knownFiles = [];
-      if (!Array.isArray(state.history)) state.history = [];
-      if (!state.cache || typeof state.cache !== "object") state.cache = {};
-
-      state.history = state.history.slice(-MAX_HISTORY);
-      return true;
-    } catch (_) {
-      return false;
-    }
-  }
-
   function pushLog(level, msg, extra) {
     try {
       if (extra !== undefined) {
-        global.RCF_LOGGER?.push?.(level, "[FACTORY_AI_CODE_READER] " + msg + " " + JSON.stringify(extra));
+        global.RCF_LOGGER?.push?.(level, "[FACTORY_AI_ACTIONS] " + msg + " " + JSON.stringify(extra));
       } else {
-        global.RCF_LOGGER?.push?.(level, "[FACTORY_AI_CODE_READER] " + msg);
+        global.RCF_LOGGER?.push?.(level, "[FACTORY_AI_ACTIONS] " + msg);
       }
     } catch (_) {}
 
-    try { console.log("[FACTORY_AI_CODE_READER]", level, msg, extra || ""); } catch (_) {}
+    try { console.log("[FACTORY_AI_ACTIONS]", level, msg, extra || ""); } catch (_) {}
   }
 
   function emit(name, detail) {
@@ -242,26 +169,69 @@
     persist();
   }
 
-  function syncPresence() {
-    try {
-      if (global.RCF_FACTORY_STATE?.registerModule) {
-        global.RCF_FACTORY_STATE.registerModule("factoryAICodeReader");
-      } else if (global.RCF_FACTORY_STATE?.setModule) {
-        global.RCF_FACTORY_STATE.setModule("factoryAICodeReader", true);
-      }
-    } catch (_) {}
+  function markAction(name, input, result) {
+    state.lastAction = {
+      name: trimText(name || ""),
+      input: clone(input || {}),
+      ts: nowISO()
+    };
 
-    try {
-      if (global.RCF_MODULE_REGISTRY?.register) {
-        global.RCF_MODULE_REGISTRY.register("factoryAICodeReader");
-      }
-    } catch (_) {}
+    state.lastResult = clone(result || null);
 
-    try {
-      if (global.RCF_FACTORY_STATE?.refreshRuntime) {
-        global.RCF_FACTORY_STATE.refreshRuntime();
-      }
-    } catch (_) {}
+    pushHistory({
+      type: "action",
+      name: trimText(name || ""),
+      input: clone(input || {}),
+      result: clone(result || {}),
+      ts: nowISO()
+    });
+
+    persist();
+  }
+
+  function getPlanner() {
+    return safe(function () { return global.RCF_FACTORY_AI_PLANNER || null; }, null);
+  }
+
+  function getBridge() {
+    return safe(function () { return global.RCF_FACTORY_AI_BRIDGE || null; }, null);
+  }
+
+  function getPatchSupervisor() {
+    return safe(function () { return global.RCF_PATCH_SUPERVISOR || null; }, null);
+  }
+
+  function getRuntime() {
+    return safe(function () { return global.RCF_FACTORY_AI_RUNTIME || null; }, null);
+  }
+
+  function getReader() {
+    return safe(function () {
+      return global.RCF_FACTORY_AI_READER || global.RCF_FACTORY_AI_CODE_READER || null;
+    }, null);
+  }
+
+  function getReaderName() {
+    return safe(function () {
+      if (global.RCF_FACTORY_AI_READER) return "RCF_FACTORY_AI_READER";
+      if (global.RCF_FACTORY_AI_CODE_READER) return "RCF_FACTORY_AI_CODE_READER";
+      return "";
+    }, "");
+  }
+
+  function getFactoryState() {
+    return safe(function () {
+      if (global.RCF_FACTORY_STATE?.getState) return global.RCF_FACTORY_STATE.getState();
+      if (global.RCF_FACTORY_STATE?.status) return global.RCF_FACTORY_STATE.status();
+      return {};
+    }, {});
+  }
+
+  function getModuleRegistrySummary() {
+    return safe(function () {
+      if (global.RCF_MODULE_REGISTRY?.summary) return global.RCF_MODULE_REGISTRY.summary();
+      return {};
+    }, {});
   }
 
   function getContextSnapshot() {
@@ -272,701 +242,1022 @@
     }, {});
   }
 
-  function getTreePaths() {
+  function getTreeSummary() {
     return safe(function () {
-      if (global.RCF_FACTORY_TREE?.getAllPaths) {
-        return asArray(global.RCF_FACTORY_TREE.getAllPaths());
+      if (global.RCF_FACTORY_TREE?.summary) return global.RCF_FACTORY_TREE.summary();
+      return {};
+    }, {});
+  }
+
+  function getDoctorState() {
+    return safe(function () {
+      if (global.RCF_DOCTOR_SCAN) {
+        return {
+          ready: true,
+          version: global.RCF_DOCTOR_SCAN.version || "unknown",
+          lastRun: global.RCF_DOCTOR_SCAN.lastRun || null,
+          lastReport: global.RCF_DOCTOR_SCAN.lastReport || null
+        };
       }
+
+      return {
+        ready: !!global.RCF_DOCTOR,
+        version: safe(function () { return global.RCF_DOCTOR.version; }, "unknown"),
+        lastRun: safe(function () { return global.RCF_DOCTOR.lastRun; }, null),
+        lastReport: safe(function () { return global.RCF_DOCTOR.lastReport; }, null)
+      };
+    }, {});
+  }
+
+  function getLoggerTail(limit) {
+    var max = Math.max(1, Number(limit || 30));
+
+    return safe(function () {
+      var logger = global.RCF_LOGGER;
+      if (!logger) return [];
+
+      if (Array.isArray(logger.items)) return logger.items.slice(-max);
+      if (Array.isArray(logger.lines)) return logger.lines.slice(-max);
+
+      if (typeof logger.getAll === "function") {
+        var arr = logger.getAll();
+        return Array.isArray(arr) ? arr.slice(-max) : [];
+      }
+
+      if (typeof logger.getText === "function") {
+        var txt = String(logger.getText() || "").trim();
+        return txt ? txt.split("\n").slice(-max) : [];
+      }
+
+      if (typeof logger.dump === "function") {
+        var raw = String(logger.dump() || "").trim();
+        return raw ? raw.split("\n").slice(-max) : [];
+      }
+
       return [];
     }, []);
   }
 
-  function getCandidateFiles() {
-    var ctx = getContextSnapshot();
-    var out = [];
+  function getRuntimeStatus() {
+    return safe(function () {
+      var api = getRuntime();
+      if (!api || typeof api.status !== "function") {
+        return {
+          available: false,
+          ready: false,
+          lastEndpoint: "",
+          lastOk: false,
+          connectionStatus: "unknown",
+          connectionProvider: "",
+          connectionConfigured: false,
+          connectionAttempted: false,
+          connectionModel: "",
+          connectionUpstreamStatus: 0
+        };
+      }
 
-    try {
-      out = out.concat(asArray(ctx.candidateFiles));
-    } catch (_) {}
-
-    try {
-      var tree = ctx.tree || {};
-      out = out.concat(asArray(tree.samples));
-      out = out.concat(asArray(safe(function () { return tree.pathGroups.core; }, [])));
-      out = out.concat(asArray(safe(function () { return tree.pathGroups.ui; }, [])));
-      out = out.concat(asArray(safe(function () { return tree.pathGroups.admin; }, [])));
-      out = out.concat(asArray(safe(function () { return tree.pathGroups.engine; }, [])));
-      out = out.concat(asArray(safe(function () { return tree.pathGroups.functions; }, [])));
-    } catch (_) {}
-
-    return uniq(out.map(normalizePath).filter(Boolean));
+      var st = api.status() || {};
+      return {
+        available: true,
+        ready: !!st.ready,
+        lastEndpoint: trimText(st.lastEndpoint || ""),
+        lastOk: !!st.lastOk,
+        connectionStatus: trimText(st.connectionStatus || "unknown"),
+        connectionProvider: trimText(st.connectionProvider || ""),
+        connectionConfigured: !!st.connectionConfigured,
+        connectionAttempted: !!st.connectionAttempted,
+        connectionModel: trimText(st.connectionModel || ""),
+        connectionUpstreamStatus: Number(st.connectionUpstreamStatus || 0) || 0
+      };
+    }, {
+      available: false,
+      ready: false,
+      lastEndpoint: "",
+      lastOk: false,
+      connectionStatus: "unknown",
+      connectionProvider: "",
+      connectionConfigured: false,
+      connectionAttempted: false,
+      connectionModel: "",
+      connectionUpstreamStatus: 0
+    });
   }
 
-  function getKnownFiles() {
-    var all = []
-      .concat(STRATEGIC_FILES)
-      .concat(getTreePaths())
-      .concat(getCandidateFiles())
-      .concat(asArray(state.knownFiles || []));
-
-    return uniq(all.map(normalizePath).filter(Boolean)).slice(0, 240);
-  }
-
-  function getExtension(path) {
-    var p = normalizePath(path);
-    var idx = p.lastIndexOf(".");
-    if (idx < 0) return "";
-    return lower(p.slice(idx + 1));
-  }
-
-  function detectKind(path) {
-    var ext = getExtension(path);
-
-    if (ext === "js" || ext === "mjs" || ext === "cjs") return "javascript";
-    if (ext === "html" || ext === "htm") return "html";
-    if (ext === "json") return "json";
-    if (ext === "css") return "css";
-    if (ext === "md") return "markdown";
-    return ext ? ext : "unknown";
-  }
-
-  function isProbablyText(path) {
-    var kind = detectKind(path);
-    return (
-      kind === "javascript" ||
-      kind === "html" ||
-      kind === "json" ||
-      kind === "css" ||
-      kind === "markdown" ||
-      kind === "txt" ||
-      kind === "unknown"
+  function isRuntimeConnected(runtimeStatus) {
+    var rt = runtimeStatus || getRuntimeStatus();
+    return !!(
+      rt.available &&
+      rt.ready &&
+      rt.lastOk &&
+      lower(rt.connectionStatus) === "connected"
     );
   }
 
-  function textPreview(text) {
-    return String(text || "").slice(0, MAX_TEXT_PREVIEW);
+  function detectIntent(prompt) {
+    var p = trimText(prompt || "").toLowerCase();
+
+    if (!p) return "chat";
+    if (p.indexOf("openai") >= 0 || p.indexOf("runtime") >= 0 || p.indexOf("backend") >= 0 || p.indexOf("endpoint") >= 0 || p.indexOf("conexão") >= 0 || p.indexOf("conexao") >= 0 || p.indexOf("status real") >= 0) return "openai_status";
+    if (p.indexOf("aprovar") >= 0 && p.indexOf("patch") >= 0) return "approve_patch";
+    if (p.indexOf("validar") >= 0 && p.indexOf("patch") >= 0) return "validate_patch";
+    if (p.indexOf("stage") >= 0 && p.indexOf("patch") >= 0) return "stage_patch";
+    if (p.indexOf("aplicar") >= 0 && p.indexOf("patch") >= 0) return "apply_patch";
+    if (p.indexOf("doctor") >= 0 || p.indexOf("diagnóstico") >= 0 || p.indexOf("diagnostico") >= 0) return "run_doctor";
+    if (p.indexOf("logs") >= 0 || p.indexOf("erros") >= 0 || p.indexOf("erro") >= 0) return "collect_logs";
+    if (p.indexOf("snapshot") >= 0 || p.indexOf("estado") >= 0 || p.indexOf("contexto") >= 0) return "snapshot";
+    if (p.indexOf("planejar") >= 0 || p.indexOf("plano") >= 0) return "plan";
+    if (p.indexOf("próximo arquivo") >= 0 || p.indexOf("proximo arquivo") >= 0) return "next_file";
+    if (p.indexOf("autonomia") >= 0) return "autonomy";
+    if (p.indexOf("listar arquivos") >= 0 || p.indexOf("list files") >= 0) return "list_files";
+    if (p.indexOf("arquivo existe") >= 0 || p.indexOf("file exists") >= 0 || p.indexOf("exists ") >= 0) return "file_exists";
+    if (p.indexOf("ler arquivo") >= 0 || p.indexOf("read file") >= 0) return "read_file";
+    if (p.indexOf("resumir arquivo") >= 0 || p.indexOf("summarize file") >= 0) return "summarize_file";
+    if (p.indexOf("inspecionar arquivo") >= 0 || p.indexOf("inspect file") >= 0) return "inspect_file";
+    if (p.indexOf("resumir vários") >= 0 || p.indexOf("resumir varios") >= 0 || p.indexOf("summarize many") >= 0) return "summarize_many";
+    return "chat";
   }
 
-  function analyzeJS(text) {
-    var src = String(text || "");
-
-    var functions = [];
-    var classes = [];
-    var imports = [];
-    var exports = [];
-    var listeners = [];
-
-    var fnRegexes = [
-      /function\s+([A-Za-z0-9_$]+)\s*\(/g,
-      /(?:var|let|const)\s+([A-Za-z0-9_$]+)\s*=\s*function\s*\(/g,
-      /(?:var|let|const)\s+([A-Za-z0-9_$]+)\s*=\s*\([^\)]*\)\s*=>/g,
-      /(?:var|let|const)\s+([A-Za-z0-9_$]+)\s*=\s*async\s*\([^\)]*\)\s*=>/g
-    ];
-
-    fnRegexes.forEach(function (rg) {
-      var m;
-      while ((m = rg.exec(src))) {
-        functions.push(String(m[1] || ""));
-      }
-    });
-
-    var classRg = /class\s+([A-Za-z0-9_$]+)/g;
-    var m1;
-    while ((m1 = classRg.exec(src))) {
-      classes.push(String(m1[1] || ""));
-    }
-
-    var importRg = /import\s+.*?from\s+['"]([^'"]+)['"]/g;
-    var m2;
-    while ((m2 = importRg.exec(src))) {
-      imports.push(String(m2[1] || ""));
-    }
-
-    var exportRg = /export\s+(?:default\s+)?(?:function|class|const|let|var)?\s*([A-Za-z0-9_$]*)/g;
-    var m3;
-    while ((m3 = exportRg.exec(src))) {
-      exports.push(String(m3[1] || "default"));
-    }
-
-    var listenerRg = /addEventListener\s*\(\s*['"]([^'"]+)['"]/g;
-    var m4;
-    while ((m4 = listenerRg.exec(src))) {
-      listeners.push(String(m4[1] || ""));
-    }
-
+  function buildRuntimeSnapshot() {
     return {
-      type: "javascript",
-      lines: src ? src.split("\n").length : 0,
-      chars: src.length,
-      functions: uniq(functions).slice(0, 80),
-      classes: uniq(classes).slice(0, 40),
-      imports: uniq(imports).slice(0, 40),
-      exports: uniq(exports).slice(0, 40),
-      listeners: uniq(listeners).slice(0, 60),
-      hasIIFE: src.indexOf("(function") >= 0 || src.indexOf("(()=>") >= 0 || src.indexOf("(() =>") >= 0,
-      hasWindowBinding: src.indexOf("window.") >= 0 || src.indexOf("global.") >= 0,
-      hasFactoryAIRefs: src.indexOf("RCF_FACTORY_AI") >= 0 || src.indexOf("factory_ai") >= 0
+      ts: nowISO(),
+      factoryState: clone(getFactoryState() || {}),
+      moduleRegistry: clone(getModuleRegistrySummary() || {}),
+      context: clone(getContextSnapshot() || {}),
+      doctor: clone(getDoctorState() || {}),
+      tree: clone(getTreeSummary() || {}),
+      runtime: clone(getRuntimeStatus() || {}),
+      loggerTail: getLoggerTail(20)
     };
   }
 
-  function analyzeHTML(text) {
-    var src = String(text || "");
-    var ids = [];
-    var scripts = [];
-    var styles = [];
-
-    var idRg = /id=["']([^"']+)["']/g;
-    var m1;
-    while ((m1 = idRg.exec(src))) {
-      ids.push(String(m1[1] || ""));
-    }
-
-    var scriptRg = /<script[^>]*src=["']([^"']+)["']/g;
-    var m2;
-    while ((m2 = scriptRg.exec(src))) {
-      scripts.push(String(m2[1] || ""));
-    }
-
-    var styleRg = /<link[^>]*href=["']([^"']+)["']/g;
-    var m3;
-    while ((m3 = styleRg.exec(src))) {
-      styles.push(String(m3[1] || ""));
-    }
-
-    return {
-      type: "html",
-      lines: src ? src.split("\n").length : 0,
-      chars: src.length,
-      ids: uniq(ids).slice(0, 100),
-      scripts: uniq(scripts).slice(0, 80),
-      styles: uniq(styles).slice(0, 80)
-    };
-  }
-
-  function analyzeJSON(text) {
-    var src = String(text || "");
-    var parsed = null;
-    var keys = [];
+  function getCandidateFilesFromContext() {
+    var snap = getContextSnapshot();
+    var out = [];
 
     try {
-      parsed = JSON.parse(src);
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        keys = Object.keys(parsed);
+      if (Array.isArray(snap.candidateFiles)) out = out.concat(snap.candidateFiles);
+    } catch (_) {}
+
+    try {
+      var tree = snap.tree || {};
+      if (Array.isArray(tree.samples)) out = out.concat(tree.samples);
+      if (tree.pathGroups && typeof tree.pathGroups === "object") {
+        Object.keys(tree.pathGroups).forEach(function (k) {
+          var arr = tree.pathGroups[k];
+          if (Array.isArray(arr)) out = out.concat(arr);
+        });
       }
     } catch (_) {}
 
+    out = out
+      .map(function (p) { return normalizeFilePath(p); })
+      .filter(Boolean);
+
+    return uniq(out);
+  }
+
+  function buildDefaultPlanInput(meta) {
+    var snapshot = buildRuntimeSnapshot();
     return {
-      type: "json",
-      lines: src ? src.split("\n").length : 0,
-      chars: src.length,
-      valid: !!parsed,
-      rootKeys: keys.slice(0, 80)
+      ts: nowISO(),
+      source: "factory_ai_actions",
+      reason: trimText(meta && meta.reason || "planner.dispatch"),
+      prompt: trimText(meta && meta.prompt || ""),
+      snapshot: clone(snapshot),
+      candidateFiles: getCandidateFilesFromContext()
     };
   }
 
-  function analyzeText(path, text) {
-    var kind = detectKind(path);
-
-    if (kind === "javascript") return analyzeJS(text);
-    if (kind === "html") return analyzeHTML(text);
-    if (kind === "json") return analyzeJSON(text);
-
+  function normalizePlanSummary(plan) {
+    var p = clone(plan || {});
     return {
-      type: kind,
-      lines: String(text || "").split("\n").length,
-      chars: String(text || "").length
+      id: trimText(p.id || ""),
+      targetFile: normalizeFilePath(p.targetFile || p.nextFile || ""),
+      mode: trimText(p.mode || ""),
+      risk: trimText(p.risk || p.priority || "unknown"),
+      approvalRequired: !!p.approvalRequired,
+      approvalStatus: trimText(p.approvalStatus || "pending"),
+      objective: trimText(p.objective || p.reason || ""),
+      nextStep: trimText(p.nextStep || p.reason || ""),
+      suggestedFiles: Array.isArray(p.suggestedFiles)
+        ? p.suggestedFiles.slice(0, 20)
+        : (Array.isArray(p.executionLine) ? p.executionLine.slice(0, 20) : [])
     };
   }
 
-  function tryReadFromTree(path) {
-    var p = normalizePath(path);
-
-    return safe(function () {
-      if (global.RCF_FACTORY_TREE?.readFile) {
-        var v = global.RCF_FACTORY_TREE.readFile(p);
-        if (typeof v === "string") return { ok: true, text: v, source: "factory_tree.readFile" };
-      }
-
-      if (global.RCF_FACTORY_TREE?.getFileContent) {
-        var c = global.RCF_FACTORY_TREE.getFileContent(p);
-        if (typeof c === "string") return { ok: true, text: c, source: "factory_tree.getFileContent" };
-      }
-
-      if (global.RCF_FACTORY_TREE?.getNode) {
-        var node = global.RCF_FACTORY_TREE.getNode(p);
-        var content = safe(function () { return node.content; }, null);
-        if (typeof content === "string") return { ok: true, text: content, source: "factory_tree.node.content" };
-      }
-
-      return null;
-    }, null);
+  function rememberPlan(plan, source) {
+    state.lastPlanSummary = {
+      source: trimText(source || "unknown"),
+      ts: nowISO(),
+      plan: normalizePlanSummary(plan || {})
+    };
+    persist();
+    return clone(state.lastPlanSummary);
   }
 
-  function tryReadFromVFS(path) {
-    var p = normalizePath(path);
+  function parsePlanTime(plan) {
+    var raw =
+      trimText(safe(function () { return plan.createdAt; }, "")) ||
+      trimText(safe(function () { return plan.ts; }, "")) ||
+      trimText(safe(function () { return plan.updatedAt; }, "")) ||
+      trimText(safe(function () { return plan.lastUpdate; }, ""));
 
-    return safe(function () {
-      var readers = [
-        safe(function () { return global.RCF_VFS; }, null),
-        safe(function () { return global.__RCF_VFS; }, null),
-        safe(function () { return global.RCF_RUNTIME_VFS; }, null),
-        safe(function () { return global.RCF_VFS_BROWSER; }, null)
-      ];
+    if (!raw) return 0;
 
-      for (var i = 0; i < readers.length; i++) {
-        var api = readers[i];
-        if (!api) continue;
-
-        if (typeof api.readFile === "function") {
-          var a = api.readFile(p);
-          if (typeof a === "string") return { ok: true, text: a, source: "vfs.readFile" };
-        }
-
-        if (typeof api.get === "function") {
-          var b = api.get(p);
-          if (typeof b === "string") return { ok: true, text: b, source: "vfs.get" };
-          if (b && typeof b.content === "string") return { ok: true, text: b.content, source: "vfs.get.content" };
-        }
-
-        if (typeof api.readText === "function") {
-          var c = api.readText(p);
-          if (typeof c === "string") return { ok: true, text: c, source: "vfs.readText" };
-        }
-      }
-
-      return null;
-    }, null);
+    var ms = Date.parse(raw);
+    return isFinite(ms) ? ms : 0;
   }
 
-  function tryReadFromOverrides(path) {
-    var p = normalizePath(path);
+  function normalizePlannerPlan(plan) {
+    if (!plan || typeof plan !== "object") return null;
 
-    return safe(function () {
-      var sources = [
-        safe(function () { return global.RCF_VFS_OVERRIDES; }, null),
-        safe(function () { return global.__RCF_VFS_OVERRIDES; }, null),
-        safe(function () { return global.RCF_RUNTIME_OVERRIDES; }, null)
-      ];
+    var nextFile = normalizeFilePath(plan.nextFile || plan.targetFile || "");
+    if (!nextFile) return null;
 
-      for (var i = 0; i < sources.length; i++) {
-        var src = sources[i];
-        if (!src || typeof src !== "object") continue;
-
-        var direct = src[p] || src[p.replace(/^\//, "")];
-        if (typeof direct === "string") return { ok: true, text: direct, source: "overrides.direct" };
-        if (direct && typeof direct.content === "string") return { ok: true, text: direct.content, source: "overrides.content" };
-      }
-
-      return null;
-    }, null);
+    return {
+      id: trimText(plan.id || ""),
+      targetFile: nextFile,
+      reason: trimText(plan.reason || ""),
+      objective: trimText(plan.objective || plan.reason || ""),
+      nextStep: trimText(plan.nextStep || plan.reason || ""),
+      risk: trimText(plan.risk || plan.priority || "unknown"),
+      priority: trimText(plan.priority || ""),
+      createdAt: trimText(plan.createdAt || plan.ts || ""),
+      source: "planner.lastPlan",
+      raw: clone(plan)
+    };
   }
 
-  async function tryReadByFetch(path) {
-    var p = normalizePath(path);
+  function normalizeBridgePlan(plan) {
+    if (!plan || typeof plan !== "object") return null;
 
-    if (!isProbablyText(p)) return null;
-    if (p.indexOf("/functions/") === 0) return null;
+    var targetFile = normalizeFilePath(plan.targetFile || plan.nextFile || "");
+    if (!targetFile) return null;
+
+    return {
+      id: trimText(plan.id || ""),
+      targetFile: targetFile,
+      reason: trimText(plan.nextStep || plan.objective || ""),
+      objective: trimText(plan.objective || ""),
+      nextStep: trimText(plan.nextStep || ""),
+      risk: trimText(plan.risk || "unknown"),
+      priority: trimText(plan.priority || ""),
+      createdAt: trimText(plan.createdAt || plan.ts || ""),
+      source: "bridge.lastPlan",
+      raw: clone(plan)
+    };
+  }
+
+  function getLastPlannerPlanNormalized() {
+    var planner = getPlanner();
+    if (!planner || typeof planner.getLastPlan !== "function") return null;
+    return normalizePlannerPlan(planner.getLastPlan());
+  }
+
+  function getLastBridgePlanNormalized() {
+    var bridge = getBridge();
+    if (!bridge || typeof bridge.getLastPlan !== "function") return null;
+    return normalizeBridgePlan(bridge.getLastPlan());
+  }
+
+  function shouldPreferPlannerPlan(plannerPlan, bridgePlan) {
+    if (plannerPlan && !bridgePlan) return true;
+    if (!plannerPlan) return false;
+    if (!bridgePlan) return true;
+
+    var plannerTs = parsePlanTime(plannerPlan);
+    var bridgeTs = parsePlanTime(bridgePlan);
+
+    if (plannerTs && bridgeTs) {
+      if (plannerTs >= bridgeTs) return true;
+      if ((bridgeTs - plannerTs) > 15000) return false;
+      return true;
+    }
+
+    return true;
+  }
+
+  function getPendingBridgePlanNormalized() {
+    var bridge = getBridge();
+    if (!bridge || typeof bridge.getPendingPlan !== "function") return null;
+    return normalizeBridgePlan(bridge.getPendingPlan());
+  }
+
+  function resolveRequestedPlanId(input) {
+    var req = input && typeof input === "object" ? input : {};
+    return trimText(
+      safe(function () { return req.planId; }, "") ||
+      safe(function () { return req.meta.planId; }, "") ||
+      safe(function () { return req.opts.planId; }, "")
+    );
+  }
+
+  function resolveCurrentBridgePlanId(preferredPlanId) {
+    var wanted = trimText(preferredPlanId || "");
+    var pending = getPendingBridgePlanNormalized();
+    var last = getLastBridgePlanNormalized();
+
+    if (wanted) {
+      if (pending && pending.id === wanted) return wanted;
+      if (last && last.id === wanted) return wanted;
+      return wanted;
+    }
+
+    if (pending && pending.id) return pending.id;
+    if (last && last.id) return last.id;
+    return "";
+  }
+
+  function isOpenAIFlowFile(file) {
+    var target = normalizeFilePath(file);
+    return OPENAI_FLOW_FILES.indexOf(target) >= 0;
+  }
+
+  function isStaleBridgePlanForCurrentPhase(plan) {
+    if (!plan || !plan.targetFile) return false;
+
+    var runtime = getRuntimeStatus();
+    var connected = isRuntimeConnected(runtime);
+    var target = normalizeFilePath(plan.targetFile);
+
+    if (connected && isOpenAIFlowFile(target)) return true;
+    return false;
+  }
+
+  function recalcPlannerNextFile(reasonText) {
+    var planner = getPlanner();
+    if (!planner) return null;
 
     try {
-      var res = await fetch(p, { method: "GET", cache: "no-store" });
-      if (!res || !res.ok) return null;
+      var input = buildDefaultPlanInput({
+        reason: reasonText || "actions.recalc",
+        prompt: "calcular próximo arquivo real após status atual do runtime/openai"
+      });
 
-      var txt = await res.text();
-      if (typeof txt !== "string") return null;
+      var plan = null;
 
-      return {
-        ok: true,
-        text: txt,
-        source: "fetch"
-      };
+      if (typeof planner.planFromRuntime === "function") {
+        plan = planner.planFromRuntime(input);
+      } else if (typeof planner.buildPlan === "function") {
+        plan = planner.buildPlan(input);
+      }
+
+      if (!plan || !plan.targetFile) return null;
+      return normalizePlannerPlan(plan);
     } catch (_) {
       return null;
     }
   }
 
-  function rememberFileResult(path, result) {
-    var p = normalizePath(path);
-    if (!p) return null;
+  function buildNextFileSuggestionFromPlan() {
+    var runtime = getRuntimeStatus();
+    var connected = isRuntimeConnected(runtime);
 
-    state.lastReadFile = p;
-    state.lastReadOk = !!(result && result.ok);
-    state.lastError = trimText(result && result.error || "");
+    var freshPlannerPlan = recalcPlannerNextFile("actions.getNextFileSuggestion");
+    var plannerPlan = freshPlannerPlan || getLastPlannerPlanNormalized();
+    var bridgePlan = getLastBridgePlanNormalized();
 
-    state.cache[p] = {
-      path: p,
-      ts: nowISO(),
-      ok: !!(result && result.ok),
-      source: trimText(result && result.source || ""),
-      size: Number(result && result.size || 0) || 0,
-      ext: getExtension(p),
-      kind: detectKind(p),
-      preview: trimText(result && result.preview || ""),
-      analysis: clone(result && result.analysis || {}),
-      text: result && result.ok ? String(result.text || "") : undefined
-    };
-
-    var keys = Object.keys(state.cache || {});
-    if (keys.length > MAX_CACHE_FILES) {
-      keys.sort(function (a, b) {
-        var ta = safe(function () { return Date.parse(state.cache[a].ts || ""); }, 0) || 0;
-        var tb = safe(function () { return Date.parse(state.cache[b].ts || ""); }, 0) || 0;
-        return ta - tb;
-      });
-
-      while (keys.length > MAX_CACHE_FILES) {
-        var oldest = keys.shift();
-        if (oldest) delete state.cache[oldest];
-      }
+    if (bridgePlan && isStaleBridgePlanForCurrentPhase(bridgePlan)) {
+      bridgePlan = null;
     }
 
-    pushHistory({
-      type: "read",
-      path: p,
-      ok: !!(result && result.ok),
-      source: trimText(result && result.source || ""),
-      ts: nowISO()
+    if (plannerPlan && shouldPreferPlannerPlan(plannerPlan, bridgePlan)) {
+      return {
+        nextFile: normalizeFilePath(plannerPlan.targetFile),
+        reason: trimText(plannerPlan.nextStep || plannerPlan.objective || plannerPlan.reason || "Arquivo alvo vindo do planner atual."),
+        source: freshPlannerPlan ? "planner.recalculated" : "planner.lastPlan",
+        risk: trimText(plannerPlan.risk || "unknown")
+      };
+    }
+
+    if (bridgePlan) {
+      return {
+        nextFile: normalizeFilePath(bridgePlan.targetFile),
+        reason: trimText(bridgePlan.nextStep || bridgePlan.objective || bridgePlan.reason || "Arquivo alvo vindo do plano supervisionado atual."),
+        source: "bridge.lastPlan",
+        risk: trimText(bridgePlan.risk || "unknown")
+      };
+    }
+
+    if (connected) {
+      return {
+        nextFile: "/app/js/core/factory_ai_actions.js",
+        reason: "OpenAI/runtime já estão conectados; o próximo passo seguro é fortalecer a camada de ações supervisionadas e parar de depender de plano stale do bridge.",
+        source: "runtime.connected.fallback",
+        risk: "low"
+      };
+    }
+
+    return {
+      nextFile: "/functions/api/admin-ai.js",
+      reason: "Sem plano consolidado ainda e sem conexão confirmada; o próximo passo seguro continua sendo consolidar a trilha real do backend OpenAI.",
+      source: "fallback",
+      risk: "low"
+    };
+  }
+
+  async function planFromCurrentRuntime(meta) {
+    var planner = getPlanner();
+    var bridge = getBridge();
+
+    if (!planner || (typeof planner.planFromRuntime !== "function" && typeof planner.buildPlan !== "function")) {
+      var fail = { ok: false, msg: "Factory AI Planner indisponível." };
+      markAction("planFromCurrentRuntime", meta, fail);
+      pushLog("WARN", "planner indisponível", fail);
+      return fail;
+    }
+
+    var plannerInput = buildDefaultPlanInput(meta);
+    var plan = null;
+
+    if (typeof planner.planFromRuntime === "function") {
+      plan = planner.planFromRuntime(plannerInput);
+    } else if (typeof planner.buildPlan === "function") {
+      plan = planner.buildPlan(plannerInput);
+    }
+
+    if (!plan || !plan.id) {
+      var failPlan = { ok: false, msg: "Planner não retornou plano válido." };
+      markAction("planFromCurrentRuntime", meta, failPlan);
+      pushLog("WARN", "planner sem plano válido", failPlan);
+      return failPlan;
+    }
+
+    if (bridge && typeof bridge.fromText === "function") {
+      var text = [
+        "1. Objetivo",
+        plan.objective || plan.reason || "",
+        "",
+        "2. Arquivo alvo",
+        plan.targetFile || plan.nextFile || "",
+        "",
+        "3. Risco",
+        plan.risk || plan.priority || "unknown",
+        "",
+        "4. Próximo passo mínimo recomendado",
+        plan.nextStep || plan.reason || "",
+        "",
+        "5. Arquivos mais prováveis de ajuste",
+        (Array.isArray(plan.suggestedFiles)
+          ? plan.suggestedFiles
+          : (Array.isArray(plan.executionLine) ? plan.executionLine : [])
+        ).map(function (x) { return "- " + x; }).join("\n"),
+        "",
+        "6. Patch mínimo sugerido",
+        plan.patchSummary || ""
+      ].join("\n");
+
+      try {
+        bridge.fromText(text, {
+          source: "factory_ai_actions.planFromCurrentRuntime",
+          plannerPlan: clone(plan),
+          plannerTs: nowISO()
+        });
+      } catch (_) {}
+    }
+
+    var result = {
+      ok: true,
+      msg: "Plano consolidado ✅",
+      plan: clone(plan),
+      summary: rememberPlan(plan, "planner.planFromRuntime")
+    };
+
+    markAction("planFromCurrentRuntime", meta, result);
+    emit("RCF:FACTORY_AI_PLAN_READY", clone(result));
+    pushLog("OK", "planFromCurrentRuntime ✅", {
+      targetFile: plan.targetFile || plan.nextFile || "",
+      risk: plan.risk || plan.priority || "unknown"
     });
 
-    persist();
-    return clone(state.cache[p]);
+    return result;
   }
 
-  async function readFile(path, opts) {
-    var p = normalizePath(path);
-    var useCache = !opts || opts.useCache !== false;
-
-    if (!p) {
-      return { ok: false, error: "path vazio" };
+  async function approveLastPlan(meta) {
+    var bridge = getBridge();
+    if (!bridge || typeof bridge.approvePlan !== "function") {
+      var fail = { ok: false, msg: "Factory AI Bridge indisponível para aprovação." };
+      markAction("approveLastPlan", meta, fail);
+      return fail;
     }
 
-    if (useCache && state.cache && state.cache[p] && state.cache[p].ok) {
-      var cached = clone(state.cache[p]);
-      if (typeof cached.text !== "string") cached.text = "";
-      return {
-        ok: true,
-        path: p,
-        text: String(cached.text || ""),
-        preview: trimText(cached.preview || ""),
-        analysis: clone(cached.analysis || {}),
-        source: trimText(cached.source || "cache"),
-        cached: true,
-        size: Number(cached.size || 0) || 0
-      };
+    var requestedPlanId = resolveRequestedPlanId({ meta: clone(meta || {}) });
+    var targetPlanId = resolveCurrentBridgePlanId(requestedPlanId);
+
+    if (!targetPlanId) {
+      var failLast = { ok: false, msg: "Nenhum plano pendente para aprovar." };
+      markAction("approveLastPlan", meta, failLast);
+      return failLast;
     }
 
-    var fromTree = tryReadFromTree(p);
-    if (fromTree && fromTree.ok) {
-      var analysisA = analyzeText(p, fromTree.text);
-      var resA = {
-        ok: true,
-        path: p,
-        text: String(fromTree.text || ""),
-        preview: textPreview(fromTree.text),
-        analysis: analysisA,
-        source: fromTree.source || "factory_tree",
-        size: String(fromTree.text || "").length
-      };
-      rememberFileResult(p, resA);
-      return resA;
+    var result = bridge.approvePlan(targetPlanId, meta || {});
+    markAction("approveLastPlan", { planId: targetPlanId, meta: clone(meta || {}) }, result);
+
+    if (result && result.ok) {
+      emit("RCF:FACTORY_AI_ACTION_APPROVED", {
+        ts: nowISO(),
+        result: clone(result)
+      });
+      pushLog("OK", "approveLastPlan ✅", result);
+    } else {
+      pushLog("WARN", "approveLastPlan falhou", result);
     }
 
-    var fromVFS = tryReadFromVFS(p);
-    if (fromVFS && fromVFS.ok) {
-      var analysisB = analyzeText(p, fromVFS.text);
-      var resB = {
-        ok: true,
-        path: p,
-        text: String(fromVFS.text || ""),
-        preview: textPreview(fromVFS.text),
-        analysis: analysisB,
-        source: fromVFS.source || "vfs",
-        size: String(fromVFS.text || "").length
-      };
-      rememberFileResult(p, resB);
-      return resB;
+    return result;
+  }
+
+  async function validateLastApprovedPlan(meta) {
+    var supervisor = getPatchSupervisor();
+    var requestedPlanId = resolveRequestedPlanId({ meta: clone(meta || {}) });
+    var planId = resolveCurrentBridgePlanId(requestedPlanId);
+
+    if (!supervisor || typeof supervisor.validateApprovedPlan !== "function") {
+      var failSup = { ok: false, msg: "Patch Supervisor indisponível." };
+      markAction("validateLastApprovedPlan", meta || {}, failSup);
+      return failSup;
     }
 
-    var fromOverrides = tryReadFromOverrides(p);
-    if (fromOverrides && fromOverrides.ok) {
-      var analysisC = analyzeText(p, fromOverrides.text);
-      var resC = {
-        ok: true,
-        path: p,
-        text: String(fromOverrides.text || ""),
-        preview: textPreview(fromOverrides.text),
-        analysis: analysisC,
-        source: fromOverrides.source || "overrides",
-        size: String(fromOverrides.text || "").length
-      };
-      rememberFileResult(p, resC);
-      return resC;
+    if (!planId) {
+      var failPlan = { ok: false, msg: "Nenhum plano atual para validar." };
+      markAction("validateLastApprovedPlan", meta || {}, failPlan);
+      return failPlan;
     }
 
-    var fromFetch = await tryReadByFetch(p);
-    if (fromFetch && fromFetch.ok) {
-      var analysisD = analyzeText(p, fromFetch.text);
-      var resD = {
-        ok: true,
-        path: p,
-        text: String(fromFetch.text || ""),
-        preview: textPreview(fromFetch.text),
-        analysis: analysisD,
-        source: fromFetch.source || "fetch",
-        size: String(fromFetch.text || "").length
-      };
-      rememberFileResult(p, resD);
-      return resD;
-    }
-
-    var fail = {
-      ok: false,
-      path: p,
-      error: "conteúdo não acessível por tree/vfs/overrides/fetch"
+    var validation = supervisor.validateApprovedPlan(planId);
+    var result = {
+      ok: !!validation.ok,
+      planId: String(planId || ""),
+      validation: clone(validation)
     };
 
-    rememberFileResult(p, fail);
-    return fail;
+    markAction("validateLastApprovedPlan", { planId: planId, meta: clone(meta || {}) }, result);
+    pushLog(result.ok ? "OK" : "WARN", "validateLastApprovedPlan", result);
+    return result;
   }
 
-  async function scanFactory(opts) {
-    if (state.busy) {
-      return {
-        ok: false,
-        error: "code_reader busy"
-      };
+  async function stageLastApprovedPlan(meta) {
+    var supervisor = getPatchSupervisor();
+    var requestedPlanId = resolveRequestedPlanId({ meta: clone(meta || {}) });
+    var planId = resolveCurrentBridgePlanId(requestedPlanId);
+
+    if (!supervisor || typeof supervisor.stageApprovedPlan !== "function") {
+      var failSup = { ok: false, msg: "Patch Supervisor indisponível." };
+      markAction("stageLastApprovedPlan", meta || {}, failSup);
+      return failSup;
     }
 
-    state.busy = true;
-    persist();
+    if (!planId) {
+      var failPlan = { ok: false, msg: "Nenhum plano atual para stage." };
+      markAction("stageLastApprovedPlan", meta || {}, failPlan);
+      return failPlan;
+    }
+
+    var result = await supervisor.stageApprovedPlan(planId);
+    markAction("stageLastApprovedPlan", { planId: planId, meta: clone(meta || {}) }, result);
+    pushLog(result.ok ? "OK" : "WARN", "stageLastApprovedPlan", result);
+    return result;
+  }
+
+  async function applyLastApprovedPlan(opts) {
+    var supervisor = getPatchSupervisor();
+    var requestedPlanId = resolveRequestedPlanId({ opts: clone(opts || {}) });
+    var planId = resolveCurrentBridgePlanId(requestedPlanId);
+
+    if (!supervisor || typeof supervisor.applyApprovedPlan !== "function") {
+      var failSup = { ok: false, msg: "Patch Supervisor indisponível." };
+      markAction("applyLastApprovedPlan", opts, failSup);
+      return failSup;
+    }
+
+    if (!planId) {
+      var failPlan = { ok: false, msg: "Nenhum plano atual para apply." };
+      markAction("applyLastApprovedPlan", opts, failPlan);
+      return failPlan;
+    }
+
+    var cleanOpts = clone(opts || {});
+    if (cleanOpts && typeof cleanOpts === "object" && Object.prototype.hasOwnProperty.call(cleanOpts, "planId")) {
+      delete cleanOpts.planId;
+    }
+
+    var result = await supervisor.applyApprovedPlan(planId, cleanOpts || {});
+    markAction("applyLastApprovedPlan", { planId: planId, opts: clone(cleanOpts || {}) }, result);
+    pushLog(result.ok ? "OK" : "WARN", "applyLastApprovedPlan", result);
+    return result;
+  }
+
+  async function runDoctor() {
+    var result = { ok: false, msg: "Doctor indisponível." };
 
     try {
-      var reason = trimText(safe(function () { return opts.reason; }, "")) || "manual";
-      var requested = asArray(safe(function () { return opts.files; }, []))
-        .map(normalizePath)
-        .filter(Boolean);
-
-      var limit = Math.max(1, Number(safe(function () { return opts.limit; }, 24) || 24));
-      var files = uniq((requested.length ? requested : getKnownFiles())).slice(0, limit);
-
-      state.knownFiles = uniq(asArray(state.knownFiles).concat(files));
-      state.lastScanAt = nowISO();
-      state.lastScanReason = reason;
-      state.lastError = "";
-
-      var okCount = 0;
-      var failCount = 0;
-      var items = [];
-
-      for (var i = 0; i < files.length; i++) {
-        var item = await readFile(files[i], { useCache: false });
-        items.push({
-          path: normalizePath(files[i]),
-          ok: !!item.ok,
-          source: trimText(item.source || ""),
-          size: Number(item.size || 0) || 0,
-          kind: detectKind(files[i]),
-          analysis: clone(item.analysis || {}),
-          error: trimText(item.error || "")
-        });
-
-        if (item.ok) okCount += 1;
-        else failCount += 1;
+      if (global.RCF_DOCTOR_SCAN?.open) {
+        await global.RCF_DOCTOR_SCAN.open();
+        result = {
+          ok: true,
+          mode: "doctor_scan.open",
+          lastRun: clone(global.RCF_DOCTOR_SCAN.lastRun || null)
+        };
+      } else if (global.RCF_DOCTOR_SCAN?.scan) {
+        var report = await global.RCF_DOCTOR_SCAN.scan();
+        result = {
+          ok: true,
+          mode: "doctor_scan.scan",
+          reportLength: String(report || "").length,
+          lastRun: clone(global.RCF_DOCTOR_SCAN.lastRun || null)
+        };
+      } else if (global.RCF_DOCTOR?.open) {
+        await global.RCF_DOCTOR.open();
+        result = { ok: true, mode: "doctor.open" };
+      } else if (global.RCF_DOCTOR?.run) {
+        var data = await global.RCF_DOCTOR.run();
+        result = {
+          ok: true,
+          mode: "doctor.run",
+          data: clone(data || {})
+        };
       }
-
-      var summary = {
-        ts: nowISO(),
-        reason: reason,
-        requestedCount: files.length,
-        okCount: okCount,
-        failCount: failCount,
-        knownFilesCount: getKnownFiles().length,
-        topReadable: items.filter(function (x) { return x.ok; }).slice(0, 20),
-        topFailed: items.filter(function (x) { return !x.ok; }).slice(0, 12)
-      };
-
-      state.lastSummary = clone(summary);
-      persist();
-
-      emit("RCF:FACTORY_AI_CODE_READER_SCAN", {
-        summary: clone(summary)
-      });
-
-      pushLog("OK", "scanFactory ✅", {
-        reason: reason,
-        okCount: okCount,
-        failCount: failCount
-      });
-
-      return {
-        ok: true,
-        summary: clone(summary),
-        items: items
-      };
     } catch (e) {
-      var msg = String(e && e.message || e || "scan error");
-      state.lastError = msg;
-      persist();
-      pushLog("ERR", "scanFactory falhou", msg);
-      return { ok: false, error: msg };
-    } finally {
-      state.busy = false;
-      persist();
-    }
-  }
-
-  function findFiles(query) {
-    var q = lower(query);
-    var files = getKnownFiles();
-
-    if (!q) {
-      return {
-        ok: true,
-        query: "",
-        results: files.slice(0, 40)
-      };
-    }
-
-    var scored = files.map(function (file) {
-      var s = 0;
-      var lf = lower(file);
-
-      if (lf === q) s += 200;
-      if (lf.indexOf(q) >= 0) s += 80;
-      if (lf.indexOf("/" + q) >= 0) s += 30;
-      if (lf.indexOf(q.replace(/\s+/g, "_")) >= 0) s += 20;
-      if (lf.indexOf(q.replace(/\s+/g, "-")) >= 0) s += 20;
-
-      return { file: file, score: s };
-    }).filter(function (x) {
-      return x.score > 0;
-    });
-
-    scored.sort(function (a, b) { return b.score - a.score; });
-
-    return {
-      ok: true,
-      query: q,
-      results: scored.slice(0, 40).map(function (x) { return x.file; })
-    };
-  }
-
-  function explainFile(path) {
-    var p = normalizePath(path);
-    if (!p) return { ok: false, error: "path vazio" };
-
-    var cached = clone(state.cache && state.cache[p] ? state.cache[p] : null);
-    if (!cached || !cached.ok) {
-      return {
+      result = {
         ok: false,
-        path: p,
-        error: "arquivo ainda não lido"
+        msg: String(e && e.message || e || "Falha ao rodar doctor.")
       };
     }
 
-    var analysis = clone(cached.analysis || {});
-    var out = {
+    markAction("runDoctor", {}, result);
+    pushLog(result.ok ? "OK" : "WARN", "runDoctor", result);
+    return result;
+  }
+
+  function collectLogs(limit) {
+    var result = {
       ok: true,
-      path: p,
-      kind: cached.kind || detectKind(p),
-      source: cached.source || "",
-      size: Number(cached.size || 0) || 0,
-      ts: cached.ts || "",
-      analysis: analysis
+      limit: Math.max(1, Number(limit || 30)),
+      logs: getLoggerTail(limit || 30)
     };
 
-    if (analysis.type === "javascript") {
-      out.summary = {
-        functionsCount: asArray(analysis.functions).length,
-        classesCount: asArray(analysis.classes).length,
-        importsCount: asArray(analysis.imports).length,
-        exportsCount: asArray(analysis.exports).length,
-        listenersCount: asArray(analysis.listeners).length,
-        functions: asArray(analysis.functions).slice(0, 30),
-        classes: asArray(analysis.classes).slice(0, 20)
-      };
-    } else if (analysis.type === "html") {
-      out.summary = {
-        idsCount: asArray(analysis.ids).length,
-        scriptsCount: asArray(analysis.scripts).length,
-        stylesCount: asArray(analysis.styles).length,
-        ids: asArray(analysis.ids).slice(0, 40)
-      };
-    } else {
-      out.summary = clone(analysis);
+    markAction("collectLogs", { limit: result.limit }, result);
+    pushLog("OK", "collectLogs", { count: result.logs.length });
+    return result;
+  }
+
+  function getAutonomySnapshot() {
+    var snapshot = buildRuntimeSnapshot();
+    var bridge = getBridge();
+    var supervisor = getPatchSupervisor();
+    var planner = getPlanner();
+    var runtime = getRuntime();
+    var reader = getReader();
+
+    var result = {
+      ok: true,
+      ts: nowISO(),
+      runtime: snapshot,
+      planner: {
+        ready: !!planner,
+        version: safe(function () { return planner.version; }, "unknown"),
+        lastPlan: safe(function () { return planner.getLastPlan ? planner.getLastPlan() : null; }, null)
+      },
+      bridge: {
+        ready: !!bridge,
+        version: safe(function () { return bridge.version; }, "unknown"),
+        lastPlan: safe(function () { return bridge.getLastPlan ? bridge.getLastPlan() : null; }, null),
+        pendingPlan: safe(function () { return bridge.getPendingPlan ? bridge.getPendingPlan() : null; }, null)
+      },
+      runtimeLayer: {
+        ready: !!runtime,
+        status: safe(function () { return runtime.status ? runtime.status() : {}; }, {})
+      },
+      readerLayer: {
+        ready: !!reader,
+        name: getReaderName(),
+        status: safe(function () { return reader.status ? reader.status() : {}; }, {})
+      },
+      patchSupervisor: {
+        ready: !!supervisor,
+        version: safe(function () { return supervisor.version; }, "unknown"),
+        status: safe(function () { return supervisor.status ? supervisor.status() : {}; }, {})
+      },
+      adminFront: {
+        lastEndpoint: trimText(safe(function () {
+          return global.RCF_FACTORY_AI?.getLastEndpoint?.() || "";
+        }, ""))
+      },
+      nextFile: buildNextFileSuggestionFromPlan()
+    };
+
+    markAction("getAutonomySnapshot", {}, result);
+    pushLog("OK", "getAutonomySnapshot", {
+      plannerReady: result.planner.ready,
+      bridgeReady: result.bridge.ready,
+      supervisorReady: result.patchSupervisor.ready,
+      runtimeReady: result.runtimeLayer.ready,
+      readerReady: result.readerLayer.ready
+    });
+
+    return result;
+  }
+
+  function getNextFileSuggestion() {
+    var result = {
+      ok: true,
+      suggestion: buildNextFileSuggestionFromPlan()
+    };
+
+    markAction("getNextFileSuggestion", {}, result);
+    pushLog("OK", "getNextFileSuggestion", result.suggestion);
+    return result;
+  }
+
+  async function getOpenAIStatus(req) {
+    var runtimeStatus = getRuntimeStatus();
+    var runtime = runtimeStatus;
+    var probe = {};
+    var connected = isRuntimeConnected(runtimeStatus);
+
+    state.lastRuntimeCall = {
+      ts: nowISO(),
+      action: "openai_status",
+      endpoint: trimText(runtimeStatus.lastEndpoint || ""),
+      connected: !!connected
+    };
+    persist();
+
+    if (!connected && req && req.probe) {
+      var runtimeApi = getRuntime();
+      if (runtimeApi && typeof runtimeApi.ask === "function") {
+        try {
+          probe = await runtimeApi.ask({
+            action: "chat",
+            prompt: "Faça um teste mínimo de conectividade e responda apenas confirmando status de conexão.",
+            payload: {
+              snapshot: buildRuntimeSnapshot()
+            },
+            history: [],
+            attachments: [],
+            source: "factory_ai_actions.openai_status",
+            version: VERSION
+          }) || {};
+
+          runtime = getRuntimeStatus();
+          connected = isRuntimeConnected(runtime);
+
+          state.lastRuntimeCall = {
+            ts: nowISO(),
+            action: "openai_status_probe",
+            endpoint: trimText(runtime.lastEndpoint || ""),
+            connected: !!connected
+          };
+          persist();
+        } catch (_) {}
+      }
     }
 
-    return out;
-  }
-
-  function getFileMap() {
-    var files = getKnownFiles();
-    return {
+    var result = {
       ok: true,
-      count: files.length,
-      files: files
+      runtime: {
+        available: !!runtime.available,
+        ready: !!runtime.ready,
+        lastEndpoint: runtime.lastEndpoint || "",
+        lastOk: !!runtime.lastOk,
+        connectionStatus: runtime.connectionStatus || "unknown",
+        connectionProvider: runtime.connectionProvider || "",
+        connectionConfigured: !!runtime.connectionConfigured,
+        connectionAttempted: !!runtime.connectionAttempted,
+        connectionModel: runtime.connectionModel || "",
+        connectionUpstreamStatus: Number(runtime.connectionUpstreamStatus || 0) || 0
+      },
+      diagnosis: {
+        connected: !!connected,
+        provider: runtime.connectionProvider || "",
+        model: runtime.connectionModel || ""
+      },
+      probe: clone(probe || {}),
+      adminFront: {
+        lastEndpoint: safe(function () { return global.RCF_FACTORY_AI.getLastEndpoint(); }, "")
+      }
     };
-  }
 
-  function getReadableMap() {
-    var cache = state.cache || {};
-    var keys = Object.keys(cache);
-    var items = keys.map(function (k) {
-      var item = cache[k] || {};
-      return {
-        path: normalizePath(k),
-        ok: !!item.ok,
-        kind: item.kind || detectKind(k),
-        source: item.source || "",
-        size: Number(item.size || 0) || 0,
-        ts: item.ts || "",
-        analysis: clone(item.analysis || {})
-      };
+    markAction("getOpenAIStatus", req || {}, result);
+    pushLog("OK", "getOpenAIStatus", {
+      connected: connected,
+      endpoint: runtime.lastEndpoint || ""
     });
 
-    items.sort(function (a, b) {
-      var ta = safe(function () { return Date.parse(a.ts || ""); }, 0) || 0;
-      var tb = safe(function () { return Date.parse(b.ts || ""); }, 0) || 0;
-      return tb - ta;
-    });
-
-    return {
-      ok: true,
-      count: items.length,
-      items: items
-    };
+    return result;
   }
 
-  function buildReaderSnapshot() {
-    return {
-      version: VERSION,
-      ready: !!state.ready,
-      busy: !!state.busy,
-      lastScanAt: state.lastScanAt || null,
-      lastScanReason: state.lastScanReason || "",
-      lastReadFile: state.lastReadFile || "",
-      lastReadOk: !!state.lastReadOk,
-      lastError: state.lastError || "",
-      knownFilesCount: getKnownFiles().length,
-      cacheCount: Object.keys(state.cache || {}).length,
-      lastSummary: clone(state.lastSummary || null),
-      readableMap: getReadableMap()
+  async function listFilesAction(req) {
+    var reader = getReader();
+    if (!reader || typeof reader.listFiles !== "function") {
+      var fail = { ok: false, msg: "RCF_FACTORY_AI_READER/RCF_FACTORY_AI_CODE_READER indisponível." };
+      markAction("listFilesAction", req, fail);
+      return fail;
+    }
+
+    var result = reader.listFiles({
+      prefix: trimText(req.prefix || ""),
+      contains: trimText(req.contains || ""),
+      limit: Math.max(1, Number(req.limit || 120) || 120)
+    });
+
+    markAction("listFilesAction", req, result);
+    pushLog(result.ok ? "OK" : "WARN", "listFilesAction", { count: result.count || 0 });
+    return result;
+  }
+
+  async function fileExistsAction(req) {
+    var reader = getReader();
+    if (!reader || typeof reader.exists !== "function") {
+      var fail = { ok: false, msg: "RCF_FACTORY_AI_READER/RCF_FACTORY_AI_CODE_READER indisponível." };
+      markAction("fileExistsAction", req, fail);
+      return fail;
+    }
+
+    var path = normalizeFilePath(req.path || req.targetFile || req.file || "");
+    var result = await reader.exists(path);
+
+    markAction("fileExistsAction", { path: path }, result);
+    pushLog(result.ok ? "OK" : "WARN", "fileExistsAction", result);
+    return result;
+  }
+
+  async function readFileAction(req) {
+    var reader = getReader();
+    if (!reader || typeof reader.readFile !== "function") {
+      var fail = { ok: false, msg: "RCF_FACTORY_AI_READER/RCF_FACTORY_AI_CODE_READER indisponível." };
+      markAction("readFileAction", req, fail);
+      return fail;
+    }
+
+    var path = normalizeFilePath(req.path || req.targetFile || req.file || "");
+    var result = await reader.readFile(path, {
+      cache: req.cache !== false,
+      limit: Math.max(0, Number(req.limit || 120000) || 120000)
+    });
+
+    markAction("readFileAction", { path: path }, result);
+    pushLog(result.ok ? "OK" : "WARN", "readFileAction", {
+      path: path,
+      source: result.source || ""
+    });
+    return result;
+  }
+
+  async function summarizeFileAction(req) {
+    var reader = getReader();
+    if (!reader || typeof reader.summarizeFile !== "function") {
+      var fail = { ok: false, msg: "RCF_FACTORY_AI_READER/RCF_FACTORY_AI_CODE_READER indisponível." };
+      markAction("summarizeFileAction", req, fail);
+      return fail;
+    }
+
+    var path = normalizeFilePath(req.path || req.targetFile || req.file || "");
+    var result = await reader.summarizeFile(path, {
+      cache: req.cache !== false
+    });
+
+    markAction("summarizeFileAction", { path: path }, result);
+    pushLog(result.ok ? "OK" : "WARN", "summarizeFileAction", {
+      path: path,
+      lines: safe(function () { return result.summary.lines; }, 0)
+    });
+    return result;
+  }
+
+  async function inspectFileAction(req) {
+    var reader = getReader();
+    if (!reader || typeof reader.inspectTarget !== "function") {
+      var fail = { ok: false, msg: "RCF_FACTORY_AI_READER/RCF_FACTORY_AI_CODE_READER indisponível." };
+      markAction("inspectFileAction", req, fail);
+      return fail;
+    }
+
+    var path = normalizeFilePath(req.path || req.targetFile || req.file || "");
+    var result = await reader.inspectTarget(path, {
+      cache: req.cache !== false
+    });
+
+    markAction("inspectFileAction", { path: path }, result);
+    pushLog(result.ok ? "OK" : "WARN", "inspectFileAction", {
+      path: path,
+      apiSurfaceCount: safe(function () { return result.summary.apiSurface.length; }, 0)
+    });
+    return result;
+  }
+
+  async function summarizeManyAction(req) {
+    var reader = getReader();
+    if (!reader || typeof reader.summarizeMany !== "function") {
+      var fail = { ok: false, msg: "RCF_FACTORY_AI_READER/RCF_FACTORY_AI_CODE_READER indisponível." };
+      markAction("summarizeManyAction", req, fail);
+      return fail;
+    }
+
+    var paths = asArray(req.paths)
+      .concat(asArray(req.files))
+      .map(normalizeFilePath)
+      .filter(Boolean);
+
+    if (!paths.length) {
+      paths = getCandidateFilesFromContext().slice(0, 6);
+    }
+
+    var result = await reader.summarizeMany(paths, {
+      limit: Math.max(1, Number(req.limit || 6) || 6),
+      cache: req.cache !== false
+    });
+
+    markAction("summarizeManyAction", { paths: paths.slice(0, 12) }, result);
+    pushLog(result.ok ? "OK" : "WARN", "summarizeManyAction", {
+      count: result.count || 0
+    });
+    return result;
+  }
+
+  async function dispatch(input) {
+    var req = (input && typeof input === "object")
+      ? clone(input)
+      : { prompt: String(input || "") };
+
+    var action = trimText(req.action || "");
+    var prompt = trimText(req.prompt || "");
+    var intent = action || detectIntent(prompt);
+    var requestedPlanId = resolveRequestedPlanId(req);
+
+    if (intent === "plan") return planFromCurrentRuntime(req);
+    if (intent === "openai_status") return getOpenAIStatus(req);
+    if (intent === "approve_patch") {
+      return approveLastPlan(merge(clone(req.meta || {}), requestedPlanId ? { planId: requestedPlanId } : {}));
+    }
+    if (intent === "validate_patch") {
+      return validateLastApprovedPlan(merge(clone(req.meta || {}), requestedPlanId ? { planId: requestedPlanId } : {}));
+    }
+    if (intent === "stage_patch") {
+      return stageLastApprovedPlan(merge(clone(req.meta || {}), requestedPlanId ? { planId: requestedPlanId } : {}));
+    }
+    if (intent === "apply_patch") {
+      return applyLastApprovedPlan(merge(clone(req.opts || {}), requestedPlanId ? { planId: requestedPlanId } : {}));
+    }
+    if (intent === "run_doctor") return runDoctor();
+    if (intent === "collect_logs") return collectLogs(req.limit || 30);
+    if (intent === "snapshot" || intent === "autonomy") return getAutonomySnapshot();
+    if (intent === "next_file") return getNextFileSuggestion();
+    if (intent === "list_files") return listFilesAction(req);
+    if (intent === "file_exists") return fileExistsAction(req);
+    if (intent === "read_file") return readFileAction(req);
+    if (intent === "summarize_file") return summarizeFileAction(req);
+    if (intent === "inspect_file") return inspectFileAction(req);
+    if (intent === "summarize_many") return summarizeManyAction(req);
+
+    var fallback = {
+      ok: true,
+      mode: "chat",
+      intent: intent,
+      snapshot: getAutonomySnapshot()
     };
+
+    markAction("dispatch", req, fallback);
+    pushLog("INFO", "dispatch chat/fallback", { intent: intent });
+    return fallback;
+  }
+
+  function syncPresence() {
+    try {
+      if (global.RCF_FACTORY_STATE?.registerModule) {
+        global.RCF_FACTORY_STATE.registerModule("factoryAIActions");
+      } else if (global.RCF_FACTORY_STATE?.setModule) {
+        global.RCF_FACTORY_STATE.setModule("factoryAIActions", true);
+      }
+    } catch (_) {}
+
+    try {
+      if (global.RCF_MODULE_REGISTRY?.register) {
+        global.RCF_MODULE_REGISTRY.register("factoryAIActions");
+      }
+    } catch (_) {}
+
+    try {
+      if (global.RCF_FACTORY_STATE?.refreshRuntime) {
+        global.RCF_FACTORY_STATE.refreshRuntime();
+      }
+    } catch (_) {}
   }
 
   function status() {
     return {
       version: VERSION,
       ready: !!state.ready,
-      busy: !!state.busy,
       lastUpdate: state.lastUpdate || null,
-      lastScanAt: state.lastScanAt || null,
-      lastScanReason: state.lastScanReason || "",
-      lastReadFile: state.lastReadFile || "",
-      lastReadOk: !!state.lastReadOk,
-      lastError: state.lastError || "",
-      knownFilesCount: getKnownFiles().length,
-      cacheCount: Object.keys(state.cache || {}).length,
-      historyCount: asArray(state.history).length
+      lastAction: clone(state.lastAction || null),
+      historyCount: Array.isArray(state.history) ? state.history.length : 0,
+      plannerReady: !!getPlanner(),
+      bridgeReady: !!getBridge(),
+      patchSupervisorReady: !!getPatchSupervisor(),
+      runtimeReady: !!(getRuntimeStatus().ready),
+      readerReady: !!getReader(),
+      readerName: getReaderName(),
+      lastRuntimeCall: clone(state.lastRuntimeCall || null),
+      lastPlanSummary: clone(state.lastPlanSummary || null)
     };
   }
 
@@ -975,25 +1266,41 @@
     state.ready = true;
     state.version = VERSION;
     state.lastUpdate = nowISO();
-    state.knownFiles = getKnownFiles();
     persist();
     syncPresence();
-    pushLog("OK", "factory_ai_code_reader ready ✅ " + VERSION);
+    pushLog("OK", "factory_ai_actions ready ✅ " + VERSION);
     return status();
   }
 
-  global.RCF_FACTORY_AI_CODE_READER = {
+  global.RCF_FACTORY_AI_ACTIONS = {
     __v100: true,
+    __v110: true,
+    __v111: true,
+    __v112: true,
+    __v113: true,
+    __v114: true,
+    __v120: true,
+    __v121: true,
     version: VERSION,
     init: init,
     status: status,
-    scanFactory: scanFactory,
-    readFile: readFile,
-    explainFile: explainFile,
-    findFiles: findFiles,
-    getFileMap: getFileMap,
-    getReadableMap: getReadableMap,
-    buildReaderSnapshot: buildReaderSnapshot,
+    dispatch: dispatch,
+    planFromCurrentRuntime: planFromCurrentRuntime,
+    getOpenAIStatus: getOpenAIStatus,
+    approveLastPlan: approveLastPlan,
+    validateLastApprovedPlan: validateLastApprovedPlan,
+    stageLastApprovedPlan: stageLastApprovedPlan,
+    applyLastApprovedPlan: applyLastApprovedPlan,
+    runDoctor: runDoctor,
+    collectLogs: collectLogs,
+    getAutonomySnapshot: getAutonomySnapshot,
+    getNextFileSuggestion: getNextFileSuggestion,
+    listFilesAction: listFilesAction,
+    fileExistsAction: fileExistsAction,
+    readFileAction: readFileAction,
+    summarizeFileAction: summarizeFileAction,
+    inspectFileAction: inspectFileAction,
+    summarizeManyAction: summarizeManyAction,
     getState: function () { return clone(state); }
   };
 
