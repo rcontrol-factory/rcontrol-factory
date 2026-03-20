@@ -1,3310 +1,2269 @@
 /* FILE: /app/js/admin.admin_ai.js
-   RControl Factory — Factory AI
-   v4.3.6 HYBRID CHAT ROUTE FIX + RUNTIME TEXT RESCUE + OPENAI STATUS ROUTE
-
-   - mantém visual chat-first aprovado
-   - mantém botão + fora da cápsula
-   - mantém anexos e voz local com fallback seguro
-   - melhora renderização das respostas
-   - adiciona copiar resposta
-   - adiciona copiar bloco de código
-   - renderiza blocos ```code``` de forma legível
-   - mantém leitura por voz da resposta
-   - evita reaproveitar HTML antigo ao trocar de versão
-   - FIX: prioriza RCF_CONTEXT/RCF_FACTORY_STATE/RCF_MODULE_REGISTRY/RCF_FACTORY_TREE
-   - FIX: evita usar contexto conversável da Factory IA como snapshot principal
-   - FIX: coleta logs com fallback quando logger não usa .items
-   - FIX: melhora fallback de activeView/activeAppSlug/modules ativos/doctor
-   - FIX CRÍTICO: não força scroll para o final quando o usuário sobe o chat
-   - ADD: histórico persistido em localStorage
-   - ADD: botão limpar histórico
-   - FIX NOVO: corta loop de mount/log repetido
-   - FIX NOVO: reduz sync agressivo
-   - ADD NOVO: usa camada supervisionada local (planner/bridge/actions/patch supervisor)
-   - ADD NOVO: sobe para runtime antes de brain/orchestrator quando não for ação local direta
-   - ADD v4.3.3: header compacto mobile, sem estourar largura
-   - ADD v4.3.3: composer reforçado para manter botão enviar visível
-   - ADD v4.3.3: overflow lateral bloqueado no card/chat/composer
-   - FIX v4.3.4: runRuntimePrompt envia payload lean completo para runtime.ask()
-   - FIX v4.3.5: perguntas normais sobre OpenAI/runtime/backend NÃO caem mais em ação local
-   - FIX v4.3.5: ação local fica só para fluxo supervisionado explícito
-   - FIX v4.3.6: prompts de OpenAI/runtime/backend sobem como openai_status
-   - FIX v4.3.6: resgata response.analysis mesmo em falha do runtime
-   - FIX v4.3.6: reduz sequestro indevido da ação local snapshot
-   - não executa patch automático sem fluxo supervisionado
+   RControl Factory
+   /app/js/admin.admin_ai.js
+   v4.4.2 SAFE INTERNAL REORG + REAL ACTIONS CONTRACT FIX
+   Base line preserved from:
+   v4.4.1 SAFE INTERNAL REORG + HYBRID ROUTE PRESERVE
 */
-
 (() => {
   "use strict";
 
-  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v436) return;
+  // =========================================================
+  // 1) GUARDS / VERSION / CONSTANTS
+  // =========================================================
+  const VERSION = "v4.4.2 SAFE INTERNAL REORG + REAL ACTIONS CONTRACT FIX";
+  const BUILD = "[ADMIN_AI]";
+  const API_NAME = "RCF_FACTORY_AI";
+  const LEGACY_API_NAME = "RCF_ADMIN_AI";
+  const CSS_ID = "rcf-admin-ai-css";
+  const ROOT_ATTR = "data-rcf-admin-ai-root";
+  const HOST_ATTR = "data-rcf-factory-ai-host";
+  const DEFAULT_ENDPOINT = "/api/admin-ai";
+  const MAX_HISTORY = 120;
+  const MAX_RENDERED_HISTORY = 120;
+  const MAX_ATTACHMENTS = 8;
+  const MAX_FILE_SIZE = 8 * 1024 * 1024;
+  const MAX_INLINE_PREVIEW = 350 * 1024;
+  const MAX_VOICE_TEXT = 3200;
+  const MAX_RUNTIME_TEXT = 32000;
+  const MOUNT_RETRY_MS = 1200;
+  const SYNC_INTERVAL_MS = 1800;
+  const SCROLL_BOTTOM_THRESHOLD = 120;
 
-  const VERSION = "v4.3.6";
-  const BOX_ID = "rcfFactoryAIBox";
-  const CHAT_ID = "rcfFactoryAIChat";
-  const STYLE_ID = "rcfFactoryAIStyleV436";
-  const HISTORY_KEY = "rcf:factory_ai_history_v436";
-  const HISTORY_MAX = 80;
-
-  const SYNC_INTERVAL_MS = 2200;
-  const MOUNT_LOG_THROTTLE_MS = 4000;
-
-  const SpeechRecognitionCtor =
-    window.SpeechRecognition ||
-    window.webkitSpeechRecognition ||
-    null;
-
-  const STATE = {
-    busy: false,
-    history: [],
-    mountedIn: "",
-    lastEndpoint: "",
-    bootedAt: new Date().toISOString(),
-    syncTimer: null,
-    attachments: [],
-    isListening: false,
-    currentUtterance: null,
-    chatBound: false,
-    pinnedToBottom: true,
-    lastRenderSignature: "",
-    renderedOnce: false,
-    lastMountSignature: "",
-    lastMountLoggedAt: 0,
-    mounted: false,
-    visibilityBound: false,
-    syncStarted: false
+  const STORAGE_KEYS = {
+    history: "rcf:factory_ai:history",
+    draft: "rcf:factory_ai:draft",
+    lastEndpoint: "rcf:factory_ai:last_endpoint",
+    ui: "rcf:factory_ai:ui",
+    attachmentsMeta: "rcf:factory_ai:attachments_meta"
   };
 
-  function nowMs() {
-    try { return Date.now(); } catch { return 0; }
+  if (window.__RCF_ADMIN_AI_BOOTED__ === true) {
+    try { console.info(BUILD, "already booted"); } catch (_) {}
+    return;
   }
+  window.__RCF_ADMIN_AI_BOOTED__ = true;
 
-  function log(level, msg) {
-    try { window.RCF_LOGGER?.push?.(level, "[FACTORY_AI] " + msg); } catch {}
-    try { console.log("[FACTORY_AI]", level, msg); } catch {}
-  }
+  // =========================================================
+  // 2) INTERNAL STATE
+  // =========================================================
+  const state = {
+    bootedAt: Date.now(),
+    mounted: false,
+    mounting: false,
+    host: null,
+    ui: null,
+    syncTimer: null,
+    mountTimer: null,
+    history: [],
+    attachments: [],
+    busy: false,
+    isSyncing: false,
+    mountCount: 0,
+    lastEndpoint: readStorage(STORAGE_KEYS.lastEndpoint, ""),
+    lastRoute: "",
+    lastSnapshotAt: 0,
+    pendingMessageId: "",
+    recognition: null,
+    voiceListening: false,
+    speaking: false,
+    autoRead: false,
+    shouldAutoStick: true,
+    lastKnownScrollTop: 0,
+    scrollLockRender: false,
+    boundDocClick: null,
+    boundVisibility: null,
+    boundResize: null,
+    lastHostSignature: "",
+    softMountedOnce: false,
+    composerStatusText: "",
+    menuOpen: false
+  };
 
-  function logMountOnce(signature, force = false) {
-    const now = nowMs();
-    if (!force && STATE.lastMountSignature === signature && (now - STATE.lastMountLoggedAt) < MOUNT_LOG_THROTTLE_MS) {
-      return;
-    }
-    STATE.lastMountSignature = signature;
-    STATE.lastMountLoggedAt = now;
-    log("OK", "Factory AI mount ✅ " + VERSION + " @ " + signature);
-  }
-
-  function qs(sel, root = document) {
-    try { return root.querySelector(sel); } catch { return null; }
-  }
-
-  function qsa(sel, root = document) {
-    try { return Array.from(root.querySelectorAll(sel)); } catch { return []; }
-  }
-
-  function esc(s) {
-    return String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({
-      "&": "&amp;",
-      "<": "&lt;",
-      ">": "&gt;",
-      "\"": "&quot;"
-    }[c]));
-  }
-
-  function pretty(obj) {
-    try { return JSON.stringify(obj, null, 2); }
-    catch { return String(obj || ""); }
-  }
-
-  function clone(obj) {
-    try { return JSON.parse(JSON.stringify(obj)); }
-    catch { return obj || {}; }
-  }
-
-  function trim(v) {
-    return String(v == null ? "" : v).trim();
-  }
-
-  function safeHistoryItem(item) {
-    if (!item || typeof item !== "object") return null;
-    const role = item.role === "assistant" ? "assistant" : "user";
-    const text = String(item.text || "").trim();
-    const ts = String(item.ts || new Date().toISOString());
-    if (!text) return null;
-    return { role, text, ts };
-  }
-
-  function loadHistory() {
-    try {
-      const raw = localStorage.getItem(HISTORY_KEY);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return [];
-      return parsed.map(safeHistoryItem).filter(Boolean).slice(-HISTORY_MAX);
-    } catch {
-      return [];
-    }
-  }
-
-  function persistHistory() {
-    try {
-      const data = Array.isArray(STATE.history) ? STATE.history.slice(-HISTORY_MAX) : [];
-      localStorage.setItem(HISTORY_KEY, JSON.stringify(data));
-    } catch {}
-  }
-
-  function pushHistory(item) {
-    const safe = safeHistoryItem(item);
-    if (!safe) return false;
-    if (!Array.isArray(STATE.history)) STATE.history = [];
-    STATE.history.push(safe);
-    if (STATE.history.length > HISTORY_MAX) {
-      STATE.history = STATE.history.slice(-HISTORY_MAX);
-    }
-    persistHistory();
-    return true;
-  }
-
-  function getChatEl() {
-    return document.getElementById(CHAT_ID);
-  }
-
-  function isNearBottom(el, threshold = 56) {
-    try {
-      if (!el) return true;
-      const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
-      return distance <= threshold;
-    } catch {
-      return true;
-    }
-  }
-
-  function bindChatScroll() {
-    const chat = getChatEl();
-    if (!chat || chat.__rcfBoundScrollV436) return;
-
-    chat.__rcfBoundScrollV436 = true;
-    STATE.pinnedToBottom = true;
-
-    chat.addEventListener("scroll", () => {
-      STATE.pinnedToBottom = isNearBottom(chat, 56);
-    }, { passive: true });
-
-    chat.addEventListener("touchmove", () => {
-      STATE.pinnedToBottom = isNearBottom(chat, 56);
-    }, { passive: true });
-  }
-
-  function scrollChatToBottom(force = false) {
-    const chat = getChatEl();
-    if (!chat) return;
-
-    if (!force && !STATE.pinnedToBottom) return;
-
-    try {
-      chat.scrollTop = chat.scrollHeight;
-      STATE.pinnedToBottom = true;
-    } catch {}
-  }
-
-  function isElementVisible(el) {
-    try {
-      if (!el) return false;
-      if (el.hidden) return false;
-      const cs = window.getComputedStyle(el);
-      if (!cs) return false;
-      if (cs.display === "none") return false;
-      if (cs.visibility === "hidden") return false;
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  function getFactoryAIView() {
-    return (
-      document.getElementById("view-factory-ai") ||
-      document.querySelector('[data-rcf-view="factory-ai"]') ||
-      document.querySelector("#rcfFactoryAIView") ||
-      document.querySelector("[data-rcf-factory-ai-view]")
-    );
-  }
-
-  function getAdminView() {
-    return (
-      document.getElementById("view-admin") ||
-      document.querySelector('[data-rcf-view="admin"]')
-    );
-  }
-
-  function isFactoryAIViewVisible() {
-    try {
-      const view = getFactoryAIView();
-      if (!view) return false;
-      if (view.classList.contains("active")) return true;
-      if (view.getAttribute("data-rcf-visible") === "1") return true;
-      return isElementVisible(view);
-    } catch {
-      return false;
-    }
-  }
-
-  function isAdminViewVisible() {
-    try {
-      const view = getAdminView();
-      if (!view) return false;
-      if (view.classList.contains("active")) return true;
-      if (view.getAttribute("data-rcf-visible") === "1") return true;
-      return isElementVisible(view);
-    } catch {
-      return false;
-    }
-  }
-
-  function getPreferredSlots() {
-    const out = {
-      tools: null,
-      fallback: null
-    };
-
-    try {
-      const ui = window.RCF_UI;
-      if (ui && typeof ui.getSlot === "function") {
-        out.tools = ui.getSlot("factoryai.tools") || null;
-        out.fallback =
-          ui.getSlot("admin.integrations") ||
-          ui.getSlot("admin.top") ||
-          null;
-      }
-    } catch {}
-
-    if (!out.tools) {
-      out.tools =
-        document.getElementById("rcfFactoryAISlotTools") ||
-        document.querySelector('[data-rcf-slot="factoryai.tools"]') ||
-        null;
-    }
-
-    if (!out.fallback) {
-      out.fallback =
-        document.getElementById("rcfAdminSlotIntegrations") ||
-        document.querySelector('[data-rcf-slot="admin.integrations"]') ||
-        document.querySelector("#view-admin .integrations") ||
-        document.querySelector("#view-admin") ||
-        document.querySelector('[data-rcf-view="admin"]') ||
-        null;
-    }
-
-    return out;
-  }
-
-  function collectLogs(limit = 30) {
+  // =========================================================
+  // 3) UTIL HELPERS
+  // =========================================================
+  function safeLoggerPush(level, message) {
     try {
       const logger = window.RCF_LOGGER;
+      if (!logger || !isFn(logger.push)) return false;
 
-      if (logger && Array.isArray(logger.items)) {
-        return logger.items.slice(-limit);
-      }
-
-      if (logger && Array.isArray(logger.lines)) {
-        return logger.lines.slice(-limit);
-      }
-
-      if (logger && typeof logger.getAll === "function") {
-        const arr = logger.getAll();
-        if (Array.isArray(arr)) return arr.slice(-limit);
-      }
-
-      if (logger && typeof logger.getText === "function") {
-        const text = String(logger.getText() || "").trim();
-        if (text) return text.split("\n").slice(-limit);
-      }
-
-      if (logger && typeof logger.dump === "function") {
-        const text = String(logger.dump() || "").trim();
-        if (text) return text.split("\n").slice(-limit);
-      }
-    } catch {}
-
-    try {
-      const raw = localStorage.getItem("rcf:logs");
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) return parsed.slice(-limit);
-      }
-    } catch {}
-
-    return [];
-  }
-
-  function collectDoctorReport() {
-    try {
-      if (window.RCF_FACTORY_STATE?.getState?.().doctorLastRun) {
-        return window.RCF_FACTORY_STATE.getState().doctorLastRun;
-      }
-    } catch {}
-
-    try {
-      if (window.RCF_DOCTOR_SCAN?.lastReport) {
-        return window.RCF_DOCTOR_SCAN.lastReport;
-      }
-    } catch {}
-
-    try {
-      if (window.RCF_DOCTOR?.lastReport) {
-        return window.RCF_DOCTOR.lastReport;
-      }
-    } catch {}
-
-    try {
-      if (window.RCF_DOCTOR?.lastRun) {
-        return window.RCF_DOCTOR.lastRun;
-      }
-    } catch {}
-
-    return {
-      note: "Doctor report não encontrado ainda. Rode o Doctor antes.",
-      ts: new Date().toISOString()
-    };
-  }
-
-  function buildActiveModuleFallback(moduleSummary) {
-    try {
-      if (Array.isArray(moduleSummary?.active) && moduleSummary.active.length) {
-        return clone(moduleSummary.active);
-      }
-
-      const map = moduleSummary?.modules || {};
-      const active = Object.keys(map).filter((k) => !!map[k]);
-      return active;
-    } catch {
-      return [];
-    }
-  }
-
-  function buildRawFromCoreModules() {
-    const factoryState = (() => {
       try {
-        if (window.RCF_FACTORY_STATE && typeof window.RCF_FACTORY_STATE.getState === "function") {
-          return clone(window.RCF_FACTORY_STATE.getState() || {});
-        }
-      } catch {}
-      return {};
-    })();
-
-    const moduleSummary = (() => {
-      try {
-        if (window.RCF_MODULE_REGISTRY && typeof window.RCF_MODULE_REGISTRY.summary === "function") {
-          return clone(window.RCF_MODULE_REGISTRY.summary() || {});
-        }
-      } catch {}
-      return {};
-    })();
-
-    const treeSummary = (() => {
-      try {
-        if (window.RCF_FACTORY_TREE && typeof window.RCF_FACTORY_TREE.summary === "function") {
-          return clone(window.RCF_FACTORY_TREE.summary() || {});
-        }
-      } catch {}
-      return {};
-    })();
-
-    const treeAllPaths = (() => {
-      try {
-        if (window.RCF_FACTORY_TREE && typeof window.RCF_FACTORY_TREE.getAllPaths === "function") {
-          return clone(window.RCF_FACTORY_TREE.getAllPaths() || []);
-        }
-      } catch {}
-      return [];
-    })();
-
-    const treeGrouped = (() => {
-      try {
-        if (window.RCF_FACTORY_TREE && typeof window.RCF_FACTORY_TREE.getTree === "function") {
-          return clone(window.RCF_FACTORY_TREE.getTree() || {});
-        }
-      } catch {}
-      return {};
-    })();
-
-    const doctorApi = window.RCF_DOCTOR_SCAN || window.RCF_DOCTOR || null;
-
-    const doctorReport = (() => {
-      try {
-        if (doctorApi?.lastReport) return clone(doctorApi.lastReport);
-      } catch {}
-      try {
-        if (doctorApi?.lastRun) return clone(doctorApi.lastRun);
-      } catch {}
-      return null;
-    })();
-
-    const plannerStatus = (() => {
-      try {
-        return window.RCF_FACTORY_AI_PLANNER?.status?.() || {};
-      } catch {}
-      return {};
-    })();
-
-    const bridgeStatus = (() => {
-      try {
-        return window.RCF_FACTORY_AI_BRIDGE?.status?.() || {};
-      } catch {}
-      return {};
-    })();
-
-    const actionsStatus = (() => {
-      try {
-        return window.RCF_FACTORY_AI_ACTIONS?.status?.() || {};
-      } catch {}
-      return {};
-    })();
-
-    const brainStatus = (() => {
-      try {
-        return window.RCF_FACTORY_AI_BRAIN?.status?.() || {};
-      } catch {}
-      return {};
-    })();
-
-    const runtimeStatus = (() => {
-      try {
-        return window.RCF_FACTORY_AI_RUNTIME?.status?.() || {};
-      } catch {}
-      return {};
-    })();
-
-    const patchSupervisorStatus = (() => {
-      try {
-        return window.RCF_PATCH_SUPERVISOR?.status?.() || {};
-      } catch {}
-      return {};
-    })();
-
-    const identitySummary = (() => {
-      try {
-        return window.RCF_FACTORY_AI_IDENTITY?.summary?.() || {};
-      } catch {}
-      return {};
-    })();
-
-    return {
-      factory: {
-        version:
-          factoryState.factoryVersion ||
-          window.RCF_VERSION ||
-          "unknown",
-        engineVersion: factoryState.engineVersion || "unknown",
-        bootStatus: factoryState.bootStatus || "unknown",
-        bootTime: factoryState.bootTime || null,
-        lastUpdate: factoryState.lastUpdate || null,
-        runtimeVFS: factoryState.runtimeVFS || "unknown",
-        environment: factoryState.environment || "unknown",
-        userAgent: factoryState.userAgent || navigator.userAgent || "",
-        activeView: factoryState.activeView || "",
-        activeAppSlug: factoryState.activeAppSlug || "",
-        loggerReady: !!factoryState.loggerReady || !!moduleSummary.logger || !!window.RCF_LOGGER,
-        doctorReady: !!factoryState.doctorReady || !!moduleSummary.doctor || !!doctorApi,
-        modules: clone(factoryState.modules || {}),
-        flags: {
-          hasLogger: !!window.RCF_LOGGER,
-          hasDoctor: !!doctorApi,
-          hasGitHub: !!window.RCF_GH_SYNC,
-          hasVault: !!window.RCF_ZIP_VAULT,
-          hasBridge: !!window.RCF_AGENT_ZIP_BRIDGE,
-          hasAdminAI: !!window.RCF_ADMIN_AI,
-          hasFactoryState: !!window.RCF_FACTORY_STATE,
-          hasModuleRegistry: !!window.RCF_MODULE_REGISTRY,
-          hasContextEngine: !!window.RCF_CONTEXT,
-          hasFactoryTree: !!window.RCF_FACTORY_TREE,
-          hasFactoryAI: !!window.RCF_FACTORY_AI || !!window.RCF_FACTORY_IA,
-          hasFactoryAIPlanner: !!window.RCF_FACTORY_AI_PLANNER,
-          hasFactoryAIBridge: !!window.RCF_FACTORY_AI_BRIDGE,
-          hasFactoryAIActions: !!window.RCF_FACTORY_AI_ACTIONS,
-          hasFactoryAIRuntime: !!window.RCF_FACTORY_AI_RUNTIME,
-          hasPatchSupervisor: !!window.RCF_PATCH_SUPERVISOR,
-          hasFactoryAIBrain: !!window.RCF_FACTORY_AI_BRAIN,
-          hasFactoryAIIdentity: !!window.RCF_FACTORY_AI_IDENTITY
-        }
-      },
-      doctor: {
-        ready: !!doctorApi,
-        version: doctorApi?.version || "unknown",
-        lastRun: factoryState.doctorLastRun || doctorReport || null
-      },
-      modules: {
-        version: moduleSummary.version || "unknown",
-        total: Number(moduleSummary.total || 0),
-        active: buildActiveModuleFallback(moduleSummary),
-        logger: !!moduleSummary.logger,
-        doctor: !!moduleSummary.doctor,
-        github: !!moduleSummary.github,
-        vault: !!moduleSummary.vault,
-        bridge: !!moduleSummary.bridge,
-        adminAI: !!moduleSummary.adminAI,
-        factoryAI: !!moduleSummary.factoryAI,
-        factoryState: !!moduleSummary.factoryState,
-        moduleRegistry: !!moduleSummary.moduleRegistry,
-        contextEngine: !!moduleSummary.contextEngine,
-        factoryTree: !!moduleSummary.factoryTree,
-        factoryAIPlanner: !!moduleSummary?.modules?.factoryAIPlanner,
-        factoryAIBridge: !!moduleSummary?.modules?.factoryAIBridge,
-        factoryAIActions: !!moduleSummary?.modules?.factoryAIActions,
-        factoryAIRuntime: !!moduleSummary?.modules?.factoryAIRuntime,
-        patchSupervisor: !!moduleSummary?.modules?.patchSupervisor,
-        factoryAIBrain: !!moduleSummary?.modules?.factoryAIBrain,
-        modules: clone(moduleSummary.modules || {})
-      },
-      planner: {
-        ready: !!window.RCF_FACTORY_AI_PLANNER,
-        version: window.RCF_FACTORY_AI_PLANNER?.version || "unknown",
-        lastGoal: plannerStatus.lastGoal || "",
-        lastPriority: plannerStatus.lastPriority || "",
-        lastNextFile: plannerStatus.lastNextFile || ""
-      },
-      runtimeLayer: {
-        ready: !!window.RCF_FACTORY_AI_RUNTIME,
-        version: window.RCF_FACTORY_AI_RUNTIME?.version || "unknown",
-        lastEndpoint: runtimeStatus.lastEndpoint || "",
-        lastAction: runtimeStatus.lastAction || "",
-        lastOk: !!runtimeStatus.lastOk,
-        connectionStatus: runtimeStatus.connectionStatus || "unknown",
-        connectionProvider: runtimeStatus.connectionProvider || "",
-        connectionConfigured: !!runtimeStatus.connectionConfigured,
-        connectionAttempted: !!runtimeStatus.connectionAttempted,
-        connectionModel: runtimeStatus.connectionModel || "",
-        connectionUpstreamStatus: Number(runtimeStatus.connectionUpstreamStatus || 0) || 0
-      },
-      bridgeLayer: {
-        ready: !!window.RCF_FACTORY_AI_BRIDGE,
-        version: window.RCF_FACTORY_AI_BRIDGE?.version || "unknown",
-        approvalStatus: bridgeStatus.approvalStatus || "",
-        targetFile: bridgeStatus.targetFile || "",
-        risk: bridgeStatus.risk || "unknown"
-      },
-      actionsLayer: {
-        ready: !!window.RCF_FACTORY_AI_ACTIONS,
-        version: window.RCF_FACTORY_AI_ACTIONS?.version || "unknown",
-        plannerReady: !!actionsStatus.plannerReady,
-        bridgeReady: !!actionsStatus.bridgeReady,
-        patchSupervisorReady: !!actionsStatus.patchSupervisorReady,
-        runtimeReady: !!actionsStatus.runtimeReady,
-        lastRuntimeCall: clone(actionsStatus.lastRuntimeCall || null)
-      },
-      brainLayer: {
-        ready: !!window.RCF_FACTORY_AI_BRAIN,
-        version: window.RCF_FACTORY_AI_BRAIN?.version || "unknown",
-        lastIntent: brainStatus.lastIntent || "",
-        lastRoute: brainStatus.lastRoute || "",
-        lastTargetFile: brainStatus.lastTargetFile || "",
-        identityName: identitySummary.name || "",
-        identityRole: identitySummary.role || ""
-      },
-      patchSupervisor: {
-        ready: !!window.RCF_PATCH_SUPERVISOR,
-        version: window.RCF_PATCH_SUPERVISOR?.version || "unknown",
-        hasStagedPatch: !!patchSupervisorStatus.hasStagedPatch,
-        stagedTargetFile: patchSupervisorStatus.stagedTargetFile || "",
-        lastApplyOk: !!patchSupervisorStatus.lastApplyOk
-      },
-      tree: {
-        summary: clone(treeSummary.counts || treeSummary.summary || {}),
-        pathsCount: Array.isArray(treeAllPaths) ? treeAllPaths.length : 0,
-        samples: Array.isArray(treeAllPaths) ? treeAllPaths.slice(0, 20) : [],
-        grouped: clone(treeGrouped || {})
-      },
-      environment: {
-        href: location.href,
-        userAgent: navigator.userAgent || "",
-        platform: navigator.platform || "",
-        language: navigator.language || "",
-        ts: new Date().toISOString()
-      }
-    };
-  }
-
-  function getSnapshotRaw() {
-    try {
-      if (window.RCF_CONTEXT && typeof window.RCF_CONTEXT.getSnapshot === "function") {
-        const ctx = window.RCF_CONTEXT.getSnapshot();
-        if (ctx && typeof ctx === "object" && (ctx.factory || ctx.modules || ctx.tree)) {
-          return ctx;
-        }
-      }
-    } catch {}
-
-    try {
-      if (window.RCF_CONTEXT && typeof window.RCF_CONTEXT.getContext === "function") {
-        const ctx = window.RCF_CONTEXT.getContext();
-        if (ctx && typeof ctx === "object" && (ctx.factory || ctx.modules || ctx.tree)) {
-          return ctx;
-        }
-      }
-    } catch {}
-
-    try {
-      const raw = buildRawFromCoreModules();
-      if (raw && (raw.factory || raw.modules || raw.tree)) {
-        return raw;
-      }
-    } catch {}
-
-    try {
-      if (window.RCF_FACTORY_IA && typeof window.RCF_FACTORY_IA.getContext === "function") {
-        const ctx = window.RCF_FACTORY_IA.getContext();
-        if (ctx && typeof ctx === "object" && (ctx.factory || ctx.modules || ctx.tree)) {
-          return ctx;
-        }
-      }
-    } catch {}
-
-    return null;
-  }
-
-  function buildLeanSnapshot() {
-    const raw = getSnapshotRaw() || {};
-    const factory = raw.factory || {};
-    const modules = raw.modules || {};
-    const doctor = raw.doctor || {};
-    const environment = raw.environment || {};
-    const tree = raw.tree || {};
-    const planner = raw.factoryAIPlanner || raw.planner || {};
-    const runtimeLayer = raw.factoryAIRuntime || raw.runtimeLayer || {};
-    const bridgeLayer = raw.factoryAIBridge || raw.bridgeLayer || {};
-    const actionsLayer = raw.factoryAIActions || raw.actionsLayer || {};
-    const brainLayer = raw.factoryAIBrain || raw.brainLayer || {};
-    const patchSupervisor = raw.patchSupervisor || {};
-    const state = window.RCF?.state || {};
-    const identitySummary = (() => {
-      try { return window.RCF_FACTORY_AI_IDENTITY?.summary?.() || {}; } catch { return {}; }
-    })();
-
-    const activeModules = (() => {
-      try {
-        if (Array.isArray(modules.active) && modules.active.length) return modules.active;
-        const map = modules.modules || {};
-        return Object.keys(map).filter((k) => !!map[k]);
-      } catch {
-        return [];
-      }
-    })();
-
-    return {
-      factory: {
-        version: factory.version || "unknown",
-        engineVersion: factory.engineVersion || "unknown",
-        bootStatus: factory.bootStatus || "unknown",
-        bootTime: factory.bootTime || null,
-        runtimeVFS: factory.runtimeVFS || "unknown",
-        loggerReady: !!factory.loggerReady,
-        doctorReady: !!factory.doctorReady,
-        environment: factory.environment || "unknown",
-        lastUpdate: factory.lastUpdate || null,
-        mountedAs: "Factory AI",
-        activeView: state?.active?.view || factory.activeView || "",
-        activeAppSlug: state?.active?.appSlug || factory.activeAppSlug || "",
-        bootedAt: STATE.bootedAt
-      },
-      doctor: {
-        version: doctor.version || "unknown",
-        lastRun: doctor.lastRun || null
-      },
-      modules: {
-        active: activeModules,
-        status: {
-          logger: !!modules.logger,
-          doctor: !!modules.doctor,
-          github: !!modules.github,
-          vault: !!modules.vault,
-          bridge: !!modules.bridge,
-          adminAI: !!modules.adminAI,
-          factoryAI: !!modules.factoryAI || true,
-          factoryState: !!modules.factoryState,
-          moduleRegistry: !!modules.moduleRegistry,
-          contextEngine: !!modules.contextEngine,
-          factoryTree: !!modules.factoryTree,
-          factoryAIPlanner: !!modules.factoryAIPlanner,
-          factoryAIBridge: !!modules.factoryAIBridge,
-          factoryAIActions: !!modules.factoryAIActions,
-          factoryAIRuntime: !!modules.factoryAIRuntime,
-          patchSupervisor: !!modules.patchSupervisor,
-          factoryAIBrain: !!modules.factoryAIBrain
-        },
-        total: Number(modules.total || 0)
-      },
-      planner: {
-        ready: !!planner.ready,
-        version: planner.version || "unknown",
-        lastGoal: planner.lastGoal || "",
-        lastPriority: planner.lastPriority || "",
-        lastNextFile: planner.lastNextFile || ""
-      },
-      runtimeLayer: {
-        ready: !!runtimeLayer.ready || !!window.RCF_FACTORY_AI_RUNTIME,
-        version: runtimeLayer.version || window.RCF_FACTORY_AI_RUNTIME?.version || "unknown",
-        lastEndpoint: runtimeLayer.lastEndpoint || STATE.lastEndpoint || "",
-        lastAction: runtimeLayer.lastAction || "",
-        lastOk: !!runtimeLayer.lastOk,
-        connectionStatus: runtimeLayer.connectionStatus || "",
-        connectionProvider: runtimeLayer.connectionProvider || "",
-        connectionConfigured: !!runtimeLayer.connectionConfigured,
-        connectionAttempted: !!runtimeLayer.connectionAttempted,
-        connectionModel: runtimeLayer.connectionModel || "",
-        connectionUpstreamStatus: Number(runtimeLayer.connectionUpstreamStatus || 0) || 0
-      },
-      bridgeLayer: {
-        ready: !!bridgeLayer.ready,
-        version: bridgeLayer.version || "unknown",
-        approvalStatus: bridgeLayer.approvalStatus || "",
-        targetFile: bridgeLayer.targetFile || "",
-        risk: bridgeLayer.risk || "unknown"
-      },
-      actionsLayer: {
-        ready: !!actionsLayer.ready,
-        version: actionsLayer.version || "unknown",
-        plannerReady: !!actionsLayer.plannerReady,
-        bridgeReady: !!actionsLayer.bridgeReady,
-        patchSupervisorReady: !!actionsLayer.patchSupervisorReady,
-        runtimeReady: !!actionsLayer.runtimeReady,
-        lastRuntimeCall: clone(actionsLayer.lastRuntimeCall || null)
-      },
-      brainLayer: {
-        ready: !!brainLayer.ready || !!window.RCF_FACTORY_AI_BRAIN,
-        version: brainLayer.version || window.RCF_FACTORY_AI_BRAIN?.version || "unknown",
-        lastIntent: brainLayer.lastIntent || "",
-        lastRoute: brainLayer.lastRoute || "",
-        lastTargetFile: brainLayer.lastTargetFile || "",
-        identityName: identitySummary.name || "",
-        identityRole: identitySummary.role || ""
-      },
-      patchSupervisor: {
-        ready: !!patchSupervisor.ready,
-        version: patchSupervisor.version || "unknown",
-        hasStagedPatch: !!patchSupervisor.hasStagedPatch,
-        stagedTargetFile: patchSupervisor.stagedTargetFile || "",
-        lastApplyOk: !!patchSupervisor.lastApplyOk
-      },
-      tree: {
-        pathsCount: Number(tree.pathsCount || 0),
-        summary: tree.summary || {},
-        samples: Array.isArray(tree.samples) ? tree.samples.slice(0, 12) : [],
-        grouped: tree.grouped || {}
-      },
-      flags: {
-        hasLogger: !!factory.flags?.hasLogger,
-        hasDoctor: !!factory.flags?.hasDoctor,
-        hasGitHub: !!factory.flags?.hasGitHub,
-        hasFactoryAI: !!factory.flags?.hasFactoryAI || true,
-        hasFactoryState: !!factory.flags?.hasFactoryState,
-        hasModuleRegistry: !!factory.flags?.hasModuleRegistry,
-        hasContextEngine: !!factory.flags?.hasContextEngine,
-        hasFactoryTree: !!factory.flags?.hasFactoryTree,
-        hasAdminAI: !!factory.flags?.hasAdminAI,
-        hasVault: !!factory.flags?.hasVault,
-        hasBridge: !!factory.flags?.hasBridge,
-        hasFactoryAIPlanner: !!factory.flags?.hasFactoryAIPlanner,
-        hasFactoryAIBridge: !!factory.flags?.hasFactoryAIBridge,
-        hasFactoryAIActions: !!factory.flags?.hasFactoryAIActions,
-        hasFactoryAIRuntime: !!factory.flags?.hasFactoryAIRuntime || !!window.RCF_FACTORY_AI_RUNTIME,
-        hasPatchSupervisor: !!factory.flags?.hasPatchSupervisor,
-        hasFactoryAIBrain: !!factory.flags?.hasFactoryAIBrain || !!window.RCF_FACTORY_AI_BRAIN,
-        hasFactoryAIIdentity: !!factory.flags?.hasFactoryAIIdentity || !!window.RCF_FACTORY_AI_IDENTITY
-      },
-      identity: {
-        name: identitySummary.name || "",
-        role: identitySummary.role || "",
-        mission: identitySummary.mission || ""
-      },
-      environment: {
-        platform: environment.platform || navigator.platform || "",
-        language: environment.language || navigator.language || "",
-        href: environment.href || location.href || "",
-        ts: environment.ts || new Date().toISOString()
-      }
-    };
-  }
-
-  function setComposerStatus(txt) {
-    const el = document.getElementById("rcfFactoryAIComposerStatus");
-    if (el) el.textContent = String(txt || "");
-  }
-
-  function setTechResult(txt) {
-    const el = document.getElementById("rcfFactoryAITechResult");
-    if (el) el.textContent = String(txt || "");
-  }
-
-  function setSnapshotPreview(obj) {
-    const el = document.getElementById("rcfFactoryAISnapshot");
-    if (el) el.textContent = pretty(obj || {});
-  }
-
-  function setButtonsBusy(busy) {
-    STATE.busy = !!busy;
-
-    const sendBtn = document.getElementById("rcfFactoryAISend");
-    const attachBtn = document.getElementById("rcfFactoryAIAttachBtn");
-    const voiceBtn = document.getElementById("rcfFactoryAIVoiceBtn");
-    const input = document.getElementById("rcfFactoryAIPrompt");
-
-    if (sendBtn) sendBtn.disabled = !!busy;
-    if (attachBtn) attachBtn.disabled = !!busy;
-    if (voiceBtn) voiceBtn.disabled = !!busy;
-    if (input) input.disabled = !!busy;
-  }
-
-  function ensureStyle() {
-    if (document.getElementById(STYLE_ID)) return;
-
-    const st = document.createElement("style");
-    st.id = STYLE_ID;
-    st.textContent = `
-#${BOX_ID}{
-  margin-top:12px;
-  border:1px solid rgba(31,41,55,.08);
-  border-radius:26px;
-  background:linear-gradient(180deg,rgba(255,255,255,.96),rgba(248,250,255,.90));
-  box-shadow:0 10px 26px rgba(15,23,42,.05);
-  overflow:hidden;
-  overflow-x:hidden;
-  width:100%;
-  max-width:100%;
-}
-#${BOX_ID},
-#${BOX_ID} *,
-#${CHAT_ID}{
-  box-sizing:border-box;
-}
-#${BOX_ID}.card{
-  padding:0;
-  max-width:100%;
-}
-#${BOX_ID} .rcfAiShell{
-  display:grid;
-  grid-template-rows:auto 1fr auto;
-  min-height:620px;
-  width:100%;
-  max-width:100%;
-  min-width:0;
-  overflow:hidden;
-}
-#${BOX_ID} .rcfAiHead{
-  display:grid;
-  grid-template-columns:minmax(0,1fr) auto;
-  align-items:center;
-  gap:10px;
-  padding:14px 16px 12px;
-  border-bottom:1px solid rgba(31,41,55,.06);
-  background:rgba(255,255,255,.72);
-  min-width:0;
-  overflow:hidden;
-}
-#${BOX_ID} .rcfAiHeadLeft{
-  min-width:0;
-  display:flex;
-  align-items:center;
-  gap:10px;
-  overflow:hidden;
-}
-#${BOX_ID} .rcfAiHeadActions{
-  min-width:0;
-  display:flex;
-  align-items:center;
-  justify-content:flex-end;
-  gap:8px;
-  flex-wrap:nowrap;
-  overflow:hidden;
-}
-#${BOX_ID} .rcfAiAvatar{
-  width:36px;
-  height:36px;
-  min-width:36px;
-  border-radius:14px;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  font-size:18px;
-  border:1px solid rgba(95,115,155,.12);
-  background:linear-gradient(180deg,rgba(255,255,255,.98),rgba(239,244,252,.92));
-}
-#${BOX_ID} .rcfAiHeadText{
-  min-width:0;
-  overflow:hidden;
-}
-#${BOX_ID} .rcfAiHeadTitle{
-  margin:0;
-  font-size:18px;
-  line-height:1.05;
-  font-weight:900;
-  color:#202d4d;
-  white-space:nowrap;
-  overflow:hidden;
-  text-overflow:ellipsis;
-}
-#${BOX_ID} .rcfAiHeadSub{
-  display:none;
-}
-#${BOX_ID} .rcfAiPill{
-  display:inline-flex;
-  align-items:center;
-  justify-content:center;
-  min-height:30px;
-  max-width:160px;
-  padding:0 10px;
-  border-radius:999px;
-  border:1px solid rgba(90,110,150,.12);
-  background:rgba(255,255,255,.82);
-  font-size:11px;
-  font-weight:800;
-  color:rgba(32,45,77,.76);
-  white-space:nowrap;
-  overflow:hidden;
-  text-overflow:ellipsis;
-}
-#${BOX_ID} .rcfAiHeadBtn{
-  min-height:30px;
-  height:30px;
-  padding:0 10px;
-  border-radius:999px;
-  border:1px solid rgba(31,41,55,.08);
-  background:rgba(255,255,255,.94);
-  color:#5a6b98;
-  font-size:12px;
-  font-weight:800;
-  cursor:pointer;
-  flex:0 0 auto;
-}
-#${CHAT_ID}{
-  min-height:320px;
-  max-height:52vh;
-  overflow:auto;
-  overflow-x:hidden;
-  padding:14px;
-  background:linear-gradient(180deg,rgba(246,248,252,.72),rgba(250,251,255,.62));
-  overscroll-behavior:contain;
-  -webkit-overflow-scrolling:touch;
-  touch-action:pan-y;
-  min-width:0;
-  width:100%;
-}
-#${BOX_ID} .rcfAiEmpty{
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  min-height:260px;
-  text-align:center;
-  color:rgba(32,45,77,.42);
-  font-size:14px;
-  line-height:1.45;
-  padding:18px;
-}
-#${BOX_ID} .rcfAiMsgRow{
-  display:flex;
-  gap:10px;
-  margin-bottom:12px;
-  min-width:0;
-}
-#${BOX_ID} .rcfAiMsgRow.user{
-  justify-content:flex-end;
-}
-#${BOX_ID} .rcfAiMsgRow.assistant{
-  justify-content:flex-start;
-}
-#${BOX_ID} .rcfAiBubble{
-  width:min(100%, 720px);
-  max-width:100%;
-  min-width:0;
-  padding:14px 16px;
-  border-radius:20px;
-  border:1px solid rgba(31,41,55,.08);
-  background:rgba(255,255,255,.92);
-  box-shadow:0 2px 10px rgba(15,23,42,.04);
-  overflow:hidden;
-}
-#${BOX_ID} .rcfAiBubble.userBubble{
-  background:linear-gradient(180deg,rgba(112,152,255,.16),rgba(112,152,255,.09));
-  border-color:rgba(112,152,255,.20);
-}
-#${BOX_ID} .rcfAiMsgLabel{
-  font-size:12px;
-  font-weight:900;
-  letter-spacing:.08em;
-  text-transform:uppercase;
-  opacity:.60;
-  margin-bottom:8px;
-}
-#${BOX_ID} .rcfAiMsgText{
-  line-height:1.54;
-  color:#202d4d;
-  font-size:15px;
-  min-width:0;
-}
-#${BOX_ID} .rcfAiParagraph{
-  white-space:pre-wrap;
-  word-break:break-word;
-  overflow-wrap:anywhere;
-  margin:0 0 10px 0;
-}
-#${BOX_ID} .rcfAiParagraph:last-child{
-  margin-bottom:0;
-}
-#${BOX_ID} .rcfAiCodeWrap{
-  margin:10px 0;
-  border:1px solid rgba(31,41,55,.08);
-  border-radius:16px;
-  overflow:hidden;
-  background:#0f172a;
-  max-width:100%;
-}
-#${BOX_ID} .rcfAiCodeHead{
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  gap:10px;
-  padding:8px 10px;
-  background:rgba(255,255,255,.06);
-  color:#dbe7ff;
-  font-size:12px;
-  font-weight:800;
-}
-#${BOX_ID} .rcfAiCodeBtn{
-  min-width:70px;
-  height:28px;
-  border-radius:10px;
-  border:1px solid rgba(255,255,255,.12);
-  background:rgba(255,255,255,.08);
-  color:#eef4ff;
-  font-size:12px;
-  font-weight:800;
-  cursor:pointer;
-}
-#${BOX_ID} .rcfAiCodePre{
-  margin:0;
-  padding:12px;
-  overflow:auto;
-  font-size:12px;
-  line-height:1.5;
-  color:#eef4ff;
-  white-space:pre;
-  max-width:100%;
-}
-#${BOX_ID} .rcfAiMsgTime{
-  margin-top:8px;
-  font-size:11px;
-  opacity:.56;
-}
-#${BOX_ID} .rcfAiMsgTools{
-  display:flex;
-  justify-content:flex-end;
-  gap:8px;
-  margin-top:8px;
-  flex-wrap:wrap;
-}
-#${BOX_ID} .rcfAiMiniBtn{
-  min-width:34px;
-  height:34px;
-  border-radius:12px;
-  border:1px solid rgba(31,41,55,.08);
-  background:rgba(255,255,255,.94);
-  color:#5a6b98;
-  font-size:16px;
-  cursor:pointer;
-  display:inline-flex;
-  align-items:center;
-  justify-content:center;
-  padding:0 10px;
-  font-weight:800;
-}
-#${BOX_ID} .rcfAiComposer{
-  display:grid;
-  gap:10px;
-  padding:12px 14px 14px;
-  border-top:1px solid rgba(31,41,55,.06);
-  background:rgba(255,255,255,.82);
-  min-width:0;
-  width:100%;
-  max-width:100%;
-  overflow:hidden;
-}
-#${BOX_ID} .rcfAiAttachRow{
-  display:flex;
-  flex-wrap:wrap;
-  gap:8px;
-  min-width:0;
-}
-#${BOX_ID} .rcfAiAttachmentChip{
-  display:inline-flex;
-  align-items:center;
-  gap:8px;
-  min-height:32px;
-  padding:0 10px;
-  border-radius:999px;
-  border:1px solid rgba(31,41,55,.08);
-  background:rgba(245,248,255,.95);
-  color:#22345e;
-  font-size:12px;
-  font-weight:800;
-  max-width:100%;
-}
-#${BOX_ID} .rcfAiAttachmentName{
-  max-width:140px;
-  overflow:hidden;
-  text-overflow:ellipsis;
-  white-space:nowrap;
-}
-#${BOX_ID} .rcfAiAttachmentRemove{
-  width:20px;
-  height:20px;
-  border-radius:999px;
-  border:none;
-  background:rgba(112,152,255,.12);
-  color:#26407a;
-  font-weight:900;
-  cursor:pointer;
-}
-#${BOX_ID} .rcfAiInputShell{
-  display:grid;
-  grid-template-columns:30px minmax(0,1fr);
-  gap:10px;
-  align-items:end;
-  min-width:0;
-  width:100%;
-}
-#${BOX_ID} .rcfAiAttachWrap{
-  position:relative;
-  display:flex;
-  align-items:flex-end;
-  justify-content:center;
-  width:30px;
-  min-width:30px;
-  padding-bottom:8px;
-  flex:0 0 30px;
-}
-#${BOX_ID} .rcfAiAttachBtn{
-  width:28px;
-  height:28px;
-  min-width:28px;
-  border:none;
-  background:transparent;
-  color:#7088c8;
-  font-size:34px;
-  line-height:1;
-  font-weight:700;
-  cursor:pointer;
-  padding:0;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-}
-#${BOX_ID} .rcfAiInputCard{
-  display:grid;
-  grid-template-columns:minmax(0,1fr) 38px 38px;
-  align-items:end;
-  gap:6px;
-  min-height:54px;
-  min-width:0;
-  width:100%;
-  max-width:100%;
-  padding:6px 8px;
-  border-radius:18px;
-  border:1px solid rgba(31,41,55,.10);
-  background:#fff;
-  box-shadow:0 1px 0 rgba(255,255,255,.65) inset;
-  overflow:hidden;
-}
-#${BOX_ID} .rcfAiPrompt{
-  width:100%;
-  min-width:0;
-  min-height:28px;
-  max-height:88px;
-  resize:none;
-  padding:10px 6px;
-  border:none;
-  outline:none;
-  background:transparent;
-  color:#18233f;
-  font:inherit;
-  line-height:1.4;
-  overflow:auto;
-}
-#${BOX_ID} .rcfAiPrompt::placeholder{
-  color:rgba(24,35,63,.38);
-}
-#${BOX_ID} .rcfAiVoiceBtn{
-  width:38px;
-  height:38px;
-  min-width:38px;
-  border:none;
-  background:transparent;
-  color:#7b8ab7;
-  font-size:19px;
-  cursor:pointer;
-  display:inline-flex;
-  align-items:center;
-  justify-content:center;
-  border-radius:12px;
-  flex:0 0 38px;
-}
-#${BOX_ID} .rcfAiVoiceBtn.listening{
-  background:rgba(112,152,255,.12);
-  color:#26407a;
-}
-#${BOX_ID} .rcfAiSendBtn{
-  width:38px;
-  height:38px;
-  min-width:38px;
-  min-height:38px;
-  padding:0;
-  border-radius:999px;
-  border:1px solid rgba(112,152,255,.20);
-  background:linear-gradient(180deg, rgba(223,232,255,.98), rgba(212,224,255,.92));
-  color:#26407a;
-  font-size:16px;
-  font-weight:900;
-  cursor:pointer;
-  -webkit-tap-highlight-color:transparent;
-  display:inline-flex;
-  align-items:center;
-  justify-content:center;
-  flex:0 0 38px;
-}
-#${BOX_ID} .rcfAiMenu{
-  position:absolute;
-  left:-4px;
-  bottom:34px;
-  min-width:190px;
-  display:none;
-  z-index:30;
-  padding:8px;
-  border-radius:16px;
-  border:1px solid rgba(31,41,55,.08);
-  background:rgba(255,255,255,.98);
-  box-shadow:0 12px 26px rgba(15,23,42,.10);
-}
-#${BOX_ID} .rcfAiMenu.open{
-  display:grid;
-  gap:6px;
-}
-#${BOX_ID} .rcfAiMenuItem{
-  display:flex;
-  align-items:center;
-  gap:8px;
-  min-height:40px;
-  padding:0 12px;
-  border-radius:12px;
-  border:1px solid transparent;
-  background:rgba(247,249,253,.9);
-  color:#22345e;
-  font-size:13px;
-  font-weight:800;
-  cursor:pointer;
-}
-#${BOX_ID} .rcfAiBottom{
-  display:flex;
-  justify-content:space-between;
-  align-items:center;
-  gap:10px;
-  flex-wrap:wrap;
-  min-width:0;
-}
-#${BOX_ID} .rcfAiStatus{
-  font-size:13px;
-  font-weight:800;
-  color:rgba(32,45,77,.80);
-}
-#${BOX_ID} details.rcfAiDetails{
-  border:1px solid rgba(31,41,55,.08);
-  border-radius:18px;
-  background:rgba(255,255,255,.72);
-  padding:10px 12px;
-  min-width:0;
-  overflow:hidden;
-}
-#${BOX_ID} details.rcfAiDetails summary{
-  cursor:pointer;
-  font-weight:900;
-  color:#202d4d;
-}
-#${BOX_ID} .rcfAiPre{
-  margin-top:6px;
-  max-height:18vh;
-  overflow:auto;
-  white-space:pre-wrap;
-  word-break:break-word;
-  overflow-wrap:anywhere;
-}
-#${BOX_ID} .rcfAiHiddenInput{
-  display:none;
-}
-@media (max-width: 720px){
-  #${BOX_ID}{ border-radius:22px; }
-  #${BOX_ID} .rcfAiShell{ min-height:560px; }
-  #${BOX_ID} .rcfAiHead{
-    grid-template-columns:minmax(0,1fr);
-    align-items:start;
-    gap:8px;
-    padding:12px 14px 10px;
-  }
-  #${BOX_ID} .rcfAiHeadLeft{ gap:8px; }
-  #${BOX_ID} .rcfAiAvatar{
-    width:32px;height:32px;min-width:32px;font-size:16px;border-radius:12px;
-  }
-  #${BOX_ID} .rcfAiHeadTitle{ font-size:16px; }
-  #${BOX_ID} .rcfAiHeadActions{
-    width:100%;
-    justify-content:space-between;
-    gap:8px;
-  }
-  #${BOX_ID} .rcfAiPill{
-    max-width:calc(100% - 84px);
-    font-size:10px;
-    min-height:28px;
-    padding:0 8px;
-  }
-  #${CHAT_ID}{
-    padding:12px;
-    max-height:48vh;
-  }
-  #${BOX_ID} .rcfAiComposer{
-    padding:10px 12px 12px;
-    gap:8px;
-  }
-  #${BOX_ID} .rcfAiInputShell{
-    grid-template-columns:28px minmax(0,1fr);
-    gap:8px;
-  }
-  #${BOX_ID} .rcfAiAttachWrap{
-    width:28px;
-    min-width:28px;
-    flex-basis:28px;
-    padding-bottom:7px;
-  }
-  #${BOX_ID} .rcfAiAttachBtn{
-    width:26px;
-    height:26px;
-    min-width:26px;
-    font-size:30px;
-  }
-  #${BOX_ID} .rcfAiInputCard{
-    grid-template-columns:minmax(0,1fr) 36px 36px;
-    gap:4px;
-    padding:6px 6px;
-    min-height:52px;
-  }
-  #${BOX_ID} .rcfAiPrompt{
-    padding:9px 4px;
-    font-size:16px;
-  }
-  #${BOX_ID} .rcfAiVoiceBtn{
-    width:36px;
-    height:36px;
-    min-width:36px;
-    font-size:18px;
-  }
-  #${BOX_ID} .rcfAiSendBtn{
-    width:36px;
-    height:36px;
-    min-width:36px;
-    min-height:36px;
-    font-size:15px;
-  }
-  #${BOX_ID} .rcfAiAttachmentName{
-    max-width:100px;
-  }
-}
-@media (max-width: 420px){
-  #${BOX_ID} .rcfAiHeadBtn{
-    min-width:72px;
-    padding:0 8px;
-    font-size:11px;
-  }
-  #${BOX_ID} .rcfAiPill{
-    max-width:calc(100% - 78px);
-  }
-}`.trim();
-
-    document.head.appendChild(st);
-  }
-
-  function parseMessageToBlocks(text) {
-    const src = String(text || "");
-    const regex = /```([\w-]*)\n?([\s\S]*?)```/g;
-    const blocks = [];
-    let lastIndex = 0;
-    let match;
-
-    while ((match = regex.exec(src))) {
-      const before = src.slice(lastIndex, match.index);
-      if (before) blocks.push({ type: "text", value: before });
-
-      blocks.push({
-        type: "code",
-        lang: String(match[1] || "").trim(),
-        value: String(match[2] || "")
-      });
-
-      lastIndex = regex.lastIndex;
-    }
-
-    const tail = src.slice(lastIndex);
-    if (tail) blocks.push({ type: "text", value: tail });
-    if (!blocks.length) blocks.push({ type: "text", value: src });
-
-    return blocks;
-  }
-
-  function renderTextBlock(text) {
-    const parts = String(text || "").split(/\n{2,}/);
-    return parts.map(part => `<p class="rcfAiParagraph">${esc(part)}</p>`).join("");
-  }
-
-  function renderCodeBlock(code, lang, idx, codeIdx) {
-    const safeLang = esc(lang || "code");
-    const safeCode = esc(code || "");
-    const codeId = `rcfFactoryAICode_${idx}_${codeIdx}`;
-    return `
-      <div class="rcfAiCodeWrap">
-        <div class="rcfAiCodeHead">
-          <span>${safeLang || "code"}</span>
-          <button class="rcfAiCodeBtn" type="button" data-rcf-copy-code="${codeId}">Copiar</button>
-        </div>
-        <pre class="rcfAiCodePre" id="${codeId}"><code>${safeCode}</code></pre>
-      </div>
-    `;
-  }
-
-  function renderMessageText(text, idx) {
-    const blocks = parseMessageToBlocks(text);
-    let codeIdx = 0;
-
-    return blocks.map((block) => {
-      if (block.type === "code") {
-        const html = renderCodeBlock(block.value, block.lang, idx, codeIdx);
-        codeIdx += 1;
-        return html;
-      }
-      return renderTextBlock(block.value);
-    }).join("");
-  }
-
-  async function copyText(text) {
-    const value = String(text || "");
-    try {
-      if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
-        await navigator.clipboard.writeText(value);
-        setComposerStatus("copiado");
+        logger.push(level, message);
         return true;
-      }
-    } catch {}
+      } catch (_) {}
 
+      try {
+        logger.push(message);
+        return true;
+      } catch (_) {}
+
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function argsToText(argsLike) {
+    const args = Array.prototype.slice.call(argsLike || []);
+    return args.map((v) => {
+      if (typeof v === "string") return v;
+      try { return JSON.stringify(v); } catch (_) {}
+      try { return String(v); } catch (_) { return "[unserializable]"; }
+    }).join(" ");
+  }
+
+  function log() {
+    const msg = BUILD + " " + argsToText(arguments);
+    try { console.log(msg); } catch (_) {}
+    safeLoggerPush("INFO", msg);
+  }
+
+  function warn() {
+    const msg = BUILD + " " + argsToText(arguments);
+    try { console.warn(msg); } catch (_) {}
+    safeLoggerPush("WARN", msg);
+  }
+
+  function errLog() {
+    const msg = BUILD + " " + argsToText(arguments);
+    try { console.error(msg); } catch (_) {}
+    safeLoggerPush("ERROR", msg);
+  }
+
+  function isFn(v) { return typeof v === "function"; }
+  function isObj(v) { return !!v && typeof v === "object" && !Array.isArray(v); }
+  function isStr(v) { return typeof v === "string"; }
+  function isArr(v) { return Array.isArray(v); }
+
+  function nowIso() {
+    try { return new Date().toISOString(); } catch (_) { return ""; }
+  }
+
+  function uid(prefix) {
+    return (prefix || "id") + "_" + Math.random().toString(36).slice(2) + "_" + Date.now().toString(36);
+  }
+
+  function clampText(text, max) {
+    text = String(text == null ? "" : text);
+    max = Number(max || 0) || MAX_RUNTIME_TEXT;
+    if (text.length <= max) return text;
+    return text.slice(0, max) + "\n\n[truncated]";
+  }
+
+  function toArray(v) {
+    return Array.isArray(v) ? v : [];
+  }
+
+  function safeJsonParse(text, fallback) {
+    try { return JSON.parse(text); } catch (_) { return fallback; }
+  }
+
+  function readStorage(key, fallback) {
+    try {
+      const raw = localStorage.getItem(key);
+      return raw == null ? fallback : raw;
+    } catch (_) {
+      return fallback;
+    }
+  }
+
+  function writeStorage(key, value) {
+    try {
+      localStorage.setItem(key, value);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function removeStorage(key) {
+    try {
+      localStorage.removeItem(key);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function deepGet(obj, path, fallback) {
+    try {
+      const parts = String(path || "").split(".");
+      let ref = obj;
+      for (let i = 0; i < parts.length; i += 1) {
+        if (!parts[i]) continue;
+        ref = ref ? ref[parts[i]] : undefined;
+      }
+      return ref == null ? fallback : ref;
+    } catch (_) {
+      return fallback;
+    }
+  }
+
+  function bytesLabel(bytes) {
+    bytes = Number(bytes || 0);
+    if (bytes < 1024) return bytes + " B";
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+    return (bytes / (1024 * 1024)).toFixed(2) + " MB";
+  }
+
+  function normalizeText(text) {
+    return String(text == null ? "" : text).replace(/\r\n/g, "\n");
+  }
+
+  function ensureHistoryShape(list) {
+    list = toArray(list).filter(Boolean).map((item) => {
+      const msg = isObj(item) ? item : {};
+      return {
+        id: msg.id || uid("msg"),
+        role: msg.role || "assistant",
+        content: normalizeText(msg.content || ""),
+        createdAt: msg.createdAt || nowIso(),
+        route: msg.route || "",
+        endpoint: msg.endpoint || "",
+        error: !!msg.error,
+        pending: !!msg.pending,
+        attachments: toArray(msg.attachments).map(minifyAttachmentMeta)
+      };
+    });
+    if (list.length > MAX_HISTORY) list = list.slice(-MAX_HISTORY);
+    return list;
+  }
+
+  function normalizeRole(role) {
+    role = String(role || "").toLowerCase();
+    if (role === "user" || role === "assistant" || role === "system") return role;
+    return "assistant";
+  }
+
+  function hasClipboard() {
+    try { return !!(navigator && navigator.clipboard && navigator.clipboard.writeText); } catch (_) { return false; }
+  }
+
+  function copyText(text) {
+    text = String(text == null ? "" : text);
+    if (!text) return Promise.resolve(false);
+
+    if (hasClipboard()) {
+      try {
+        return navigator.clipboard.writeText(text).then(() => true).catch(() => Promise.resolve(legacyCopyText(text)));
+      } catch (_) {}
+    }
+
+    return Promise.resolve(legacyCopyText(text));
+  }
+
+  function legacyCopyText(text) {
     try {
       const ta = document.createElement("textarea");
-      ta.value = value;
+      ta.value = text;
       ta.setAttribute("readonly", "readonly");
       ta.style.position = "fixed";
       ta.style.opacity = "0";
       ta.style.left = "-9999px";
+      ta.style.top = "0";
       document.body.appendChild(ta);
+      ta.focus();
       ta.select();
-      document.execCommand("copy");
-      ta.remove();
-      setComposerStatus("copiado");
-      return true;
-    } catch {}
-
-    setComposerStatus("falha ao copiar");
-    return false;
+      ta.setSelectionRange(0, ta.value.length);
+      const ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      return !!ok;
+    } catch (_) {
+      return false;
+    }
   }
 
-  function bindCopyButtons(root) {
-    qsa("[data-rcf-copy-msg]", root).forEach((btn) => {
-      if (btn.__boundCopyMsg) return;
-      btn.__boundCopyMsg = true;
-      btn.addEventListener("click", async () => {
-        const idx = Number(btn.getAttribute("data-rcf-copy-msg"));
-        const item = Array.isArray(STATE.history) ? STATE.history[idx] : null;
-        if (item && item.text) await copyText(item.text);
-      });
-    });
-
-    qsa("[data-rcf-copy-code]", root).forEach((btn) => {
-      if (btn.__boundCopyCode) return;
-      btn.__boundCopyCode = true;
-      btn.addEventListener("click", async () => {
-        const targetId = btn.getAttribute("data-rcf-copy-code");
-        const el = targetId ? document.getElementById(targetId) : null;
-        const txt = el ? String(el.textContent || "") : "";
-        await copyText(txt);
-      });
-    });
+  function scrollInfo(el) {
+    if (!el) return { top: 0, height: 0, client: 0, distanceToBottom: 0, anchored: true };
+    const top = el.scrollTop || 0;
+    const height = el.scrollHeight || 0;
+    const client = el.clientHeight || 0;
+    const distanceToBottom = Math.max(0, height - client - top);
+    const anchored = distanceToBottom <= SCROLL_BOTTOM_THRESHOLD;
+    return { top, height, client, distanceToBottom, anchored };
   }
 
-  function getHistorySignature() {
+  function createEl(tag, cls, text) {
+    const el = document.createElement(tag);
+    if (cls) el.className = cls;
+    if (text != null) el.textContent = String(text);
+    return el;
+  }
+
+  function requestAnimation(fn) {
+    try { return window.requestAnimationFrame(fn); } catch (_) { return setTimeout(fn, 16); }
+  }
+
+  function resolveFactoryState() {
+    return isObj(window.RCF_FACTORY_STATE) ? window.RCF_FACTORY_STATE : {};
+  }
+
+  function resolveContext() {
+    return isObj(window.RCF_CONTEXT) ? window.RCF_CONTEXT : {};
+  }
+
+  function resolveRegistry() {
+    return isObj(window.RCF_MODULE_REGISTRY) ? window.RCF_MODULE_REGISTRY : {};
+  }
+
+  function resolveFactoryTree() {
+    return window.RCF_FACTORY_TREE || null;
+  }
+
+  function safeModuleKeys(obj, max) {
     try {
-      const last = STATE.history.slice(-6);
-      return JSON.stringify(last);
-    } catch {
-      return String((STATE.history || []).length);
+      return Object.keys(isObj(obj) ? obj : {}).slice(0, max || 80);
+    } catch (_) {
+      return [];
     }
   }
 
-  function renderChat(options = {}) {
-    const box = document.getElementById(CHAT_ID);
-    if (!box) return;
+  function resolveHostSignature(host) {
+    if (!host) return "";
+    return [
+      host.id || "",
+      host.className || "",
+      host.getAttribute ? (host.getAttribute("data-view") || "") : "",
+      host.tagName || ""
+    ].join("|");
+  }
 
-    const forceBottom = !!options.forceBottom;
-    const signature = getHistorySignature();
-
-    bindChatScroll();
-
-    if (!Array.isArray(STATE.history) || !STATE.history.length) {
-      if (STATE.lastRenderSignature !== "__empty__") {
-        box.innerHTML = `
-          <div class="rcfAiEmpty">
-            Converse com a Factory AI para analisar arquitetura, corrigir módulos, revisar contexto e estruturar a própria Factory.
-          </div>
-        `;
-        STATE.lastRenderSignature = "__empty__";
+  function safeInvoke(target, names, args) {
+    target = target || null;
+    names = toArray(names);
+    args = toArray(args);
+    for (let i = 0; i < names.length; i += 1) {
+      const fn = target ? target[names[i]] : null;
+      if (isFn(fn)) {
+        return fn.apply(target, args);
       }
-      if (forceBottom) scrollChatToBottom(true);
-      return;
     }
+    throw new Error("No compatible method found: " + names.join(", "));
+  }
 
-    const shouldReuse = STATE.renderedOnce && STATE.lastRenderSignature === signature && !forceBottom;
-    if (shouldReuse) return;
+  // =========================================================
+  // 4) HISTORY HELPERS
+  // =========================================================
+  function loadHistory() {
+    const raw = readStorage(STORAGE_KEYS.history, "[]");
+    state.history = ensureHistoryShape(safeJsonParse(raw, []));
+    return state.history.slice();
+  }
 
-    const wasNearBottom = isNearBottom(box, 56);
-    if (wasNearBottom) STATE.pinnedToBottom = true;
+  function saveHistory() {
+    state.history = ensureHistoryShape(state.history);
+    writeStorage(STORAGE_KEYS.history, JSON.stringify(state.history));
+    return true;
+  }
 
-    box.innerHTML = STATE.history.map((item, idx) => {
-      const isUser = item.role === "user";
-      const canSpeak = !isUser;
-      const canCopy = !isUser;
-      return `
-        <div class="rcfAiMsgRow ${isUser ? "user" : "assistant"}">
-          <div class="rcfAiBubble ${isUser ? "userBubble" : ""}">
-            <div class="rcfAiMsgLabel">${isUser ? "Você" : "Factory AI"}</div>
-            <div class="rcfAiMsgText">${renderMessageText(item.text, idx)}</div>
-            <div class="rcfAiMsgTime">${esc(item.ts)}</div>
-            ${!isUser ? `
-              <div class="rcfAiMsgTools">
-                ${canCopy ? `<button class="rcfAiMiniBtn" type="button" data-rcf-copy-msg="${idx}" title="Copiar resposta">Copiar</button>` : ``}
-                ${canSpeak ? `<button class="rcfAiMiniBtn" type="button" data-rcf-speak-idx="${idx}" title="Ler resposta">🔊</button>` : ``}
-              </div>
-            ` : ``}
-          </div>
-        </div>
-      `;
-    }).join("");
+  function getHistory() {
+    if (!state.history.length) loadHistory();
+    return state.history.slice();
+  }
 
-    qsa("[data-rcf-speak-idx]", box).forEach((btn) => {
-      if (btn.__boundSpeak) return;
-      btn.__boundSpeak = true;
-      btn.addEventListener("click", () => {
-        const idx = Number(btn.getAttribute("data-rcf-speak-idx"));
-        const item = Array.isArray(STATE.history) ? STATE.history[idx] : null;
-        if (item && item.text) speakText(item.text);
-      }, { passive: true });
+  function buildMessage(role, content, extra) {
+    extra = isObj(extra) ? extra : {};
+    return {
+      id: extra.id || uid("msg"),
+      role: normalizeRole(role),
+      content: normalizeText(content || ""),
+      createdAt: extra.createdAt || nowIso(),
+      route: extra.route || "",
+      endpoint: extra.endpoint || "",
+      error: !!extra.error,
+      pending: !!extra.pending,
+      attachments: toArray(extra.attachments).map(minifyAttachmentMeta)
+    };
+  }
+
+  function pushMessage(message, renderNow) {
+    state.history.push(buildMessage(
+      message.role,
+      message.content,
+      message
+    ));
+    if (state.history.length > MAX_HISTORY) state.history = state.history.slice(-MAX_HISTORY);
+    saveHistory();
+    if (renderNow !== false) appendRenderedMessage(state.history[state.history.length - 1]);
+    return state.history[state.history.length - 1];
+  }
+
+  function replaceMessage(messageId, patch) {
+    let found = false;
+    state.history = state.history.map((msg) => {
+      if (msg && msg.id === messageId) {
+        found = true;
+        return buildMessage(
+          patch.role || msg.role,
+          patch.content != null ? patch.content : msg.content,
+          {
+            id: msg.id,
+            createdAt: patch.createdAt || msg.createdAt,
+            route: patch.route != null ? patch.route : msg.route,
+            endpoint: patch.endpoint != null ? patch.endpoint : msg.endpoint,
+            error: patch.error != null ? patch.error : msg.error,
+            pending: patch.pending != null ? patch.pending : msg.pending,
+            attachments: patch.attachments != null ? patch.attachments : msg.attachments
+          }
+        );
+      }
+      return msg;
     });
-
-    bindCopyButtons(box);
-
-    STATE.lastRenderSignature = signature;
-    STATE.renderedOnce = true;
-
-    if (forceBottom || STATE.pinnedToBottom || wasNearBottom) {
-      scrollChatToBottom(true);
+    if (!found) {
+      state.history.push(buildMessage(patch.role || "assistant", patch.content || "", patch));
     }
+    saveHistory();
+    rerenderHistoryPreservingScroll();
+    return true;
   }
 
   function clearChat() {
-    STATE.history = [];
-    persistHistory();
-    STATE.lastRenderSignature = "";
-    STATE.renderedOnce = false;
-    renderChat();
-    setComposerStatus("aguardando");
-    setTechResult("Pronto.");
-    setSnapshotPreview({});
+    state.history = [];
+    saveHistory();
+    rerenderHistoryPreservingScroll(true);
+    setComposerStatus("Histórico limpo.");
+    return true;
   }
 
-  function inferActionFromPrompt(prompt) {
-    const p = String(prompt || "").trim().toLowerCase();
+  // =========================================================
+  // 5) RENDER HELPERS
+  // =========================================================
+  function ensureCss() {
+    if (document.getElementById(CSS_ID)) return true;
 
-    if (!p) return "chat";
+    const style = document.createElement("style");
+    style.id = CSS_ID;
+    style.textContent = `
+      .rcf-admin-ai-root{
+        position:relative; display:flex; flex-direction:column; height:100%; min-height:280px;
+        color:inherit; background:transparent; overflow:hidden;
+      }
+      .rcf-admin-ai-shell{
+        position:relative; display:flex; flex-direction:column; height:100%; min-height:0;
+      }
+      .rcf-admin-ai-head{
+        display:flex; align-items:center; justify-content:space-between; gap:10px;
+        padding:12px; border-bottom:1px solid rgba(255,255,255,.08);
+      }
+      .rcf-admin-ai-head-left{
+        min-width:0; display:flex; align-items:center; gap:10px;
+      }
+      .rcf-admin-ai-badge{
+        width:36px; height:36px; border-radius:12px;
+        display:flex; align-items:center; justify-content:center;
+        background:rgba(255,255,255,.06);
+        flex:0 0 auto;
+      }
+      .rcf-admin-ai-head-copy{ min-width:0; }
+      .rcf-admin-ai-title{
+        font-size:14px; font-weight:700; line-height:1.2; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+      }
+      .rcf-admin-ai-sub{
+        font-size:11px; opacity:.72; line-height:1.2; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+      }
+      .rcf-admin-ai-head-actions{
+        display:flex; align-items:center; gap:8px; flex:0 0 auto;
+      }
+      .rcf-admin-ai-btn,
+      .rcf-admin-ai-iconbtn{
+        border:0; outline:0; appearance:none; -webkit-appearance:none;
+        background:rgba(255,255,255,.06); color:inherit; border-radius:12px; cursor:pointer;
+        font:inherit;
+      }
+      .rcf-admin-ai-btn{
+        height:34px; padding:0 12px; font-size:12px;
+      }
+      .rcf-admin-ai-iconbtn{
+        width:34px; height:34px; display:flex; align-items:center; justify-content:center;
+      }
+      .rcf-admin-ai-body{
+        flex:1 1 auto; min-height:0; overflow:auto; padding:14px 12px 18px 12px;
+        overscroll-behavior:contain;
+      }
+      .rcf-admin-ai-list{
+        width:100%; max-width:980px; margin:0 auto; display:flex; flex-direction:column; gap:12px;
+      }
+      .rcf-admin-ai-empty{
+        text-align:center; font-size:13px; opacity:.72; padding:26px 14px;
+      }
+      .rcf-admin-ai-row{
+        display:flex; width:100%;
+      }
+      .rcf-admin-ai-row.user{ justify-content:flex-end; }
+      .rcf-admin-ai-row.assistant,
+      .rcf-admin-ai-row.system{ justify-content:flex-start; }
 
-    if (
-      p.includes("openai") ||
-      p.includes("api key") ||
-      p.includes("status real") ||
-      p.includes("teste real") ||
-      p.includes("runtime") ||
-      p.includes("backend") ||
-      p.includes("endpoint") ||
-      p.includes("conexão") ||
-      p.includes("conexao") ||
-      p.includes("/api/admin-ai")
-    ) return "openai_status";
+      .rcf-admin-ai-bubble{
+        position:relative; max-width:min(88%, 800px); border-radius:18px; padding:12px 12px 10px 12px;
+        word-break:break-word; overflow-wrap:anywhere; box-shadow:0 5px 18px rgba(0,0,0,.08);
+      }
+      .rcf-admin-ai-row.user .rcf-admin-ai-bubble{ background:rgba(85,130,255,.16); }
+      .rcf-admin-ai-row.assistant .rcf-admin-ai-bubble,
+      .rcf-admin-ai-row.system .rcf-admin-ai-bubble{ background:rgba(255,255,255,.05); }
+      .rcf-admin-ai-bubble.error{ outline:1px solid rgba(255,100,100,.28); }
 
-    if (
-      p.includes("log") ||
-      p.includes("erro") ||
-      p.includes("error") ||
-      p.includes("falha") ||
-      p.includes("crash")
-    ) return "analyze-logs";
+      .rcf-admin-ai-role{
+        font-size:11px; font-weight:700; opacity:.62; text-transform:uppercase; letter-spacing:.04em; margin-bottom:7px;
+      }
+      .rcf-admin-ai-text{
+        font-size:14px; line-height:1.5; white-space:pre-wrap;
+      }
+      .rcf-admin-ai-meta{
+        display:flex; flex-wrap:wrap; gap:8px; font-size:11px; opacity:.64; margin-top:8px;
+      }
+      .rcf-admin-ai-mini-actions{
+        display:flex; flex-wrap:wrap; gap:6px; margin-top:10px;
+      }
+      .rcf-admin-ai-mini{
+        border:0; outline:0; appearance:none; -webkit-appearance:none;
+        background:rgba(255,255,255,.07); color:inherit; border-radius:10px;
+        height:30px; padding:0 10px; font:inherit; font-size:12px; cursor:pointer;
+      }
 
-    if (
-      p.includes("doctor") ||
-      p.includes("diagnóstico") ||
-      p.includes("diagnostico") ||
-      p.includes("estabilidade") ||
-      p.includes("stability")
-    ) return "factory_diagnosis";
+      .rcf-admin-ai-code-wrap{
+        margin-top:10px; border-radius:14px; overflow:hidden;
+        background:rgba(0,0,0,.28); border:1px solid rgba(255,255,255,.06);
+      }
+      .rcf-admin-ai-code-head{
+        display:flex; align-items:center; justify-content:space-between; gap:10px;
+        padding:8px 10px; background:rgba(255,255,255,.05); font-size:11px; opacity:.86;
+      }
+      .rcf-admin-ai-code{
+        margin:0; padding:12px; overflow:auto; white-space:pre; font-size:12px; line-height:1.5;
+        font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      }
 
-    if (
-      p.includes("patch") ||
-      p.includes("corrig") ||
-      p.includes("fix") ||
-      p.includes("ajust") ||
-      p.includes("consert")
-    ) return "propose-patch";
+      .rcf-admin-ai-attachments-inline{
+        display:flex; flex-wrap:wrap; gap:8px; margin-top:10px;
+      }
+      .rcf-admin-ai-att-chip{
+        display:inline-flex; align-items:center; gap:8px; max-width:100%;
+        background:rgba(255,255,255,.07); border-radius:12px; padding:8px 10px; font-size:12px;
+      }
+      .rcf-admin-ai-att-name{
+        white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:180px;
+      }
 
-    if (
-      p.includes("gerar código") ||
-      p.includes("gerar codigo") ||
-      p.includes("gere código") ||
-      p.includes("gere codigo") ||
-      p.includes("código completo") ||
-      p.includes("codigo completo") ||
-      p.includes("arquivo completo") ||
-      p.includes("code")
-    ) return "generate-code";
+      .rcf-admin-ai-composer-wrap{
+        position:relative; flex:0 0 auto; padding:10px 12px 12px 12px;
+        border-top:1px solid rgba(255,255,255,.08);
+      }
+      .rcf-admin-ai-attachments-bar{
+        display:none; max-width:980px; margin:0 auto 8px auto; gap:8px; overflow:auto;
+      }
+      .rcf-admin-ai-attachments-bar.show{ display:flex; }
 
-    if (
-      p.includes("módulo") ||
-      p.includes("modulo") ||
-      p.includes("arquivo") ||
-      p.includes("file") ||
-      p.includes("review")
-    ) return "review-module";
+      .rcf-admin-ai-chip{
+        display:inline-flex; align-items:center; gap:8px; white-space:nowrap;
+        background:rgba(255,255,255,.07); border-radius:999px; padding:8px 10px; font-size:12px;
+      }
+      .rcf-admin-ai-chip button{
+        border:0; background:transparent; color:inherit; cursor:pointer; opacity:.85; font-size:14px;
+      }
 
-    if (
-      p.includes("melhoria") ||
-      p.includes("melhorar") ||
-      p.includes("improve") ||
-      p.includes("sugest")
-    ) return "suggest-improvement";
+      .rcf-admin-ai-composer{
+        position:relative; display:flex; align-items:flex-end; gap:8px; max-width:980px; margin:0 auto;
+      }
+      .rcf-admin-ai-plus{
+        width:42px; min-width:42px; height:42px; border-radius:14px; border:0; cursor:pointer;
+        background:rgba(255,255,255,.07); color:inherit; font-size:20px;
+      }
+      .rcf-admin-ai-core{
+        flex:1 1 auto; min-width:0; display:flex; align-items:flex-end; gap:8px;
+        background:rgba(255,255,255,.05); border-radius:18px; padding:8px;
+        min-height:58px;
+      }
+      .rcf-admin-ai-textarea{
+        flex:1 1 auto; min-width:0; min-height:42px; max-height:180px; resize:none;
+        background:transparent; border:0; outline:0; color:inherit; font:inherit;
+        padding:10px 8px 10px 10px; line-height:1.4;
+      }
+      .rcf-admin-ai-actions{
+        display:flex; align-items:center; gap:6px; flex:0 0 auto;
+      }
+      .rcf-admin-ai-send{
+        width:42px; min-width:42px; height:42px; border-radius:14px; border:0; cursor:pointer;
+        background:rgba(255,255,255,.10); color:inherit;
+      }
+      .rcf-admin-ai-send.busy{ opacity:.75; }
+      .rcf-admin-ai-status{
+        max-width:980px; margin:8px auto 0 auto; min-height:18px; padding:0 2px;
+        font-size:12px; opacity:.72;
+      }
+      .rcf-admin-ai-menu{
+        position:absolute; left:12px; bottom:82px; z-index:20; min-width:240px;
+        display:none; padding:8px; border-radius:14px;
+        background:rgba(19,20,25,.96); border:1px solid rgba(255,255,255,.08);
+        box-shadow:0 12px 30px rgba(0,0,0,.26);
+      }
+      .rcf-admin-ai-menu.show{ display:block; }
+      .rcf-admin-ai-menu button{
+        display:block; width:100%; text-align:left; border:0; background:transparent; color:inherit;
+        padding:10px 10px; border-radius:10px; font:inherit; cursor:pointer;
+      }
 
-    if (
-      p.includes("zip") ||
-      p.includes("pdf") ||
-      p.includes("imagem") ||
-      p.includes("foto") ||
-      p.includes("arquivo") ||
-      p.includes("vídeo") ||
-      p.includes("video") ||
-      p.includes("áudio") ||
-      p.includes("audio")
-    ) return "zip-readiness";
+      .rcf-admin-ai-hidden-input{ display:none !important; }
 
-    if (
-      p.includes("arquitetura") ||
-      p.includes("estrutura") ||
-      p.includes("organiza") ||
-      p.includes("orquestra") ||
-      p.includes("layout") ||
-      p.includes("design")
-    ) return "analyze-architecture";
-
-    return "chat";
+      @media (max-width:640px){
+        .rcf-admin-ai-body{ padding:12px 10px 16px 10px; }
+        .rcf-admin-ai-composer-wrap{ padding:8px 10px 10px 10px; }
+        .rcf-admin-ai-bubble{ max-width:93%; }
+      }
+    `;
+    document.head.appendChild(style);
+    return true;
   }
 
-  function inferLocalActionFromPrompt(prompt) {
-    const p = String(prompt || "").trim().toLowerCase();
+  function parseCodeBlocks(text) {
+    const out = [];
+    const rx = /```([a-zA-Z0-9_.+\-]*)\n([\s\S]*?)```/g;
+    let match;
+    while ((match = rx.exec(String(text || "")))) {
+      out.push({
+        lang: (match[1] || "").trim() || "code",
+        code: match[2] || ""
+      });
+    }
+    return out;
+  }
 
-    if (!p) return "";
+  function renderMessageText(container, text) {
+    text = normalizeText(text);
+    const rx = /```([a-zA-Z0-9_.+\-]*)\n([\s\S]*?)```/g;
+    let last = 0;
+    let match;
 
-    if (
-      (p.includes("aprovar") || p.includes("aprova")) &&
-      p.includes("patch")
-    ) return "approve_patch";
+    while ((match = rx.exec(text))) {
+      const plain = text.slice(last, match.index);
+      if (plain) {
+        container.appendChild(createEl("div", "rcf-admin-ai-text", plain));
+      }
 
-    if (
-      (p.includes("validar") || p.includes("valida")) &&
-      p.includes("patch")
-    ) return "validate_patch";
+      const wrap = createEl("div", "rcf-admin-ai-code-wrap");
+      const head = createEl("div", "rcf-admin-ai-code-head");
+      head.appendChild(createEl("div", "", (match[1] || "code").trim() || "code"));
 
-    if (
-      p.includes("stage") &&
-      p.includes("patch")
-    ) return "stage_patch";
+      const btn = createEl("button", "rcf-admin-ai-mini", "Copiar código");
+      btn.type = "button";
+      btn.addEventListener("click", () => {
+        copyText(match[2] || "").then((ok) => setComposerStatus(ok ? "Código copiado." : "Falha ao copiar código."));
+      });
+      head.appendChild(btn);
 
-    if (
-      (p.includes("aplicar") || p.includes("aplica")) &&
-      p.includes("patch")
-    ) return "apply_patch";
+      const pre = createEl("pre", "rcf-admin-ai-code");
+      const code = document.createElement("code");
+      code.textContent = match[2] || "";
+      pre.appendChild(code);
+      wrap.appendChild(head);
+      wrap.appendChild(pre);
+      container.appendChild(wrap);
 
-    if (
-      p.includes("planejar") ||
-      p.includes("gerar plano") ||
-      p.includes("montar plano") ||
-      (p.includes("plano") && p.includes("próximo"))
-    ) return "plan";
+      last = rx.lastIndex;
+    }
 
-    if (
-      p.includes("próximo arquivo") ||
-      p.includes("proximo arquivo")
-    ) return "next_file";
+    const rest = text.slice(last);
+    if (rest || !container.childNodes.length) {
+      container.appendChild(createEl("div", "rcf-admin-ai-text", rest || ""));
+    }
+  }
 
-    if (
-      p.includes("snapshot local") ||
-      p.includes("snapshot do runtime") ||
-      p.includes("mostrar snapshot") ||
-      p.includes("estado local")
-    ) return "snapshot";
+  function minifyAttachmentMeta(file) {
+    file = isObj(file) ? file : {};
+    return {
+      id: file.id || uid("att"),
+      name: String(file.name || "arquivo"),
+      type: String(file.type || "application/octet-stream"),
+      size: Number(file.size || 0),
+      kind: String(file.kind || inferAttachmentKind(file.type || "", file.name || "")),
+      previewText: file.previewText ? clampText(String(file.previewText), 6000) : "",
+      dataUrl: file.dataUrl && String(file.dataUrl).length <= (MAX_INLINE_PREVIEW * 2) ? String(file.dataUrl) : ""
+    };
+  }
 
-    if (
-      p.includes("rodar doctor") ||
-      p.includes("executar doctor") ||
-      p.includes("run doctor")
-    ) return "run_doctor";
+  function renderInlineAttachments(parent, files) {
+    files = toArray(files);
+    if (!files.length) return;
 
-    if (
-      p.includes("coletar logs") ||
-      p.includes("mostrar logs locais")
-    ) return "collect_logs";
+    const wrap = createEl("div", "rcf-admin-ai-attachments-inline");
+    files.forEach((f) => {
+      const chip = createEl("div", "rcf-admin-ai-att-chip");
+      chip.appendChild(createEl("span", "", attachmentEmoji(f.kind || inferAttachmentKind(f.type, f.name))));
+      chip.appendChild(createEl("span", "rcf-admin-ai-att-name", f.name || "arquivo"));
+      chip.appendChild(createEl("span", "", bytesLabel(f.size)));
+      wrap.appendChild(chip);
+    });
+    parent.appendChild(wrap);
+  }
+
+  function attachmentEmoji(kind) {
+    kind = String(kind || "");
+    if (kind === "image") return "🖼️";
+    if (kind === "pdf") return "📄";
+    if (kind === "zip") return "🗜️";
+    if (kind === "video") return "🎞️";
+    if (kind === "audio") return "🎵";
+    return "📎";
+  }
+
+  function renderSingleMessage(msg) {
+    const row = createEl("div", "rcf-admin-ai-row " + normalizeRole(msg.role));
+    row.dataset.messageId = msg.id || "";
+
+    const bubble = createEl("div", "rcf-admin-ai-bubble" + (msg.error ? " error" : ""));
+    bubble.appendChild(createEl("div", "rcf-admin-ai-role", msg.role || "assistant"));
+
+    const content = createEl("div", "rcf-admin-ai-content");
+    renderMessageText(content, msg.content || "");
+    bubble.appendChild(content);
+
+    renderInlineAttachments(bubble, msg.attachments);
+
+    const meta = createEl("div", "rcf-admin-ai-meta");
+    if (msg.route) meta.appendChild(createEl("span", "", "route: " + msg.route));
+    if (msg.endpoint) meta.appendChild(createEl("span", "", "endpoint: " + msg.endpoint));
+    if (msg.createdAt) meta.appendChild(createEl("span", "", msg.createdAt));
+    bubble.appendChild(meta);
+
+    const actions = createEl("div", "rcf-admin-ai-mini-actions");
+
+    const copyBtn = createEl("button", "rcf-admin-ai-mini", "Copiar resposta");
+    copyBtn.type = "button";
+    copyBtn.addEventListener("click", () => {
+      copyText(msg.content || "").then((ok) => setComposerStatus(ok ? "Resposta copiada." : "Falha ao copiar resposta."));
+    });
+    actions.appendChild(copyBtn);
+
+    if (normalizeRole(msg.role) === "assistant") {
+      const readBtn = createEl("button", "rcf-admin-ai-mini", "Ler");
+      readBtn.type = "button";
+      readBtn.addEventListener("click", () => speakText(msg.content || ""));
+      actions.appendChild(readBtn);
+    }
+
+    bubble.appendChild(actions);
+    row.appendChild(bubble);
+    return row;
+  }
+
+  function appendRenderedMessage(msg) {
+    if (!state.ui || !state.ui.list) return false;
+    if (!state.ui.list.__hasRealMessage) {
+      state.ui.list.innerHTML = "";
+      state.ui.list.__hasRealMessage = true;
+    }
+
+    const shouldStick = isChatAnchored();
+    state.ui.list.appendChild(renderSingleMessage(msg));
+    if (shouldStick) scrollChatToBottom(true);
+    return true;
+  }
+
+  function rerenderHistoryPreservingScroll(forceBottom) {
+    if (!state.ui || !state.ui.body || !state.ui.list) return false;
+
+    const body = state.ui.body;
+    const infoBefore = scrollInfo(body);
+    const wasAnchored = forceBottom ? true : infoBefore.anchored;
+    const prevTop = infoBefore.top;
+    const prevHeight = infoBefore.height;
+
+    state.ui.list.innerHTML = "";
+    state.ui.list.__hasRealMessage = false;
+
+    const list = getHistory().slice(-MAX_RENDERED_HISTORY);
+    if (!list.length) {
+      state.ui.list.appendChild(createEl("div", "rcf-admin-ai-empty", "Factory AI pronta. Envie um prompt para começar."));
+    } else {
+      state.ui.list.__hasRealMessage = true;
+      list.forEach((msg) => {
+        state.ui.list.appendChild(renderSingleMessage(msg));
+      });
+    }
+
+    requestAnimation(() => {
+      if (!state.ui || !state.ui.body) return;
+      if (wasAnchored) {
+        scrollChatToBottom(true);
+      } else {
+        const newHeight = state.ui.body.scrollHeight || 0;
+        const delta = newHeight - prevHeight;
+        state.ui.body.scrollTop = Math.max(0, prevTop + delta);
+      }
+    });
+
+    return true;
+  }
+
+  function isChatAnchored() {
+    return !!(state.ui && state.ui.body && scrollInfo(state.ui.body).anchored);
+  }
+
+  function scrollChatToBottom(force) {
+    if (!state.ui || !state.ui.body) return false;
+    if (!force && !state.shouldAutoStick) return false;
+    try {
+      state.ui.body.scrollTop = state.ui.body.scrollHeight;
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function onChatScroll() {
+    if (!state.ui || !state.ui.body) return;
+    const info = scrollInfo(state.ui.body);
+    state.lastKnownScrollTop = info.top;
+    state.shouldAutoStick = info.anchored;
+  }
+
+  function autogrowTextarea() {
+    if (!state.ui || !state.ui.textarea) return false;
+    const ta = state.ui.textarea;
+    ta.style.height = "42px";
+    const next = Math.min(180, ta.scrollHeight || 42);
+    ta.style.height = next + "px";
+    return true;
+  }
+
+  function setComposerStatus(text) {
+    state.composerStatusText = String(text || "");
+    if (state.ui && state.ui.status) state.ui.status.textContent = state.composerStatusText;
+  }
+
+  // =========================================================
+  // 6) ATTACHMENT HELPERS
+  // =========================================================
+  function inferAttachmentKind(type, name) {
+    type = String(type || "").toLowerCase();
+    name = String(name || "").toLowerCase();
+
+    if (type.indexOf("image/") === 0) return "image";
+    if (type.indexOf("video/") === 0) return "video";
+    if (type.indexOf("audio/") === 0) return "audio";
+    if (type.indexOf("pdf") >= 0 || /\.pdf$/i.test(name)) return "pdf";
+    if (type.indexOf("zip") >= 0 || /\.(zip|rar|7z)$/i.test(name)) return "zip";
+    return "file";
+  }
+
+  function getAttachments() {
+    return state.attachments.slice();
+  }
+
+  function persistAttachmentMetaOnly() {
+    const list = state.attachments.map((a) => ({
+      id: a.id,
+      name: a.name,
+      type: a.type,
+      size: a.size,
+      kind: a.kind
+    }));
+    writeStorage(STORAGE_KEYS.attachmentsMeta, JSON.stringify(list));
+  }
+
+  function clearAttachments() {
+    state.attachments = [];
+    persistAttachmentMetaOnly();
+    renderAttachmentBar();
+    return true;
+  }
+
+  function renderAttachmentBar() {
+    if (!state.ui || !state.ui.attachmentsBar) return false;
+    const bar = state.ui.attachmentsBar;
+    bar.innerHTML = "";
+
+    if (!state.attachments.length) {
+      bar.classList.remove("show");
+      return true;
+    }
+
+    state.attachments.forEach((file, index) => {
+      const chip = createEl("div", "rcf-admin-ai-chip");
+      chip.appendChild(createEl("span", "", attachmentEmoji(file.kind) + " " + (file.name || "arquivo")));
+      chip.appendChild(createEl("span", "", bytesLabel(file.size)));
+      const rm = document.createElement("button");
+      rm.type = "button";
+      rm.textContent = "×";
+      rm.addEventListener("click", () => {
+        state.attachments.splice(index, 1);
+        persistAttachmentMetaOnly();
+        renderAttachmentBar();
+      });
+      chip.appendChild(rm);
+      bar.appendChild(chip);
+    });
+
+    bar.classList.add("show");
+    return true;
+  }
+
+  function fileToDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      try {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result || "");
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      } catch (e) {
+        reject(e);
+      }
+    });
+  }
+
+  function fileToText(file) {
+    return new Promise((resolve, reject) => {
+      try {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = reject;
+        reader.readAsText(file);
+      } catch (e) {
+        reject(e);
+      }
+    });
+  }
+
+  async function normalizeBrowserFile(file, forcedKind) {
+    if (!file) return null;
+    const normalized = {
+      id: uid("att"),
+      name: file.name || "arquivo",
+      type: file.type || "application/octet-stream",
+      size: Number(file.size || 0),
+      kind: forcedKind || inferAttachmentKind(file.type, file.name),
+      previewText: "",
+      dataUrl: ""
+    };
+
+    if (normalized.size > MAX_FILE_SIZE) {
+      throw new Error("Arquivo excede limite: " + normalized.name + " (" + bytesLabel(normalized.size) + ")");
+    }
+
+    const isTextLike =
+      /^(text\/|application\/json|application\/javascript|application\/xml)/i.test(normalized.type) ||
+      /\.(txt|md|json|js|css|html|xml|csv|log)$/i.test(normalized.name);
+
+    if (normalized.size <= MAX_INLINE_PREVIEW) {
+      try {
+        normalized.dataUrl = await fileToDataUrl(file);
+      } catch (_) {}
+      if (isTextLike) {
+        try {
+          normalized.previewText = clampText(await fileToText(file), 12000);
+        } catch (_) {}
+      }
+    }
+
+    return normalized;
+  }
+
+  async function handleSelectedFiles(fileList, forcedKind) {
+    const files = Array.prototype.slice.call(fileList || []);
+    if (!files.length) return false;
+
+    const next = state.attachments.slice();
+    for (let i = 0; i < files.length; i += 1) {
+      if (next.length >= MAX_ATTACHMENTS) break;
+      try {
+        const prepared = await normalizeBrowserFile(files[i], forcedKind || "");
+        if (prepared) next.push(prepared);
+      } catch (e) {
+        setComposerStatus(e && e.message ? e.message : "Falha ao adicionar arquivo.");
+      }
+    }
+
+    state.attachments = next.slice(0, MAX_ATTACHMENTS);
+    persistAttachmentMetaOnly();
+    renderAttachmentBar();
+    setComposerStatus(state.attachments.length ? "Anexos prontos." : "");
+    return true;
+  }
+
+  // =========================================================
+  // 7) VOICE HELPERS
+  // =========================================================
+  function speechSynthesisAvailable() {
+    return typeof window.speechSynthesis !== "undefined" && typeof window.SpeechSynthesisUtterance !== "undefined";
+  }
+
+  function recognitionCtor() {
+    return window.SpeechRecognition || window.webkitSpeechRecognition || null;
+  }
+
+  function stopSpeak() {
+    try {
+      if (speechSynthesisAvailable()) window.speechSynthesis.cancel();
+    } catch (_) {}
+    state.speaking = false;
+  }
+
+  function speakText(text) {
+    text = clampText(text || "", MAX_VOICE_TEXT);
+    if (!text) return false;
+    if (!speechSynthesisAvailable()) {
+      setComposerStatus("Leitura por voz indisponível.");
+      return false;
+    }
+
+    try {
+      stopSpeak();
+      const utter = new SpeechSynthesisUtterance(text);
+      utter.lang = "pt-BR";
+      utter.rate = 1;
+      utter.pitch = 1;
+      utter.onstart = () => {
+        state.speaking = true;
+        setComposerStatus("Lendo resposta...");
+      };
+      utter.onend = () => {
+        state.speaking = false;
+        setComposerStatus("");
+      };
+      utter.onerror = () => {
+        state.speaking = false;
+        setComposerStatus("Falha na leitura por voz.");
+      };
+      window.speechSynthesis.speak(utter);
+      return true;
+    } catch (e) {
+      warn("speakText failed", e);
+      setComposerStatus("Falha na leitura por voz.");
+      return false;
+    }
+  }
+
+  function reflectVoiceButton() {
+    if (!state.ui || !state.ui.voiceBtn) return;
+    state.ui.voiceBtn.textContent = state.voiceListening ? "⏹" : "🎤";
+    state.ui.voiceBtn.style.opacity = state.voiceListening ? "1" : "";
+  }
+
+  function startVoiceInput() {
+    const Ctor = recognitionCtor();
+    if (!Ctor) {
+      setComposerStatus("Reconhecimento de voz indisponível.");
+      return false;
+    }
+    if (state.voiceListening) return true;
+
+    try {
+      const rec = new Ctor();
+      rec.lang = "pt-BR";
+      rec.interimResults = true;
+      rec.continuous = false;
+
+      rec.onstart = () => {
+        state.voiceListening = true;
+        reflectVoiceButton();
+        setComposerStatus("Ouvindo...");
+      };
+
+      rec.onresult = (ev) => {
+        let transcript = "";
+        for (let i = ev.resultIndex; i < ev.results.length; i += 1) {
+          transcript += (ev.results[i] && ev.results[i][0] && ev.results[i][0].transcript) || "";
+        }
+        if (state.ui && state.ui.textarea && transcript.trim()) {
+          const current = state.ui.textarea.value || "";
+          state.ui.textarea.value = (current ? current + " " : "") + transcript.trim();
+          persistDraft();
+          autogrowTextarea();
+        }
+      };
+
+      rec.onerror = () => {
+        state.voiceListening = false;
+        reflectVoiceButton();
+        setComposerStatus("Falha na captura de voz.");
+      };
+
+      rec.onend = () => {
+        state.voiceListening = false;
+        reflectVoiceButton();
+        setComposerStatus("");
+      };
+
+      state.recognition = rec;
+      rec.start();
+      return true;
+    } catch (e) {
+      warn("startVoiceInput failed", e);
+      setComposerStatus("Falha ao iniciar voz.");
+      return false;
+    }
+  }
+
+  function stopVoiceInput() {
+    try {
+      if (state.recognition && isFn(state.recognition.stop)) state.recognition.stop();
+    } catch (_) {}
+    state.voiceListening = false;
+    reflectVoiceButton();
+    return true;
+  }
+
+  // =========================================================
+  // 8) SNAPSHOT / CONTEXT HELPERS
+  // =========================================================
+  function collectLoggerTail(limit) {
+    limit = Number(limit || 60);
+    try {
+      if (window.RCF_LOGGER && Array.isArray(window.RCF_LOGGER.items)) {
+        return window.RCF_LOGGER.items.slice(-limit);
+      }
+      if (window.RCF_LOGGER && Array.isArray(window.RCF_LOGGER.logs)) {
+        return window.RCF_LOGGER.logs.slice(-limit);
+      }
+      if (window.RCF_LOGGER && Array.isArray(window.RCF_LOGGER.tail)) {
+        return window.RCF_LOGGER.tail.slice(-limit);
+      }
+    } catch (_) {}
+    return [];
+  }
+
+  function collectDoctorSummary() {
+    const registry = resolveRegistry();
+    const doctor =
+      window.RCF_DOCTOR ||
+      registry.doctor ||
+      registry.rcf_doctor ||
+      window.RCF_FACTORY_DOCTOR ||
+      null;
+
+    if (!doctor) return null;
+
+    try {
+      if (isFn(doctor.getSummary)) return doctor.getSummary();
+      if (isFn(doctor.summary)) return doctor.summary();
+      if (isFn(doctor.run)) return doctor.run({ silent: true, summaryOnly: true });
+    } catch (_) {}
+
+    return null;
+  }
+
+  function getActiveViewSafe() {
+    const ctx = resolveContext();
+    const fs = resolveFactoryState();
+    return (
+      ctx.activeView ||
+      ctx.view ||
+      ctx.currentView ||
+      fs.activeView ||
+      fs.view ||
+      fs.currentView ||
+      ""
+    );
+  }
+
+  function getActiveAppSlugSafe() {
+    const ctx = resolveContext();
+    const fs = resolveFactoryState();
+    return (
+      ctx.activeAppSlug ||
+      ctx.appSlug ||
+      ctx.selectedAppSlug ||
+      fs.activeAppSlug ||
+      fs.selectedAppSlug ||
+      (fs.activeApp && (fs.activeApp.slug || fs.activeApp.id)) ||
+      ""
+    );
+  }
+
+  function getActiveModulesSafe() {
+    const registry = resolveRegistry();
+    const names = Object.keys(registry);
+    const out = [];
+    for (let i = 0; i < names.length; i += 1) {
+      const mod = registry[names[i]];
+      if (mod && (mod.active === true || mod.enabled === true || mod.ready === true || mod.mounted === true)) {
+        out.push(names[i]);
+      }
+    }
+    return out.slice(0, 80);
+  }
+
+  function summarizeFactoryTree(tree) {
+    try {
+      if (Array.isArray(tree)) return { type: "array", size: tree.length };
+      if (isObj(tree)) {
+        const keys = Object.keys(tree);
+        return { type: "object", size: keys.length, keys: keys.slice(0, 40) };
+      }
+      return tree == null ? null : { type: typeof tree };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function buildTechnicalSnapshot() {
+    const ctx = resolveContext();
+    const fs = resolveFactoryState();
+    const registry = resolveRegistry();
+    const tree = resolveFactoryTree();
+    const doctorSummary = collectDoctorSummary();
+    const loggerTail = collectLoggerTail(40);
+
+    const snapshot = {
+      version: VERSION,
+      ts: nowIso(),
+      activeView: getActiveViewSafe(),
+      activeAppSlug: getActiveAppSlugSafe(),
+      context: {
+        keys: safeModuleKeys(ctx, 60),
+        route: ctx.route || "",
+        mode: ctx.mode || "",
+        view: ctx.view || ctx.currentView || ""
+      },
+      factoryState: {
+        keys: safeModuleKeys(fs, 60),
+        appsCount: Array.isArray(fs.apps) ? fs.apps.length : 0,
+        activeAppId: fs.activeAppId || "",
+        activeAppSlug: fs.activeAppSlug || "",
+        selectedFile: fs.selectedFile || fs.currentFile || "",
+        selectedPath: fs.selectedPath || fs.currentPath || ""
+      },
+      registry: {
+        keys: safeModuleKeys(registry, 120),
+        activeModules: getActiveModulesSafe()
+      },
+      tree: summarizeFactoryTree(tree),
+      doctor: doctorSummary || null,
+      loggerTail: loggerTail,
+      chat: {
+        historyCount: state.history.length,
+        attachmentsCount: state.attachments.length,
+        lastEndpoint: state.lastEndpoint || "",
+        lastRoute: state.lastRoute || ""
+      }
+    };
+
+    state.lastSnapshotAt = Date.now();
+    return snapshot;
+  }
+
+  function buildTechnicalContextText() {
+    const s = buildTechnicalSnapshot();
+    return [
+      "TECHNICAL SNAPSHOT",
+      "version: " + s.version,
+      "ts: " + s.ts,
+      "activeView: " + (s.activeView || "-"),
+      "activeAppSlug: " + (s.activeAppSlug || "-"),
+      "context.keys: " + (s.context.keys || []).join(", "),
+      "factoryState.keys: " + (s.factoryState.keys || []).join(", "),
+      "factoryState.appsCount: " + s.factoryState.appsCount,
+      "factoryState.selectedFile: " + (s.factoryState.selectedFile || "-"),
+      "factoryState.selectedPath: " + (s.factoryState.selectedPath || "-"),
+      "registry.keys: " + (s.registry.keys || []).join(", "),
+      "registry.activeModules: " + (s.registry.activeModules || []).join(", "),
+      "tree: " + JSON.stringify(s.tree || {}),
+      "doctor: " + JSON.stringify(s.doctor || null),
+      "loggerTail: " + JSON.stringify(s.loggerTail || []),
+      "chat.lastEndpoint: " + (s.chat.lastEndpoint || "-"),
+      "chat.historyCount: " + s.chat.historyCount,
+      "chat.attachmentsCount: " + s.chat.attachmentsCount
+    ].join("\n");
+  }
+
+  // =========================================================
+  // 9) RESPONSE FORMATTERS
+  // =========================================================
+  function stringifySafe(value) {
+    if (value == null) return "";
+    if (typeof value === "string") return value;
+    try { return JSON.stringify(value, null, 2); } catch (_) {}
+    try { return String(value); } catch (_) { return ""; }
+  }
+
+  function extractResponseText(result) {
+    if (result == null) return "";
+    if (typeof result === "string") return result;
+
+    const candidates = [
+      result.text,
+      result.answer,
+      result.output,
+      result.message,
+      result.content,
+      deepGet(result, "data.text", ""),
+      deepGet(result, "data.answer", ""),
+      deepGet(result, "response.text", ""),
+      deepGet(result, "response.output_text", ""),
+      deepGet(result, "result.text", ""),
+      deepGet(result, "choices.0.message.content", ""),
+      deepGet(result, "choices.0.text", "")
+    ];
+
+    for (let i = 0; i < candidates.length; i += 1) {
+      if (typeof candidates[i] === "string" && candidates[i].trim()) return candidates[i];
+    }
 
     return "";
   }
 
-  function buildPayload(action) {
-    const snapshot = buildLeanSnapshot();
-    setSnapshotPreview(snapshot);
-    const attachments = getAttachmentPayload();
-
-    if (action === "analyze-logs") {
-      return { snapshot, logs: collectLogs(), attachments };
-    }
-
-    if (action === "factory_diagnosis") {
-      return { snapshot, doctor: collectDoctorReport(), attachments };
-    }
-
-    if (action === "propose-patch" || action === "generate-code") {
-      return {
-        snapshot,
-        doctor: collectDoctorReport(),
-        logs: collectLogs(25),
-        attachments
-      };
-    }
-
-    if (action === "review-module") {
-      return {
-        snapshot,
-        doctor: collectDoctorReport(),
-        logs: collectLogs(12),
-        attachments
-      };
-    }
-
-    if (action === "zip-readiness") {
-      return {
-        snapshot,
-        attachments,
-        capability: {
-          wantsZipFlow: true,
-          wantsPdfFlow: true,
-          wantsImageFlow: true,
-          wantsVideoFlow: true,
-          wantsAudioFlow: true
-        }
-      };
-    }
-
-    return { snapshot, attachments };
+  function formatResponseFallbackObject(result, title) {
+    const json = stringifySafe(result || {});
+    return [
+      title || "Resposta recebida.",
+      "",
+      "```json",
+      json || "{}",
+      "```"
+    ].join("\n");
   }
 
-  function getAttachmentPayload() {
-    return (STATE.attachments || []).map((item) => ({
-      name: item.name || "",
-      kind: item.kind || "unknown",
-      mime: item.mime || "",
-      size: item.size || 0,
-      summary: item.summary || ""
+  function formatLocalActionResponse(actionName, result) {
+    const text = extractResponseText(result);
+    if (text && text.trim()) return text;
+
+    return [
+      "Ação local supervisionada executada.",
+      "",
+      "action: " + actionName,
+      "",
+      "```json",
+      stringifySafe(result || {}),
+      "```"
+    ].join("\n");
+  }
+
+  function formatRouteError(route, e) {
+    return [
+      "Falha ao processar a solicitação.",
+      "",
+      "route: " + (route || "unknown"),
+      "error: " + (e && e.message ? e.message : String(e || "unknown"))
+    ].join("\n");
+  }
+
+  // =========================================================
+  // 10) RUNNERS
+  // =========================================================
+  function getActionsApi() {
+    return window.RCF_FACTORY_AI_ACTIONS || null;
+  }
+
+  function getRuntimeApi() {
+    return window.RCF_FACTORY_AI_RUNTIME || null;
+  }
+
+  function getBrainApi() {
+    return window.RCF_FACTORY_AI_BRAIN || null;
+  }
+
+  function getOrchestratorApi() {
+    return window.RCF_FACTORY_AI_ORCHESTRATOR || null;
+  }
+
+  function setLastEndpoint(endpoint) {
+    state.lastEndpoint = String(endpoint || "");
+    writeStorage(STORAGE_KEYS.lastEndpoint, state.lastEndpoint);
+    return state.lastEndpoint;
+  }
+
+  function getLastEndpoint() {
+    return state.lastEndpoint || "";
+  }
+
+  async function callRuntime(payload) {
+    const api = getRuntimeApi();
+    if (!api) throw new Error("RCF_FACTORY_AI_RUNTIME unavailable");
+
+    const result = await Promise.resolve(
+      safeInvoke(api, ["ask", "run", "send", "chat", "complete", "request"], [payload])
+    );
+    return result;
+  }
+
+  async function callBrain(payload) {
+    const api = getBrainApi();
+    if (!api) throw new Error("RCF_FACTORY_AI_BRAIN unavailable");
+
+    const result = await Promise.resolve(
+      safeInvoke(api, ["ask", "run", "send", "chat", "think", "complete"], [payload])
+    );
+    return result;
+  }
+
+  async function callOrchestrator(payload) {
+    const api = getOrchestratorApi();
+    if (!api) throw new Error("RCF_FACTORY_AI_ORCHESTRATOR unavailable");
+
+    const result = await Promise.resolve(
+      safeInvoke(api, ["ask", "run", "send", "chat", "orchestrate", "complete"], [payload])
+    );
+    return result;
+  }
+
+  async function callLocalAction(actionName, payload) {
+    const api = getActionsApi();
+    if (!api) throw new Error("RCF_FACTORY_AI_ACTIONS unavailable");
+
+    if (isFn(api[actionName])) {
+      return Promise.resolve(api[actionName](payload));
+    }
+
+    if (isFn(api.dispatch)) {
+      return Promise.resolve(api.dispatch(Object.assign({}, payload || {}, { action: actionName })));
+    }
+
+    throw new Error("No compatible local action entry");
+  }
+
+  async function callEndpointFallback(payload) {
+    const res = await fetch(DEFAULT_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt: payload.prompt || "",
+        attachments: payload.attachments || [],
+        history: payload.history || [],
+        snapshot: payload.snapshot || {},
+        source: "/app/js/admin.admin_ai.js",
+        version: VERSION
+      })
+    });
+
+    if (!res.ok) throw new Error("Endpoint HTTP " + res.status);
+
+    const data = await res.json().catch(() => ({}));
+    setLastEndpoint(DEFAULT_ENDPOINT);
+    return data;
+  }
+
+  // =========================================================
+  // 11) LOCAL ACTION DETECTION / ROUTING
+  // =========================================================
+  const LOCAL_ACTION_NAMES = [
+    "openai_status",
+    "snapshot",
+    "plan",
+    "next_file",
+    "run_doctor",
+    "collect_logs",
+    "approve_patch",
+    "validate_patch",
+    "stage_patch",
+    "apply_patch"
+  ];
+
+  function extractSlashAction(prompt) {
+    const m = String(prompt || "").trim().match(/^\/([a-z_]+)\b/i);
+    return m ? String(m[1] || "").toLowerCase() : "";
+  }
+
+  function looksExplicitLocalAction(prompt) {
+    const original = String(prompt || "").trim();
+    const lower = original.toLowerCase();
+    if (!lower) return "";
+
+    const slash = extractSlashAction(lower);
+    if (LOCAL_ACTION_NAMES.indexOf(slash) >= 0) return slash;
+
+    const explicitPatterns = [
+      { name: "openai_status", tests: [/^\s*(openai[_ ]status|status da openai|status do openai)\s*$/i, /^\s*(me mostre|mostrar|rodar|executar)\s+(o\s+)?(openai[_ ]status|status da openai|status do openai)\s*$/i] },
+      { name: "snapshot", tests: [/^\s*(snapshot|contexto t[eé]cnico|contexto tecnico|estado t[eé]cnico|estado tecnico|resumo t[eé]cnico|resumo tecnico)\s*$/i, /^\s*(gerar|mostrar|me mostre|trazer|coletar)\s+(o\s+)?(snapshot|contexto t[eé]cnico|contexto tecnico|resumo t[eé]cnico|resumo tecnico)\s*$/i] },
+      { name: "plan", tests: [/^\s*(plan|planejar patch|planejar corre[cç][aã]o|criar plano de patch|montar plano de patch)\s*$/i, /^\s*(fa[cç]a|crie|gere|monte)\s+(um\s+)?plano(\s+de\s+patch|\s+de\s+corre[cç][aã]o)?\s*$/i] },
+      { name: "next_file", tests: [/^\s*(next file|pr[oó]ximo arquivo|proximo arquivo)\s*$/i, /^\s*(qual\s+[ée]\s+o\s+)?(next file|pr[oó]ximo arquivo|proximo arquivo)\s*$/i] },
+      { name: "run_doctor", tests: [/^\s*(run doctor|doctor|rodar doctor|executar doctor|diagn[oó]stico|diagnostico)\s*$/i, /^\s*(rode|executa|executar|rodar)\s+(o\s+)?(doctor|diagn[oó]stico|diagnostico)\s*$/i] },
+      { name: "collect_logs", tests: [/^\s*(collect logs|coletar logs|mostrar logs|trazer logs|capturar logs)\s*$/i, /^\s*(colete|mostrar|mostre|traga|capturar)\s+(os\s+)?logs\s*$/i] },
+      { name: "approve_patch", tests: [/^\s*(approve patch|aprovar patch|aprova patch)\s*$/i, /^\s*(aprove|aprovar)\s+(o\s+)?patch\s*$/i] },
+      { name: "validate_patch", tests: [/^\s*(validate patch|validar patch|valida patch)\s*$/i, /^\s*(valide|validar)\s+(o\s+)?patch\s*$/i] },
+      { name: "stage_patch", tests: [/^\s*(stage patch|staging patch|colocar patch em stage|preparar patch para stage)\s*$/i, /^\s*(coloque|prepare|stage)\s+(o\s+)?patch(\s+em\s+stage)?\s*$/i] },
+      { name: "apply_patch", tests: [/^\s*(apply patch|aplicar patch|aplica patch)\s*$/i, /^\s*(aplique|aplicar)\s+(o\s+)?patch\s*$/i] }
+    ];
+
+    for (let i = 0; i < explicitPatterns.length; i += 1) {
+      for (let j = 0; j < explicitPatterns[i].tests.length; j += 1) {
+        if (explicitPatterns[i].tests[j].test(original)) return explicitPatterns[i].name;
+      }
+    }
+
+    return "";
+  }
+
+  function buildRunnerPayload(prompt) {
+    const snapshot = buildTechnicalSnapshot();
+    const history = getHistory().slice(-18).map((msg) => ({
+      role: msg.role,
+      content: clampText(msg.content || "", 6000),
+      createdAt: msg.createdAt || ""
+    }));
+
+    const attachments = getAttachments().map((a) => ({
+      id: a.id,
+      name: a.name,
+      type: a.type,
+      size: a.size,
+      kind: a.kind,
+      previewText: a.previewText || "",
+      dataUrl: a.dataUrl || ""
+    }));
+
+    return {
+      prompt: String(prompt || ""),
+      history: history,
+      attachments: attachments,
+      snapshot: snapshot,
+      snapshotText: buildTechnicalContextText()
+    };
+  }
+
+  async function executeHybridRoute(prompt) {
+    const payload = buildRunnerPayload(prompt);
+    const preferredLocalAction = looksExplicitLocalAction(prompt);
+
+    if (preferredLocalAction) {
+      try {
+        const localResult = await callLocalAction(preferredLocalAction, payload);
+        const text = formatLocalActionResponse(preferredLocalAction, localResult);
+        state.lastRoute = "local_action";
+        setLastEndpoint("local:" + preferredLocalAction);
+        return {
+          ok: true,
+          route: "local_action",
+          endpoint: "local:" + preferredLocalAction,
+          action: preferredLocalAction,
+          text: text,
+          raw: localResult
+        };
+      } catch (e) {
+        warn("local action failed, continuing hybrid fallback", preferredLocalAction, e);
+      }
+    }
+
+    try {
+      const runtimeResult = await callRuntime(payload);
+      const runtimeText = extractResponseText(runtimeResult);
+      if (runtimeText && runtimeText.trim()) {
+        state.lastRoute = "runtime";
+        setLastEndpoint("runtime");
+        return {
+          ok: true,
+          route: "runtime",
+          endpoint: "runtime",
+          text: clampText(runtimeText, MAX_RUNTIME_TEXT),
+          raw: runtimeResult
+        };
+      }
+      throw new Error("Runtime returned empty text");
+    } catch (runtimeError) {
+      warn("runtime failed", runtimeError);
+
+      try {
+        const brainResult = await callBrain(payload);
+        const brainText = extractResponseText(brainResult);
+        if (brainText && brainText.trim()) {
+          state.lastRoute = "brain";
+          setLastEndpoint("brain");
+          return {
+            ok: true,
+            route: "brain",
+            endpoint: "brain",
+            text: clampText(brainText, MAX_RUNTIME_TEXT),
+            raw: brainResult
+          };
+        }
+        throw new Error("Brain returned empty text");
+      } catch (brainError) {
+        warn("brain failed", brainError);
+
+        try {
+          const orchResult = await callOrchestrator(payload);
+          const orchText = extractResponseText(orchResult);
+          if (orchText && orchText.trim()) {
+            state.lastRoute = "orchestrator";
+            setLastEndpoint("orchestrator");
+            return {
+              ok: true,
+              route: "orchestrator",
+              endpoint: "orchestrator",
+              text: clampText(orchText, MAX_RUNTIME_TEXT),
+              raw: orchResult
+            };
+          }
+          throw new Error("Orchestrator returned empty text");
+        } catch (orchError) {
+          warn("orchestrator failed", orchError);
+
+          try {
+            const endpointData = await callEndpointFallback(payload);
+            const endpointText = extractResponseText(endpointData) || formatResponseFallbackObject(endpointData, "Resposta recebida pelo fallback.");
+            state.lastRoute = "endpoint_fallback";
+            return {
+              ok: true,
+              route: "endpoint_fallback",
+              endpoint: DEFAULT_ENDPOINT,
+              text: clampText(endpointText, MAX_RUNTIME_TEXT),
+              raw: endpointData
+            };
+          } catch (endpointError) {
+            errLog("endpoint fallback failed", endpointError);
+            state.lastRoute = "failed";
+            return {
+              ok: false,
+              route: "failed",
+              endpoint: "",
+              text: formatRouteError("hybrid", endpointError),
+              raw: {
+                runtimeError: String(runtimeError && runtimeError.message || runtimeError || ""),
+                brainError: String(brainError && brainError.message || brainError || ""),
+                orchestratorError: String(orchError && orchError.message || orchError || ""),
+                endpointError: String(endpointError && endpointError.message || endpointError || "")
+              }
+            };
+          }
+        }
+      }
+    }
+  }
+
+  // =========================================================
+  // 12) SEND / CHAT FLOW
+  // =========================================================
+  function persistDraft() {
+    if (!state.ui || !state.ui.textarea) return false;
+    writeStorage(STORAGE_KEYS.draft, String(state.ui.textarea.value || ""));
+    return true;
+  }
+
+  function restoreDraft() {
+    return readStorage(STORAGE_KEYS.draft, "");
+  }
+
+  function reflectBusyUi() {
+    if (!state.ui) return;
+    if (state.ui.sendBtn) {
+      state.ui.sendBtn.disabled = !!state.busy;
+      state.ui.sendBtn.classList.toggle("busy", !!state.busy);
+    }
+    reflectVoiceButton();
+  }
+
+  async function sendPrompt(prompt) {
+    prompt = String(prompt == null ? "" : prompt).trim();
+
+    if (!prompt && !state.attachments.length) return false;
+    if (state.busy) {
+      setComposerStatus("A Factory AI já está processando.");
+      return false;
+    }
+
+    state.busy = true;
+    reflectBusyUi();
+
+    const userText = prompt || "[prompt com anexos]";
+    pushMessage(buildMessage("user", userText, {
+      route: "input",
+      attachments: state.attachments
+    }));
+
+    const pending = buildMessage("assistant", "Pensando...", {
+      pending: true,
+      route: "pending"
+    });
+    pushMessage(pending);
+    state.pendingMessageId = pending.id;
+
+    if (state.ui && state.ui.textarea) {
+      state.ui.textarea.value = "";
+      persistDraft();
+      autogrowTextarea();
+    }
+
+    setComposerStatus("Processando...");
+
+    try {
+      const result = await executeHybridRoute(prompt);
+      replaceMessage(state.pendingMessageId, {
+        role: "assistant",
+        content: result.text || "",
+        route: result.route || "",
+        endpoint: result.endpoint || "",
+        error: !result.ok
+      });
+
+      clearAttachments();
+
+      if (state.autoRead && result.text) speakText(result.text);
+      setComposerStatus(result.ok ? "Resposta pronta." : "Resposta com erro/fallback.");
+      return true;
+    } catch (e) {
+      errLog("sendPrompt failed", e);
+      replaceMessage(state.pendingMessageId, {
+        role: "assistant",
+        content: formatRouteError("sendPrompt", e),
+        route: "error",
+        endpoint: "",
+        error: true
+      });
+      setComposerStatus("Falha no processamento.");
+      return false;
+    } finally {
+      state.pendingMessageId = "";
+      state.busy = false;
+      reflectBusyUi();
+    }
+  }
+
+  // =========================================================
+  // 13) UI BUILD
+  // =========================================================
+  function resolveHost(target) {
+    if (target && target.nodeType === 1) return target;
+    if (typeof target === "string" && target.trim()) {
+      const q = document.querySelector(target);
+      if (q) return q;
+    }
+
+    const candidates = [
+      "[" + HOST_ATTR + "]",
+      "#rcf-factory-ai",
+      "#factory-ai-chat",
+      "#admin-ai-chat",
+      "[data-view='factory_ai']",
+      "[data-view='factory-ai']",
+      ".factory-ai-host"
+    ];
+
+    for (let i = 0; i < candidates.length; i += 1) {
+      const el = document.querySelector(candidates[i]);
+      if (el) return el;
+    }
+
+    return null;
+  }
+
+  function buildUi(host) {
+    ensureCss();
+
+    const existing = host.querySelector("[" + ROOT_ATTR + "]");
+    if (existing) existing.remove();
+
+    const root = createEl("div", "rcf-admin-ai-root");
+    root.setAttribute(ROOT_ATTR, "1");
+
+    const shell = createEl("div", "rcf-admin-ai-shell");
+
+    const head = createEl("div", "rcf-admin-ai-head");
+    const headLeft = createEl("div", "rcf-admin-ai-head-left");
+    const badge = createEl("div", "rcf-admin-ai-badge", "🤖");
+    const copyWrap = createEl("div", "rcf-admin-ai-head-copy");
+    copyWrap.appendChild(createEl("div", "rcf-admin-ai-title", "Factory AI"));
+    copyWrap.appendChild(createEl("div", "rcf-admin-ai-sub", "chat principal da Factory"));
+    headLeft.appendChild(badge);
+    headLeft.appendChild(copyWrap);
+
+    const headActions = createEl("div", "rcf-admin-ai-head-actions");
+    const autoReadBtn = createEl("button", "rcf-admin-ai-btn", "Voz off");
+    autoReadBtn.type = "button";
+    const clearBtn = createEl("button", "rcf-admin-ai-iconbtn", "🧹");
+    clearBtn.type = "button";
+    clearBtn.title = "Limpar histórico";
+    headActions.appendChild(autoReadBtn);
+    headActions.appendChild(clearBtn);
+
+    head.appendChild(headLeft);
+    head.appendChild(headActions);
+
+    const body = createEl("div", "rcf-admin-ai-body");
+    const list = createEl("div", "rcf-admin-ai-list");
+    body.appendChild(list);
+
+    const composerWrap = createEl("div", "rcf-admin-ai-composer-wrap");
+    const attachmentsBar = createEl("div", "rcf-admin-ai-attachments-bar");
+
+    const composer = createEl("div", "rcf-admin-ai-composer");
+    const plusBtn = createEl("button", "rcf-admin-ai-plus", "+");
+    plusBtn.type = "button";
+    plusBtn.title = "Anexos";
+
+    const core = createEl("div", "rcf-admin-ai-core");
+    const textarea = createEl("textarea", "rcf-admin-ai-textarea");
+    textarea.placeholder = "Fale com a Factory AI...";
+    const actions = createEl("div", "rcf-admin-ai-actions");
+    const voiceBtn = createEl("button", "rcf-admin-ai-iconbtn", "🎤");
+    voiceBtn.type = "button";
+    voiceBtn.title = "Voz";
+    const sendBtn = createEl("button", "rcf-admin-ai-send", "➤");
+    sendBtn.type = "button";
+    sendBtn.title = "Enviar";
+    actions.appendChild(voiceBtn);
+    actions.appendChild(sendBtn);
+    core.appendChild(textarea);
+    core.appendChild(actions);
+
+    composer.appendChild(plusBtn);
+    composer.appendChild(core);
+
+    const status = createEl("div", "rcf-admin-ai-status", "");
+
+    const menu = createEl("div", "rcf-admin-ai-menu");
+    const menuAddFile = createEl("button", "", "Adicionar arquivo");
+    const menuAddImage = createEl("button", "", "Adicionar imagem");
+    const menuAddPdf = createEl("button", "", "Adicionar PDF");
+    const menuAddZip = createEl("button", "", "Adicionar ZIP");
+    const menuAddVideo = createEl("button", "", "Adicionar vídeo");
+    const menuAddAudio = createEl("button", "", "Adicionar áudio");
+    const menuAddSnapshot = createEl("button", "", "Inserir snapshot técnico");
+    const menuClearAttachments = createEl("button", "", "Limpar anexos");
+
+    menu.appendChild(menuAddFile);
+    menu.appendChild(menuAddImage);
+    menu.appendChild(menuAddPdf);
+    menu.appendChild(menuAddZip);
+    menu.appendChild(menuAddVideo);
+    menu.appendChild(menuAddAudio);
+    menu.appendChild(menuAddSnapshot);
+    menu.appendChild(menuClearAttachments);
+
+    const fileInput = createEl("input", "rcf-admin-ai-hidden-input");
+    fileInput.type = "file";
+    fileInput.multiple = true;
+
+    const imageInput = createEl("input", "rcf-admin-ai-hidden-input");
+    imageInput.type = "file";
+    imageInput.multiple = true;
+    imageInput.accept = "image/*";
+
+    const pdfInput = createEl("input", "rcf-admin-ai-hidden-input");
+    pdfInput.type = "file";
+    pdfInput.multiple = true;
+    pdfInput.accept = ".pdf,application/pdf";
+
+    const zipInput = createEl("input", "rcf-admin-ai-hidden-input");
+    zipInput.type = "file";
+    zipInput.multiple = true;
+    zipInput.accept = ".zip,.rar,.7z,application/zip,application/x-zip-compressed,application/x-rar-compressed";
+
+    const videoInput = createEl("input", "rcf-admin-ai-hidden-input");
+    videoInput.type = "file";
+    videoInput.multiple = true;
+    videoInput.accept = "video/*,.mp4,.mov,.m4v,.webm";
+
+    const audioInput = createEl("input", "rcf-admin-ai-hidden-input");
+    audioInput.type = "file";
+    audioInput.multiple = true;
+    audioInput.accept = "audio/*,.mp3,.wav,.m4a,.aac,.ogg";
+
+    composerWrap.appendChild(attachmentsBar);
+    composerWrap.appendChild(composer);
+    composerWrap.appendChild(status);
+    composerWrap.appendChild(menu);
+    composerWrap.appendChild(fileInput);
+    composerWrap.appendChild(imageInput);
+    composerWrap.appendChild(pdfInput);
+    composerWrap.appendChild(zipInput);
+    composerWrap.appendChild(videoInput);
+    composerWrap.appendChild(audioInput);
+
+    shell.appendChild(head);
+    shell.appendChild(body);
+    shell.appendChild(composerWrap);
+    root.appendChild(shell);
+
+    host.appendChild(root);
+
+    state.ui = {
+      root,
+      shell,
+      head,
+      body,
+      list,
+      autoReadBtn,
+      clearBtn,
+      attachmentsBar,
+      composerWrap,
+      composer,
+      plusBtn,
+      textarea,
+      voiceBtn,
+      sendBtn,
+      status,
+      menu,
+      menuAddFile,
+      menuAddImage,
+      menuAddPdf,
+      menuAddZip,
+      menuAddVideo,
+      menuAddAudio,
+      menuAddSnapshot,
+      menuClearAttachments,
+      fileInput,
+      imageInput,
+      pdfInput,
+      zipInput,
+      videoInput,
+      audioInput
+    };
+
+    return state.ui;
+  }
+
+  // =========================================================
+  // 14) UI EVENTS
+  // =========================================================
+  function closeMenu() {
+    state.menuOpen = false;
+    if (state.ui && state.ui.menu) state.ui.menu.classList.remove("show");
+  }
+
+  function openMenu() {
+    state.menuOpen = true;
+    if (state.ui && state.ui.menu) state.ui.menu.classList.add("show");
+  }
+
+  function toggleMenu() {
+    if (state.menuOpen) closeMenu();
+    else openMenu();
+  }
+
+  function bindUiEvents() {
+    if (!state.ui || state.ui.__bound) return true;
+    const ui = state.ui;
+    ui.__bound = true;
+
+    ui.body.addEventListener("scroll", onChatScroll);
+
+    ui.autoReadBtn.addEventListener("click", () => {
+      state.autoRead = !state.autoRead;
+      ui.autoReadBtn.textContent = state.autoRead ? "Voz on" : "Voz off";
+      setComposerStatus(state.autoRead ? "Leitura automática ativada." : "Leitura automática desligada.");
+      persistUiState();
+    });
+
+    ui.clearBtn.addEventListener("click", () => {
+      clearChat();
+      closeMenu();
+    });
+
+    ui.plusBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleMenu();
+    });
+
+    ui.menuAddFile.addEventListener("click", () => {
+      closeMenu();
+      ui.fileInput.click();
+    });
+
+    ui.menuAddImage.addEventListener("click", () => {
+      closeMenu();
+      ui.imageInput.click();
+    });
+
+    ui.menuAddPdf.addEventListener("click", () => {
+      closeMenu();
+      ui.pdfInput.click();
+    });
+
+    ui.menuAddZip.addEventListener("click", () => {
+      closeMenu();
+      ui.zipInput.click();
+    });
+
+    ui.menuAddVideo.addEventListener("click", () => {
+      closeMenu();
+      ui.videoInput.click();
+    });
+
+    ui.menuAddAudio.addEventListener("click", () => {
+      closeMenu();
+      ui.audioInput.click();
+    });
+
+    ui.menuAddSnapshot.addEventListener("click", () => {
+      closeMenu();
+      const snap = buildTechnicalContextText();
+      ui.textarea.value = (ui.textarea.value ? ui.textarea.value + "\n\n" : "") + snap;
+      persistDraft();
+      autogrowTextarea();
+      ui.textarea.focus();
+    });
+
+    ui.menuClearAttachments.addEventListener("click", () => {
+      closeMenu();
+      clearAttachments();
+      setComposerStatus("Anexos limpos.");
+    });
+
+    ui.fileInput.addEventListener("change", async (ev) => {
+      await handleSelectedFiles(ev.target.files, "file");
+      ev.target.value = "";
+    });
+
+    ui.imageInput.addEventListener("change", async (ev) => {
+      await handleSelectedFiles(ev.target.files, "image");
+      ev.target.value = "";
+    });
+
+    ui.pdfInput.addEventListener("change", async (ev) => {
+      await handleSelectedFiles(ev.target.files, "pdf");
+      ev.target.value = "";
+    });
+
+    ui.zipInput.addEventListener("change", async (ev) => {
+      await handleSelectedFiles(ev.target.files, "zip");
+      ev.target.value = "";
+    });
+
+    ui.videoInput.addEventListener("change", async (ev) => {
+      await handleSelectedFiles(ev.target.files, "video");
+      ev.target.value = "";
+    });
+
+    ui.audioInput.addEventListener("change", async (ev) => {
+      await handleSelectedFiles(ev.target.files, "audio");
+      ev.target.value = "";
+    });
+
+    ui.textarea.addEventListener("input", () => {
+      persistDraft();
+      autogrowTextarea();
+    });
+
+    ui.textarea.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" && !ev.shiftKey) {
+        ev.preventDefault();
+        sendPrompt(ui.textarea.value);
+      }
+    });
+
+    ui.sendBtn.addEventListener("click", () => {
+      sendPrompt(ui.textarea.value);
+    });
+
+    ui.voiceBtn.addEventListener("click", () => {
+      if (state.voiceListening) stopVoiceInput();
+      else startVoiceInput();
+    });
+
+    if (!state.boundDocClick) {
+      state.boundDocClick = function (ev) {
+        if (!state.ui || !state.ui.menu || !state.ui.plusBtn) return;
+        if (state.ui.menu.contains(ev.target) || state.ui.plusBtn.contains(ev.target)) return;
+        closeMenu();
+      };
+      document.addEventListener("click", state.boundDocClick);
+    }
+
+    if (!state.boundVisibility) {
+      state.boundVisibility = function () {
+        if (document.hidden) stopVoiceInput();
+      };
+      document.addEventListener("visibilitychange", state.boundVisibility);
+    }
+
+    if (!state.boundResize) {
+      state.boundResize = function () {
+        autogrowTextarea();
+      };
+      window.addEventListener("resize", state.boundResize);
+    }
+
+    return true;
+  }
+
+  function persistUiState() {
+    writeStorage(STORAGE_KEYS.ui, JSON.stringify({
+      autoRead: !!state.autoRead
     }));
   }
 
-  function appendRuntimeMetaNote(text, result) {
-    const base = trim(text);
-    const hints = result?.response?.hints || result?.hints || {};
-    const connection = result?.connection || result?.response?.connection || {};
-    const incomplete = !!hints.incomplete;
-    const responseStatus = trim(hints.responseStatus || "");
-    const incompleteReason = trim(hints.incompleteReason || "");
-    const connStatus = trim(connection.status || "");
-
-    if (!base) return "";
-
-    if (!incomplete && responseStatus !== "incomplete" && connStatus !== "partial") {
-      return base;
-    }
-
-    const noteParts = [];
-    if (responseStatus) noteParts.push(`responseStatus=${responseStatus}`);
-    if (incompleteReason) noteParts.push(`motivo=${incompleteReason}`);
-    if (connStatus) noteParts.push(`connection=${connStatus}`);
-
-    if (!noteParts.length) return base;
-
-    return [
-      base,
-      "",
-      "Observação do runtime:",
-      `- saída parcial detectada (${noteParts.join(" | ")})`
-    ].join("\n");
+  function restoreUiState() {
+    const raw = readStorage(STORAGE_KEYS.ui, "{}");
+    const data = safeJsonParse(raw, {});
+    state.autoRead = !!data.autoRead;
   }
 
-  function extractRuntimeMessage(result) {
-    const direct =
-      trim(result?.analysis) ||
-      trim(result?.answer) ||
-      trim(result?.result);
-
-    if (direct) return appendRuntimeMetaNote(direct, result);
-
-    const responseAnalysis =
-      trim(result?.response?.analysis) ||
-      trim(result?.response?.answer) ||
-      trim(result?.response?.result);
-
-    if (responseAnalysis) return appendRuntimeMetaNote(responseAnalysis, result);
-
-    const nestedError =
-      trim(result?.error) ||
-      trim(result?.response?.error);
-
-    if (nestedError) {
-      const analysisFallback =
-        trim(result?.response?.details?.analysis) ||
-        trim(result?.response?.details?.answer) ||
-        trim(result?.response?.details?.result);
-
-      if (analysisFallback) return appendRuntimeMetaNote(analysisFallback, result);
-
-      return nestedError;
-    }
-
-    return pretty(result || { ok: false, msg: "sem resposta do runtime" });
-  }
-
-  function formatPlanResult(planResult) {
-    const plan = planResult?.plan || {};
-    const summary = planResult?.summary?.plan || {};
-
-    const targetFile = plan.nextFile || plan.targetFile || summary.targetFile || "";
-    const executionLine = Array.isArray(plan.executionLine) ? plan.executionLine : [];
-    const ranking = Array.isArray(plan.ranking) ? plan.ranking.slice(0, 5) : [];
-    const notes = Array.isArray(plan.notes) ? plan.notes : [];
-
-    return [
-      "1. Fatos confirmados",
-      `- Planner local executado: ${!!planResult?.ok}`,
-      `- Próximo arquivo calculado: ${targetFile || "dado ausente"}`,
-      `- Prioridade: ${plan.priority || "dado ausente"}`,
-      "",
-      "2. Dados ausentes ou mal consolidados",
-      "- O plano depende do snapshot atual do runtime; se algum módulo não apareceu no snapshot, ele pode estar fora da árvore/contexto atual.",
-      "",
-      "3. Inferências prováveis",
-      executionLine.length
-        ? `- Linha provável de execução: ${executionLine.join(" -> ")}`
-        : "- Linha de execução ainda não consolidada.",
-      notes.length
-        ? `- Nota principal: ${notes[0]}`
-        : "- O planner aponta que a próxima etapa deve continuar a camada supervisionada.",
-      "",
-      "4. Próximo passo mínimo recomendado",
-      targetFile
-        ? `- Trabalhar o arquivo ${targetFile}`
-        : "- Revisar snapshot e recalcular plano.",
-      "",
-      "5. Arquivos mais prováveis de ajuste",
-      ranking.length
-        ? ranking.map((item) => `- ${item.file} (${item.score})`).join("\n")
-        : "- dado ausente"
-    ].join("\n");
-  }
-
-  function formatNextFileResult(result) {
-    const suggestion = result?.suggestion || result?.nextFile || {};
-    return [
-      "1. Fatos confirmados",
-      `- Sugestão local calculada: ${!!result?.ok}`,
-      `- Próximo arquivo: ${suggestion.nextFile || "dado ausente"}`,
-      "",
-      "2. Dados ausentes ou mal consolidados",
-      "- A sugestão depende do plano e do snapshot disponíveis no runtime atual.",
-      "",
-      "3. Inferências prováveis",
-      `- Origem da sugestão: ${suggestion.source || "desconhecida"}`,
-      `- Risco estimado: ${suggestion.risk || "unknown"}`,
-      "",
-      "4. Próximo passo mínimo recomendado",
-      `- ${suggestion.reason || "Usar o próximo arquivo sugerido como base."}`,
-      "",
-      "5. Arquivos mais prováveis de ajuste",
-      `- ${suggestion.nextFile || "dado ausente"}`
-    ].join("\n");
-  }
-
-  function formatValidationResult(result) {
-    const validation = result?.validation || {};
-    const warnings = Array.isArray(validation.warnings) ? validation.warnings : [];
-    const errors = Array.isArray(validation.errors) ? validation.errors : [];
-
-    return [
-      "1. Fatos confirmados",
-      `- Validação executada: ${!!result?.ok}`,
-      `- PlanId: ${result?.planId || validation?.planId || "dado ausente"}`,
-      "",
-      "2. Dados ausentes ou mal consolidados",
-      errors.length ? errors.map((x) => `- ${x}`).join("\n") : "- Nenhum erro estrutural retornado pela validação.",
-      "",
-      "3. Inferências prováveis",
-      warnings.length ? warnings.map((x) => `- ${x}`).join("\n") : "- O plano parece coerente para seguir no fluxo supervisionado.",
-      "",
-      "4. Próximo passo mínimo recomendado",
-      result?.ok ? "- Seguir para stage do patch." : "- Corrigir o plano antes de stage/apply.",
-      "",
-      "5. Arquivos mais prováveis de ajuste",
-      `- ${validation?.normalized?.targetFile || "dado ausente"}`
-    ].join("\n");
-  }
-
-  function formatStageOrApplyResult(title, result) {
-    const staged = result?.stagedPatch || {};
-    return [
-      "1. Fatos confirmados",
-      `- ${title}: ${!!result?.ok}`,
-      `- Arquivo alvo: ${result?.targetFile || staged?.targetFile || "dado ausente"}`,
-      `- PlanId: ${result?.planId || staged?.planId || "dado ausente"}`,
-      "",
-      "2. Dados ausentes ou mal consolidados",
-      result?.ok ? "- Sem ausência crítica reportada nesta etapa." : `- ${result?.msg || "falha não detalhada"}`,
-      "",
-      "3. Inferências prováveis",
-      `- Risco: ${result?.risk || staged?.risk || "unknown"}`,
-      `- Modo: ${result?.mode || staged?.mode || "dado ausente"}`,
-      "",
-      "4. Próximo passo mínimo recomendado",
-      title === "Stage"
-        ? (result?.ok ? "- Seguir para apply supervisionado quando aprovado." : "- Corrigir o plano antes de repetir o stage.")
-        : (result?.ok ? "- Revalidar runtime e revisar o resultado aplicado." : "- Revisar writer/runtime antes de tentar novo apply."),
-      "",
-      "5. Arquivos mais prováveis de ajuste",
-      `- ${result?.targetFile || staged?.targetFile || "dado ausente"}`
-    ].join("\n");
-  }
-
-  function formatSnapshotResult(result) {
-    const runtime = result?.runtime || {};
-    const nextFile = result?.nextFile || {};
-    const bridge = result?.bridge || {};
-    const planner = result?.planner || {};
-    const supervisor = result?.patchSupervisor || {};
-    const runtimeLayer = result?.runtimeLayer || {};
-    const adminFront = result?.adminFront || {};
-
-    return [
-      "1. Fatos confirmados",
-      `- Snapshot local consolidado: ${!!result?.ok}`,
-      `- Planner ready: ${!!planner.ready}`,
-      `- Bridge ready: ${!!bridge.ready}`,
-      `- Patch Supervisor ready: ${!!supervisor.ready}`,
-      `- Runtime ready: ${!!runtimeLayer.ready}`,
-      "",
-      "2. Dados ausentes ou mal consolidados",
-      `- bootStatus: ${runtime?.factoryState?.bootStatus || "dado ausente"}`,
-      `- activeView: ${runtime?.factoryState?.activeView || "dado ausente"}`,
-      `- lastEndpoint front: ${adminFront?.lastEndpoint || "dado ausente"}`,
-      "",
-      "3. Inferências prováveis",
-      `- Próximo arquivo provável: ${nextFile?.nextFile || "dado ausente"}`,
-      `- Motivo: ${nextFile?.reason || "dado ausente"}`,
-      `- Runtime status: ${runtimeLayer?.connectionStatus || "unknown"}`,
-      "",
-      "4. Próximo passo mínimo recomendado",
-      nextFile?.nextFile
-        ? `- Trabalhar ${nextFile.nextFile}`
-        : "- Rodar planner local para consolidar o próximo alvo.",
-      "",
-      "5. Arquivos mais prováveis de ajuste",
-      `- ${nextFile?.nextFile || "dado ausente"}`
-    ].join("\n");
-  }
-
-  function formatDoctorResult(result) {
-    return [
-      "1. Fatos confirmados",
-      `- Doctor executado: ${!!result?.ok}`,
-      `- Modo: ${result?.mode || "dado ausente"}`,
-      "",
-      "2. Dados ausentes ou mal consolidados",
-      result?.ok ? "- O relatório completo fica no próprio Doctor/local state." : `- ${result?.msg || "falha não detalhada"}`,
-      "",
-      "3. Inferências prováveis",
-      `- lastRun: ${pretty(result?.lastRun || result?.data || {})}`,
-      "",
-      "4. Próximo passo mínimo recomendado",
-      result?.ok ? "- Ler o doctorLastRun no snapshot e seguir com o arquivo indicado." : "- Restaurar Doctor antes de nova execução.",
-      "",
-      "5. Arquivos mais prováveis de ajuste",
-      "- /app/js/core/doctor_scan.js",
-      "- /app/js/core/factory_state.js"
-    ].join("\n");
-  }
-
-  function formatLogsResult(result) {
-    const logs = Array.isArray(result?.logs) ? result.logs : [];
-    return [
-      "1. Fatos confirmados",
-      `- Coleta local de logs: ${!!result?.ok}`,
-      `- Quantidade retornada: ${logs.length}`,
-      "",
-      "2. Dados ausentes ou mal consolidados",
-      logs.length ? "- Os logs refletem só o tail atual disponível no runtime." : "- Nenhum log disponível no tail atual.",
-      "",
-      "3. Inferências prováveis",
-      logs.length ? `- Última linha: ${String(logs[logs.length - 1])}` : "- Sem inferência útil sem logs.",
-      "",
-      "4. Próximo passo mínimo recomendado",
-      "- Usar esses logs junto com snapshot ou doctor para decidir o próximo patch.",
-      "",
-      "5. Arquivos mais prováveis de ajuste",
-      "- /app/js/core/logger.js",
-      "- /app/js/core/context_engine.js"
-    ].join("\n");
-  }
-
-  function formatLocalActionResult(action, result) {
-    if (action === "plan") return formatPlanResult(result);
-    if (action === "next_file") return formatNextFileResult(result);
-    if (action === "validate_patch") return formatValidationResult(result);
-    if (action === "stage_patch") return formatStageOrApplyResult("Stage", result);
-    if (action === "apply_patch") return formatStageOrApplyResult("Apply", result);
-    if (action === "approve_patch") return [
-      "1. Fatos confirmados",
-      `- Aprovação executada: ${!!result?.ok}`,
-      `- PlanId: ${result?.planId || "dado ausente"}`,
-      "",
-      "2. Dados ausentes ou mal consolidados",
-      result?.ok ? "- Nenhuma ausência crítica retornada na aprovação." : `- ${result?.msg || "falha não detalhada"}`,
-      "",
-      "3. Inferências prováveis",
-      "- O plano pode seguir para validação/stage se a aprovação foi aceita.",
-      "",
-      "4. Próximo passo mínimo recomendado",
-      result?.ok ? "- Rodar validar patch." : "- Recalcular plano antes de nova aprovação.",
-      "",
-      "5. Arquivos mais prováveis de ajuste",
-      `- ${result?.summary?.targetFile || "dado ausente"}`
-    ].join("\n");
-    if (action === "snapshot") return formatSnapshotResult(result);
-    if (action === "run_doctor") return formatDoctorResult(result);
-    if (action === "collect_logs") return formatLogsResult(result);
-    return pretty(result || {});
-  }
-
-  async function runLocalAction(localAction, prompt) {
-    const api = window.RCF_FACTORY_AI_ACTIONS;
-    if (!api || typeof api.dispatch !== "function") {
-      return {
-        ok: false,
-        msg: "RCF_FACTORY_AI_ACTIONS indisponível no runtime atual."
-      };
-    }
-
-    const map = {
-      plan: { action: "plan", prompt },
-      approve_patch: { action: "approve_patch", prompt },
-      validate_patch: { action: "validate_patch", prompt },
-      stage_patch: { action: "stage_patch", prompt },
-      apply_patch: { action: "apply_patch", prompt },
-      run_doctor: { action: "run_doctor", prompt },
-      collect_logs: { action: "collect_logs", prompt, limit: 40 },
-      snapshot: { action: "snapshot", prompt },
-      next_file: { action: "next_file", prompt }
-    };
-
-    const req = map[localAction];
-    if (!req) {
-      return { ok: false, msg: "Ação local não mapeada." };
-    }
-
-    STATE.lastEndpoint = "local:factory_ai_actions";
-    setButtonsBusy(true);
-    setComposerStatus("executando local...");
-    setTechResult("");
-
-    try {
-      const result = await api.dispatch(req);
-      const text = formatLocalActionResult(localAction, result);
-
-      setComposerStatus(result?.ok ? "concluído local" : "falha local");
-      setTechResult(text);
-
-      pushHistory({
-        role: "assistant",
-        text,
-        ts: new Date().toISOString()
-      });
-
-      renderChat({ forceBottom: true });
-
-      try {
-        window.dispatchEvent(new CustomEvent("RCF:FACTORY_AI_LOCAL_ACTION", {
-          detail: {
-            localAction,
-            request: req,
-            result: clone(result || {})
-          }
-        }));
-      } catch {}
-
-      log(result?.ok ? "OK" : "WARN", "ação local executada: " + localAction);
-      return result;
-    } catch (e) {
-      const msg = String(e?.message || e || "Erro local");
-      setComposerStatus("erro local");
-      setTechResult(msg);
-
-      pushHistory({
-        role: "assistant",
-        text: msg,
-        ts: new Date().toISOString()
-      });
-
-      renderChat({ forceBottom: true });
-      log("ERR", "erro ação local: " + localAction);
-      return { ok: false, msg };
-    } finally {
-      setButtonsBusy(false);
-    }
-  }
-
-  async function runRuntimePrompt(action, prompt) {
-    const runtime = window.RCF_FACTORY_AI_RUNTIME;
-
-    if (!runtime || typeof runtime.ask !== "function") {
-      return { ok: false, msg: "RCF_FACTORY_AI_RUNTIME indisponível." };
-    }
-
-    STATE.lastEndpoint = "runtime:/api/admin-ai";
-    setButtonsBusy(true);
-    setComposerStatus("consultando runtime...");
-    setTechResult("");
-
-    try {
-      const result = await runtime.ask({
-        action,
-        prompt,
-        payload: buildPayload(action),
-        history: STATE.history.slice(-12).map((m) => ({
-          role: m.role,
-          text: m.text
-        })),
-        attachments: getAttachmentPayload()
-      });
-
-      const text = extractRuntimeMessage(result);
-
-      if (!result || result.ok === false) {
-        setComposerStatus("falha runtime");
-        setTechResult(text);
-
-        pushHistory({
-          role: "assistant",
-          text,
-          ts: new Date().toISOString()
-        });
-
-        renderChat({ forceBottom: true });
-        log("WARN", "runtime falhou");
-        return result || { ok: false, msg: text };
-      }
-
-      setComposerStatus("concluído runtime");
-      setTechResult(text);
-
-      pushHistory({
-        role: "assistant",
-        text,
-        ts: new Date().toISOString()
-      });
-
-      renderChat({ forceBottom: true });
-
-      try {
-        window.dispatchEvent(new CustomEvent("RCF:FACTORY_AI_RUNTIME_RESPONSE", {
-          detail: { action, prompt, result: clone(result || {}) }
-        }));
-      } catch {}
-
-      log("OK", "runtime executado");
-      return result;
-    } catch (e) {
-      const msg = String(e?.message || e || "Erro no runtime");
-      setComposerStatus("erro runtime");
-      setTechResult(msg);
-
-      pushHistory({
-        role: "assistant",
-        text: msg,
-        ts: new Date().toISOString()
-      });
-
-      renderChat({ forceBottom: true });
-      log("ERR", "erro no runtime");
-      return { ok: false, msg };
-    } finally {
-      setButtonsBusy(false);
-    }
-  }
-
-  async function runBrainPrompt(prompt) {
-    const brain = window.RCF_FACTORY_AI_BRAIN;
-
-    if (!brain || typeof brain.think !== "function") {
-      return { ok: false, msg: "RCF_FACTORY_AI_BRAIN indisponível." };
-    }
-
-    STATE.lastEndpoint = "local:factory_ai_brain";
-    setButtonsBusy(true);
-    setComposerStatus("pensando...");
-    setTechResult("");
-
-    try {
-      const result = await brain.think({ prompt });
-      const text =
-        (typeof result?.answer === "string" && result.answer.trim())
-          ? result.answer
-          : (typeof result?.analysis === "string" && result.analysis.trim())
-            ? result.analysis
-            : pretty(result || { ok: false, msg: "sem resposta do brain" });
-
-      setComposerStatus(result?.ok === false ? "falha local" : "concluído local");
-      setTechResult(text);
-
-      pushHistory({
-        role: "assistant",
-        text,
-        ts: new Date().toISOString()
-      });
-
-      renderChat({ forceBottom: true });
-
-      try {
-        window.dispatchEvent(new CustomEvent("RCF:FACTORY_AI_BRAIN_RESPONSE", {
-          detail: { prompt, result: clone(result || {}) }
-        }));
-      } catch {}
-
-      log(result?.ok === false ? "WARN" : "OK", "brain executado");
-      return result;
-    } catch (e) {
-      const msg = String(e?.message || e || "Erro no brain");
-      setComposerStatus("erro local");
-      setTechResult(msg);
-
-      pushHistory({
-        role: "assistant",
-        text: msg,
-        ts: new Date().toISOString()
-      });
-
-      renderChat({ forceBottom: true });
-      log("ERR", "erro no brain");
-      return { ok: false, msg };
-    } finally {
-      setButtonsBusy(false);
-    }
-  }
-
-  async function runOrchestratorPrompt(prompt) {
-    const orch = window.RCF_FACTORY_AI_ORCHESTRATOR;
-
-    if (!orch || typeof orch.orchestrate !== "function") {
-      return { ok: false, msg: "RCF_FACTORY_AI_ORCHESTRATOR indisponível." };
-    }
-
-    STATE.lastEndpoint = "local:factory_ai_orchestrator";
-    setButtonsBusy(true);
-    setComposerStatus("orquestrando...");
-    setTechResult("");
-
-    try {
-      const result = await orch.orchestrate({ prompt });
-      const text =
-        (typeof result?.analysis === "string" && result.analysis.trim())
-          ? result.analysis
-          : pretty(result || { ok: false, msg: "sem resposta do orchestrator" });
-
-      setComposerStatus(result?.ok === false ? "falha local" : "concluído local");
-      setTechResult(text);
-
-      pushHistory({
-        role: "assistant",
-        text,
-        ts: new Date().toISOString()
-      });
-
-      renderChat({ forceBottom: true });
-
-      try {
-        window.dispatchEvent(new CustomEvent("RCF:FACTORY_AI_ORCHESTRATED", {
-          detail: { prompt, result: clone(result || {}) }
-        }));
-      } catch {}
-
-      log(result?.ok === false ? "WARN" : "OK", "orchestrator executado");
-      return result;
-    } catch (e) {
-      const msg = String(e?.message || e || "Erro no orchestrator");
-      setComposerStatus("erro local");
-      setTechResult(msg);
-
-      pushHistory({
-        role: "assistant",
-        text: msg,
-        ts: new Date().toISOString()
-      });
-
-      renderChat({ forceBottom: true });
-      log("ERR", "erro no orchestrator");
-      return { ok: false, msg };
-    } finally {
-      setButtonsBusy(false);
-    }
-  }
-
-  async function postJSON(url, body) {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body)
-    });
-    const data = await res.json().catch(() => ({}));
-    return { res, data };
-  }
-
-  async function callFactoryAI(action, payload, prompt) {
-    if (STATE.busy) return;
-
-    setButtonsBusy(true);
-    setComposerStatus("carregando...");
-    setTechResult("");
-
-    const body = {
-      action,
-      payload,
-      prompt,
-      history: STATE.history.slice(-12).map((m) => ({
-        role: m.role,
-        text: m.text
-      })),
-      attachments: getAttachmentPayload(),
-      source: "factory-ai",
-      version: VERSION
-    };
-
-    try {
-      let result = null;
-      let endpoint = "";
-
-      try {
-        result = await postJSON("/api/factory-ai", body);
-        endpoint = "/api/factory-ai";
-      } catch {
-        result = null;
-      }
-
-      if (!result || !result.res || (!result.res.ok && !result.data?.ok)) {
-        result = await postJSON("/api/admin-ai", body);
-        endpoint = "/api/admin-ai";
-      }
-
-      STATE.lastEndpoint = endpoint;
-
-      const { res, data } = result;
-
-      if (!res.ok || !data.ok) {
-        const text =
-          trim(data?.analysis) ||
-          trim(data?.answer) ||
-          trim(data?.result) ||
-          pretty(data || { error: "Erro ao chamar endpoint IA" });
-
-        setComposerStatus("erro");
-        setTechResult(text);
-        pushHistory({
-          role: "assistant",
-          text,
-          ts: new Date().toISOString()
-        });
-        renderChat({ forceBottom: true });
-        log("ERR", "falha IA endpoint=" + endpoint);
-        return;
-      }
-
-      const text =
-        data.analysis ||
-        data.answer ||
-        data.result ||
-        pretty(data);
-
-      try {
-        window.dispatchEvent(new CustomEvent("RCF:FACTORY_AI_RESPONSE", {
-          detail: {
-            action,
-            source: endpoint,
-            analysis: text,
-            raw: data
-          }
-        }));
-      } catch {}
-
-      setComposerStatus("concluído");
-      setTechResult(text);
-      pushHistory({
-        role: "assistant",
-        text,
-        ts: new Date().toISOString()
-      });
-      renderChat({ forceBottom: true });
-      log("OK", "resposta recebida action=" + action + " endpoint=" + endpoint);
-    } catch (e) {
-      const msg = String(e?.message || e || "Erro de rede");
-      setComposerStatus("erro");
-      setTechResult(msg);
-      pushHistory({
-        role: "assistant",
-        text: msg,
-        ts: new Date().toISOString()
-      });
-      renderChat({ forceBottom: true });
-      log("ERR", "erro de rede IA");
-    } finally {
-      setButtonsBusy(false);
-    }
-  }
-
-  function sendPrompt(rawPrompt, forcedAction = "") {
-    const prompt = String(rawPrompt || "").trim();
-
-    if (!prompt && !(STATE.attachments && STATE.attachments.length)) {
-      setComposerStatus("aguardando");
-      setTechResult("Digite uma instrução ou selecione um arquivo primeiro.");
-      return;
-    }
-
-    const finalPrompt = prompt || "Analise os anexos enviados e diga o próximo passo mais seguro.";
-    const action = forcedAction || inferActionFromPrompt(finalPrompt);
-    const localAction = inferLocalActionFromPrompt(finalPrompt);
-
-    let userText = finalPrompt;
-    if (STATE.attachments && STATE.attachments.length) {
-      const list = STATE.attachments.map((a) => a.name).join(", ");
-      userText += `\n\n[anexos: ${list}]`;
-    }
-
-    pushHistory({
-      role: "user",
-      text: userText,
-      ts: new Date().toISOString()
-    });
-    renderChat({ forceBottom: true });
-
-    if (localAction) {
-      runLocalAction(localAction, finalPrompt);
-    } else if (window.RCF_FACTORY_AI_RUNTIME?.ask) {
-      runRuntimePrompt(action, finalPrompt);
-    } else if (window.RCF_FACTORY_AI_BRAIN?.think) {
-      runBrainPrompt(finalPrompt);
-    } else if (window.RCF_FACTORY_AI_ORCHESTRATOR?.orchestrate) {
-      runOrchestratorPrompt(finalPrompt);
-    } else {
-      callFactoryAI(action, buildPayload(action), finalPrompt);
-    }
-
-    const input = document.getElementById("rcfFactoryAIPrompt");
-    if (input) {
-      try {
-        input.value = "";
-        autoResizePrompt(input);
-      } catch {}
-    }
-
-    clearAttachments();
-    closeAttachMenus();
-    stopListening();
-  }
-
-  function normalizePickedFiles(fileList, forcedKind = "") {
-    const files = Array.from(fileList || []);
-    if (!files.length) return [];
-
-    return files.slice(0, 10).map((file) => {
-      const mime = String(file.type || "").trim();
-      const name = String(file.name || "arquivo").trim();
-      const size = Number(file.size || 0) || 0;
-
-      let kind = forcedKind || "file";
-
-      if (!forcedKind) {
-        if (mime.startsWith("image/")) kind = "image";
-        else if (mime.startsWith("video/")) kind = "video";
-        else if (mime === "application/pdf") kind = "pdf";
-        else if (/zip|compressed|x-zip/i.test(mime) || /\.zip$/i.test(name)) kind = "zip";
-        else if (mime.startsWith("audio/")) kind = "audio";
-      }
-
-      return {
-        id: "att_" + Math.random().toString(36).slice(2, 10),
-        name,
-        mime,
-        size,
-        kind,
-        summary: `${kind.toUpperCase()} • ${formatBytes(size)}`
-      };
-    });
-  }
-
-  function formatBytes(bytes) {
-    const value = Number(bytes || 0);
-    if (!value) return "0 B";
-    if (value < 1024) return value + " B";
-    if (value < 1024 * 1024) return (value / 1024).toFixed(1) + " KB";
-    if (value < 1024 * 1024 * 1024) return (value / (1024 * 1024)).toFixed(1) + " MB";
-    return (value / (1024 * 1024 * 1024)).toFixed(1) + " GB";
-  }
-
-  function addAttachments(items) {
-    if (!Array.isArray(items) || !items.length) return;
-
-    const current = Array.isArray(STATE.attachments) ? STATE.attachments.slice() : [];
-    const merged = current.concat(items).slice(0, 12);
-
-    const dedup = [];
-    const seen = new Set();
-
-    merged.forEach((item) => {
-      const key = `${item.name}::${item.size}::${item.kind}`;
-      if (seen.has(key)) return;
-      seen.add(key);
-      dedup.push(item);
-    });
-
-    STATE.attachments = dedup;
-    renderAttachments();
-    setComposerStatus("anexos prontos");
-  }
-
-  function removeAttachment(id) {
-    STATE.attachments = (STATE.attachments || []).filter((item) => item.id !== id);
-    renderAttachments();
-    if (!STATE.attachments.length) setComposerStatus("aguardando");
-  }
-
-  function clearAttachments() {
-    STATE.attachments = [];
-    renderAttachments();
-
-    [
-      "rcfFactoryAIInputImage",
-      "rcfFactoryAIInputPdf",
-      "rcfFactoryAIInputZip",
-      "rcfFactoryAIInputFile",
-      "rcfFactoryAIInputVideo",
-      "rcfFactoryAIInputAudio"
-    ].forEach((id) => {
-      const el = document.getElementById(id);
-      if (el) {
-        try { el.value = ""; } catch {}
-      }
-    });
-  }
-
-  function renderAttachments() {
-    const wrap = document.getElementById("rcfFactoryAIAttachments");
-    if (!wrap) return;
-
-    const list = Array.isArray(STATE.attachments) ? STATE.attachments : [];
-    if (!list.length) {
-      wrap.innerHTML = "";
-      wrap.style.display = "none";
-      return;
-    }
-
-    wrap.style.display = "flex";
-    wrap.innerHTML = list.map((item) => {
-      const icon =
-        item.kind === "image" ? "🖼️" :
-        item.kind === "pdf" ? "📄" :
-        item.kind === "zip" ? "🗜️" :
-        item.kind === "video" ? "🎬" :
-        item.kind === "audio" ? "🎤" : "📎";
-
-      return `
-        <div class="rcfAiAttachmentChip">
-          <span>${icon}</span>
-          <span class="rcfAiAttachmentName" title="${esc(item.name)}">${esc(item.name)}</span>
-          <button class="rcfAiAttachmentRemove" type="button" data-rcf-attach-remove="${esc(item.id)}">×</button>
-        </div>
-      `;
-    }).join("");
-
-    qsa("[data-rcf-attach-remove]", wrap).forEach((btn) => {
-      if (btn.__boundRemove) return;
-      btn.__boundRemove = true;
-      btn.addEventListener("click", () => {
-        removeAttachment(btn.getAttribute("data-rcf-attach-remove") || "");
-      }, { passive: true });
-    });
-  }
-
-  function toggleAttachMenu(menuId) {
-    const menu = document.getElementById(menuId);
-    if (!menu) return;
-
-    const isOpen = menu.classList.contains("open");
-    closeAttachMenus();
-    if (!isOpen) menu.classList.add("open");
-  }
-
-  function closeAttachMenus() {
-    ["rcfFactoryAIClipMenuMain"].forEach((id) => {
-      const menu = document.getElementById(id);
-      if (menu) menu.classList.remove("open");
-    });
-  }
-
-  function openFileInput(id) {
-    const el = document.getElementById(id);
-    if (!el) return;
-    closeAttachMenus();
-    try { el.click(); } catch {}
-  }
-
-  function autoResizePrompt(el) {
-    try {
-      if (!el) return;
-      el.style.height = "28px";
-      const next = Math.min(Math.max(el.scrollHeight, 28), 88);
-      el.style.height = next + "px";
-    } catch {}
-  }
-
-  function stopSpeaking() {
-    try {
-      if (window.speechSynthesis) window.speechSynthesis.cancel();
-    } catch {}
-    STATE.currentUtterance = null;
-  }
-
-  function speakText(text) {
-    try {
-      stopSpeaking();
-      if (!("speechSynthesis" in window)) {
-        setComposerStatus("leitura por voz indisponível");
-        return;
-      }
-      const utter = new SpeechSynthesisUtterance(String(text || ""));
-      utter.lang = "pt-BR";
-      utter.rate = 1;
-      utter.pitch = 1;
-      utter.onend = () => {
-        STATE.currentUtterance = null;
-        setComposerStatus("aguardando");
-      };
-      STATE.currentUtterance = utter;
-      window.speechSynthesis.speak(utter);
-      setComposerStatus("lendo resposta");
-    } catch {
-      setComposerStatus("leitura por voz indisponível");
-    }
-  }
-
-  function setVoiceBtnState() {
-    const btn = document.getElementById("rcfFactoryAIVoiceBtn");
-    if (!btn) return;
-
-    if (STATE.isListening) {
-      btn.classList.add("listening");
-      btn.setAttribute("title", "Parar gravação");
-      btn.setAttribute("aria-label", "Parar gravação");
-      btn.textContent = "⏺";
-    } else {
-      btn.classList.remove("listening");
-      btn.setAttribute("title", SpeechRecognitionCtor ? "Falar por áudio" : "Áudio indisponível");
-      btn.setAttribute("aria-label", SpeechRecognitionCtor ? "Falar por áudio" : "Áudio indisponível");
-      btn.textContent = "🎤";
-    }
-  }
-
-  function stopListening() {
-    try {
-      const rec = window.__RCF_FACTORY_AI_REC__;
-      if (rec && typeof rec.stop === "function") rec.stop();
-    } catch {}
-    STATE.isListening = false;
-    setVoiceBtnState();
-  }
-
-  function startListening() {
-    if (!SpeechRecognitionCtor) {
-      setComposerStatus("áudio não suportado neste navegador");
-      return;
-    }
-
-    try {
-      stopListening();
-
-      const rec = new SpeechRecognitionCtor();
-      window.__RCF_FACTORY_AI_REC__ = rec;
-      rec.lang = "pt-BR";
-      rec.interimResults = true;
-      rec.maxAlternatives = 1;
-      rec.continuous = false;
-
-      const input = document.getElementById("rcfFactoryAIPrompt");
-      if (!input) return;
-
-      let finalText = String(input.value || "");
-
-      rec.onstart = () => {
-        STATE.isListening = true;
-        setVoiceBtnState();
-        setComposerStatus("ouvindo...");
-      };
-
-      rec.onresult = (event) => {
-        let interim = "";
-        let complete = finalText;
-
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          const txt = String(event.results[i][0]?.transcript || "");
-          if (event.results[i].isFinal) {
-            complete += (complete ? " " : "") + txt.trim();
-          } else {
-            interim += " " + txt.trim();
-          }
-        }
-
-        input.value = (complete + interim).trim();
-        autoResizePrompt(input);
-      };
-
-      rec.onerror = () => {
-        STATE.isListening = false;
-        setVoiceBtnState();
-        setComposerStatus("falha no áudio");
-      };
-
-      rec.onend = () => {
-        STATE.isListening = false;
-        setVoiceBtnState();
-        setComposerStatus("aguardando");
-      };
-
-      rec.start();
-    } catch {
-      STATE.isListening = false;
-      setVoiceBtnState();
-      setComposerStatus("áudio não suportado neste navegador");
-    }
-  }
-
-  function toggleListening() {
-    if (STATE.isListening) stopListening();
-    else startListening();
-  }
-
-  function cleanupFactoryAIHost() {
-    const view = getFactoryAIView();
-    if (!view) return false;
-
-    try {
-      const hero = qs(".rcfUiFactoryHero", view);
-      if (hero) hero.style.display = "none";
-    } catch {}
-
-    try {
-      const actionsBlock = qs('[data-rcf-factory-block="factory-ai-actions"]', view);
-      if (actionsBlock) actionsBlock.style.display = "none";
-    } catch {}
-
-    try {
-      const contextBlock = qs('[data-rcf-factory-block="factory-ai-context"]', view);
-      if (contextBlock) contextBlock.style.display = "none";
-    } catch {}
-
-    try {
-      const blockHead = qs('[data-rcf-factory-block="factory-ai-tools"] .rcfUiFactoryBlockHead', view);
-      if (blockHead) blockHead.style.display = "none";
-    } catch {}
-
-    try {
-      const toolsBlock = qs('[data-rcf-factory-block="factory-ai-tools"]', view);
-      if (toolsBlock) {
-        toolsBlock.style.marginTop = "0";
-        toolsBlock.style.paddingTop = "0";
-        toolsBlock.style.border = "0";
-        toolsBlock.style.background = "transparent";
-        toolsBlock.style.boxShadow = "none";
-      }
-    } catch {}
-
-    try {
-      const wrong = qsa('#rcfFactoryAIQuickActions, #rcfFactoryAIStateMini, [data-rcf-factory-ai-fallback]', view);
-      wrong.forEach((el) => {
-        try { el.remove(); } catch {}
-      });
-    } catch {}
-
+  // =========================================================
+  // 15) MOUNT / SYNC
+  // =========================================================
+  function renderInitialUiState() {
+    if (!state.ui) return false;
+
+    restoreUiState();
+    state.ui.autoReadBtn.textContent = state.autoRead ? "Voz on" : "Voz off";
+    state.ui.textarea.value = restoreDraft();
+    autogrowTextarea();
+    renderAttachmentBar();
+    loadHistory();
+    rerenderHistoryPreservingScroll(true);
+    reflectBusyUi();
+    setComposerStatus(state.composerStatusText || "");
     return true;
   }
 
-  function syncVisibility() {
-    const box = document.getElementById(BOX_ID);
-    const showFactory = isFactoryAIViewVisible();
-    const showAdminFallback = !showFactory && isAdminViewVisible() && /^admin/.test(STATE.mountedIn || "");
-    const visible = !!(showFactory || showAdminFallback);
-
-    try {
-      if (box) {
-        box.style.display = visible ? "" : "none";
-        box.hidden = !visible;
-      }
-    } catch {}
-
-    try { cleanupFactoryAIHost(); } catch {}
-  }
-
-  function bindAttachmentInputs() {
-    const map = [
-      ["rcfFactoryAIInputImage", "image"],
-      ["rcfFactoryAIInputPdf", "pdf"],
-      ["rcfFactoryAIInputZip", "zip"],
-      ["rcfFactoryAIInputFile", "file"],
-      ["rcfFactoryAIInputVideo", "video"],
-      ["rcfFactoryAIInputAudio", "audio"]
-    ];
-
-    map.forEach(([id, kind]) => {
-      const input = document.getElementById(id);
-      if (!input || input.__boundFileInput) return;
-
-      input.__boundFileInput = true;
-      input.addEventListener("change", () => {
-        const items = normalizePickedFiles(input.files, kind);
-        addAttachments(items);
-      });
-    });
-  }
-
-  function bindMenuItems() {
-    [
-      ["rcfFactoryAIChooseImage", "rcfFactoryAIInputImage"],
-      ["rcfFactoryAIChoosePdf", "rcfFactoryAIInputPdf"],
-      ["rcfFactoryAIChooseZip", "rcfFactoryAIInputZip"],
-      ["rcfFactoryAIChooseFile", "rcfFactoryAIInputFile"],
-      ["rcfFactoryAIChooseVideo", "rcfFactoryAIInputVideo"],
-      ["rcfFactoryAIChooseAudio", "rcfFactoryAIInputAudio"]
-    ].forEach(([btnId, inputId]) => {
-      const btn = document.getElementById(btnId);
-      if (!btn || btn.__boundPick) return;
-      btn.__boundPick = true;
-      btn.addEventListener("click", () => {
-        openFileInput(inputId);
-      }, { passive: true });
-    });
-  }
-
-  function bindHeaderButtons() {
-    const btnClear = document.getElementById("rcfFactoryAIClearHistory");
-    if (btnClear && !btnClear.__boundClearV436) {
-      btnClear.__boundClearV436 = true;
-      btnClear.addEventListener("click", () => {
-        try {
-          const ok = window.confirm("Limpar histórico desta conversa da Factory AI?");
-          if (!ok) return;
-        } catch {}
-        clearChat();
-      });
-    }
-  }
-
-  function bindBox() {
-    const sendBtn = document.getElementById("rcfFactoryAISend");
-    const promptEl = document.getElementById("rcfFactoryAIPrompt");
-    const attachBtn = document.getElementById("rcfFactoryAIAttachBtn");
-    const voiceBtn = document.getElementById("rcfFactoryAIVoiceBtn");
-
-    if (sendBtn && !sendBtn.__boundV436) {
-      sendBtn.__boundV436 = true;
-      sendBtn.addEventListener("click", () => {
-        sendPrompt(String(promptEl?.value || "").trim(), "");
-      }, { passive: true });
-    }
-
-    if (promptEl && !promptEl.__boundInputV436) {
-      promptEl.__boundInputV436 = true;
-      autoResizePrompt(promptEl);
-
-      promptEl.addEventListener("input", () => {
-        autoResizePrompt(promptEl);
-      });
-
-      promptEl.addEventListener("keydown", (ev) => {
-        try {
-          if (ev.key === "Enter" && !ev.shiftKey) {
-            ev.preventDefault();
-            sendPrompt(String(promptEl.value || "").trim(), "");
-          }
-        } catch {}
-      });
-    }
-
-    if (attachBtn && !attachBtn.__boundV436) {
-      attachBtn.__boundV436 = true;
-      attachBtn.addEventListener("click", () => {
-        toggleAttachMenu("rcfFactoryAIClipMenuMain");
-      }, { passive: true });
-    }
-
-    if (voiceBtn && !voiceBtn.__boundV436) {
-      voiceBtn.__boundV436 = true;
-      voiceBtn.addEventListener("click", () => {
-        toggleListening();
-      }, { passive: true });
-    }
-
-    bindMenuItems();
-    bindAttachmentInputs();
-    bindHeaderButtons();
-    bindChatScroll();
-    renderAttachments();
-    setVoiceBtnState();
-
-    if (!document.__rcfFactoryAIOutsideClickV436) {
-      document.__rcfFactoryAIOutsideClickV436 = true;
-      document.addEventListener("click", (ev) => {
-        try {
-          const wrap = document.getElementById("rcfFactoryAIAttachWrap");
-          if (wrap && wrap.contains(ev.target)) return;
-          closeAttachMenus();
-        } catch {}
-      }, { passive: true });
-    }
-  }
-
-  function buildAttachMenu() {
-    return `
-      <div id="rcfFactoryAIClipMenuMain" class="rcfAiMenu">
-        <button class="rcfAiMenuItem" id="rcfFactoryAIChooseImage" type="button">🖼️ Imagem</button>
-        <button class="rcfAiMenuItem" id="rcfFactoryAIChoosePdf" type="button">📄 PDF</button>
-        <button class="rcfAiMenuItem" id="rcfFactoryAIChooseZip" type="button">🗜️ ZIP</button>
-        <button class="rcfAiMenuItem" id="rcfFactoryAIChooseFile" type="button">📎 Arquivo</button>
-        <button class="rcfAiMenuItem" id="rcfFactoryAIChooseVideo" type="button">🎬 Vídeo</button>
-        <button class="rcfAiMenuItem" id="rcfFactoryAIChooseAudio" type="button">🎤 Áudio</button>
-      </div>
-    `;
-  }
-
-  function buildBoxHtml() {
-    return `
-      <div class="rcfAiShell">
-        <section class="rcfAiHead">
-          <div class="rcfAiHeadLeft">
-            <div class="rcfAiAvatar">🤖</div>
-            <div class="rcfAiHeadText">
-              <h2 class="rcfAiHeadTitle">Factory AI</h2>
-              <p class="rcfAiHeadSub"></p>
-            </div>
-          </div>
-          <div class="rcfAiHeadActions">
-            <div class="rcfAiPill" title="Runtime + OpenAI + bridge supervisionada">Runtime + OpenAI</div>
-            <button class="rcfAiHeadBtn" id="rcfFactoryAIClearHistory" type="button">Limpar</button>
-          </div>
-        </section>
-
-        <section id="${CHAT_ID}"></section>
-
-        <section class="rcfAiComposer">
-          <div id="rcfFactoryAIAttachments" class="rcfAiAttachRow" style="display:none"></div>
-
-          <div class="rcfAiInputShell">
-            <div class="rcfAiAttachWrap" id="rcfFactoryAIAttachWrap">
-              <button
-                class="rcfAiAttachBtn"
-                id="rcfFactoryAIAttachBtn"
-                type="button"
-                aria-label="Adicionar anexo"
-                title="Adicionar anexo"
-              >＋</button>
-              ${buildAttachMenu()}
-            </div>
-
-            <div class="rcfAiInputCard">
-              <textarea
-                id="rcfFactoryAIPrompt"
-                class="rcfAiPrompt"
-                placeholder="Digite sua mensagem..."
-              ></textarea>
-
-              <button
-                class="rcfAiVoiceBtn"
-                id="rcfFactoryAIVoiceBtn"
-                type="button"
-                aria-label="Falar por áudio"
-                title="Falar por áudio"
-              >🎤</button>
-
-              <button class="rcfAiSendBtn" id="rcfFactoryAISend" type="button" aria-label="Enviar" title="Enviar">➤</button>
-            </div>
-          </div>
-
-          <input id="rcfFactoryAIInputImage" class="rcfAiHiddenInput" type="file" accept="image/*" multiple>
-          <input id="rcfFactoryAIInputPdf" class="rcfAiHiddenInput" type="file" accept="application/pdf,.pdf" multiple>
-          <input id="rcfFactoryAIInputZip" class="rcfAiHiddenInput" type="file" accept=".zip,application/zip,application/x-zip-compressed" multiple>
-          <input id="rcfFactoryAIInputFile" class="rcfAiHiddenInput" type="file" multiple>
-          <input id="rcfFactoryAIInputVideo" class="rcfAiHiddenInput" type="file" accept="video/*" multiple>
-          <input id="rcfFactoryAIInputAudio" class="rcfAiHiddenInput" type="file" accept="audio/*" multiple>
-
-          <div class="rcfAiBottom">
-            <div id="rcfFactoryAIComposerStatus" class="rcfAiStatus">aguardando</div>
-          </div>
-
-          <details class="rcfAiDetails">
-            <summary>Contexto técnico</summary>
-            <div style="margin-top:10px;display:grid;gap:10px">
-              <div>
-                <label class="hint">Snapshot Preview enviado</label>
-                <pre class="mono small rcfAiPre" id="rcfFactoryAISnapshot">{"status":"aguardando"}</pre>
-              </div>
-              <div>
-                <label class="hint">Último resultado técnico</label>
-                <pre class="mono small rcfAiPre" id="rcfFactoryAITechResult">Pronto.</pre>
-              </div>
-            </div>
-          </details>
-        </section>
-      </div>
-    `;
-  }
-
-  function ensureMainBox(primarySlot) {
-    let box = document.getElementById(BOX_ID);
-    if (!primarySlot) return null;
-
-    ensureStyle();
-
-    let needsFreshRender = false;
-    let moved = false;
-
-    if (!box) {
-      box = document.createElement("div");
-      box.id = BOX_ID;
-      box.className = "card";
-      box.setAttribute("data-rcf-factory-ai", "1");
-      box.setAttribute("data-rcf-build", VERSION);
-      box.innerHTML = buildBoxHtml();
-      primarySlot.appendChild(box);
-      needsFreshRender = true;
-      moved = true;
-    } else {
-      const currentBuild = String(box.getAttribute("data-rcf-build") || "");
-      if (currentBuild !== VERSION) {
-        box.setAttribute("data-rcf-build", VERSION);
-        box.innerHTML = buildBoxHtml();
-        needsFreshRender = true;
-      }
-      if (box.parentNode !== primarySlot) {
-        primarySlot.appendChild(box);
-        moved = true;
-      }
-    }
-
-    bindBox();
-
-    if (needsFreshRender) {
-      renderChat();
-    }
-
-    return { box, needsFreshRender, moved };
-  }
-
-  function mount() {
-    const slots = getPreferredSlots();
-    const primary = slots.tools || slots.fallback || null;
-    if (!primary) return false;
-
-    const nextMountedIn = slots.tools ? "factoryai.tools" : "admin.fallback";
-    const prevMountedIn = STATE.mountedIn || "";
-    STATE.mountedIn = nextMountedIn;
-
-    const ensured = ensureMainBox(primary);
-    if (!ensured || !ensured.box) return false;
-
-    try { cleanupFactoryAIHost(); } catch {}
-    try { syncVisibility(); } catch {}
-
-    const signature = `${STATE.mountedIn || "unknown"}|build=${VERSION}|slot=${primary.id || primary.getAttribute("data-rcf-slot") || primary.className || "unknown"}`;
-    const firstMount = !STATE.mounted;
-    const changedMount = prevMountedIn !== STATE.mountedIn || !!ensured.needsFreshRender || !!ensured.moved;
-
-    STATE.mounted = true;
-
-    if (firstMount || changedMount) {
-      logMountOnce(signature, true);
-    }
-
+  function isMountedInValidHost() {
+    if (!state.mounted || !state.host || !state.ui || !state.ui.root) return false;
+    if (!document.body.contains(state.host)) return false;
+    if (!document.body.contains(state.ui.root)) return false;
+    if (!state.host.contains(state.ui.root)) return false;
     return true;
   }
 
-  function mountLoop() {
-    if (mount()) return true;
-    setTimeout(() => { try { mount(); } catch {} }, 700);
-    setTimeout(() => { try { mount(); } catch {} }, 1600);
-    setTimeout(() => { try { mount(); } catch {} }, 2800);
-    return false;
-  }
-
-  function bindVisibilityHooksOnce() {
-    if (STATE.visibilityBound) return;
-    STATE.visibilityBound = true;
+  function sync() {
+    if (state.isSyncing) return true;
+    state.isSyncing = true;
 
     try {
-      document.addEventListener("visibilitychange", () => {
-        try {
-          if (document.visibilityState === "visible") {
-            mount();
-            syncVisibility();
-          }
-        } catch {}
-      }, { passive: true });
-    } catch {}
+      if (!state.mounted || !state.ui || !state.host) return false;
 
-    try {
-      window.addEventListener("pageshow", () => {
-        try {
-          mount();
-          syncVisibility();
-        } catch {}
-      }, { passive: true });
-    } catch {}
+      if (!isMountedInValidHost()) {
+        warn("sync detected detached mount");
+        state.mounted = false;
+        state.ui = null;
+        return false;
+      }
 
-    try {
-      window.addEventListener("resize", () => {
-        try { syncVisibility(); } catch {}
-      }, { passive: true });
-    } catch {}
+      const currentSig = resolveHostSignature(state.host);
+      if (state.lastHostSignature && currentSig !== state.lastHostSignature) {
+        warn("host signature changed", state.lastHostSignature, currentSig);
+      }
+
+      renderAttachmentBar();
+      reflectBusyUi();
+      return true;
+    } catch (e) {
+      warn("sync failed", e);
+      return false;
+    } finally {
+      state.isSyncing = false;
+    }
   }
 
   function startSync() {
-    if (STATE.syncStarted) return;
-    STATE.syncStarted = true;
-
-    try {
-      if (STATE.syncTimer) clearInterval(STATE.syncTimer);
-    } catch {}
-
-    STATE.syncTimer = setInterval(() => {
-      try { mount(); } catch {}
-      try { syncVisibility(); } catch {}
-    }, SYNC_INTERVAL_MS);
-
-    bindVisibilityHooksOnce();
-
-    try {
-      if (!document.__rcfFactoryAIClickSyncV436) {
-        document.__rcfFactoryAIClickSyncV436 = true;
-        document.addEventListener("click", () => {
-          setTimeout(() => {
-            try { syncVisibility(); } catch {}
-          }, 80);
-        }, { passive: true });
-      }
-    } catch {}
+    if (state.syncTimer) return true;
+    state.syncTimer = setInterval(sync, SYNC_INTERVAL_MS);
+    return true;
   }
 
-  STATE.history = loadHistory();
+  function stopSync() {
+    if (state.syncTimer) clearInterval(state.syncTimer);
+    state.syncTimer = null;
+    return true;
+  }
 
-  window.RCF_FACTORY_AI = {
-    __v41: true,
-    __v411: true,
-    __v42: true,
-    __v421: true,
-    __v430: true,
-    __v431: true,
-    __v432: true,
-    __v433: true,
-    __v434: true,
-    __v435: true,
-    __v436: true,
-    version: VERSION,
+  function mount(target) {
+    if (state.mounting) return false;
+    const host = resolveHost(target);
+    if (!host) {
+      warn("mount host not found");
+      return false;
+    }
+
+    if (state.mounted && state.host === host && isMountedInValidHost()) {
+      sync();
+      return true;
+    }
+
+    state.mounting = true;
+    try {
+      state.host = host;
+      state.lastHostSignature = resolveHostSignature(host);
+
+      buildUi(host);
+      bindUiEvents();
+      renderInitialUiState();
+
+      state.softMountedOnce = true;
+      state.mounted = true;
+      state.mountCount += 1;
+      startSync();
+      log("mounted", VERSION, "count=", state.mountCount);
+      return true;
+    } catch (e) {
+      errLog("mount failed", e);
+      state.mounted = false;
+      state.ui = null;
+      return false;
+    } finally {
+      state.mounting = false;
+    }
+  }
+
+  function mountLoop(target) {
+    if (mount(target)) return true;
+    if (state.mountTimer) clearTimeout(state.mountTimer);
+    state.mountTimer = setTimeout(() => mountLoop(target), MOUNT_RETRY_MS);
+    return false;
+  }
+
+  function unmount() {
+    stopSync();
+
+    if (state.mountTimer) {
+      clearTimeout(state.mountTimer);
+      state.mountTimer = null;
+    }
+
+    if (state.ui && state.ui.root && state.host && state.host.contains(state.ui.root)) {
+      state.host.removeChild(state.ui.root);
+    }
+
+    state.ui = null;
+    state.host = null;
+    state.mounted = false;
+    return true;
+  }
+
+  // =========================================================
+  // 16) PUBLIC API
+  // =========================================================
+  const api = {
+    VERSION,
     mount,
+    mountLoop,
+    unmount,
+    sync,
+    startSync,
+    stopSync,
     clearChat,
+    clearAttachments,
     sendPrompt,
-    stopListening,
+    getHistory,
+    getAttachments,
+    getLastEndpoint,
+    getSnapshot: buildTechnicalSnapshot,
+    getTechnicalContextText: buildTechnicalContextText,
     speakText,
-    getHistory() {
-      return Array.isArray(STATE.history) ? STATE.history.slice() : [];
-    },
-    getLastEndpoint() {
-      return STATE.lastEndpoint || "";
-    },
-    getAttachments() {
-      return Array.isArray(STATE.attachments) ? STATE.attachments.slice() : [];
+    startVoiceInput,
+    stopVoiceInput,
+    debugState: function () {
+      return {
+        version: VERSION,
+        mounted: state.mounted,
+        busy: state.busy,
+        mountCount: state.mountCount,
+        historyCount: state.history.length,
+        attachmentsCount: state.attachments.length,
+        lastEndpoint: state.lastEndpoint,
+        lastRoute: state.lastRoute,
+        autoRead: state.autoRead
+      };
     }
   };
 
-  window.RCF_ADMIN_AI = Object.assign(window.RCF_ADMIN_AI || {}, {
-    __v41_bridge: true,
-    __v411_bridge: true,
-    __v42_bridge: true,
-    __v421_bridge: true,
-    __v430_bridge: true,
-    __v431_bridge: true,
-    __v432_bridge: true,
-    __v433_bridge: true,
-    __v434_bridge: true,
-    __v435_bridge: true,
-    __v436_bridge: true,
-    version: VERSION,
-    mount,
-    clearChat,
-    sendPrompt
-  });
+  window[API_NAME] = Object.assign(window[API_NAME] || {}, api);
+  window[LEGACY_API_NAME] = window[API_NAME];
 
+  // =========================================================
+  // 17) BOOT
+  // =========================================================
   try {
-    window.addEventListener("RCF:UI_READY", () => {
-      try { mountLoop(); } catch {}
-    }, { passive: true });
-  } catch {}
-
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", () => {
-      try { mountLoop(); } catch {}
-      try { startSync(); } catch {}
-    }, { once: true });
-  } else {
-    mountLoop();
-    startSync();
+    state.history = loadHistory();
+    state.attachments = [];
+    restoreUiState();
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", () => mountLoop());
+    } else {
+      mountLoop();
+    }
+  } catch (e) {
+    errLog("boot failed", e);
   }
 
-  log("OK", "admin.admin_ai.js -> Factory AI ready ✅ " + VERSION);
+  log("booted", VERSION);
 })();
