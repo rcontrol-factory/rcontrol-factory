@@ -1,9 +1,9 @@
 /* FILE: /app/js/admin.admin_ai.js
    RControl Factory
    /app/js/admin.admin_ai.js
-   v4.4.2 SAFE INTERNAL REORG + REAL ACTIONS CONTRACT FIX
+   v4.4.3 UI STABILITY PATCH + SAFE HYBRID PRESERVE
    Base line preserved from:
-   v4.4.1 SAFE INTERNAL REORG + HYBRID ROUTE PRESERVE
+   v4.4.2 SAFE INTERNAL REORG + REAL ACTIONS CONTRACT FIX
 */
 (() => {
   "use strict";
@@ -11,7 +11,7 @@
   // =========================================================
   // 1) GUARDS / VERSION / CONSTANTS
   // =========================================================
-  const VERSION = "v4.4.2 SAFE INTERNAL REORG + REAL ACTIONS CONTRACT FIX";
+  const VERSION = "v4.4.3 UI STABILITY PATCH + SAFE HYBRID PRESERVE";
   const BUILD = "[ADMIN_AI]";
   const API_NAME = "RCF_FACTORY_AI";
   const LEGACY_API_NAME = "RCF_ADMIN_AI";
@@ -70,7 +70,6 @@
     autoRead: false,
     shouldAutoStick: true,
     lastKnownScrollTop: 0,
-    scrollLockRender: false,
     boundDocClick: null,
     boundVisibility: null,
     boundResize: null,
@@ -133,7 +132,6 @@
 
   function isFn(v) { return typeof v === "function"; }
   function isObj(v) { return !!v && typeof v === "object" && !Array.isArray(v); }
-  function isStr(v) { return typeof v === "string"; }
   function isArr(v) { return Array.isArray(v); }
 
   function nowIso() {
@@ -171,15 +169,6 @@
   function writeStorage(key, value) {
     try {
       localStorage.setItem(key, value);
-      return true;
-    } catch (_) {
-      return false;
-    }
-  }
-
-  function removeStorage(key) {
-    try {
-      localStorage.removeItem(key);
       return true;
     } catch (_) {
       return false;
@@ -435,68 +424,201 @@
     const style = document.createElement("style");
     style.id = CSS_ID;
     style.textContent = `
+      [${ROOT_ATTR}]{
+        position:relative !important;
+        display:flex !important;
+        flex-direction:column !important;
+        width:100% !important;
+        max-width:100% !important;
+        min-width:0 !important;
+        height:100% !important;
+        min-height:0 !important;
+        flex:1 1 auto !important;
+        color:inherit !important;
+        background:transparent !important;
+        overflow:hidden !important;
+        overflow-x:hidden !important;
+        box-sizing:border-box !important;
+        isolation:isolate !important;
+        z-index:1 !important;
+      }
+      [${ROOT_ATTR}] *{
+        box-sizing:border-box !important;
+      }
       .rcf-admin-ai-root{
-        position:relative; display:flex; flex-direction:column; height:100%; min-height:280px;
-        color:inherit; background:transparent; overflow:hidden;
+        position:relative;
+        display:flex;
+        flex-direction:column;
+        width:100%;
+        max-width:100%;
+        min-width:0;
+        height:100%;
+        min-height:0;
+        flex:1 1 auto;
+        color:inherit;
+        background:transparent;
+        overflow:hidden;
+        overflow-x:hidden;
       }
       .rcf-admin-ai-shell{
-        position:relative; display:flex; flex-direction:column; height:100%; min-height:0;
+        position:relative;
+        display:flex;
+        flex-direction:column;
+        width:100%;
+        max-width:100%;
+        min-width:0;
+        height:100%;
+        min-height:0;
+        flex:1 1 auto;
+        overflow:hidden;
+        overflow-x:hidden;
+        background:transparent;
       }
       .rcf-admin-ai-head{
-        display:flex; align-items:center; justify-content:space-between; gap:10px;
-        padding:12px; border-bottom:1px solid rgba(255,255,255,.08);
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap:10px;
+        width:100%;
+        max-width:100%;
+        min-width:0;
+        flex:0 0 auto;
+        padding:12px;
+        border-bottom:1px solid rgba(255,255,255,.08);
+        overflow:hidden;
       }
       .rcf-admin-ai-head-left{
-        min-width:0; display:flex; align-items:center; gap:10px;
+        min-width:0;
+        max-width:100%;
+        flex:1 1 auto;
+        display:flex;
+        align-items:center;
+        gap:10px;
+        overflow:hidden;
       }
       .rcf-admin-ai-badge{
-        width:36px; height:36px; border-radius:12px;
-        display:flex; align-items:center; justify-content:center;
+        width:36px;
+        height:36px;
+        min-width:36px;
+        flex:0 0 36px;
+        border-radius:12px;
+        display:flex;
+        align-items:center;
+        justify-content:center;
         background:rgba(255,255,255,.06);
-        flex:0 0 auto;
       }
-      .rcf-admin-ai-head-copy{ min-width:0; }
+      .rcf-admin-ai-head-copy{
+        min-width:0;
+        max-width:100%;
+        flex:1 1 auto;
+        overflow:hidden;
+      }
       .rcf-admin-ai-title{
-        font-size:14px; font-weight:700; line-height:1.2; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+        font-size:14px;
+        font-weight:700;
+        line-height:1.2;
+        white-space:nowrap;
+        overflow:hidden;
+        text-overflow:ellipsis;
       }
       .rcf-admin-ai-sub{
-        font-size:11px; opacity:.72; line-height:1.2; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+        font-size:11px;
+        opacity:.72;
+        line-height:1.2;
+        white-space:nowrap;
+        overflow:hidden;
+        text-overflow:ellipsis;
       }
       .rcf-admin-ai-head-actions{
-        display:flex; align-items:center; gap:8px; flex:0 0 auto;
+        display:flex;
+        align-items:center;
+        gap:8px;
+        flex:0 0 auto;
+        min-width:0;
       }
       .rcf-admin-ai-btn,
       .rcf-admin-ai-iconbtn{
-        border:0; outline:0; appearance:none; -webkit-appearance:none;
-        background:rgba(255,255,255,.06); color:inherit; border-radius:12px; cursor:pointer;
+        border:0;
+        outline:0;
+        appearance:none;
+        -webkit-appearance:none;
+        background:rgba(255,255,255,.06);
+        color:inherit;
+        border-radius:12px;
+        cursor:pointer;
         font:inherit;
+        touch-action:manipulation;
+        user-select:none;
+        -webkit-user-select:none;
+        position:relative;
+        z-index:2;
       }
       .rcf-admin-ai-btn{
-        height:34px; padding:0 12px; font-size:12px;
+        height:34px;
+        padding:0 12px;
+        font-size:12px;
+        white-space:nowrap;
+        flex:0 0 auto;
       }
       .rcf-admin-ai-iconbtn{
-        width:34px; height:34px; display:flex; align-items:center; justify-content:center;
+        width:34px;
+        min-width:34px;
+        height:34px;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        flex:0 0 auto;
       }
       .rcf-admin-ai-body{
-        flex:1 1 auto; min-height:0; overflow:auto; padding:14px 12px 18px 12px;
+        position:relative;
+        flex:1 1 auto;
+        min-height:0;
+        min-width:0;
+        width:100%;
+        max-width:100%;
+        overflow-x:hidden;
+        overflow-y:auto;
+        padding:14px 12px 18px 12px;
         overscroll-behavior:contain;
+        -webkit-overflow-scrolling:touch;
       }
       .rcf-admin-ai-list{
-        width:100%; max-width:980px; margin:0 auto; display:flex; flex-direction:column; gap:12px;
+        width:100%;
+        max-width:980px;
+        min-width:0;
+        margin:0 auto;
+        display:flex;
+        flex-direction:column;
+        gap:12px;
       }
       .rcf-admin-ai-empty{
-        text-align:center; font-size:13px; opacity:.72; padding:26px 14px;
+        text-align:center;
+        font-size:13px;
+        opacity:.72;
+        padding:26px 14px;
+        width:100%;
+        min-width:0;
       }
       .rcf-admin-ai-row{
-        display:flex; width:100%;
+        display:flex;
+        width:100%;
+        min-width:0;
+        max-width:100%;
       }
       .rcf-admin-ai-row.user{ justify-content:flex-end; }
       .rcf-admin-ai-row.assistant,
       .rcf-admin-ai-row.system{ justify-content:flex-start; }
 
       .rcf-admin-ai-bubble{
-        position:relative; max-width:min(88%, 800px); border-radius:18px; padding:12px 12px 10px 12px;
-        word-break:break-word; overflow-wrap:anywhere; box-shadow:0 5px 18px rgba(0,0,0,.08);
+        position:relative;
+        max-width:min(88%, 800px);
+        min-width:0;
+        border-radius:18px;
+        padding:12px 12px 10px 12px;
+        word-break:break-word;
+        overflow-wrap:anywhere;
+        box-shadow:0 5px 18px rgba(0,0,0,.08);
+        overflow:hidden;
       }
       .rcf-admin-ai-row.user .rcf-admin-ai-bubble{ background:rgba(85,130,255,.16); }
       .rcf-admin-ai-row.assistant .rcf-admin-ai-bubble,
@@ -504,111 +626,301 @@
       .rcf-admin-ai-bubble.error{ outline:1px solid rgba(255,100,100,.28); }
 
       .rcf-admin-ai-role{
-        font-size:11px; font-weight:700; opacity:.62; text-transform:uppercase; letter-spacing:.04em; margin-bottom:7px;
+        font-size:11px;
+        font-weight:700;
+        opacity:.62;
+        text-transform:uppercase;
+        letter-spacing:.04em;
+        margin-bottom:7px;
       }
       .rcf-admin-ai-text{
-        font-size:14px; line-height:1.5; white-space:pre-wrap;
+        font-size:14px;
+        line-height:1.5;
+        white-space:pre-wrap;
+        word-break:break-word;
+        overflow-wrap:anywhere;
+        min-width:0;
       }
       .rcf-admin-ai-meta{
-        display:flex; flex-wrap:wrap; gap:8px; font-size:11px; opacity:.64; margin-top:8px;
+        display:flex;
+        flex-wrap:wrap;
+        gap:8px;
+        font-size:11px;
+        opacity:.64;
+        margin-top:8px;
+        min-width:0;
       }
       .rcf-admin-ai-mini-actions{
-        display:flex; flex-wrap:wrap; gap:6px; margin-top:10px;
+        display:flex;
+        flex-wrap:wrap;
+        gap:6px;
+        margin-top:10px;
       }
       .rcf-admin-ai-mini{
-        border:0; outline:0; appearance:none; -webkit-appearance:none;
-        background:rgba(255,255,255,.07); color:inherit; border-radius:10px;
-        height:30px; padding:0 10px; font:inherit; font-size:12px; cursor:pointer;
+        border:0;
+        outline:0;
+        appearance:none;
+        -webkit-appearance:none;
+        background:rgba(255,255,255,.07);
+        color:inherit;
+        border-radius:10px;
+        height:30px;
+        padding:0 10px;
+        font:inherit;
+        font-size:12px;
+        cursor:pointer;
+        touch-action:manipulation;
       }
 
       .rcf-admin-ai-code-wrap{
-        margin-top:10px; border-radius:14px; overflow:hidden;
-        background:rgba(0,0,0,.28); border:1px solid rgba(255,255,255,.06);
+        margin-top:10px;
+        border-radius:14px;
+        overflow:hidden;
+        background:rgba(0,0,0,.28);
+        border:1px solid rgba(255,255,255,.06);
+        min-width:0;
+        max-width:100%;
       }
       .rcf-admin-ai-code-head{
-        display:flex; align-items:center; justify-content:space-between; gap:10px;
-        padding:8px 10px; background:rgba(255,255,255,.05); font-size:11px; opacity:.86;
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap:10px;
+        padding:8px 10px;
+        background:rgba(255,255,255,.05);
+        font-size:11px;
+        opacity:.86;
+        min-width:0;
       }
       .rcf-admin-ai-code{
-        margin:0; padding:12px; overflow:auto; white-space:pre; font-size:12px; line-height:1.5;
+        margin:0;
+        padding:12px;
+        overflow:auto;
+        max-width:100%;
+        white-space:pre;
+        font-size:12px;
+        line-height:1.5;
         font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
       }
 
       .rcf-admin-ai-attachments-inline{
-        display:flex; flex-wrap:wrap; gap:8px; margin-top:10px;
+        display:flex;
+        flex-wrap:wrap;
+        gap:8px;
+        margin-top:10px;
+        min-width:0;
       }
       .rcf-admin-ai-att-chip{
-        display:inline-flex; align-items:center; gap:8px; max-width:100%;
-        background:rgba(255,255,255,.07); border-radius:12px; padding:8px 10px; font-size:12px;
+        display:inline-flex;
+        align-items:center;
+        gap:8px;
+        max-width:100%;
+        background:rgba(255,255,255,.07);
+        border-radius:12px;
+        padding:8px 10px;
+        font-size:12px;
+        min-width:0;
       }
       .rcf-admin-ai-att-name{
-        white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:180px;
+        white-space:nowrap;
+        overflow:hidden;
+        text-overflow:ellipsis;
+        max-width:180px;
+        min-width:0;
       }
 
       .rcf-admin-ai-composer-wrap{
-        position:relative; flex:0 0 auto; padding:10px 12px 12px 12px;
+        position:relative;
+        flex:0 0 auto;
+        width:100%;
+        max-width:100%;
+        min-width:0;
+        padding:10px 12px 12px 12px;
         border-top:1px solid rgba(255,255,255,.08);
+        overflow:visible;
+        z-index:3;
+        background:transparent;
       }
       .rcf-admin-ai-attachments-bar{
-        display:none; max-width:980px; margin:0 auto 8px auto; gap:8px; overflow:auto;
+        display:none;
+        max-width:980px;
+        width:100%;
+        min-width:0;
+        margin:0 auto 8px auto;
+        gap:8px;
+        overflow-x:auto;
+        overflow-y:hidden;
+        -webkit-overflow-scrolling:touch;
       }
       .rcf-admin-ai-attachments-bar.show{ display:flex; }
 
       .rcf-admin-ai-chip{
-        display:inline-flex; align-items:center; gap:8px; white-space:nowrap;
-        background:rgba(255,255,255,.07); border-radius:999px; padding:8px 10px; font-size:12px;
+        display:inline-flex;
+        align-items:center;
+        gap:8px;
+        white-space:nowrap;
+        background:rgba(255,255,255,.07);
+        border-radius:999px;
+        padding:8px 10px;
+        font-size:12px;
+        min-width:0;
+        flex:0 0 auto;
       }
       .rcf-admin-ai-chip button{
-        border:0; background:transparent; color:inherit; cursor:pointer; opacity:.85; font-size:14px;
+        border:0;
+        background:transparent;
+        color:inherit;
+        cursor:pointer;
+        opacity:.85;
+        font-size:14px;
+        touch-action:manipulation;
       }
 
       .rcf-admin-ai-composer{
-        position:relative; display:flex; align-items:flex-end; gap:8px; max-width:980px; margin:0 auto;
+        position:relative;
+        display:flex;
+        align-items:flex-end;
+        gap:8px;
+        width:100%;
+        max-width:980px;
+        min-width:0;
+        margin:0 auto;
+        overflow:visible;
       }
       .rcf-admin-ai-plus{
-        width:42px; min-width:42px; height:42px; border-radius:14px; border:0; cursor:pointer;
-        background:rgba(255,255,255,.07); color:inherit; font-size:20px;
+        width:42px;
+        min-width:42px;
+        height:42px;
+        flex:0 0 42px;
+        border-radius:14px;
+        border:0;
+        cursor:pointer;
+        background:rgba(255,255,255,.07);
+        color:inherit;
+        font-size:20px;
+        touch-action:manipulation;
+        position:relative;
+        z-index:4;
       }
       .rcf-admin-ai-core{
-        flex:1 1 auto; min-width:0; display:flex; align-items:flex-end; gap:8px;
-        background:rgba(255,255,255,.05); border-radius:18px; padding:8px;
+        flex:1 1 auto;
+        min-width:0;
+        width:auto;
+        max-width:100%;
+        display:flex;
+        align-items:flex-end;
+        gap:8px;
+        background:rgba(255,255,255,.05);
+        border-radius:18px;
+        padding:8px;
         min-height:58px;
+        overflow:hidden;
       }
       .rcf-admin-ai-textarea{
-        flex:1 1 auto; min-width:0; min-height:42px; max-height:180px; resize:none;
-        background:transparent; border:0; outline:0; color:inherit; font:inherit;
-        padding:10px 8px 10px 10px; line-height:1.4;
+        flex:1 1 auto;
+        min-width:0;
+        width:100%;
+        max-width:100%;
+        min-height:42px;
+        max-height:180px;
+        resize:none;
+        background:transparent;
+        border:0;
+        outline:0;
+        color:inherit;
+        font:inherit;
+        padding:10px 8px 10px 10px;
+        line-height:1.4;
+        white-space:pre-wrap;
+        word-break:break-word;
+        overflow-wrap:anywhere;
+        overflow-x:hidden;
+        overflow-y:auto;
+        display:block;
+      }
+      .rcf-admin-ai-textarea::placeholder{
+        white-space:normal;
+        word-break:normal;
+        overflow-wrap:break-word;
+        writing-mode:horizontal-tb;
       }
       .rcf-admin-ai-actions{
-        display:flex; align-items:center; gap:6px; flex:0 0 auto;
+        display:flex;
+        align-items:center;
+        gap:6px;
+        flex:0 0 auto;
+        min-width:0;
       }
       .rcf-admin-ai-send{
-        width:42px; min-width:42px; height:42px; border-radius:14px; border:0; cursor:pointer;
-        background:rgba(255,255,255,.10); color:inherit;
+        width:42px;
+        min-width:42px;
+        height:42px;
+        flex:0 0 42px;
+        border-radius:14px;
+        border:0;
+        cursor:pointer;
+        background:rgba(255,255,255,.10);
+        color:inherit;
+        touch-action:manipulation;
+        position:relative;
+        z-index:4;
       }
       .rcf-admin-ai-send.busy{ opacity:.75; }
       .rcf-admin-ai-status{
-        max-width:980px; margin:8px auto 0 auto; min-height:18px; padding:0 2px;
-        font-size:12px; opacity:.72;
+        max-width:980px;
+        width:100%;
+        min-width:0;
+        margin:8px auto 0 auto;
+        min-height:18px;
+        padding:0 2px;
+        font-size:12px;
+        opacity:.72;
+        overflow:hidden;
+        text-overflow:ellipsis;
       }
       .rcf-admin-ai-menu{
-        position:absolute; left:12px; bottom:82px; z-index:20; min-width:240px;
-        display:none; padding:8px; border-radius:14px;
-        background:rgba(19,20,25,.96); border:1px solid rgba(255,255,255,.08);
+        position:absolute;
+        left:12px;
+        bottom:82px;
+        z-index:20;
+        min-width:240px;
+        max-width:min(300px, calc(100vw - 24px));
+        display:none;
+        padding:8px;
+        border-radius:14px;
+        background:rgba(19,20,25,.96);
+        border:1px solid rgba(255,255,255,.08);
         box-shadow:0 12px 30px rgba(0,0,0,.26);
       }
       .rcf-admin-ai-menu.show{ display:block; }
       .rcf-admin-ai-menu button{
-        display:block; width:100%; text-align:left; border:0; background:transparent; color:inherit;
-        padding:10px 10px; border-radius:10px; font:inherit; cursor:pointer;
+        display:block;
+        width:100%;
+        text-align:left;
+        border:0;
+        background:transparent;
+        color:inherit;
+        padding:10px 10px;
+        border-radius:10px;
+        font:inherit;
+        cursor:pointer;
+        touch-action:manipulation;
       }
 
       .rcf-admin-ai-hidden-input{ display:none !important; }
 
       @media (max-width:640px){
+        .rcf-admin-ai-head{ padding:10px; }
         .rcf-admin-ai-body{ padding:12px 10px 16px 10px; }
         .rcf-admin-ai-composer-wrap{ padding:8px 10px 10px 10px; }
         .rcf-admin-ai-bubble{ max-width:93%; }
+        .rcf-admin-ai-menu{
+          left:10px;
+          right:10px;
+          bottom:76px;
+          min-width:0;
+          max-width:none;
+        }
       }
     `;
     document.head.appendChild(style);
@@ -1735,8 +2047,21 @@
     return null;
   }
 
+  function stabilizeHostLayout(host) {
+    if (!host || !host.style) return;
+    host.style.position = host.style.position || "relative";
+    host.style.width = "100%";
+    host.style.maxWidth = "100%";
+    host.style.minWidth = "0";
+    if (!host.style.minHeight) host.style.minHeight = "0";
+    if (!host.style.height) host.style.height = "100%";
+    host.style.overflow = "hidden";
+    host.style.overflowX = "hidden";
+  }
+
   function buildUi(host) {
     ensureCss();
+    stabilizeHostLayout(host);
 
     const existing = host.querySelector("[" + ROOT_ATTR + "]");
     if (existing) existing.remove();
@@ -1782,6 +2107,12 @@
     const core = createEl("div", "rcf-admin-ai-core");
     const textarea = createEl("textarea", "rcf-admin-ai-textarea");
     textarea.placeholder = "Fale com a Factory AI...";
+    textarea.setAttribute("rows", "1");
+    textarea.setAttribute("spellcheck", "false");
+    textarea.setAttribute("autocapitalize", "sentences");
+    textarea.setAttribute("autocomplete", "off");
+    textarea.setAttribute("autocorrect", "on");
+
     const actions = createEl("div", "rcf-admin-ai-actions");
     const voiceBtn = createEl("button", "rcf-admin-ai-iconbtn", "🎤");
     voiceBtn.type = "button";
@@ -2059,6 +2390,9 @@
     if (!state.boundResize) {
       state.boundResize = function () {
         autogrowTextarea();
+        if (state.ui && state.ui.menu && state.menuOpen) {
+          closeMenu();
+        }
       };
       window.addEventListener("resize", state.boundResize);
     }
@@ -2093,6 +2427,12 @@
     rerenderHistoryPreservingScroll(true);
     reflectBusyUi();
     setComposerStatus(state.composerStatusText || "");
+
+    requestAnimation(() => {
+      autogrowTextarea();
+      scrollChatToBottom(true);
+    });
+
     return true;
   }
 
@@ -2117,6 +2457,8 @@
         state.ui = null;
         return false;
       }
+
+      stabilizeHostLayout(state.host);
 
       const currentSig = resolveHostSignature(state.host);
       if (state.lastHostSignature && currentSig !== state.lastHostSignature) {
