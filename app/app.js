@@ -1,17 +1,20 @@
 /* FILE: app/app.js
-   RControl Factory - /app/app.js - V8.1.0 LEAN ORCHESTRATOR
+   RControl Factory - /app/app.js - V8.1.1 LEAN ORCHESTRATOR
    - Arquivo completo (1 peca) pra copiar/colar
    - Objetivo: app.js como ORQUESTRADOR LEVE REAL
    - Mantém: boot lock, state, storage, logger, watchdog, diagnostics, SW, VFS, injector safe, agent CLI
    - Prioriza: ui_shell / ui_runtime / ui_state / ui_views / ui_router / ui_events / módulos UI
-   - PATCH: carrega cadeia supervisionada da Factory AI
-   - ADD: planner + bridge + runtime + patch supervisor + actions
+   - PATCH: resolução segura da cadeia supervisionada da Factory AI
+   - FIX: resolve módulos existentes antes de dynamic-load
+   - FIX: ordem de init da cadeia da IA ajustada
+   - FIX: loadScriptOnce mais robusto contra falso negativo em mobile/PWA
+   - ADD: status real da cadeia Factory AI (existing / dynamic / missing / init)
    - Fallback: ultra mínimo de sobrevivência
 */
 (() => {
   "use strict";
 
-  try { console.info("[RCF] /app/app.js BUILD=V8.1.0_LEAN_ORCHESTRATOR"); } catch {}
+  try { console.info("[RCF] /app/app.js BUILD=V8.1.1_LEAN_ORCHESTRATOR"); } catch {}
 
   // =========================================================
   // GLOBAL LOG ALIAS
@@ -41,7 +44,7 @@
     if (st.booted === true) return;
     if (st.booting === true && (now - (st.ts || 0)) < 8000) return;
 
-    window[__BOOT_KEY] = { booting: true, booted: false, ts: now, ver: "v8.1.0" };
+    window[__BOOT_KEY] = { booting: true, booted: false, ts: now, ver: "v8.1.1" };
   } catch {
     if (window.__RCF_BOOTED__) return;
     window.__RCF_BOOTED__ = true;
@@ -353,24 +356,177 @@
   const getUiViewsApi = () => { try { return (window.RCF_UI_VIEWS && typeof window.RCF_UI_VIEWS === "object") ? window.RCF_UI_VIEWS : null; } catch { return null; } };
   const getUiDashboardApi = () => { try { return (window.RCF_UI_DASHBOARD && typeof window.RCF_UI_DASHBOARD === "object") ? window.RCF_UI_DASHBOARD : null; } catch { return null; } };
 
+  function getFactoryAIPlanner() { try { return window.RCF_FACTORY_AI_PLANNER || null; } catch { return null; } }
+  function getFactoryAIBridge() { try { return window.RCF_FACTORY_AI_BRIDGE || null; } catch { return null; } }
+  function getFactoryAIRuntime() { try { return window.RCF_FACTORY_AI_RUNTIME || null; } catch { return null; } }
+  function getPatchSupervisor() { try { return window.RCF_PATCH_SUPERVISOR || null; } catch { return null; } }
+  function getFactoryAIActions() { try { return window.RCF_FACTORY_AI_ACTIONS || null; } catch { return null; } }
+
+  function ensureChainStatusStore() {
+    try {
+      window.RCF_FACTORY_AI_CHAIN_STATUS = window.RCF_FACTORY_AI_CHAIN_STATUS || {
+        version: "v1",
+        modules: {},
+        summary: { loaded: 0, present: 0, missing: 0, initialized: 0, healthy: false },
+        updatedAt: null
+      };
+      return window.RCF_FACTORY_AI_CHAIN_STATUS;
+    } catch {
+      return null;
+    }
+  }
+
+  function updateChainStatus(name, patch = {}) {
+    try {
+      const store = ensureChainStatusStore();
+      if (!store) return;
+      const prev = store.modules[name] || {};
+      store.modules[name] = Object.assign({}, prev, patch, { name, updatedAt: nowISO() });
+
+      const vals = Object.values(store.modules || {});
+      const present = vals.filter(v => !!v.present).length;
+      const loaded = vals.filter(v => v.loadState === "existing" || v.loadState === "dynamic").length;
+      const missing = vals.filter(v => v.loadState === "missing").length;
+      const initialized = vals.filter(v => !!v.initialized).length;
+      store.summary = {
+        loaded,
+        present,
+        missing,
+        initialized,
+        healthy: missing === 0 && initialized >= 5
+      };
+      store.updatedAt = nowISO();
+    } catch {}
+  }
+
+  function getFactoryAIModulesSnapshot() {
+    const modules = {
+      planner: getFactoryAIPlanner(),
+      bridge: getFactoryAIBridge(),
+      runtime: getFactoryAIRuntime(),
+      supervisor: getPatchSupervisor(),
+      actions: getFactoryAIActions()
+    };
+    try {
+      Object.keys(modules).forEach(name => {
+        updateChainStatus(name, {
+          present: !!modules[name],
+          loadState: modules[name] ? ((ensureChainStatusStore()?.modules?.[name]?.loadState) || "existing") : "missing"
+        });
+      });
+    } catch {}
+    return modules;
+  }
+
+  function moduleInitKey(name) {
+    return "__RCF_APP_INIT__" + String(name || "").toUpperCase().replace(/[^A-Z0-9]+/g, "_");
+  }
+
+  function markModuleInitialized(name, ok) {
+    try {
+      window[moduleInitKey(name)] = !!ok;
+      updateChainStatus(name, { initialized: !!ok });
+    } catch {}
+  }
+
+  function isModuleInitialized(name) {
+    try { return window[moduleInitKey(name)] === true; } catch { return false; }
+  }
+
+  function moduleHealthSummary() {
+    const mods = getFactoryAIModulesSnapshot();
+    return {
+      planner: !!mods.planner,
+      bridge: !!mods.bridge,
+      runtime: !!mods.runtime,
+      supervisor: !!mods.supervisor,
+      actions: !!mods.actions,
+      plannerInit: isModuleInitialized("planner"),
+      bridgeInit: isModuleInitialized("bridge"),
+      runtimeInit: isModuleInitialized("runtime"),
+      supervisorInit: isModuleInitialized("supervisor"),
+      actionsInit: isModuleInitialized("actions")
+    };
+  }
+
+  function findExistingScript(marker, src) {
+    try {
+      const byMarker = marker ? document.querySelector(`script[${marker}="1"]`) : null;
+      if (byMarker) return byMarker;
+
+      if (src) {
+        const norm = String(src);
+        const scripts = Array.from(document.querySelectorAll("script[src]"));
+        return scripts.find(sc => {
+          try {
+            const raw = sc.getAttribute("src") || "";
+            if (!raw) return false;
+            return raw === norm || raw.endsWith(norm.replace(/^\.\//, "")) || raw.endsWith(norm);
+          } catch {
+            return false;
+          }
+        }) || null;
+      }
+    } catch {}
+    return null;
+  }
+
   function loadScriptOnce(src, marker) {
     return new Promise(resolve => {
+      let settled = false;
+      const finish = (val) => {
+        if (settled) return;
+        settled = true;
+        resolve(!!val);
+      };
+
       try {
-        const hit = document.querySelector(`script[${marker}="1"]`);
-        if (hit) return resolve(true);
+        const existing = findExistingScript(marker, src);
+        if (existing) {
+          const done = existing.getAttribute("data-rcf-loaded") === "1" || existing.readyState === "complete";
+          if (done) return finish(true);
+
+          existing.addEventListener("load", () => {
+            try { existing.setAttribute("data-rcf-loaded", "1"); } catch {}
+            finish(true);
+          }, { once: true });
+
+          existing.addEventListener("error", () => finish(false), { once: true });
+
+          setTimeout(() => {
+            try {
+              const lateOk = existing.getAttribute("data-rcf-loaded") === "1" || !!findExistingScript(marker, src);
+              finish(!!lateOk);
+            } catch {
+              finish(false);
+            }
+          }, 3500);
+          return;
+        }
 
         const sc = document.createElement("script");
         sc.src = src;
         sc.defer = true;
         sc.async = false;
-        sc.setAttribute(marker, "1");
-        sc.onload = () => resolve(true);
-        sc.onerror = () => resolve(false);
+        if (marker) sc.setAttribute(marker, "1");
+        sc.onload = () => {
+          try { sc.setAttribute("data-rcf-loaded", "1"); } catch {}
+          finish(true);
+        };
+        sc.onerror = () => finish(false);
         (document.head || document.documentElement).appendChild(sc);
 
-        setTimeout(() => resolve(false), 1600);
+        setTimeout(() => {
+          try {
+            const lateHit = findExistingScript(marker, src);
+            const lateOk = !!lateHit && (lateHit.getAttribute("data-rcf-loaded") === "1" || lateHit.readyState === "complete");
+            finish(!!lateOk);
+          } catch {
+            finish(false);
+          }
+        }, 3500);
       } catch {
-        resolve(false);
+        finish(false);
       }
     });
   }
@@ -428,19 +584,42 @@
     if (__factoryAICorePromise) return __factoryAICorePromise;
 
     __factoryAICorePromise = (async () => {
-      await loadScriptOnce("./js/core/factory_ai_planner.js", "data-rcf-fai-planner");
-      await loadScriptOnce("./js/core/factory_ai_bridge.js", "data-rcf-fai-bridge");
-      await loadScriptOnce("./js/core/factory_ai_runtime.js", "data-rcf-fai-runtime");
-      await loadScriptOnce("./js/core/patch_supervisor.js", "data-rcf-patch-supervisor");
-      await loadScriptOnce("./js/core/factory_ai_actions.js", "data-rcf-fai-actions");
+      const defs = [
+        { name: "planner", src: "./js/core/factory_ai_planner.js", marker: "data-rcf-fai-planner", getter: getFactoryAIPlanner },
+        { name: "bridge", src: "./js/core/factory_ai_bridge.js", marker: "data-rcf-fai-bridge", getter: getFactoryAIBridge },
+        { name: "runtime", src: "./js/core/factory_ai_runtime.js", marker: "data-rcf-fai-runtime", getter: getFactoryAIRuntime },
+        { name: "supervisor", src: "./js/core/patch_supervisor.js", marker: "data-rcf-patch-supervisor", getter: getPatchSupervisor },
+        { name: "actions", src: "./js/core/factory_ai_actions.js", marker: "data-rcf-fai-actions", getter: getFactoryAIActions }
+      ];
 
-      return {
-        planner: window.RCF_FACTORY_AI_PLANNER || null,
-        bridge: window.RCF_FACTORY_AI_BRIDGE || null,
-        runtime: window.RCF_FACTORY_AI_RUNTIME || null,
-        supervisor: window.RCF_PATCH_SUPERVISOR || null,
-        actions: window.RCF_FACTORY_AI_ACTIONS || null
-      };
+      const out = {};
+
+      for (const def of defs) {
+        let mod = null;
+        try { mod = def.getter(); } catch {}
+
+        if (mod) {
+          out[def.name] = mod;
+          updateChainStatus(def.name, { present: true, loadState: "existing", source: "window" });
+          Logger.write("factory ai resolve:", def.name, "existing ✅");
+          continue;
+        }
+
+        const ok = await loadScriptOnce(def.src, def.marker);
+        try { mod = def.getter(); } catch {}
+
+        if (ok && mod) {
+          out[def.name] = mod;
+          updateChainStatus(def.name, { present: true, loadState: "dynamic", source: def.src });
+          Logger.write("factory ai resolve:", def.name, "dynamic ✅");
+        } else {
+          out[def.name] = null;
+          updateChainStatus(def.name, { present: false, loadState: "missing", source: def.src });
+          Logger.write("factory ai resolve:", def.name, "missing ❌");
+        }
+      }
+
+      return out;
     })();
 
     return __factoryAICorePromise;
@@ -452,11 +631,12 @@
       window.RCF_FACTORY_IA.getContext = () => buildFactoryIAContext();
       window.RCF_FACTORY_IA.getMode = () => "supervised";
       window.RCF_FACTORY_IA.canApply = () => false;
-      window.RCF_FACTORY_IA.getActions = () => window.RCF_FACTORY_AI_ACTIONS || null;
-      window.RCF_FACTORY_IA.getPlanner = () => window.RCF_FACTORY_AI_PLANNER || null;
-      window.RCF_FACTORY_IA.getBridge = () => window.RCF_FACTORY_AI_BRIDGE || null;
-      window.RCF_FACTORY_IA.getRuntime = () => window.RCF_FACTORY_AI_RUNTIME || null;
-      window.RCF_FACTORY_IA.getPatchSupervisor = () => window.RCF_PATCH_SUPERVISOR || null;
+      window.RCF_FACTORY_IA.getActions = () => getFactoryAIActions();
+      window.RCF_FACTORY_IA.getPlanner = () => getFactoryAIPlanner();
+      window.RCF_FACTORY_IA.getBridge = () => getFactoryAIBridge();
+      window.RCF_FACTORY_IA.getRuntime = () => getFactoryAIRuntime();
+      window.RCF_FACTORY_IA.getPatchSupervisor = () => getPatchSupervisor();
+      window.RCF_FACTORY_IA.getChainStatus = () => ensureChainStatusStore();
     } catch {}
   }
 
@@ -470,11 +650,11 @@
         openTools,
         openFabPanel,
         toggleFabPanel,
-        getFactoryAIActions: () => window.RCF_FACTORY_AI_ACTIONS || null,
-        getFactoryAIPlanner: () => window.RCF_FACTORY_AI_PLANNER || null,
-        getFactoryAIBridge: () => window.RCF_FACTORY_AI_BRIDGE || null,
-        getFactoryAIRuntime: () => window.RCF_FACTORY_AI_RUNTIME || null,
-        getPatchSupervisor: () => window.RCF_PATCH_SUPERVISOR || null
+        getFactoryAIActions: () => getFactoryAIActions(),
+        getFactoryAIPlanner: () => getFactoryAIPlanner(),
+        getFactoryAIBridge: () => getFactoryAIBridge(),
+        getFactoryAIRuntime: () => getFactoryAIRuntime(),
+        getPatchSupervisor: () => getPatchSupervisor()
       },
       helpers: { $, $$, uiMsg, bindTap, textContentSafe, slugify, escapeHtml, escapeAttr, normalizeViewName },
       apps: { getActiveApp, setActiveApp, openFile, renderAppsList, renderFilesList },
@@ -1015,24 +1195,50 @@
   function runMicroTests() {
     const results = [];
     const push = (n, p, i = "") => results.push({ name: n, pass: !!p, info: String(i || "") });
+
+    const hs = moduleHealthSummary();
+    const chainStore = ensureChainStatusStore();
+
     push("TEST_RENDER", !!$("#rcfRoot") && !!$("#views"), $("#rcfRoot") ? "UI root ok" : "UI root missing");
     push("TEST_IMPORTS", !!window.RCF_LOGGER && !!window.RCF && !!window.RCF.state, "globals");
     push("TEST_STATE_INIT", !!State && Array.isArray(State.apps) && !!State.active && typeof State.cfg === "object", "state");
     push("TEST_UI_REGISTRY", !!window.RCF_UI && typeof window.RCF_UI.getSlot === "function", "RCF_UI");
-    push("TEST_FACTORY_AI_CHAIN", !!window.RCF_FACTORY_AI_BRIDGE && !!window.RCF_FACTORY_AI_RUNTIME && !!window.RCF_PATCH_SUPERVISOR && !!window.RCF_FACTORY_AI_ACTIONS, "factory ai supervised chain");
+    push("TEST_FACTORY_AI_PRESENCE", hs.planner && hs.bridge && hs.runtime && hs.supervisor && hs.actions, "planner/bridge/runtime/supervisor/actions present");
+    push("TEST_FACTORY_AI_INIT", hs.plannerInit && hs.bridgeInit && hs.runtimeInit && hs.supervisorInit && hs.actionsInit, "planner/bridge/runtime/supervisor/actions initialized");
+    push("TEST_FACTORY_AI_STATUS", !!chainStore && chainStore.summary && chainStore.summary.missing === 0, safeJsonStringify(chainStore?.summary || {}));
+
+    try {
+      const reg = window.RCF_MODULE_REGISTRY;
+      const hasRefresh = !!(reg && typeof reg.refresh === "function");
+      push("TEST_REGISTRY_API", hasRefresh, "module_registry refresh");
+    } catch {
+      push("TEST_REGISTRY_API", false, "module_registry missing");
+    }
+
     const pass = results.filter(r => r.pass).length;
-    return { ok: pass === results.length, pass, total: results.length, results };
+    return { ok: pass === results.length, pass, total: results.length, results, health: hs, chain: chainStore };
   }
 
   async function runV8StabilityCheck() {
     const mt = runMicroTests();
-    uiMsg("#diagOut", `RCF — V8 STABILITY CHECK\nPASS=${mt.pass}/${mt.total}`);
+    const lines = [
+      "RCF — V8 STABILITY CHECK",
+      `PASS=${mt.pass}/${mt.total}`,
+      "",
+      "FACTORY AI CHAIN:",
+      safeJsonStringify(mt.chain?.summary || {}),
+      "",
+      "HEALTH:",
+      safeJsonStringify(mt.health || {})
+    ].join("\n");
+
+    uiMsg("#diagOut", lines);
     Logger.write("V8 check:", mt.ok ? "PASS ✅" : "FAIL ❌", `${mt.pass}/${mt.total}`);
     return {
       stable: mt.ok,
       pass: mt.pass,
       fail: mt.total - mt.pass,
-      report: "",
+      report: lines,
       overlay: { ok: true, suspects: [] },
       microtests: mt,
       css: { ok: true, token: "n/a" },
@@ -1116,7 +1322,7 @@
         return this._out(r.msg);
       }
       if (lower === "factory plan") {
-        const actions = window.RCF_FACTORY_AI_ACTIONS;
+        const actions = getFactoryAIActions();
         if (actions && typeof actions.planFromCurrentRuntime === "function") {
           const r = await actions.planFromCurrentRuntime({ prompt: "factory plan", reason: "agent.route" });
           return this._out(safeJsonStringify(r));
@@ -1286,7 +1492,32 @@
     } catch {}
   }
 
+  function initModuleSafely(name, mod, fnName = "init", args) {
+    try {
+      if (!mod || typeof mod[fnName] !== "function") {
+        updateChainStatus(name, { initialized: false, initState: "missing-init" });
+        return false;
+      }
+      if (isModuleInitialized(name)) {
+        updateChainStatus(name, { initialized: true, initState: "already" });
+        return true;
+      }
+      mod[fnName](args);
+      markModuleInitialized(name, true);
+      updateChainStatus(name, { initState: "ok" });
+      Logger.write("factory ai init:", name, "ok ✅");
+      return true;
+    } catch (e) {
+      markModuleInitialized(name, false);
+      updateChainStatus(name, { initState: "error", initError: String(e?.message || e) });
+      Logger.write(`factory_ai_${name} init err:`, e?.message || e);
+      return false;
+    }
+  }
+
   function bootFactoryAIChainHooks() {
+    const mods = getFactoryAIModulesSnapshot();
+
     try {
       if (window.RCF_FACTORY_STATE?.registerModule) {
         window.RCF_FACTORY_STATE.registerModule("factoryAI");
@@ -1299,43 +1530,17 @@
       }
     } catch {}
 
-    try {
-      const actions = window.RCF_FACTORY_AI_ACTIONS;
-      if (actions && typeof actions.init === "function") actions.init();
-    } catch (e) {
-      Logger.write("factory_ai_actions init err:", e?.message || e);
-    }
+    const ctx = buildFactoryIAContext();
+
+    initModuleSafely("planner", mods.planner, "init", ctx);
+    initModuleSafely("bridge", mods.bridge, "init", ctx);
+    initModuleSafely("runtime", mods.runtime, "init", ctx);
+    initModuleSafely("supervisor", mods.supervisor, "init", ctx);
+    initModuleSafely("actions", mods.actions, "init", ctx);
 
     try {
-      const bridge = window.RCF_FACTORY_AI_BRIDGE;
-      if (bridge && typeof bridge.init === "function") bridge.init();
-    } catch (e) {
-      Logger.write("factory_ai_bridge init err:", e?.message || e);
-    }
-
-    try {
-      const runtime = window.RCF_FACTORY_AI_RUNTIME;
-      if (runtime && typeof runtime.init === "function") runtime.init();
-    } catch (e) {
-      Logger.write("factory_ai_runtime init err:", e?.message || e);
-    }
-
-    try {
-      const planner = window.RCF_FACTORY_AI_PLANNER;
-      if (planner && typeof planner.init === "function") planner.init();
-    } catch (e) {
-      Logger.write("factory_ai_planner init err:", e?.message || e);
-    }
-
-    try {
-      const supervisor = window.RCF_PATCH_SUPERVISOR;
-      if (supervisor && typeof supervisor.init === "function") supervisor.init();
-    } catch (e) {
-      Logger.write("patch_supervisor init err:", e?.message || e);
-    }
-
-    try {
-      Logger.write("factory ai chain:", "planner/bridge/runtime/supervisor/actions ready ✅");
+      const store = ensureChainStatusStore();
+      Logger.write("factory ai chain:", safeJsonStringify(store?.summary || {}));
     } catch {}
   }
 
@@ -1343,6 +1548,7 @@
     try {
       Stability.install();
       injectCompactCSSOnce();
+      ensureChainStatusStore();
 
       await loadUiCoreBridgeOnce();
       await loadUiRuntimeOnce();
