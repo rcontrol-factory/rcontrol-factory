@@ -1,23 +1,47 @@
 /* FILE: /app/js/admin.admin_ai.js
    RControl Factory
    /app/js/admin.admin_ai.js
-   v4.4.3 UI STABILITY PATCH + SAFE HYBRID PRESERVE
-   Base line preserved from:
-   v4.4.2 SAFE INTERNAL REORG + REAL ACTIONS CONTRACT FIX
+   v4.3.6-r2 SAFE HOT-RELOAD + CSS REFRESH PATCH
+   - minimal hot-reload patch over v4.3.6-r1
+   - preserves tolerant mount behavior
+   - rebootstrap-safe on runtime file replace
 */
 (() => {
   "use strict";
 
   // =========================================================
+  // 0) HOT-RELOAD SAFE PRE-CLEANUP
+  // =========================================================
+  try {
+    const prevRuntime = window.__RCF_ADMIN_AI_RUNTIME__;
+    if (prevRuntime && typeof prevRuntime.destroy === "function") {
+      try { prevRuntime.destroy("hot-reload"); } catch (_) {}
+    } else {
+      try {
+        if (window.RCF_FACTORY_AI && typeof window.RCF_FACTORY_AI.unmount === "function") {
+          window.RCF_FACTORY_AI.unmount();
+        }
+      } catch (_) {}
+      try {
+        if (window.RCF_ADMIN_AI && typeof window.RCF_ADMIN_AI.unmount === "function") {
+          window.RCF_ADMIN_AI.unmount();
+        }
+      } catch (_) {}
+    }
+  } catch (_) {}
+
+  // do not hard-abort on hot reload; convert guard to reentry-safe mark
+  window.__RCF_ADMIN_AI_BOOTED__ = true;
+
+  // =========================================================
   // 1) GUARDS / VERSION / CONSTANTS
   // =========================================================
-  const VERSION = "v4.4.3 UI STABILITY PATCH + SAFE HYBRID PRESERVE";
+  const VERSION = "v4.3.6-r2 SAFE HOT-RELOAD + CSS REFRESH PATCH";
   const BUILD = "[ADMIN_AI]";
   const API_NAME = "RCF_FACTORY_AI";
   const LEGACY_API_NAME = "RCF_ADMIN_AI";
   const CSS_ID = "rcf-admin-ai-css";
   const ROOT_ATTR = "data-rcf-admin-ai-root";
-  const HOST_ATTR = "data-rcf-factory-ai-host";
   const DEFAULT_ENDPOINT = "/api/admin-ai";
   const MAX_HISTORY = 120;
   const MAX_RENDERED_HISTORY = 120;
@@ -37,12 +61,6 @@
     ui: "rcf:factory_ai:ui",
     attachmentsMeta: "rcf:factory_ai:attachments_meta"
   };
-
-  if (window.__RCF_ADMIN_AI_BOOTED__ === true) {
-    try { console.info(BUILD, "already booted"); } catch (_) {}
-    return;
-  }
-  window.__RCF_ADMIN_AI_BOOTED__ = true;
 
   // =========================================================
   // 2) INTERNAL STATE
@@ -74,7 +92,6 @@
     boundVisibility: null,
     boundResize: null,
     lastHostSignature: "",
-    softMountedOnce: false,
     composerStatusText: "",
     menuOpen: false
   };
@@ -85,7 +102,7 @@
   function safeLoggerPush(level, message) {
     try {
       const logger = window.RCF_LOGGER;
-      if (!logger || !isFn(logger.push)) return false;
+      if (!logger || typeof logger.push !== "function") return false;
 
       try {
         logger.push(level, message);
@@ -331,6 +348,32 @@
     throw new Error("No compatible method found: " + names.join(", "));
   }
 
+  function isVisibleElement(el) {
+    if (!el || !el.nodeType) return false;
+    try {
+      if (!document.body.contains(el)) return false;
+      const rect = el.getBoundingClientRect();
+      const style = window.getComputedStyle ? window.getComputedStyle(el) : null;
+      if (style && (style.display === "none" || style.visibility === "hidden")) return false;
+      if (rect.width <= 0 && rect.height <= 0) return false;
+      return true;
+    } catch (_) {
+      return true;
+    }
+  }
+
+  function removeAllLegacyRoots() {
+    try {
+      const roots = document.querySelectorAll("[" + ROOT_ATTR + "]");
+      for (let i = 0; i < roots.length; i += 1) {
+        const root = roots[i];
+        if (root && root.parentNode) {
+          root.parentNode.removeChild(root);
+        }
+      }
+    } catch (_) {}
+  }
+
   // =========================================================
   // 4) HISTORY HELPERS
   // =========================================================
@@ -419,11 +462,7 @@
   // 5) RENDER HELPERS
   // =========================================================
   function ensureCss() {
-    if (document.getElementById(CSS_ID)) return true;
-
-    const style = document.createElement("style");
-    style.id = CSS_ID;
-    style.textContent = `
+    const cssText = `
       [${ROOT_ATTR}]{
         position:relative !important;
         display:flex !important;
@@ -923,7 +962,16 @@
         }
       }
     `;
-    document.head.appendChild(style);
+
+    let style = document.getElementById(CSS_ID);
+    if (!style) {
+      style = document.createElement("style");
+      style.id = CSS_ID;
+      document.head.appendChild(style);
+    }
+    if (style.textContent !== cssText) {
+      style.textContent = cssText;
+    }
     return true;
   }
 
@@ -2020,29 +2068,86 @@
   }
 
   // =========================================================
-  // 13) UI BUILD
+  // 13) HOST RESOLUTION / UI BUILD
   // =========================================================
+  function getOfficialHost() {
+    const selectors = [
+      "#rcf-factory-ai-host",
+      "#factory-ai-host",
+      "#admin-ai-host",
+      "[data-rcf-factory-ai-host]",
+      "[data-rcf-factory-ai-slot='main']"
+    ];
+    for (let i = 0; i < selectors.length; i += 1) {
+      try {
+        const el = document.querySelector(selectors[i]);
+        if (el && isVisibleElement(el)) return el;
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  function getViewScopedFallbackHost() {
+    const selectors = [
+      '[data-view="factory_ai"]',
+      '[data-view="factory-ai"]',
+      '[data-panel="factory-ai"]',
+      "#view-factory-ai",
+      "#factory-ai-view",
+      "#factory-ai-panel"
+    ];
+    for (let i = 0; i < selectors.length; i += 1) {
+      try {
+        const el = document.querySelector(selectors[i]);
+        if (el && isVisibleElement(el)) return el;
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  function getAdminFallbackHost() {
+    const selectors = [
+      "#admin-ai-chat",
+      "#factory-ai-chat",
+      "#rcf-factory-ai",
+      "[data-admin-ai-host]",
+      ".factory-ai-host",
+      ".admin-ai-host",
+      '[data-slot="admin-main"]',
+      "#admin-main",
+      "#view-admin",
+      ".admin-panel-body",
+      ".admin-panel",
+      ".rcf-admin-panel"
+    ];
+    for (let i = 0; i < selectors.length; i += 1) {
+      try {
+        const el = document.querySelector(selectors[i]);
+        if (!el || !isVisibleElement(el)) continue;
+        return el;
+      } catch (_) {}
+    }
+    return null;
+  }
+
   function resolveHost(target) {
     if (target && target.nodeType === 1) return target;
+
     if (typeof target === "string" && target.trim()) {
-      const q = document.querySelector(target);
-      if (q) return q;
+      try {
+        const q = document.querySelector(target.trim());
+        if (q && isVisibleElement(q)) return q;
+      } catch (_) {}
     }
 
-    const candidates = [
-      "[" + HOST_ATTR + "]",
-      "#rcf-factory-ai",
-      "#factory-ai-chat",
-      "#admin-ai-chat",
-      "[data-view='factory_ai']",
-      "[data-view='factory-ai']",
-      ".factory-ai-host"
-    ];
+    const official = getOfficialHost();
+    if (official) return official;
 
-    for (let i = 0; i < candidates.length; i += 1) {
-      const el = document.querySelector(candidates[i]);
-      if (el) return el;
-    }
+    const viewScoped = getViewScopedFallbackHost();
+    if (viewScoped) return viewScoped;
+
+    const adminFallback = getAdminFallbackHost();
+    if (adminFallback) return adminFallback;
 
     return null;
   }
@@ -2050,13 +2155,12 @@
   function stabilizeHostLayout(host) {
     if (!host || !host.style) return;
     host.style.position = host.style.position || "relative";
-    host.style.width = "100%";
-    host.style.maxWidth = "100%";
-    host.style.minWidth = "0";
+    host.style.width = host.style.width || "100%";
+    host.style.maxWidth = host.style.maxWidth || "100%";
+    host.style.minWidth = host.style.minWidth || "0";
     if (!host.style.minHeight) host.style.minHeight = "0";
     if (!host.style.height) host.style.height = "100%";
-    host.style.overflow = "hidden";
-    host.style.overflowX = "hidden";
+    if (!host.style.overflowX) host.style.overflowX = "hidden";
   }
 
   function buildUi(host) {
@@ -2452,19 +2556,12 @@
       if (!state.mounted || !state.ui || !state.host) return false;
 
       if (!isMountedInValidHost()) {
-        warn("sync detected detached mount");
         state.mounted = false;
         state.ui = null;
         return false;
       }
 
       stabilizeHostLayout(state.host);
-
-      const currentSig = resolveHostSignature(state.host);
-      if (state.lastHostSignature && currentSig !== state.lastHostSignature) {
-        warn("host signature changed", state.lastHostSignature, currentSig);
-      }
-
       renderAttachmentBar();
       reflectBusyUi();
       return true;
@@ -2490,31 +2587,37 @@
 
   function mount(target) {
     if (state.mounting) return false;
-    const host = resolveHost(target);
-    if (!host) {
-      warn("mount host not found");
+
+    const nextHost = resolveHost(target);
+    if (!nextHost) {
+      warn("mount skipped: host not found yet");
       return false;
     }
 
-    if (state.mounted && state.host === host && isMountedInValidHost()) {
+    const nextSig = resolveHostSignature(nextHost);
+
+    if (state.mounted && state.host === nextHost && isMountedInValidHost()) {
       sync();
       return true;
     }
 
+    if (state.mounted && state.host && state.host !== nextHost) {
+      try { unmount(); } catch (_) {}
+    }
+
     state.mounting = true;
     try {
-      state.host = host;
-      state.lastHostSignature = resolveHostSignature(host);
+      state.host = nextHost;
+      state.lastHostSignature = nextSig;
 
-      buildUi(host);
+      buildUi(nextHost);
       bindUiEvents();
       renderInitialUiState();
 
-      state.softMountedOnce = true;
       state.mounted = true;
       state.mountCount += 1;
       startSync();
-      log("mounted", VERSION, "count=", state.mountCount);
+      log("mounted", VERSION, "count=", state.mountCount, "host=", nextSig);
       return true;
     } catch (e) {
       errLog("mount failed", e);
@@ -2548,6 +2651,53 @@
     state.ui = null;
     state.host = null;
     state.mounted = false;
+    state.menuOpen = false;
+    return true;
+  }
+
+  function destroyRuntime(reason) {
+    try { stopVoiceInput(); } catch (_) {}
+    try { stopSpeak(); } catch (_) {}
+    try { stopSync(); } catch (_) {}
+
+    try {
+      if (state.mountTimer) {
+        clearTimeout(state.mountTimer);
+        state.mountTimer = null;
+      }
+    } catch (_) {}
+
+    try {
+      if (state.boundDocClick) {
+        document.removeEventListener("click", state.boundDocClick);
+        state.boundDocClick = null;
+      }
+    } catch (_) {}
+
+    try {
+      if (state.boundVisibility) {
+        document.removeEventListener("visibilitychange", state.boundVisibility);
+        state.boundVisibility = null;
+      }
+    } catch (_) {}
+
+    try {
+      if (state.boundResize) {
+        window.removeEventListener("resize", state.boundResize);
+        state.boundResize = null;
+      }
+    } catch (_) {}
+
+    try { unmount(); } catch (_) {}
+    try { removeAllLegacyRoots(); } catch (_) {}
+
+    try {
+      if (window.__RCF_ADMIN_AI_RUNTIME__ && window.__RCF_ADMIN_AI_RUNTIME__.version === VERSION) {
+        window.__RCF_ADMIN_AI_RUNTIME__ = null;
+      }
+    } catch (_) {}
+
+    log("destroyed", reason || "cleanup");
     return true;
   }
 
@@ -2583,18 +2733,28 @@
         attachmentsCount: state.attachments.length,
         lastEndpoint: state.lastEndpoint,
         lastRoute: state.lastRoute,
-        autoRead: state.autoRead
+        autoRead: state.autoRead,
+        hostSignature: state.lastHostSignature || ""
       };
     }
   };
 
   window[API_NAME] = Object.assign(window[API_NAME] || {}, api);
   window[LEGACY_API_NAME] = window[API_NAME];
+  window.__RCF_ADMIN_AI_RUNTIME__ = {
+    version: VERSION,
+    destroy: destroyRuntime,
+    unmount: unmount,
+    mount: mount,
+    mountLoop: mountLoop
+  };
 
   // =========================================================
   // 17) BOOT
   // =========================================================
   try {
+    removeAllLegacyRoots();
+    ensureCss();
     state.history = loadHistory();
     state.attachments = [];
     restoreUiState();
