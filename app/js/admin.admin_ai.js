@@ -1,10 +1,12 @@
 /* FILE: /app/js/admin.admin_ai.js
    RControl Factory
    /app/js/admin.admin_ai.js
-   v4.3.6-r2 SAFE HOT-RELOAD + CSS REFRESH PATCH
-   - minimal hot-reload patch over v4.3.6-r1
-   - preserves tolerant mount behavior
-   - rebootstrap-safe on runtime file replace
+   v4.3.7-r1 SAFE HOST RESOLVE + FULLSCREEN CHAT PATCH
+   - corrige seleção de host para evitar mount em card pequeno
+   - prioriza view/panel real da Factory AI
+   - ocupa melhor a área útil sem cair na barra inferior
+   - reduz placeholder/intro duplicado visível atrás do chat
+   - preserva hot-reload seguro e fluxo atual
 */
 (() => {
   "use strict";
@@ -36,7 +38,7 @@
   // =========================================================
   // 1) GUARDS / VERSION / CONSTANTS
   // =========================================================
-  const VERSION = "v4.3.6-r2 SAFE HOT-RELOAD + CSS REFRESH PATCH";
+  const VERSION = "v4.3.7-r1 SAFE HOST RESOLVE + FULLSCREEN CHAT PATCH";
   const BUILD = "[ADMIN_AI]";
   const API_NAME = "RCF_FACTORY_AI";
   const LEGACY_API_NAME = "RCF_ADMIN_AI";
@@ -374,6 +376,201 @@
     } catch (_) {}
   }
 
+  function nodeTextSample(el, maxLen) {
+    try {
+      const text = String((el && el.textContent) || "").replace(/\s+/g, " ").trim();
+      return text.slice(0, maxLen || 220);
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function candidateScore(el, source) {
+    if (!el) return -999999;
+    let score = 0;
+
+    try {
+      const rect = el.getBoundingClientRect();
+      const area = Math.max(0, rect.width) * Math.max(0, rect.height);
+      score += Math.min(500000, area) / 1000;
+
+      if (rect.height >= 420) score += 160;
+      else if (rect.height >= 320) score += 70;
+      else score -= 160;
+
+      if (rect.width >= 280) score += 25;
+      else score -= 40;
+    } catch (_) {}
+
+    const id = String(el.id || "").toLowerCase();
+    const cls = String(el.className || "").toLowerCase();
+    const dv = String(el.getAttribute && (el.getAttribute("data-view") || el.getAttribute("data-panel") || "") || "").toLowerCase();
+    const tag = String(el.tagName || "").toLowerCase();
+    const text = nodeTextSample(el, 260).toLowerCase();
+    const src = String(source || "").toLowerCase();
+    const hint = [id, cls, dv, src, tag].join(" ");
+
+    if (/factory-ai|factory_ai/.test(hint)) score += 180;
+    if (/view|panel|body|content|main|shell|workspace|screen|canvas/.test(hint)) score += 65;
+    if (/host|slot|mount/.test(hint)) score += 130;
+
+    if (/card|tile|item|hero|intro|header|title|badge|toolbar/.test(hint)) score -= 140;
+    if (/button|label|h1|h2|h3|h4|h5|h6|span/.test(tag)) score -= 120;
+
+    if (/preparando chat oficial|chat oficial da factory/.test(text)) score -= 140;
+    if (/factory ai pronta/.test(text)) score -= 30;
+
+    if (el.querySelector) {
+      if (el.querySelector("textarea, input, button")) score += 10;
+      if (el.querySelector('[data-view="factory-ai"], [data-view="factory_ai"], #view-factory-ai, #factory-ai-view')) score += 160;
+    }
+
+    return score;
+  }
+
+  function collectHostCandidates() {
+    const defs = [
+      "#rcf-factory-ai-host",
+      "#factory-ai-host",
+      "#admin-ai-host",
+      "[data-rcf-factory-ai-host]",
+      "[data-rcf-factory-ai-slot='main']",
+      '[data-view="factory_ai"]',
+      '[data-view="factory-ai"]',
+      '[data-panel="factory-ai"]',
+      "#view-factory-ai",
+      "#factory-ai-view",
+      "#factory-ai-panel",
+      "#admin-ai-chat",
+      "#factory-ai-chat",
+      "#rcf-factory-ai",
+      "[data-admin-ai-host]",
+      ".factory-ai-host",
+      ".admin-ai-host",
+      '[data-slot="admin-main"]',
+      "#admin-main",
+      "#view-admin",
+      ".admin-panel-body",
+      ".admin-panel",
+      ".rcf-admin-panel"
+    ];
+
+    const out = [];
+    const seen = new Set();
+
+    defs.forEach((selector) => {
+      try {
+        const list = document.querySelectorAll(selector);
+        for (let i = 0; i < list.length; i += 1) {
+          const el = list[i];
+          if (!el || seen.has(el) || !isVisibleElement(el)) continue;
+          seen.add(el);
+          out.push({ el, selector, score: candidateScore(el, selector) });
+        }
+      } catch (_) {}
+    });
+
+    return out.sort((a, b) => b.score - a.score);
+  }
+
+  function getOfficialHost() {
+    const list = collectHostCandidates().filter((c) => {
+      const s = String(c.selector || "");
+      return /host|slot|mount/.test(s) || /factory-ai/.test(s);
+    });
+    return list.length ? list[0].el : null;
+  }
+
+  function getViewScopedFallbackHost() {
+    const list = collectHostCandidates().filter((c) => {
+      const s = String(c.selector || "");
+      return /data-view|data-panel|view-factory-ai|factory-ai-view|factory-ai-panel/.test(s);
+    });
+    return list.length ? list[0].el : null;
+  }
+
+  function getAdminFallbackHost() {
+    const list = collectHostCandidates().filter((c) => {
+      const s = String(c.selector || "");
+      return /admin-main|view-admin|admin-panel|admin-ai-chat|factory-ai-chat/.test(s);
+    });
+    return list.length ? list[0].el : null;
+  }
+
+  function resolveHost(target) {
+    if (target && target.nodeType === 1) return target;
+
+    if (typeof target === "string" && target.trim()) {
+      try {
+        const q = document.querySelector(target.trim());
+        if (q && isVisibleElement(q)) return q;
+      } catch (_) {}
+    }
+
+    const official = getOfficialHost();
+    if (official) return official;
+
+    const viewScoped = getViewScopedFallbackHost();
+    if (viewScoped) return viewScoped;
+
+    const adminFallback = getAdminFallbackHost();
+    if (adminFallback) return adminFallback;
+
+    const all = collectHostCandidates();
+    return all.length ? all[0].el : null;
+  }
+
+  function hostUsesOverlayMode(host) {
+    if (!host) return false;
+    const hint = [
+      String(host.id || "").toLowerCase(),
+      String(host.className || "").toLowerCase(),
+      String(host.getAttribute && (host.getAttribute("data-view") || host.getAttribute("data-panel") || "") || "").toLowerCase()
+    ].join(" ");
+
+    if (/view-factory-ai|factory-ai-view|factory-ai-panel|data-view|data-panel|workspace|screen|canvas|content|body|main/.test(hint)) {
+      return true;
+    }
+
+    try {
+      const rect = host.getBoundingClientRect();
+      if (rect.height >= 420) return true;
+    } catch (_) {}
+
+    return false;
+  }
+
+  function hideLegacyPlaceholders(host) {
+    if (!host || !host.querySelectorAll) return;
+
+    const nodes = host.querySelectorAll("div,section,article,header,p");
+    for (let i = 0; i < nodes.length; i += 1) {
+      const el = nodes[i];
+      if (!el || el.closest("[" + ROOT_ATTR + "]")) continue;
+
+      const text = nodeTextSample(el, 260).toLowerCase();
+      if (!text) continue;
+
+      const hint = [
+        String(el.id || "").toLowerCase(),
+        String(el.className || "").toLowerCase(),
+        String(el.getAttribute && (el.getAttribute("data-view") || el.getAttribute("data-panel") || "") || "").toLowerCase()
+      ].join(" ");
+
+      const looksPlaceholder =
+        /preparando chat oficial da factory/.test(text) ||
+        (/chat oficial da factory/.test(text) && /factory ai/.test(text));
+
+      if (!looksPlaceholder) continue;
+      if (/\bmessage\b|\bchat\b|\bcomposer\b|\bbody\b/.test(hint) && el.querySelector("textarea,button,input")) continue;
+
+      try {
+        el.style.display = "none";
+        el.setAttribute("aria-hidden", "true");
+      } catch (_) {}
+    }
+  }
+
   // =========================================================
   // 4) HISTORY HELPERS
   // =========================================================
@@ -479,7 +676,13 @@
         overflow-x:hidden !important;
         box-sizing:border-box !important;
         isolation:isolate !important;
-        z-index:1 !important;
+        z-index:5 !important;
+      }
+      [${ROOT_ATTR}].rcf-admin-ai-overlay{
+        position:absolute !important;
+        inset:0 !important;
+        min-height:0 !important;
+        height:100% !important;
       }
       [${ROOT_ATTR}] *{
         box-sizing:border-box !important;
@@ -620,6 +823,7 @@
         padding:14px 12px 18px 12px;
         overscroll-behavior:contain;
         -webkit-overflow-scrolling:touch;
+        scrollbar-gutter:stable;
       }
       .rcf-admin-ai-list{
         width:100%;
@@ -774,7 +978,7 @@
         width:100%;
         max-width:100%;
         min-width:0;
-        padding:10px 12px 12px 12px;
+        padding:10px 12px calc(12px + env(safe-area-inset-bottom, 0px)) 12px;
         border-top:1px solid rgba(255,255,255,.08);
         overflow:visible;
         z-index:3;
@@ -951,7 +1155,7 @@
       @media (max-width:640px){
         .rcf-admin-ai-head{ padding:10px; }
         .rcf-admin-ai-body{ padding:12px 10px 16px 10px; }
-        .rcf-admin-ai-composer-wrap{ padding:8px 10px 10px 10px; }
+        .rcf-admin-ai-composer-wrap{ padding:8px 10px calc(10px + env(safe-area-inset-bottom, 0px)) 10px; }
         .rcf-admin-ai-bubble{ max-width:93%; }
         .rcf-admin-ai-menu{
           left:10px;
@@ -2070,108 +2274,41 @@
   // =========================================================
   // 13) HOST RESOLUTION / UI BUILD
   // =========================================================
-  function getOfficialHost() {
-    const selectors = [
-      "#rcf-factory-ai-host",
-      "#factory-ai-host",
-      "#admin-ai-host",
-      "[data-rcf-factory-ai-host]",
-      "[data-rcf-factory-ai-slot='main']"
-    ];
-    for (let i = 0; i < selectors.length; i += 1) {
-      try {
-        const el = document.querySelector(selectors[i]);
-        if (el && isVisibleElement(el)) return el;
-      } catch (_) {}
-    }
-    return null;
-  }
-
-  function getViewScopedFallbackHost() {
-    const selectors = [
-      '[data-view="factory_ai"]',
-      '[data-view="factory-ai"]',
-      '[data-panel="factory-ai"]',
-      "#view-factory-ai",
-      "#factory-ai-view",
-      "#factory-ai-panel"
-    ];
-    for (let i = 0; i < selectors.length; i += 1) {
-      try {
-        const el = document.querySelector(selectors[i]);
-        if (el && isVisibleElement(el)) return el;
-      } catch (_) {}
-    }
-    return null;
-  }
-
-  function getAdminFallbackHost() {
-    const selectors = [
-      "#admin-ai-chat",
-      "#factory-ai-chat",
-      "#rcf-factory-ai",
-      "[data-admin-ai-host]",
-      ".factory-ai-host",
-      ".admin-ai-host",
-      '[data-slot="admin-main"]',
-      "#admin-main",
-      "#view-admin",
-      ".admin-panel-body",
-      ".admin-panel",
-      ".rcf-admin-panel"
-    ];
-    for (let i = 0; i < selectors.length; i += 1) {
-      try {
-        const el = document.querySelector(selectors[i]);
-        if (!el || !isVisibleElement(el)) continue;
-        return el;
-      } catch (_) {}
-    }
-    return null;
-  }
-
-  function resolveHost(target) {
-    if (target && target.nodeType === 1) return target;
-
-    if (typeof target === "string" && target.trim()) {
-      try {
-        const q = document.querySelector(target.trim());
-        if (q && isVisibleElement(q)) return q;
-      } catch (_) {}
-    }
-
-    const official = getOfficialHost();
-    if (official) return official;
-
-    const viewScoped = getViewScopedFallbackHost();
-    if (viewScoped) return viewScoped;
-
-    const adminFallback = getAdminFallbackHost();
-    if (adminFallback) return adminFallback;
-
-    return null;
-  }
-
   function stabilizeHostLayout(host) {
     if (!host || !host.style) return;
+
+    const overlay = hostUsesOverlayMode(host);
+
     host.style.position = host.style.position || "relative";
     host.style.width = host.style.width || "100%";
     host.style.maxWidth = host.style.maxWidth || "100%";
     host.style.minWidth = host.style.minWidth || "0";
-    if (!host.style.minHeight) host.style.minHeight = "0";
-    if (!host.style.height) host.style.height = "100%";
-    if (!host.style.overflowX) host.style.overflowX = "hidden";
+    host.style.display = host.style.display || "flex";
+    host.style.flexDirection = host.style.flexDirection || "column";
+    host.style.flex = host.style.flex || "1 1 auto";
+    host.style.minHeight = host.style.minHeight || "0";
+    host.style.overflowX = host.style.overflowX || "hidden";
+
+    if (overlay) {
+      host.style.height = host.style.height || "100%";
+      host.style.overflowY = host.style.overflowY || "hidden";
+    }
   }
 
   function buildUi(host) {
     ensureCss();
     stabilizeHostLayout(host);
+    hideLegacyPlaceholders(host);
 
     const existing = host.querySelector("[" + ROOT_ATTR + "]");
     if (existing) existing.remove();
 
     const root = createEl("div", "rcf-admin-ai-root");
     root.setAttribute(ROOT_ATTR, "1");
+
+    if (hostUsesOverlayMode(host)) {
+      root.classList.add("rcf-admin-ai-overlay");
+    }
 
     const shell = createEl("div", "rcf-admin-ai-shell");
 
@@ -2466,7 +2603,11 @@
       }
     });
 
-    ui.sendBtn.addEventListener("click", () => {
+    ui.sendBtn.addEventListener("click", (ev) => {
+      try {
+        if (ev && typeof ev.preventDefault === "function") ev.preventDefault();
+        if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
+      } catch (_) {}
       sendPrompt(ui.textarea.value);
     });
 
@@ -2562,6 +2703,7 @@
       }
 
       stabilizeHostLayout(state.host);
+      hideLegacyPlaceholders(state.host);
       renderAttachmentBar();
       reflectBusyUi();
       return true;
