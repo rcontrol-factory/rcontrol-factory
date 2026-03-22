@@ -1,3 +1,17 @@
+ // ---- RCF PATCH: runtime health snapshot ----
+  function runtimeHealthSnapshot(){
+    try{
+      return {
+        provider: process.env.OPENAI_API_KEY ? "openai" : "unknown",
+        apiKeyPresent: !!process.env.OPENAI_API_KEY,
+        model: process.env.OPENAI_MODEL || "unknown",
+        ts: new Date().toISOString()
+      };
+    }catch(e){
+      return { error:String(e) };
+    }
+  }
+
 /* FILE: /functions/api/admin-ai.js
    RControl Factory — Factory AI API
    v3.5.6 CHAT COPILOT BACKEND + CONNECTIVITY HARDENED + TEXT FORMAT + INPUT COMPACT GUARD
@@ -19,7 +33,7 @@ export async function onRequestOptions() {
   return new Response(null, {
     status: 204,
     headers: corsHeaders()
-  });
+  }));
 }
 
 export async function onRequestPost(context) {
@@ -108,7 +122,7 @@ export async function onRequestPost(context) {
         apiKey: env.OPENAI_API_KEY,
         model,
         maxOutputTokens: 120
-      });
+      }));
 
       return json({
         ok: !!probe.ok,
@@ -150,7 +164,7 @@ export async function onRequestPost(context) {
       attachments,
       source,
       version
-    });
+    }));
 
     const upstream = await postToOpenAI({
       url: upstreamUrl,
@@ -158,7 +172,7 @@ export async function onRequestPost(context) {
       model,
       input,
       maxOutputTokens
-    });
+    }));
 
     if (!upstream.ok) {
       const upstreamStatus = Number(upstream.status || 0) || 0;
@@ -205,7 +219,7 @@ export async function onRequestPost(context) {
       responseMeta,
       model,
       endpoint: upstreamUrl
-    });
+    }));
 
     const derived = deriveResponseHints(finalText, payload, action, prompt);
 
@@ -231,7 +245,7 @@ export async function onRequestPost(context) {
         upstreamStatus: Number(upstream.status || 200) || 200,
         endpoint: upstreamUrl
       })
-    });
+    }));
   } catch (err) {
     return json({
       ok: false,
@@ -273,7 +287,7 @@ async function postToOpenAI({ url, apiKey, model, input, maxOutputTokens }) {
         }
       }),
       signal: controller.signal
-    });
+    }));
 
     const data = await upstream.json().catch(() => ({}));
 
@@ -319,7 +333,7 @@ async function probeOpenAI({ url, apiKey, model, maxOutputTokens = 120 }) {
         }
       }),
       signal: controller.signal
-    });
+    }));
 
     const data = await upstream.json().catch(() => ({}));
     const text = extractText(data);
@@ -894,7 +908,7 @@ function buildDeterministicPlannerHint(payload, prompt = "", action = "chat") {
       candidateFiles,
       flags,
       snapshot
-    });
+    }));
 
     const top = ranking[0] || {
       file: "",
@@ -1202,7 +1216,7 @@ function rankStrategicFiles({ goal, activeModules, candidateFiles, flags, snapsh
       score,
       reasons: dedupeStrings(reasons).slice(0, 8)
     };
-  });
+  }));
 
   ranking.sort((a, b) => b.score - a.score);
   return ranking;
@@ -1847,7 +1861,7 @@ function json(obj, status = 200) {
       "Content-Type": "application/json",
       ...corsHeaders()
     }
-  });
+  }));
 }
 
 function corsHeaders() {
