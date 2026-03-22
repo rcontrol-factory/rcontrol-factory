@@ -1,4 +1,4 @@
-/* RControl Factory — /app/js/core/github_sync.js — v2.4i (FINAL STABLE + FILLERS + RUNTIME PATH FIX)
+/* RControl Factory — /app/js/core/github_sync.js — v2.4j (FINAL STABLE + FILLERS + RUNTIME PATH FIX)
    PATCH sobre v2.4h:
    - ✅ mantém estrutura completa da v2.4h
    - ✅ FIX runtime path resolver (evita /app/app/)
@@ -10,7 +10,7 @@
 (() => {
   "use strict";
 
-  if (window.RCF_GH_SYNC && window.RCF_GH_SYNC.__v24i) return;
+  if (window.RCF_GH_SYNC && window.RCF_GH_SYNC.__v24j) return;
 
   const LS_CFG_KEY = "rcf:ghcfg";
   const API_BASE = "https://api.github.com";
@@ -18,6 +18,8 @@
 
   // bundle local (compat com MAE)
   const LS_BUNDLE_KEY = "rcf:mother_bundle_local";
+  const BUILD_STAMP = Date.now();
+  const BUILD_TAG = "ghsync_v2.4j_" + BUILD_STAMP;
   let RUNTIME_PAT = "";
 
   const log = (lvl, msg, obj) => {
@@ -80,10 +82,12 @@
   }
 
   async function ghFetch(url, cfg, opts) {
-    const res = await fetch(url, {
+    const finalUrl = String(url || "") + (String(url || "").includes("?") ? "&" : "?") + "_rcfcb=" + BUILD_STAMP;
+    const res = await fetch(finalUrl, {
       method: opts?.method || "GET",
       headers: { ...headers(cfg), ...(opts?.headers || {}) },
-      body: opts?.body
+      body: opts?.body,
+      cache: "no-store"
     });
 
     const text = await res.text();
@@ -486,7 +490,7 @@
 
   window.RCF_GH_SYNC = {
     __v24h: true,
-    __v24i: true,
+    __v24j: true,
     loadConfig,
     saveConfig,
     setToken(token) { RUNTIME_PAT = String(token || "").trim(); return true; },
@@ -496,10 +500,11 @@
     push,
     pushMotherBundle,
     listFillers,
-    buildFactoryBundle
+    buildFactoryBundle,
+    status
   };
 
-  log("info", "github_sync.js loaded (v2.4i)");
+  log("info", "github_sync.js loaded (v2.4j)", { buildTag: typeof BUILD_TAG !== "undefined" ? BUILD_TAG : "" });
 })();
 
 // ---------------------------------------------------------
