@@ -25,7 +25,7 @@
 
   if (global.RCF_FACTORY_AI_RUNTIME && global.RCF_FACTORY_AI_RUNTIME.__v105) return;
 
-  var VERSION = "v1.0.5";
+  var VERSION = "v1.0.6";
   var STORAGE_KEY = "rcf:factory_ai_runtime";
   var LAST_RESPONSE_KEY = "rcf:factory_ai_runtime_last_response";
   var MAX_HISTORY = 60;
@@ -383,6 +383,19 @@
     }
 
     return null;
+  }
+
+  function runtimeHealth() {
+    return {
+      provider: state.connectionProvider || "",
+      configured: !!state.connectionConfigured,
+      attempted: !!state.connectionAttempted,
+      status: state.connectionStatus || "unknown",
+      model: state.connectionModel || "",
+      upstreamStatus: Number(state.connectionUpstreamStatus || 0) || 0,
+      lastOk: !!state.lastOk,
+      ts: nowISO()
+    };
   }
 
   function status() {
