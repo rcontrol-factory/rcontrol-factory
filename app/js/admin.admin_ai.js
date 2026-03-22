@@ -1,3 +1,24 @@
+// --------------------------------------------------
+// RCF PATCH: normalize moduleRegistry / factoryState counts
+// --------------------------------------------------
+try {
+  if (window.RCF_MODULE_REGISTRY && typeof window.RCF_MODULE_REGISTRY.summary === "function") {
+    const reg = window.RCF_MODULE_REGISTRY.summary() || {};
+    if (reg && typeof reg.activeCount === "undefined" && Array.isArray(reg.active)) {
+      reg.activeCount = reg.active.length;
+    }
+  }
+} catch {}
+
+try {
+  if (window.RCF_FACTORY_STATE && typeof window.RCF_FACTORY_STATE.getState === "function") {
+    const st = window.RCF_FACTORY_STATE.getState() || {};
+    if (st && typeof st.activeModulesCount === "undefined" && Array.isArray(st.activeList)) {
+      st.activeModulesCount = st.activeList.length;
+    }
+  }
+} catch {}
+
 /* FILE: /app/js/admin.admin_ai.js
    RControl Factory — Factory AI
    v4.3.6 HYBRID CHAT ROUTE FIX + RUNTIME TEXT RESCUE + OPENAI STATUS ROUTE
@@ -1811,7 +1832,24 @@ try {
     return "";
   }
 
-  function buildPayload(action) {
+  
+
+// --------------------------------------------------
+// RCF PATCH: ensure frontTelemetry.lastRouting always exists
+// --------------------------------------------------
+try {
+  if (window.RCF_FACTORY_AI && typeof window.RCF_FACTORY_AI.getFrontTelemetry === "function") {
+    const ft = window.RCF_FACTORY_AI.getFrontTelemetry() || {};
+    if (!ft.lastRouting) {
+      ft.lastRouting = "admin_ai";
+    }
+    if (typeof window.RCF_FACTORY_AI.setFrontTelemetry === "function") {
+      window.RCF_FACTORY_AI.setFrontTelemetry(ft);
+    }
+  }
+} catch {}
+
+function buildPayload(action) {
     const snapshot = buildLeanSnapshot();
     setSnapshotPreview(snapshot);
     const attachments = getAttachmentPayload();
