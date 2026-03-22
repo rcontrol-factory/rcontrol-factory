@@ -23,7 +23,7 @@
 
   if (global.RCF_FACTORY_AI_ACTIONS && global.RCF_FACTORY_AI_ACTIONS.__v121) return;
 
-  var VERSION = "v1.2.1";
+  var VERSION = "v1.2.2";
   var STORAGE_KEY = "rcf:factory_ai_actions";
   var MAX_HISTORY = 100;
 
