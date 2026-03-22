@@ -126,9 +126,9 @@ function patchRecommendedFileInObject(obj) {
 
 /* FILE: /functions/api/admin-ai.js
    RControl Factory Ã¢ÂÂ Factory AI API
-   v3.5.9 CHAT COPILOT BACKEND + CONNECTIVITY HARDENED + TEXT FORMAT + INPUT COMPACT GUARD
+   v3.6.0 CHAT COPILOT BACKEND + CONNECTIVITY HARDENED + TEXT FORMAT + INPUT COMPACT GUARD
 
-   PATCH v3.5.9:
+   PATCH v3.5.6:
    - KEEP: openai_status como action permitida
    - KEEP: normalizeOpenAIUrl endurecido
    - KEEP: extractText ampliado
@@ -796,8 +796,6 @@ function buildSnapshotSemanticSummary(payload) {
     const live = safeObj(snapshot.live);
     const liveFactoryState = safeObj(live.factoryState);
     const liveModuleRegistry = safeObj(live.moduleRegistry);
-    const liveRuntimeLayer = safeObj(live.runtimeLayer);
-    const liveFrontTelemetry = safeObj(live.frontTelemetry);
     const liveDoctor = safeObj(live.doctor);
 
     const factory = safeObj(snapshot.factory);
@@ -830,7 +828,6 @@ function buildSnapshotSemanticSummary(payload) {
         "- nÃÂ£o conclua 'mÃÂ³dulo desativado' sÃÂ³ porque active=false quando presence=true ou ready=true"
       ].join(" "),
       activeList,
-      live: cloneValue(live),
       modules: {
         logger: buildModuleSemantic("logger", {
           presence: boolFrom(flagValue(flags, ["hasLogger"])),
@@ -944,8 +941,7 @@ function buildSnapshotSemanticSummary(payload) {
           )),
           active: boolFrom(firstDefined(
             moduleStatus.factoryTree,
-            moduleStatus.tree,
-            Array.isArray(activeList) ? activeList.includes("factoryTree") : undefined
+            moduleStatus.tree
           )),
           extra: {
             pathsCount: numberOrNull(snapshot.tree && snapshot.tree.pathsCount)
@@ -1470,16 +1466,17 @@ function cloneValue(value) {
 
 function buildGroundedPrompt({ action, payload, prompt, history, attachments, source, version }) {
   const plannerHint = safeObj(payload).__planner_hint;
-  const live = safeObj(safeObj(payload).snapshot).live;
+  const snapshotObj = safeObj(payload).snapshot;
+  const live = safeObj(snapshotObj.live);
   const frontTelemetry =
     safeObj(payload).frontTelemetry ||
     safeObj(live.frontTelemetry) ||
-    safeObj(safeObj(payload).snapshot).frontTelemetry ||
+    safeObj(snapshotObj.frontTelemetry) ||
     {};
   const runtimeLayer =
     safeObj(payload).runtimeLayer ||
     safeObj(live.runtimeLayer) ||
-    safeObj(safeObj(payload).snapshot).runtimeLayer ||
+    safeObj(snapshotObj.runtimeLayer) ||
     {};
   const structuredRuntimeFrontDiagnostic = isStructuredRuntimeFrontDiagnostic(prompt);
   const lowerPrompt = String(prompt || "").trim().toLowerCase();
@@ -1509,7 +1506,6 @@ function buildGroundedPrompt({ action, payload, prompt, history, attachments, so
     "8. Quando o prompt pedir diagnÃÂ³stico estruturado de runtime/front, NÃÂO reduza a resposta a um probe simples de OpenAI.",
     "9. Em diagnÃÂ³stico estruturado de runtime/front, use explicitamente frontTelemetry, runtimeLayer, connection e request.routing se existirem no payload.",
     "10. SÃÂ³ use probe simples quando a tarefa for explicitamente openai_status/conectividade.",
-    "11. NÃÂO recomende doctor_scan.js automaticamente se runtimeLayer.connectionStatus='connected' e frontTelemetry.lastResponseOk=true e o problema principal estiver em activeCount/activeModulesCount ou consolidaÃÂ§ÃÂ£o de contexto.",
     "   - fato confirmado",
     "   - dado ausente",
     "   - inferÃÂªncia provÃÂ¡vel",
