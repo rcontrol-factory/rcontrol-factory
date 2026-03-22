@@ -1,39 +1,151 @@
- // ---- RCF PATCH: runtime health snapshot ----
-  function runtimeHealthSnapshot(){
-    try{
-      return {
-        provider: process.env.OPENAI_API_KEY ? "openai" : "unknown",
-        apiKeyPresent: !!process.env.OPENAI_API_KEY,
-        model: process.env.OPENAI_MODEL || "unknown",
-        ts: new Date().toISOString()
-      };
-    }catch(e){
-      return { error:String(e) };
+// ---- RCF PATCH v1.0.2: recommendation anti-repeat + phase memory ----
+function normalizeRecommendationState(raw) {
+  var out = raw && typeof raw === "object" ? raw : {};
+  if (!Array.isArray(out.recentlyTouchedFiles)) out.recentlyTouchedFiles = [];
+  if (!Array.isArray(out.completedThisPhase)) out.completedThisPhase = [];
+  if (!Array.isArray(out.blockedFiles)) out.blockedFiles = [];
+  if (!out.recommendationCountByFile || typeof out.recommendationCountByFile !== "object") {
+    out.recommendationCountByFile = {};
+  }
+  out.lastRecommendedFile = String(out.lastRecommendedFile || "");
+  out.lastRecommendedAt = String(out.lastRecommendedAt || "");
+  return out;
+}
+
+function readRecommendationState() {
+  try {
+    var raw = globalThis.RCF_RECOMMENDATION_STATE || {};
+    return normalizeRecommendationState(raw);
+  } catch (_) {
+    return normalizeRecommendationState({});
+  }
+}
+
+function writeRecommendationState(next) {
+  try {
+    globalThis.RCF_RECOMMENDATION_STATE = normalizeRecommendationState(next || {});
+    return globalThis.RCF_RECOMMENDATION_STATE;
+  } catch (_) {
+    return normalizeRecommendationState({});
+  }
+}
+
+function markRecommendation(file) {
+  var state = readRecommendationState();
+  var key = String(file || "").trim();
+  if (!key) return state;
+  state.lastRecommendedFile = key;
+  state.lastRecommendedAt = new Date().toISOString();
+  state.recommendationCountByFile[key] = Number(state.recommendationCountByFile[key] || 0) + 1;
+  return writeRecommendationState(state);
+}
+
+function sanitizeRecommendedFile(file) {
+  var candidate = String(file || "").trim();
+  if (!candidate) return candidate;
+
+  var state = readRecommendationState();
+  var completed = new Set([].concat(state.recentlyTouchedFiles || [], state.completedThisPhase || [], state.blockedFiles || []).map(function (x) {
+    return String(x || "").trim();
+  }).filter(Boolean));
+
+  var repeatedTooMuch = Number((state.recommendationCountByFile || {})[candidate] || 0) >= 2;
+  var plannerLocked = /factory_ai_planner\.js$/i.test(candidate) && (completed.has(candidate) || repeatedTooMuch);
+
+  if (plannerLocked) {
+    var fallbackQueue = [
+      "/app/js/core/factory_ai_bridge.js",
+      "/app/js/core/factory_ai_actions.js",
+      "/functions/api/admin-ai.js",
+      "/app/js/core/patch_supervisor.js",
+      "/app/js/core/factory_ai_runtime.js"
+    ];
+    for (var i = 0; i < fallbackQueue.length; i++) {
+      var next = fallbackQueue[i];
+      if (!completed.has(next)) {
+        candidate = next;
+        break;
+      }
     }
   }
 
+  markRecommendation(candidate);
+  return candidate;
+}
+
+function patchRecommendedFileInObject(obj) {
+  try {
+    if (!obj || typeof obj !== "object") return obj;
+
+    if (typeof obj.targetFile === "string" && obj.targetFile.trim()) {
+      obj.targetFile = sanitizeRecommendedFile(obj.targetFile);
+    }
+
+    if (typeof obj.nextFile === "string" && obj.nextFile.trim()) {
+      obj.nextFile = sanitizeRecommendedFile(obj.nextFile);
+    }
+
+    if (obj.summary && typeof obj.summary === "object") {
+      if (typeof obj.summary.targetFile === "string" && obj.summary.targetFile.trim()) {
+        obj.summary.targetFile = sanitizeRecommendedFile(obj.summary.targetFile);
+      }
+      if (typeof obj.summary.nextFile === "string" && obj.summary.nextFile.trim()) {
+        obj.summary.nextFile = sanitizeRecommendedFile(obj.summary.nextFile);
+      }
+    }
+
+    if (obj.plan && typeof obj.plan === "object") {
+      if (typeof obj.plan.targetFile === "string" && obj.plan.targetFile.trim()) {
+        obj.plan.targetFile = sanitizeRecommendedFile(obj.plan.targetFile);
+      }
+      if (typeof obj.plan.nextFile === "string" && obj.plan.nextFile.trim()) {
+        obj.plan.nextFile = sanitizeRecommendedFile(obj.plan.nextFile);
+      }
+    }
+
+    if (obj.bridge && typeof obj.bridge === "object" && typeof obj.bridge.targetFile === "string" && obj.bridge.targetFile.trim()) {
+      obj.bridge.targetFile = sanitizeRecommendedFile(obj.bridge.targetFile);
+    }
+
+    if (obj.planner_hint && typeof obj.planner_hint === "object") {
+      if (typeof obj.planner_hint.targetFile === "string" && obj.planner_hint.targetFile.trim()) {
+        obj.planner_hint.targetFile = sanitizeRecommendedFile(obj.planner_hint.targetFile);
+      }
+      if (typeof obj.planner_hint.nextFile === "string" && obj.planner_hint.nextFile.trim()) {
+        obj.planner_hint.nextFile = sanitizeRecommendedFile(obj.planner_hint.nextFile);
+      }
+    }
+
+    obj.recommendationState = readRecommendationState();
+    return obj;
+  } catch (_) {
+    return obj;
+  }
+}
+// ---- END RCF PATCH v1.0.2 ----
+
 /* FILE: /functions/api/admin-ai.js
-   RControl Factory — Factory AI API
+   RControl Factory â Factory AI API
    v3.5.6 CHAT COPILOT BACKEND + CONNECTIVITY HARDENED + TEXT FORMAT + INPUT COMPACT GUARD
 
    PATCH v3.5.6:
    - KEEP: openai_status como action permitida
    - KEEP: normalizeOpenAIUrl endurecido
    - KEEP: extractText ampliado
-   - KEEP: max_output_tokens explícito
+   - KEEP: max_output_tokens explÃ­cito
    - ADD: text.format.type="text" para favorecer output_text consolidado
-   - ADD: compactação do input para reduzir corte por texto grande
+   - ADD: compactaÃ§Ã£o do input para reduzir corte por texto grande
    - ADD: truncation guard em prompt/history/attachments/payload
    - ADD: fallback mais robusto quando a Responses API vem sem texto final
-   - FIX: mantém compatibilidade com runtime/admin atuais
-   - FIX: não altera a arquitetura central; apenas fortalece backend, conectividade e saída textual
+   - FIX: mantÃ©m compatibilidade com runtime/admin atuais
+   - FIX: nÃ£o altera a arquitetura central; apenas fortalece backend, conectividade e saÃ­da textual
 */
 
 export async function onRequestOptions() {
   return new Response(null, {
     status: 204,
     headers: corsHeaders()
-  }));
+  });
 }
 
 export async function onRequestPost(context) {
@@ -64,7 +176,7 @@ export async function onRequestPost(context) {
     if (!body || typeof body !== "object") {
       return json({
         ok: false,
-        error: "JSON inválido.",
+        error: "JSON invÃ¡lido.",
         connection: buildConnectionMeta({
           provider: "openai",
           configured: true,
@@ -102,7 +214,7 @@ export async function onRequestPost(context) {
     if (!allowed.has(action)) {
       return json({
         ok: false,
-        error: "Ação não permitida nesta fase.",
+        error: "AÃ§Ã£o nÃ£o permitida nesta fase.",
         action,
         connection: buildConnectionMeta({
           provider: "openai",
@@ -122,7 +234,7 @@ export async function onRequestPost(context) {
         apiKey: env.OPENAI_API_KEY,
         model,
         maxOutputTokens: 120
-      }));
+      });
 
       return json({
         ok: !!probe.ok,
@@ -164,7 +276,7 @@ export async function onRequestPost(context) {
       attachments,
       source,
       version
-    }));
+    });
 
     const upstream = await postToOpenAI({
       url: upstreamUrl,
@@ -172,7 +284,7 @@ export async function onRequestPost(context) {
       model,
       input,
       maxOutputTokens
-    }));
+    });
 
     if (!upstream.ok) {
       const upstreamStatus = Number(upstream.status || 0) || 0;
@@ -219,7 +331,7 @@ export async function onRequestPost(context) {
       responseMeta,
       model,
       endpoint: upstreamUrl
-    }));
+    });
 
     const derived = deriveResponseHints(finalText, payload, action, prompt);
 
@@ -245,7 +357,7 @@ export async function onRequestPost(context) {
         upstreamStatus: Number(upstream.status || 200) || 200,
         endpoint: upstreamUrl
       })
-    }));
+    });
   } catch (err) {
     return json({
       ok: false,
@@ -287,7 +399,7 @@ async function postToOpenAI({ url, apiKey, model, input, maxOutputTokens }) {
         }
       }),
       signal: controller.signal
-    }));
+    });
 
     const data = await upstream.json().catch(() => ({}));
 
@@ -333,7 +445,7 @@ async function probeOpenAI({ url, apiKey, model, maxOutputTokens = 120 }) {
         }
       }),
       signal: controller.signal
-    }));
+    });
 
     const data = await upstream.json().catch(() => ({}));
     const text = extractText(data);
@@ -349,15 +461,15 @@ async function probeOpenAI({ url, apiKey, model, maxOutputTokens = 120 }) {
           `- Modelo: ${model}`,
           "",
           "2. Dados ausentes ou mal consolidados",
-          "- O texto final da resposta não pôde ser confirmado como sucesso.",
+          "- O texto final da resposta nÃ£o pÃ´de ser confirmado como sucesso.",
           "",
-          "3. Inferências prováveis",
-          "- A conexão com OpenAI não está operacional nesta rodada.",
+          "3. InferÃªncias provÃ¡veis",
+          "- A conexÃ£o com OpenAI nÃ£o estÃ¡ operacional nesta rodada.",
           "",
-          "4. Próximo passo mínimo recomendado",
+          "4. PrÃ³ximo passo mÃ­nimo recomendado",
           "- Revisar endpoint, chave e payload enviados ao backend.",
           "",
-          "5. Arquivos mais prováveis de ajuste",
+          "5. Arquivos mais provÃ¡veis de ajuste",
           "- /functions/api/admin-ai.js",
           "- /app/js/core/factory_ai_runtime.js"
         ].join("\n"),
@@ -381,24 +493,24 @@ async function probeOpenAI({ url, apiKey, model, maxOutputTokens = 120 }) {
         "- Probe real executado com sucesso.",
         `- Endpoint usado: ${url}`,
         `- Modelo: ${model}`,
-        `- Texto retornado: ${text || "OK upstream sem texto legível"}`,
+        `- Texto retornado: ${text || "OK upstream sem texto legÃ­vel"}`,
         "",
         "2. Dados ausentes ou mal consolidados",
         meta.incomplete
-          ? `- A resposta veio incompleta: ${meta.incompleteReason || "motivo não informado"}.`
-          : "- Nenhuma ausência crítica nesta rodada.",
+          ? `- A resposta veio incompleta: ${meta.incompleteReason || "motivo nÃ£o informado"}.`
+          : "- Nenhuma ausÃªncia crÃ­tica nesta rodada.",
         "",
-        "3. Inferências prováveis",
+        "3. InferÃªncias provÃ¡veis",
         meta.incomplete
-          ? "- A conexão backend -> OpenAI está operacional, mas a saída pode estar sendo limitada."
-          : "- A conexão backend -> OpenAI está operacional.",
+          ? "- A conexÃ£o backend -> OpenAI estÃ¡ operacional, mas a saÃ­da pode estar sendo limitada."
+          : "- A conexÃ£o backend -> OpenAI estÃ¡ operacional.",
         "",
-        "4. Próximo passo mínimo recomendado",
+        "4. PrÃ³ximo passo mÃ­nimo recomendado",
         meta.incomplete
-          ? "- Validar limite de saída no backend/runtime e depois testar no front."
-          : "- Validar consumo dessa conexão no runtime e no front.",
+          ? "- Validar limite de saÃ­da no backend/runtime e depois testar no front."
+          : "- Validar consumo dessa conexÃ£o no runtime e no front.",
         "",
-        "5. Arquivos mais prováveis de ajuste",
+        "5. Arquivos mais provÃ¡veis de ajuste",
         "- /app/js/core/factory_ai_runtime.js",
         "- /app/js/admin.admin_ai.js"
       ].join("\n"),
@@ -414,18 +526,18 @@ async function probeOpenAI({ url, apiKey, model, maxOutputTokens = 120 }) {
       ok: false,
       analysis: [
         "1. Fatos confirmados",
-        "- O probe real falhou por exceção de rede ou abort.",
+        "- O probe real falhou por exceÃ§Ã£o de rede ou abort.",
         "",
         "2. Dados ausentes ou mal consolidados",
         `- detalhe: ${String(err?.message || err || "erro de rede")}`,
         "",
-        "3. Inferências prováveis",
-        "- A chamada backend -> OpenAI não foi concluída nesta rodada.",
+        "3. InferÃªncias provÃ¡veis",
+        "- A chamada backend -> OpenAI nÃ£o foi concluÃ­da nesta rodada.",
         "",
-        "4. Próximo passo mínimo recomendado",
+        "4. PrÃ³ximo passo mÃ­nimo recomendado",
         "- Revisar rede, endpoint e chave no backend.",
         "",
-        "5. Arquivos mais prováveis de ajuste",
+        "5. Arquivos mais provÃ¡veis de ajuste",
         "- /functions/api/admin-ai.js",
         "- /app/js/core/factory_ai_runtime.js"
       ].join("\n"),
@@ -537,16 +649,16 @@ function normalizeAction(value, promptValue = "") {
     prompt.includes("endpoint") ||
     prompt.includes("runtime") ||
     prompt.includes("backend") ||
-    prompt.includes("conexão") ||
+    prompt.includes("conexÃ£o") ||
     prompt.includes("conexao")
   ) {
     return "openai_status";
   }
 
   if (
-    prompt.includes("relatório") ||
+    prompt.includes("relatÃ³rio") ||
     prompt.includes("relatorio") ||
-    prompt.includes("diagnóstico") ||
+    prompt.includes("diagnÃ³stico") ||
     prompt.includes("diagnostico")
   ) {
     return "factory_diagnosis";
@@ -555,7 +667,7 @@ function normalizeAction(value, promptValue = "") {
   if (
     prompt.includes("arquitetura") ||
     prompt.includes("estrutura") ||
-    prompt.includes("organização") ||
+    prompt.includes("organizaÃ§Ã£o") ||
     prompt.includes("organizacao")
   ) {
     return "analyze-architecture";
@@ -572,7 +684,7 @@ function normalizeAction(value, promptValue = "") {
 
   if (
     prompt.includes("arquivo completo") ||
-    prompt.includes("código completo") ||
+    prompt.includes("cÃ³digo completo") ||
     prompt.includes("codigo completo") ||
     prompt.includes("gere o arquivo") ||
     prompt.includes("gera o arquivo")
@@ -584,7 +696,7 @@ function normalizeAction(value, promptValue = "") {
     prompt.includes("patch") ||
     prompt.includes("corrige") ||
     prompt.includes("corrigir") ||
-    prompt.includes("ajuste mínimo") ||
+    prompt.includes("ajuste mÃ­nimo") ||
     prompt.includes("ajuste minimo")
   ) {
     return "propose-patch";
@@ -594,9 +706,9 @@ function normalizeAction(value, promptValue = "") {
     prompt.includes("zip") ||
     prompt.includes("pdf") ||
     prompt.includes("imagem") ||
-    prompt.includes("vídeo") ||
+    prompt.includes("vÃ­deo") ||
     prompt.includes("video") ||
-    prompt.includes("áudio") ||
+    prompt.includes("Ã¡udio") ||
     prompt.includes("audio") ||
     prompt.includes("anexo")
   ) {
@@ -697,11 +809,11 @@ function buildSnapshotSemanticSummary(payload) {
       note: [
         "IMPORTANTE:",
         "- presence = componente detectado no ambiente/flags",
-        "- ready = API/componente disponível para uso no runtime",
+        "- ready = API/componente disponÃ­vel para uso no runtime",
         "- active = componente marcado como ativo no status/registry/snapshot atual",
-        "- activeList = lista explícita de módulos ativos",
-        "- presence, ready e active NÃO são sinônimos",
-        "- não conclua 'módulo desativado' só porque active=false quando presence=true ou ready=true"
+        "- activeList = lista explÃ­cita de mÃ³dulos ativos",
+        "- presence, ready e active NÃO sÃ£o sinÃ´nimos",
+        "- nÃ£o conclua 'mÃ³dulo desativado' sÃ³ porque active=false quando presence=true ou ready=true"
       ].join(" "),
       activeList,
       modules: {
@@ -839,10 +951,10 @@ function buildSnapshotSemanticSummary(payload) {
       "Use esta prioridade ao descrever o snapshot:",
       "1) cite presence quando a flag/hasX confirmar que o componente existe no ambiente",
       "2) cite ready quando um boolean/API do runtime confirmar disponibilidade agora",
-      "3) cite active apenas quando o status do módulo ou activeList confirmar ativação",
-      "4) se presence=true e active=false, descreva como 'presente, mas não marcado como ativo no snapshot atual'",
-      "5) se ready=true e active=false, descreva como 'disponível/pronto, mas não marcado como ativo no status atual'",
-      "6) não converta isso automaticamente em falha confirmada"
+      "3) cite active apenas quando o status do mÃ³dulo ou activeList confirmar ativaÃ§Ã£o",
+      "4) se presence=true e active=false, descreva como 'presente, mas nÃ£o marcado como ativo no snapshot atual'",
+      "5) se ready=true e active=false, descreva como 'disponÃ­vel/pronto, mas nÃ£o marcado como ativo no status atual'",
+      "6) nÃ£o converta isso automaticamente em falha confirmada"
     ];
 
     return semantics;
@@ -865,10 +977,10 @@ function buildPlannerContext(payload, prompt = "", action = "chat") {
 
     return {
       goalBias: [
-        "priorizar evolução da própria Factory AI antes de outros fluxos",
-        "evitar cair no ciclo genérico doctor/state/registry/tree sem avanço real",
-        "quando possível, indicar próximo arquivo mais estratégico",
-        "dar preferência a planner/bridge/actions/backend/chat supervisionado quando a meta for inteligência da Factory"
+        "priorizar evoluÃ§Ã£o da prÃ³pria Factory AI antes de outros fluxos",
+        "evitar cair no ciclo genÃ©rico doctor/state/registry/tree sem avanÃ§o real",
+        "quando possÃ­vel, indicar prÃ³ximo arquivo mais estratÃ©gico",
+        "dar preferÃªncia a planner/bridge/actions/backend/chat supervisionado quando a meta for inteligÃªncia da Factory"
       ],
       action,
       prompt: clampText(String(prompt || ""), 1400),
@@ -908,7 +1020,7 @@ function buildDeterministicPlannerHint(payload, prompt = "", action = "chat") {
       candidateFiles,
       flags,
       snapshot
-    }));
+    });
 
     const top = ranking[0] || {
       file: "",
@@ -925,8 +1037,8 @@ function buildDeterministicPlannerHint(payload, prompt = "", action = "chat") {
       executionLine: buildExecutionLineForGoal(goal, top.file),
       note: [
         "Este planner_hint foi calculado deterministicamente no backend.",
-        "Ele deve ter prioridade sobre heurísticas genéricas quando o usuário pedir evolução, autonomia, plano ou próximo arquivo.",
-        "Evite cair automaticamente em doctor/state/registry/tree se o contexto atual já aponta para evolução cognitiva da Factory AI."
+        "Ele deve ter prioridade sobre heurÃ­sticas genÃ©ricas quando o usuÃ¡rio pedir evoluÃ§Ã£o, autonomia, plano ou prÃ³ximo arquivo.",
+        "Evite cair automaticamente em doctor/state/registry/tree se o contexto atual jÃ¡ aponta para evoluÃ§Ã£o cognitiva da Factory AI."
       ].join(" ")
     };
   } catch {
@@ -963,7 +1075,7 @@ function detectBackendGoal(prompt, action) {
 
   if (
     prompt.includes("openai") ||
-    prompt.includes("conexão") ||
+    prompt.includes("conexÃ£o") ||
     prompt.includes("conexao") ||
     prompt.includes("api key") ||
     prompt.includes("endpoint") ||
@@ -976,17 +1088,17 @@ function detectBackendGoal(prompt, action) {
 
   if (
     prompt.includes("autonomia") ||
-    prompt.includes("autônom") ||
+    prompt.includes("autÃ´nom") ||
     prompt.includes("autonom") ||
     prompt.includes("evoluir") ||
-    prompt.includes("evolução") ||
+    prompt.includes("evoluÃ§Ã£o") ||
     prompt.includes("evolucao") ||
     prompt.includes("factory ai") ||
-    prompt.includes("próximo arquivo") ||
+    prompt.includes("prÃ³ximo arquivo") ||
     prompt.includes("proximo arquivo") ||
     prompt.includes("plano") ||
     prompt.includes("planejar") ||
-    prompt.includes("próxima etapa") ||
+    prompt.includes("prÃ³xima etapa") ||
     prompt.includes("proxima etapa")
   ) {
     return "evolve-factory-ai";
@@ -1004,7 +1116,7 @@ function detectBackendGoal(prompt, action) {
 
   if (
     prompt.includes("doctor") ||
-    prompt.includes("diagnóstico") ||
+    prompt.includes("diagnÃ³stico") ||
     prompt.includes("diagnostico") ||
     prompt.includes("logs") ||
     prompt.includes("erro") ||
@@ -1040,11 +1152,11 @@ function rankStrategicFiles({ goal, activeModules, candidateFiles, flags, snapsh
     if (goal === "openai-connectivity") {
       if (file === "/functions/api/admin-ai.js") {
         score += 120;
-        reasons.push("backend real da conexão com OpenAI");
+        reasons.push("backend real da conexÃ£o com OpenAI");
       }
       if (file === "/app/js/core/factory_ai_runtime.js") {
         score += 95;
-        reasons.push("runtime lê e expõe status real da conexão");
+        reasons.push("runtime lÃª e expÃµe status real da conexÃ£o");
       }
       if (file === "/app/js/admin.admin_ai.js") {
         score += 72;
@@ -1052,18 +1164,18 @@ function rankStrategicFiles({ goal, activeModules, candidateFiles, flags, snapsh
       }
       if (file === "/app/js/core/factory_ai_planner.js") {
         score -= 24;
-        reasons.push("planner não é o primeiro gargalo da conectividade");
+        reasons.push("planner nÃ£o Ã© o primeiro gargalo da conectividade");
       }
     }
 
     if (goal === "evolve-factory-ai") {
       if (file === "/app/js/core/factory_ai_planner.js") {
         score += 100;
-        reasons.push("camada principal de priorização e inteligência supervisionada");
+        reasons.push("camada principal de priorizaÃ§Ã£o e inteligÃªncia supervisionada");
       }
       if (file === "/app/js/core/factory_ai_actions.js") {
         score += 85;
-        reasons.push("coordena execução supervisionada real da Factory AI");
+        reasons.push("coordena execuÃ§Ã£o supervisionada real da Factory AI");
       }
       if (file === "/app/js/core/factory_ai_bridge.js") {
         score += 72;
@@ -1071,42 +1183,42 @@ function rankStrategicFiles({ goal, activeModules, candidateFiles, flags, snapsh
       }
       if (file === "/functions/api/admin-ai.js") {
         score += 66;
-        reasons.push("backend do chat precisa obedecer melhor a lógica de prioridade");
+        reasons.push("backend do chat precisa obedecer melhor a lÃ³gica de prioridade");
       }
       if (file === "/app/js/admin.admin_ai.js") {
         score += 54;
-        reasons.push("front do chat e integração da Factory AI");
+        reasons.push("front do chat e integraÃ§Ã£o da Factory AI");
       }
       if (file === "/app/js/core/patch_supervisor.js") {
         score += 45;
-        reasons.push("fecha o fluxo supervisionado approve → validate → stage → apply");
+        reasons.push("fecha o fluxo supervisionado approve â validate â stage â apply");
       }
       if (file === "/app/js/core/factory_tree.js") {
         score -= 22;
-        reasons.push("tree não deve voltar a sequestrar prioridade nesta fase");
+        reasons.push("tree nÃ£o deve voltar a sequestrar prioridade nesta fase");
       }
       if (file === "/app/js/core/factory_state.js") {
         score -= 14;
-        reasons.push("state já não deve ser prioridade padrão quando a meta é inteligência da Factory");
+        reasons.push("state jÃ¡ nÃ£o deve ser prioridade padrÃ£o quando a meta Ã© inteligÃªncia da Factory");
       }
       if (file === "/app/js/core/doctor_scan.js") {
         score -= 40;
-        reasons.push("doctor não deve assumir a prioridade se o foco for evolução cognitiva");
+        reasons.push("doctor nÃ£o deve assumir a prioridade se o foco for evoluÃ§Ã£o cognitiva");
       }
     }
 
     if (goal === "supervised-patch-flow") {
       if (file === "/app/js/core/patch_supervisor.js") {
         score += 100;
-        reasons.push("núcleo do fluxo supervisionado de patch");
+        reasons.push("nÃºcleo do fluxo supervisionado de patch");
       }
       if (file === "/app/js/core/factory_ai_actions.js") {
         score += 82;
-        reasons.push("ações coordenam approve, validate, stage e apply");
+        reasons.push("aÃ§Ãµes coordenam approve, validate, stage e apply");
       }
       if (file === "/app/js/core/factory_ai_bridge.js") {
         score += 68;
-        reasons.push("bridge mantém integridade do plano supervisionado");
+        reasons.push("bridge mantÃ©m integridade do plano supervisionado");
       }
       if (file === "/functions/api/admin-ai.js") {
         score += 32;
@@ -1117,11 +1229,11 @@ function rankStrategicFiles({ goal, activeModules, candidateFiles, flags, snapsh
     if (goal === "diagnostics") {
       if (file === "/app/js/core/doctor_scan.js") {
         score += 100;
-        reasons.push("doctor é prioritário quando o foco real é diagnóstico");
+        reasons.push("doctor Ã© prioritÃ¡rio quando o foco real Ã© diagnÃ³stico");
       }
       if (file === "/app/js/core/factory_state.js") {
         score += 55;
-        reasons.push("estado ajuda a consolidar dados diagnósticos");
+        reasons.push("estado ajuda a consolidar dados diagnÃ³sticos");
       }
       if (file === "/app/js/core/factory_tree.js") {
         score += 34;
@@ -1132,15 +1244,15 @@ function rankStrategicFiles({ goal, activeModules, candidateFiles, flags, snapsh
     if (goal === "generate-code") {
       if (file === "/functions/api/admin-ai.js") {
         score += 58;
-        reasons.push("backend influencia a qualidade da geração");
+        reasons.push("backend influencia a qualidade da geraÃ§Ã£o");
       }
       if (file === "/app/js/core/factory_ai_actions.js") {
         score += 66;
-        reasons.push("actions ajuda a transformar geração em fluxo operacional");
+        reasons.push("actions ajuda a transformar geraÃ§Ã£o em fluxo operacional");
       }
       if (file === "/app/js/core/factory_ai_bridge.js") {
         score += 48;
-        reasons.push("bridge melhora consolidação do código gerado");
+        reasons.push("bridge melhora consolidaÃ§Ã£o do cÃ³digo gerado");
       }
     }
 
@@ -1155,7 +1267,7 @@ function rankStrategicFiles({ goal, activeModules, candidateFiles, flags, snapsh
       }
       if (file === "/app/js/core/patch_supervisor.js") {
         score += 70;
-        reasons.push("patch supervisor é a camada segura de aplicação");
+        reasons.push("patch supervisor Ã© a camada segura de aplicaÃ§Ã£o");
       }
     }
 
@@ -1166,15 +1278,15 @@ function rankStrategicFiles({ goal, activeModules, candidateFiles, flags, snapsh
       }
       if (file === "/app/js/core/factory_ai_actions.js") {
         score += 24;
-        reasons.push("actions mantém avanço supervisionado real");
+        reasons.push("actions mantÃ©m avanÃ§o supervisionado real");
       }
       if (file === "/app/js/core/factory_ai_bridge.js") {
         score += 20;
-        reasons.push("bridge continua chave na orquestração");
+        reasons.push("bridge continua chave na orquestraÃ§Ã£o");
       }
       if (file === "/app/js/core/doctor_scan.js") {
         score -= 12;
-        reasons.push("doctor não deve assumir prioridade padrão sem pedido específico");
+        reasons.push("doctor nÃ£o deve assumir prioridade padrÃ£o sem pedido especÃ­fico");
       }
     }
 
@@ -1190,25 +1302,25 @@ function rankStrategicFiles({ goal, activeModules, candidateFiles, flags, snapsh
         file === "/app/js/core/factory_ai_runtime.js"
       ) {
         score += 14;
-        reasons.push("núcleo ativo já permite subir para camada cognitiva mais forte");
+        reasons.push("nÃºcleo ativo jÃ¡ permite subir para camada cognitiva mais forte");
       }
     }
 
     if (candidateFiles.includes(file)) {
       score += 8;
-      reasons.push("arquivo já aparece entre candidatos do snapshot");
+      reasons.push("arquivo jÃ¡ aparece entre candidatos do snapshot");
     }
 
     const hasTree = boolFrom(flagValue(flags, ["hasFactoryTree"]));
     if (!hasTree && file === "/app/js/core/factory_tree.js") {
       score += 12;
-      reasons.push("tree ainda pode precisar consolidação se realmente estiver ausente");
+      reasons.push("tree ainda pode precisar consolidaÃ§Ã£o se realmente estiver ausente");
     }
 
     const pathsCount = numberOrNull(snapshot?.tree?.pathsCount) || 0;
     if (pathsCount < 20 && file === "/app/js/core/factory_tree.js") {
       score += 16;
-      reasons.push("árvore ainda está rasa");
+      reasons.push("Ã¡rvore ainda estÃ¡ rasa");
     }
 
     return {
@@ -1216,7 +1328,7 @@ function rankStrategicFiles({ goal, activeModules, candidateFiles, flags, snapsh
       score,
       reasons: dedupeStrings(reasons).slice(0, 8)
     };
-  }));
+  });
 
   ranking.sort((a, b) => b.score - a.score);
   return ranking;
@@ -1266,17 +1378,17 @@ function buildModuleSemantic(name, info) {
   if (presence && ready && active) {
     interpretation = "presente, pronto e ativo";
   } else if (presence && ready && !active) {
-    interpretation = "presente e pronto, mas não marcado como ativo no snapshot atual";
+    interpretation = "presente e pronto, mas nÃ£o marcado como ativo no snapshot atual";
   } else if (presence && !ready && active) {
-    interpretation = "presente e marcado como ativo, mas sem prontidão clara no snapshot";
+    interpretation = "presente e marcado como ativo, mas sem prontidÃ£o clara no snapshot";
   } else if (presence && !ready && !active) {
-    interpretation = "presente, mas sem prontidão clara e sem ativação confirmada no snapshot";
+    interpretation = "presente, mas sem prontidÃ£o clara e sem ativaÃ§Ã£o confirmada no snapshot";
   } else if (!presence && ready) {
-    interpretation = "possível inconsistência do snapshot: pronto sem presença explícita";
+    interpretation = "possÃ­vel inconsistÃªncia do snapshot: pronto sem presenÃ§a explÃ­cita";
   } else if (!presence && active) {
-    interpretation = "possível inconsistência do snapshot: ativo sem presença explícita";
+    interpretation = "possÃ­vel inconsistÃªncia do snapshot: ativo sem presenÃ§a explÃ­cita";
   } else if (!presence && !ready && !active) {
-    interpretation = "sem evidência de presença, prontidão ou ativação";
+    interpretation = "sem evidÃªncia de presenÃ§a, prontidÃ£o ou ativaÃ§Ã£o";
   }
 
   return {
@@ -1337,7 +1449,7 @@ function buildGroundedPrompt({ action, payload, prompt, history, attachments, so
   const lowerPrompt = String(prompt || "").trim().toLowerCase();
   const asksOpenAI =
     lowerPrompt.includes("openai") ||
-    lowerPrompt.includes("conexão") ||
+    lowerPrompt.includes("conexÃ£o") ||
     lowerPrompt.includes("conexao") ||
     lowerPrompt.includes("api key") ||
     lowerPrompt.includes("endpoint") ||
@@ -1345,97 +1457,97 @@ function buildGroundedPrompt({ action, payload, prompt, history, attachments, so
     lowerPrompt.includes("backend");
 
   const system = [
-    "Você é a Factory AI da RControl Factory.",
-    "Você é o chat oficial interno da Factory.",
-    "Sua prioridade atual é ajudar a estruturar, estabilizar, evoluir e supervisionar a própria Factory antes de expandir para outros fluxos.",
-    "Você deve agir como copiloto técnico da Factory, mas SEM inventar fatos.",
+    "VocÃª Ã© a Factory AI da RControl Factory.",
+    "VocÃª Ã© o chat oficial interno da Factory.",
+    "Sua prioridade atual Ã© ajudar a estruturar, estabilizar, evoluir e supervisionar a prÃ³pria Factory antes de expandir para outros fluxos.",
+    "VocÃª deve agir como copiloto tÃ©cnico da Factory, mas SEM inventar fatos.",
     "",
     "Regras centrais:",
-    "1. Responda EXCLUSIVAMENTE com base no payload recebido, no histórico enviado, nos anexos descritos e no prompt atual.",
-    "2. NÃO invente estados, módulos, falhas, versões, arquivos, árvores, logs, relatórios ou inconsistências que não estejam explícitos.",
+    "1. Responda EXCLUSIVAMENTE com base no payload recebido, no histÃ³rico enviado, nos anexos descritos e no prompt atual.",
+    "2. NÃO invente estados, mÃ³dulos, falhas, versÃµes, arquivos, Ã¡rvores, logs, relatÃ³rios ou inconsistÃªncias que nÃ£o estejam explÃ­citos.",
     "3. Se um dado estiver ausente, diga exatamente: 'dado ausente'.",
-    "4. Se algo parecer contraditório, diga exatamente: 'possível inconsistência do snapshot'.",
-    "5. NÃO trate ausência de dado como erro confirmado.",
-    "6. NÃO diga que um módulo está quebrado só porque ele não apareceu no snapshot.",
+    "4. Se algo parecer contraditÃ³rio, diga exatamente: 'possÃ­vel inconsistÃªncia do snapshot'.",
+    "5. NÃO trate ausÃªncia de dado como erro confirmado.",
+    "6. NÃO diga que um mÃ³dulo estÃ¡ quebrado sÃ³ porque ele nÃ£o apareceu no snapshot.",
     "7. Diferencie sempre:",
     "   - fato confirmado",
     "   - dado ausente",
-    "   - inferência provável",
-    "   - hipótese que ainda depende de arquivo/contexto adicional.",
-    "8. NÃO mande recriar a Factory do zero.",
-    "9. NÃO proponha reescrever toda a plataforma.",
-    "10. Priorize patch mínimo, estabilidade, segurança e evolução em camadas.",
-    "11. Se faltar contexto para gerar código seguro, explique o que falta e diga qual é o próximo arquivo mais útil.",
-    "12. Quando houver contexto suficiente e o usuário pedir arquivo completo, entregue o arquivo completo.",
-    "13. Quando o usuário estiver só conversando, responda como chat técnico natural, útil e direto.",
-    "14. Responda sempre em português do Brasil.",
+    "   - inferÃªncia provÃ¡vel",
+    "   - hipÃ³tese que ainda depende de arquivo/contexto adicional.",
+    "8. NÃO mande recriar a Factory do zero.",
+    "9. NÃO proponha reescrever toda a plataforma.",
+    "10. Priorize patch mÃ­nimo, estabilidade, seguranÃ§a e evoluÃ§Ã£o em camadas.",
+    "11. Se faltar contexto para gerar cÃ³digo seguro, explique o que falta e diga qual Ã© o prÃ³ximo arquivo mais Ãºtil.",
+    "12. Quando houver contexto suficiente e o usuÃ¡rio pedir arquivo completo, entregue o arquivo completo.",
+    "13. Quando o usuÃ¡rio estiver sÃ³ conversando, responda como chat tÃ©cnico natural, Ãºtil e direto.",
+    "14. Responda sempre em portuguÃªs do Brasil.",
     "",
-    "Regra crítica de leitura do snapshot:",
-    "- NÃO confunda presença, prontidão e ativação.",
+    "Regra crÃ­tica de leitura do snapshot:",
+    "- NÃO confunda presenÃ§a, prontidÃ£o e ativaÃ§Ã£o.",
     "- presence/presente = componente detectado no ambiente ou nas flags.",
-    "- ready/pronto = componente/API disponível para uso no runtime atual.",
-    "- active/ativo = módulo marcado como ativo no status/registry/lista active.",
-    "- Se presence=true e active=false, descreva como 'presente, mas não marcado como ativo no snapshot atual'.",
-    "- Se ready=true e active=false, descreva como 'pronto/disponível, mas não marcado como ativo no status atual'.",
-    "- Isso NÃO é falha confirmada por si só.",
+    "- ready/pronto = componente/API disponÃ­vel para uso no runtime atual.",
+    "- active/ativo = mÃ³dulo marcado como ativo no status/registry/lista active.",
+    "- Se presence=true e active=false, descreva como 'presente, mas nÃ£o marcado como ativo no snapshot atual'.",
+    "- Se ready=true e active=false, descreva como 'pronto/disponÃ­vel, mas nÃ£o marcado como ativo no status atual'.",
+    "- Isso NÃO Ã© falha confirmada por si sÃ³.",
     "",
     "Sobre anexos:",
-    "- Trate anexos apenas como metadados/contexto descrito, não como conteúdo binário já lido.",
-    "- Não finja que abriu ZIP, PDF, imagem, áudio ou vídeo se só houver descrição/metadados.",
+    "- Trate anexos apenas como metadados/contexto descrito, nÃ£o como conteÃºdo binÃ¡rio jÃ¡ lido.",
+    "- NÃ£o finja que abriu ZIP, PDF, imagem, Ã¡udio ou vÃ­deo se sÃ³ houver descriÃ§Ã£o/metadados.",
     "",
-    "Sobre a função atual da Factory AI:",
-    "- A Factory AI deve primeiro ajudar a estruturar a própria Factory.",
-    "- O foco atual não é voltar sempre para o mesmo ciclo genérico.",
-    "- Priorize evolução cognitiva e orquestração supervisionada quando o contexto apontar para isso.",
-    "- Depois ela poderá apoiar criação de módulos, agentes e fluxos de app building.",
+    "Sobre a funÃ§Ã£o atual da Factory AI:",
+    "- A Factory AI deve primeiro ajudar a estruturar a prÃ³pria Factory.",
+    "- O foco atual nÃ£o Ã© voltar sempre para o mesmo ciclo genÃ©rico.",
+    "- Priorize evoluÃ§Ã£o cognitiva e orquestraÃ§Ã£o supervisionada quando o contexto apontar para isso.",
+    "- Depois ela poderÃ¡ apoiar criaÃ§Ã£o de mÃ³dulos, agentes e fluxos de app building.",
     "- Sempre respeite fluxo supervisionado e seguro.",
     "",
     "Sobre o estilo das respostas:",
-    "- Seja útil e prática.",
-    "- Evite repetir listas genéricas sem avanço real.",
-    "- Se o snapshot estiver raso, reconheça isso e foque no próximo arquivo mais útil.",
-    "- Não fique repetindo logger/doctor/version unknown como centro da resposta, a menos que isso seja realmente o ponto principal do pedido.",
-    "- Se o objetivo do usuário for evoluir a Factory AI, dê prioridade a planner/bridge/actions/backend/chat supervisionado antes de cair automaticamente em doctor/state/registry/tree.",
+    "- Seja Ãºtil e prÃ¡tica.",
+    "- Evite repetir listas genÃ©ricas sem avanÃ§o real.",
+    "- Se o snapshot estiver raso, reconheÃ§a isso e foque no prÃ³ximo arquivo mais Ãºtil.",
+    "- NÃ£o fique repetindo logger/doctor/version unknown como centro da resposta, a menos que isso seja realmente o ponto principal do pedido.",
+    "- Se o objetivo do usuÃ¡rio for evoluir a Factory AI, dÃª prioridade a planner/bridge/actions/backend/chat supervisionado antes de cair automaticamente em doctor/state/registry/tree.",
     "- Se existir __planner_hint no payload, trate-o como guidance operacional forte.",
-    "- Não ignore __planner_hint quando o usuário pedir próximo arquivo, prioridade, autonomia, evolução ou plano.",
+    "- NÃ£o ignore __planner_hint quando o usuÃ¡rio pedir prÃ³ximo arquivo, prioridade, autonomia, evoluÃ§Ã£o ou plano.",
     "",
     "Regra especial para perguntas sobre OpenAI/conectividade/runtime/backend:",
-    "- Se o pedido falar de OpenAI, conexão, endpoint, backend, runtime ou API key, priorize diagnosticar a trilha real backend -> runtime -> frontend.",
-    "- Nessa situação, NÃO empurre automaticamente a resposta para factory_ai_planner.js se houver sinais mais fortes em /functions/api/admin-ai.js ou no runtime.",
-    "- Diga claramente se a conexão está confirmada, ausente, falhando por chave, rede, upstream ou dado ausente.",
-    "- Use o campo connection do backend como evidência principal quando existir.",
+    "- Se o pedido falar de OpenAI, conexÃ£o, endpoint, backend, runtime ou API key, priorize diagnosticar a trilha real backend -> runtime -> frontend.",
+    "- Nessa situaÃ§Ã£o, NÃO empurre automaticamente a resposta para factory_ai_planner.js se houver sinais mais fortes em /functions/api/admin-ai.js ou no runtime.",
+    "- Diga claramente se a conexÃ£o estÃ¡ confirmada, ausente, falhando por chave, rede, upstream ou dado ausente.",
+    "- Use o campo connection do backend como evidÃªncia principal quando existir.",
     "",
     "Formato de resposta por action:",
     "",
     "Se action=factory_diagnosis, analyze-architecture, analyze-logs, summarize-structure, suggest-improvement ou openai_status:",
     "1. Fatos confirmados",
     "2. Dados ausentes ou mal consolidados",
-    "3. Inferências prováveis",
-    "4. Próximo passo mínimo recomendado",
-    "5. Arquivos mais prováveis de ajuste",
+    "3. InferÃªncias provÃ¡veis",
+    "4. PrÃ³ximo passo mÃ­nimo recomendado",
+    "5. Arquivos mais provÃ¡veis de ajuste",
     "",
     "Se action=propose-patch, acrescente:",
-    "6. Patch mínimo sugerido",
+    "6. Patch mÃ­nimo sugerido",
     "",
     "Se action=generate-code, use exatamente:",
     "1. Objetivo",
     "2. Arquivo alvo",
     "3. Risco",
-    "4. Código sugerido",
+    "4. CÃ³digo sugerido",
     "",
     "Se action=ingest-context:",
-    "- explique como aproveitar os anexos/contexto enviado sem fingir leitura binária real.",
+    "- explique como aproveitar os anexos/contexto enviado sem fingir leitura binÃ¡ria real.",
     "",
     "Se action=chat:",
-    "- responda como chat técnico natural, conversável, direto e útil.",
+    "- responda como chat tÃ©cnico natural, conversÃ¡vel, direto e Ãºtil.",
     "- se o pedido for claro e houver contexto suficiente, responda direto.",
-    "- se o pedido pedir próximo arquivo, prioridade ou autonomia, dê resposta objetiva e priorizada.",
-    "- se existir planner_hint.nextFile, use esse alvo como base principal, salvo se o payload trouxer fato mais forte em sentido contrário.",
-    "- se o pedido exigir arquivo específico que não foi enviado, diga qual arquivo é o próximo mais útil.",
-    "- se houver risco de inferência excessiva, explicite esse limite sem enrolar.",
-    "- se o snapshot vier raso, não transforme isso automaticamente em diagnóstico de falha estrutural.",
+    "- se o pedido pedir prÃ³ximo arquivo, prioridade ou autonomia, dÃª resposta objetiva e priorizada.",
+    "- se existir planner_hint.nextFile, use esse alvo como base principal, salvo se o payload trouxer fato mais forte em sentido contrÃ¡rio.",
+    "- se o pedido exigir arquivo especÃ­fico que nÃ£o foi enviado, diga qual arquivo Ã© o prÃ³ximo mais Ãºtil.",
+    "- se houver risco de inferÃªncia excessiva, explicite esse limite sem enrolar.",
+    "- se o snapshot vier raso, nÃ£o transforme isso automaticamente em diagnÃ³stico de falha estrutural.",
     asksOpenAI
-      ? "- como o pedido atual é sobre OpenAI/conexão/runtime/backend, priorize /functions/api/admin-ai.js e status connection antes de sugerir planner."
+      ? "- como o pedido atual Ã© sobre OpenAI/conexÃ£o/runtime/backend, priorize /functions/api/admin-ai.js e status connection antes de sugerir planner."
       : ""
   ].filter(Boolean).join("\n");
 
@@ -1452,25 +1564,25 @@ function buildGroundedPrompt({ action, payload, prompt, history, attachments, so
     "Fonte:",
     source || "factory-ai",
     "",
-    "Versão do cliente:",
-    version || "(não informada)",
+    "VersÃ£o do cliente:",
+    version || "(nÃ£o informada)",
     "",
-    "Ação:",
+    "AÃ§Ã£o:",
     action,
     "",
     "Tarefa:",
     task,
     "",
-    "Planner hint determinístico:",
+    "Planner hint determinÃ­stico:",
     stringify(plannerHint || "(ausente)"),
     "",
-    "Histórico recente:",
+    "HistÃ³rico recente:",
     historyText,
     "",
     "Anexos recebidos (metadados):",
     attachmentsText,
     "",
-    "Prompt atual do usuário:",
+    "Prompt atual do usuÃ¡rio:",
     prompt || "(nenhum)",
     "",
     "Payload recebido:",
@@ -1485,24 +1597,24 @@ function buildTaskText(action, prompt = "", payload = null) {
   const hintedNextFile = String(plannerHint.nextFile || "").trim();
 
   const asksNextFile =
-    p.includes("próximo arquivo") ||
+    p.includes("prÃ³ximo arquivo") ||
     p.includes("proximo arquivo") ||
     p.includes("qual arquivo") ||
     p.includes("prioridade");
   const asksAutonomy =
     p.includes("autonomia") ||
-    p.includes("autônom") ||
+    p.includes("autÃ´nom") ||
     p.includes("autonom") ||
     p.includes("sozinha") ||
     p.includes("sozinho");
   const asksPlan =
     p.includes("planejar") ||
     p.includes("plano") ||
-    p.includes("sequência") ||
+    p.includes("sequÃªncia") ||
     p.includes("sequencia");
   const asksOpenAI =
     p.includes("openai") ||
-    p.includes("conexão") ||
+    p.includes("conexÃ£o") ||
     p.includes("conexao") ||
     p.includes("endpoint") ||
     p.includes("runtime") ||
@@ -1511,30 +1623,30 @@ function buildTaskText(action, prompt = "", payload = null) {
 
   if (action === "factory_diagnosis") {
     return [
-      "Analise o snapshot/relatório da RControl Factory e aponte somente fatos confirmados, dados ausentes, inferências prováveis e próximo passo mínimo.",
-      "Ao descrever módulos, separe explicitamente presença, prontidão e ativação."
+      "Analise o snapshot/relatÃ³rio da RControl Factory e aponte somente fatos confirmados, dados ausentes, inferÃªncias provÃ¡veis e prÃ³ximo passo mÃ­nimo.",
+      "Ao descrever mÃ³dulos, separe explicitamente presenÃ§a, prontidÃ£o e ativaÃ§Ã£o."
     ].join(" ");
   }
 
   if (action === "analyze-architecture") {
     return [
       "Analise a arquitetura atual da RControl Factory usando somente o contexto enviado, evitando confundir snapshot parcial com falha confirmada.",
-      "Ao descrever módulos, separe explicitamente presença, prontidão e ativação."
+      "Ao descrever mÃ³dulos, separe explicitamente presenÃ§a, prontidÃ£o e ativaÃ§Ã£o."
     ].join(" ");
   }
 
   if (action === "analyze-logs") {
-    return "Analise logs recentes da RControl Factory em conjunto com o snapshot enviado, separando fato confirmado de hipótese.";
+    return "Analise logs recentes da RControl Factory em conjunto com o snapshot enviado, separando fato confirmado de hipÃ³tese.";
   }
 
   if (action === "review-module") {
-    return "Revise o módulo informado usando somente os dados enviados e diga o próximo arquivo mais útil se o contexto ainda estiver incompleto.";
+    return "Revise o mÃ³dulo informado usando somente os dados enviados e diga o prÃ³ximo arquivo mais Ãºtil se o contexto ainda estiver incompleto.";
   }
 
   if (action === "suggest-improvement") {
     return [
-      "Sugira a próxima melhoria mais segura com base apenas no snapshot enviado, priorizando a evolução da própria Factory AI.",
-      "Se houver diferença entre presence, ready e active, trate isso como nuance do snapshot, não como falha automática."
+      "Sugira a prÃ³xima melhoria mais segura com base apenas no snapshot enviado, priorizando a evoluÃ§Ã£o da prÃ³pria Factory AI.",
+      "Se houver diferenÃ§a entre presence, ready e active, trate isso como nuance do snapshot, nÃ£o como falha automÃ¡tica."
     ].join(" ");
   }
 
@@ -1543,43 +1655,43 @@ function buildTaskText(action, prompt = "", payload = null) {
   }
 
   if (action === "propose-patch") {
-    return "Proponha um patch mínimo e seguro com base apenas no contexto enviado, sem reescrever a Factory do zero.";
+    return "Proponha um patch mÃ­nimo e seguro com base apenas no contexto enviado, sem reescrever a Factory do zero.";
   }
 
   if (action === "generate-code") {
-    return "Gere código com patch mínimo, sem reescrever a Factory do zero, usando apenas o contexto enviado. Se faltar contexto, explique exatamente o que falta.";
+    return "Gere cÃ³digo com patch mÃ­nimo, sem reescrever a Factory do zero, usando apenas o contexto enviado. Se faltar contexto, explique exatamente o que falta.";
   }
 
   if (action === "ingest-context") {
-    return "Explique como a Factory deve aproveitar os anexos descritos e o contexto recebido sem fingir leitura binária real dos arquivos.";
+    return "Explique como a Factory deve aproveitar os anexos descritos e o contexto recebido sem fingir leitura binÃ¡ria real dos arquivos.";
   }
 
   if (action === "openai_status") {
-    return "Diagnostique especificamente a trilha backend -> OpenAI, mostrando se há conexão real, endpoint válido, chave configurada e qual é o próximo arquivo mínimo da cadeia.";
+    return "Diagnostique especificamente a trilha backend -> OpenAI, mostrando se hÃ¡ conexÃ£o real, endpoint vÃ¡lido, chave configurada e qual Ã© o prÃ³ximo arquivo mÃ­nimo da cadeia.";
   }
 
   if (action === "chat") {
     const lines = [
-      "Responda como o chat técnico oficial da Factory, de forma natural, objetiva e útil, ajudando a estruturar a própria Factory primeiro.",
-      "Quando o pedido estiver raso ou o snapshot vier incompleto, foque mais em qual é o próximo arquivo certo do que em repetir diagnóstico genérico.",
-      "Se o payload trouxer nuances entre presence, ready e active, respeite essas diferenças explicitamente."
+      "Responda como o chat tÃ©cnico oficial da Factory, de forma natural, objetiva e Ãºtil, ajudando a estruturar a prÃ³pria Factory primeiro.",
+      "Quando o pedido estiver raso ou o snapshot vier incompleto, foque mais em qual Ã© o prÃ³ximo arquivo certo do que em repetir diagnÃ³stico genÃ©rico.",
+      "Se o payload trouxer nuances entre presence, ready e active, respeite essas diferenÃ§as explicitamente."
     ];
 
     if (asksOpenAI) {
-      lines.push("O pedido atual é sobre OpenAI/conexão/runtime/backend. Priorize diagnosticar a trilha real /functions/api/admin-ai.js -> runtime -> front.");
-      lines.push("Só indique planner como próximo arquivo se o próprio payload trouxer fato forte de que ele é o gargalo principal.");
+      lines.push("O pedido atual Ã© sobre OpenAI/conexÃ£o/runtime/backend. Priorize diagnosticar a trilha real /functions/api/admin-ai.js -> runtime -> front.");
+      lines.push("SÃ³ indique planner como prÃ³ximo arquivo se o prÃ³prio payload trouxer fato forte de que ele Ã© o gargalo principal.");
     }
 
     if (asksNextFile || asksPlan || asksAutonomy) {
-      lines.push("O usuário está pedindo priorização real. Dê uma resposta objetiva indicando o próximo arquivo mais estratégico e por quê.");
-      lines.push("Evite cair automaticamente no ciclo genérico doctor/state/registry/tree se o contexto atual estiver voltado para evolução da Factory AI.");
+      lines.push("O usuÃ¡rio estÃ¡ pedindo priorizaÃ§Ã£o real. DÃª uma resposta objetiva indicando o prÃ³ximo arquivo mais estratÃ©gico e por quÃª.");
+      lines.push("Evite cair automaticamente no ciclo genÃ©rico doctor/state/registry/tree se o contexto atual estiver voltado para evoluÃ§Ã£o da Factory AI.");
       if (hintedNextFile) {
-        lines.push("O backend já calculou planner_hint.nextFile='" + hintedNextFile + "'. Use isso como base principal, salvo se o próprio payload trouxer fato mais forte em sentido contrário.");
+        lines.push("O backend jÃ¡ calculou planner_hint.nextFile='" + hintedNextFile + "'. Use isso como base principal, salvo se o prÃ³prio payload trouxer fato mais forte em sentido contrÃ¡rio.");
       }
     }
 
     if (hasPlannerContext) {
-      lines.push("Use o contexto de planner/candidateFiles/pathGroups para priorizar melhor o próximo arquivo.");
+      lines.push("Use o contexto de planner/candidateFiles/pathGroups para priorizar melhor o prÃ³ximo arquivo.");
     }
 
     if (prompt) {
@@ -1594,7 +1706,7 @@ function buildTaskText(action, prompt = "", payload = null) {
 
 function historyToText(history) {
   if (!Array.isArray(history) || !history.length) {
-    return "(sem histórico)";
+    return "(sem histÃ³rico)";
   }
 
   return history
@@ -1638,8 +1750,8 @@ function deriveResponseHints(text, payload, action, prompt = "") {
     targetFile: targetFile || "",
     risk: risk || "unknown",
     hasCodeBlock: /```[\s\S]*?```/.test(content),
-    mentionsPlannerFlow: /planner|plano|prioridade|próximo arquivo|proximo arquivo/i.test(content),
-    mentionsOpenAIFlow: /openai|conexão|conexao|runtime|backend|endpoint|api key/i.test(content),
+    mentionsPlannerFlow: /planner|plano|prioridade|prÃ³ximo arquivo|proximo arquivo/i.test(content),
+    mentionsOpenAIFlow: /openai|conexÃ£o|conexao|runtime|backend|endpoint|api key/i.test(content),
     nextFileCandidate: targetFile || "",
     plannerHintUsed: !!plannerHintFile,
     promptClass: detectBackendGoal(String(prompt || "").toLowerCase(), action)
@@ -1671,8 +1783,8 @@ function extractRisk(text) {
   const raw = String(text || "").toLowerCase();
   if (!raw) return "unknown";
   if (raw.includes("baixo") || raw.includes("low") || raw.includes("seguro") || raw.includes("safe")) return "low";
-  if (raw.includes("médio") || raw.includes("medio") || raw.includes("medium")) return "medium";
-  if (raw.includes("alto") || raw.includes("high") || raw.includes("crítico") || raw.includes("critico")) return "high";
+  if (raw.includes("mÃ©dio") || raw.includes("medio") || raw.includes("medium")) return "medium";
+  if (raw.includes("alto") || raw.includes("high") || raw.includes("crÃ­tico") || raw.includes("critico")) return "high";
   return "unknown";
 }
 
@@ -1773,7 +1885,7 @@ function extractText(data) {
 function buildEmptyTextFallback({ action, prompt, responseMeta, model, endpoint }) {
   return [
     "1. Fatos confirmados",
-    "- O backend recebeu resposta da OpenAI, mas sem texto consolidado legível.",
+    "- O backend recebeu resposta da OpenAI, mas sem texto consolidado legÃ­vel.",
     `- action: ${action || "dado ausente"}`,
     `- model: ${model || "dado ausente"}`,
     `- endpoint: ${endpoint || "dado ausente"}`,
@@ -1782,15 +1894,15 @@ function buildEmptyTextFallback({ action, prompt, responseMeta, model, endpoint 
     `- response.status: ${responseMeta?.status || "dado ausente"}`,
     `- incomplete_reason: ${responseMeta?.incompleteReason || "dado ausente"}`,
     "",
-    "3. Inferências prováveis",
+    "3. InferÃªncias provÃ¡veis",
     responseMeta?.incomplete
       ? "- A resposta provavelmente foi limitada antes de consolidar todo o texto."
-      : "- O formato retornado não veio no padrão textual esperado pelo backend.",
+      : "- O formato retornado nÃ£o veio no padrÃ£o textual esperado pelo backend.",
     "",
-    "4. Próximo passo mínimo recomendado",
-    "- Validar limite de saída, formato retornado e consumo no runtime/front.",
+    "4. PrÃ³ximo passo mÃ­nimo recomendado",
+    "- Validar limite de saÃ­da, formato retornado e consumo no runtime/front.",
     "",
-    "5. Arquivos mais prováveis de ajuste",
+    "5. Arquivos mais provÃ¡veis de ajuste",
     "- /functions/api/admin-ai.js",
     "- /app/js/core/factory_ai_runtime.js",
     "- /app/js/admin.admin_ai.js",
@@ -1833,7 +1945,7 @@ function compactPayloadForModel(value, depth = 0) {
 function clampText(value, max = 1000) {
   const text = String(value || "");
   if (text.length <= max) return text;
-  return text.slice(0, max) + ` …[truncated ${text.length - max} chars]`;
+  return text.slice(0, max) + ` â¦[truncated ${text.length - max} chars]`;
 }
 
 async function safeJson(request) {
@@ -1861,7 +1973,7 @@ function json(obj, status = 200) {
       "Content-Type": "application/json",
       ...corsHeaders()
     }
-  }));
+  });
 }
 
 function corsHeaders() {
