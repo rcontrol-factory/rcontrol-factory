@@ -10,7 +10,7 @@ function schedulePresenceResync(syncFn){
 
 /* FILE: /app/js/core/context_engine.js
    RControl Factory — Context Engine
-   v1.0.1 SNAPSHOT CONSOLIDATED / FULL CURRENT STACK + SUPERVISOR + RUNTIME CONNECTION
+   v1.0.2 SNAPSHOT CONSOLIDATED / FULL CURRENT STACK + SUPERVISOR + RUNTIME CONNECTION
 
    Objetivo:
    - consolidar snapshot estrutural mais confiável
@@ -132,6 +132,7 @@ function schedulePresenceResync(syncFn){
     }, null);
 
     return {
+      live: buildLiveContextAdditions(),
       ready: !!doctorApi,
       version: safe(function () { return doctorApi && doctorApi.version; }, "unknown"),
       lastRun: lastFromState || lastFromDoctor || null
@@ -1248,6 +1249,64 @@ function schedulePresenceResync(syncFn){
 
   function getSnapshot() {
     return buildSnapshot();
+  }
+
+
+  function buildLiveContextAdditions() {
+    var out = {
+      doctor: {},
+      runtimeLayer: {},
+      frontTelemetry: {},
+      registry: {},
+      factoryStateRuntime: {}
+    };
+
+    try {
+      if (global.RCF_DOCTOR_SCAN && global.RCF_DOCTOR_SCAN.lastRun) {
+        out.doctor.lastRun = clone(global.RCF_DOCTOR_SCAN.lastRun);
+      } else if (global.RCF_DOCTOR && global.RCF_DOCTOR.lastRun) {
+        out.doctor.lastRun = clone(global.RCF_DOCTOR.lastRun);
+      } else {
+        out.doctor.lastRun = null;
+      }
+    } catch (_) {
+      out.doctor.lastRun = null;
+    }
+
+    try {
+      var runtime = global.RCF_FACTORY_AI_RUNTIME || null;
+      if (runtime && typeof runtime.status === "function") {
+        out.runtimeLayer = clone(runtime.status() || {});
+      }
+    } catch (_) {}
+
+    try {
+      var ai = global.RCF_FACTORY_AI || null;
+      if (ai && typeof ai.getFrontTelemetry === "function") {
+        out.frontTelemetry = clone(ai.getFrontTelemetry() || {});
+      }
+    } catch (_) {}
+
+    try {
+      if (global.RCF_MODULE_REGISTRY && typeof global.RCF_MODULE_REGISTRY.summary === "function") {
+        out.registry = clone(global.RCF_MODULE_REGISTRY.summary() || {});
+      }
+    } catch (_) {}
+
+    try {
+      if (global.RCF_FACTORY_STATE && typeof global.RCF_FACTORY_STATE.getState === "function") {
+        var st = global.RCF_FACTORY_STATE.getState() || {};
+        out.factoryStateRuntime = {
+          activeModulesCount: Number(st.activeModulesCount || 0) || 0,
+          activeList: Array.isArray(st.activeList) ? clone(st.activeList) : [],
+          doctorLastRun: clone(st.doctorLastRun || null),
+          frontTelemetry: clone(st.frontTelemetry || {}),
+          runtimeLayer: clone(st.runtimeLayer || {})
+        };
+      }
+    } catch (_) {}
+
+    return out;
   }
 
   function getContext() {
