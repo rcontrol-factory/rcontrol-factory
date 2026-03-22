@@ -1,6 +1,6 @@
 /* FILE: /app/js/admin.admin_ai.js
    RControl Factory — Factory AI
-   v4.3.7 HYBRID CHAT ROUTE FIX + RUNTIME TEXT RESCUE + OPENAI STATUS ROUTE
+   v4.4.0 HYBRID CHAT ROUTE FIX + RUNTIME TEXT RESCUE + OPENAI STATUS ROUTE
 
    - mantém visual chat-first aprovado
    - mantém botão + fora da cápsula
@@ -1641,22 +1641,77 @@
     setSnapshotPreview({});
   }
 
+
+  function isStrictDiagnosticPrompt(prompt) {
+    const p = String(prompt || "").trim().toLowerCase();
+    if (!p) return false;
+
+    return (
+      p.includes("diagnóstico técnico") ||
+      p.includes("diagnostico tecnico") ||
+      p.includes("diagnóstico consolidado") ||
+      p.includes("diagnostico consolidado") ||
+      p.includes("runtime/front") ||
+      p.includes("sem ação local") ||
+      p.includes("sem acao local") ||
+      p.includes("não cair em") ||
+      p.includes("nao cair em") ||
+      p.includes("não responder só") ||
+      p.includes("nao responder so") ||
+      p.includes("fatos confirmados") ||
+      p.includes("dados ausentes") ||
+      p.includes("estado real dos módulos") ||
+      p.includes("estado real do runtime/front") ||
+      p.includes("próximo passo mínimo recomendado") ||
+      p.includes("proximo passo minimo recomendado") ||
+      p.includes("próximo arquivo único da fila") ||
+      p.includes("proximo arquivo unico da fila")
+    );
+  }
+
+  function isShortExplicitLocalCommand(prompt) {
+    const p = String(prompt || "").trim().toLowerCase();
+    if (!p) return false;
+    if (isStrictDiagnosticPrompt(prompt)) return false;
+    if (p.length > 120) return false;
+
+    return (
+      p === "validar patch" ||
+      p === "validate patch" ||
+      p === "approve patch" ||
+      p === "aprovar patch" ||
+      p === "stage patch" ||
+      p === "apply patch" ||
+      p === "run doctor" ||
+      p === "rodar doctor" ||
+      p === "doctor scan" ||
+      p === "execute doctor scan" ||
+      p === "snapshot local" ||
+      p === "mostrar logs locais" ||
+      p === "coletar logs" ||
+      p === "próximo arquivo" ||
+      p === "proximo arquivo"
+    );
+  }
+
   function inferActionFromPrompt(prompt) {
     const p = String(prompt || "").trim().toLowerCase();
 
     if (!p) return "chat";
 
+    if (isStrictDiagnosticPrompt(prompt)) return "factory_diagnosis";
+
     if (
-      p.includes("openai") ||
-      p.includes("api key") ||
-      p.includes("status real") ||
-      p.includes("teste real") ||
-      p.includes("runtime") ||
-      p.includes("backend") ||
-      p.includes("endpoint") ||
-      p.includes("conexão") ||
-      p.includes("conexao") ||
-      p.includes("/api/admin-ai")
+      p.length <= 180 &&
+      (
+        p.includes("openai") ||
+        p.includes("api key") ||
+        p.includes("status real") ||
+        p.includes("teste real") ||
+        p.includes("probe") ||
+        p.includes("conexão openai") ||
+        p.includes("conexao openai")
+      )
     ) return "openai_status";
 
     if (
@@ -1672,7 +1727,13 @@
       p.includes("diagnóstico") ||
       p.includes("diagnostico") ||
       p.includes("estabilidade") ||
-      p.includes("stability")
+      p.includes("stability") ||
+      p.includes("runtime") ||
+      p.includes("backend") ||
+      p.includes("endpoint") ||
+      p.includes("conexão") ||
+      p.includes("conexao") ||
+      p.includes("/api/admin-ai")
     ) return "factory_diagnosis";
 
     if (
@@ -1737,38 +1798,32 @@
     const p = String(prompt || "").trim().toLowerCase();
 
     if (!p) return "";
+    if (!isShortExplicitLocalCommand(prompt)) return "";
 
     if (
-      (p.includes("aprovar") || p.includes("aprova")) &&
+      (p.includes("aprovar") || p.includes("aprova") || p.includes("approve")) &&
       p.includes("patch")
     ) return "approve_patch";
 
     if (
-      (p.includes("validar") || p.includes("valida")) &&
+      (p.includes("validar") || p.includes("valida") || p.includes("validate")) &&
       p.includes("patch")
     ) return "validate_patch";
 
-    if (
-      p.includes("stage") &&
-      p.includes("patch")
-    ) return "stage_patch";
+    if (p.includes("stage") && p.includes("patch")) return "stage_patch";
 
     if (
-      (p.includes("aplicar") || p.includes("aplica")) &&
+      (p.includes("aplicar") || p.includes("aplica") || p.includes("apply")) &&
       p.includes("patch")
     ) return "apply_patch";
 
     if (
       p.includes("planejar") ||
       p.includes("gerar plano") ||
-      p.includes("montar plano") ||
-      (p.includes("plano") && p.includes("próximo"))
+      p.includes("montar plano")
     ) return "plan";
 
-    if (
-      p.includes("próximo arquivo") ||
-      p.includes("proximo arquivo")
-    ) return "next_file";
+    if (p.includes("próximo arquivo") || p.includes("proximo arquivo")) return "next_file";
 
     if (
       p.includes("snapshot local") ||
@@ -1779,8 +1834,9 @@
 
     if (
       p.includes("rodar doctor") ||
-      p.includes("executar doctor") ||
-      p.includes("run doctor")
+      p.includes("run doctor") ||
+      p.includes("doctor scan") ||
+      p.includes("execute doctor scan")
     ) return "run_doctor";
 
     if (
@@ -1793,16 +1849,6 @@
 
   function buildPayload(action) {
     const snapshot = buildLeanSnapshot();
-    // --- LIVE CONTEXT MERGE (Factory runtime truth) ---
-    try{
-      if(global.RCF_FACTORY_AI_CONTEXT && global.RCF_FACTORY_AI_CONTEXT.buildSnapshot){
-        const liveSnapshot = global.RCF_FACTORY_AI_CONTEXT.buildSnapshot();
-        if(liveSnapshot && liveSnapshot.live){
-          snapshot.live = liveSnapshot.live;
-        }
-      }
-    }catch(_){}
-
     setSnapshotPreview(snapshot);
     const attachments = getAttachmentPayload();
 
