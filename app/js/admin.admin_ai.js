@@ -1,6 +1,6 @@
 /* FILE: /app/js/admin.admin_ai.js
    RControl Factory — Factory AI
-   v4.3.6 HYBRID CHAT ROUTE FIX + RUNTIME TEXT RESCUE + OPENAI STATUS ROUTE
+   v4.3.7 HYBRID CHAT ROUTE FIX + RUNTIME TEXT RESCUE + OPENAI STATUS ROUTE
 
    - mantém visual chat-first aprovado
    - mantém botão + fora da cápsula
@@ -28,22 +28,22 @@
    - FIX v4.3.4: runRuntimePrompt envia payload lean completo para runtime.ask()
    - FIX v4.3.5: perguntas normais sobre OpenAI/runtime/backend NÃO caem mais em ação local
    - FIX v4.3.5: ação local fica só para fluxo supervisionado explícito
-   - FIX v4.3.6: prompts de OpenAI/runtime/backend sobem como openai_status
-   - FIX v4.3.6: resgata response.analysis mesmo em falha do runtime
-   - FIX v4.3.6: reduz sequestro indevido da ação local snapshot
+   - FIX v4.3.7: prompts de OpenAI/runtime/backend sobem como openai_status
+   - FIX v4.3.7: resgata response.analysis mesmo em falha do runtime
+   - FIX v4.3.7: reduz sequestro indevido da ação local snapshot
    - não executa patch automático sem fluxo supervisionado
 */
 
 (() => {
   "use strict";
 
-  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v436) return;
+  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v437) return;
 
-  const VERSION = "v4.3.6";
+  const VERSION = "v4.3.7";
   const BOX_ID = "rcfFactoryAIBox";
   const CHAT_ID = "rcfFactoryAIChat";
-  const STYLE_ID = "rcfFactoryAIStyleV436";
-  const HISTORY_KEY = "rcf:factory_ai_history_v436";
+  const STYLE_ID = "rcfFactoryAIStyleV437";
+  const HISTORY_KEY = "rcf:factory_ai_history_v437";
   const HISTORY_MAX = 80;
 
   const SYNC_INTERVAL_MS = 2200;
@@ -1727,59 +1727,120 @@
     return "chat";
   }
 
+
+  function isBroadDiagnosticPrompt(prompt) {
+    const p = String(prompt || "").trim().toLowerCase();
+    if (!p) return false;
+
+    const broadSignals = [
+      "diagnóstico", "diagnostico", "snapshot", "status", "estado atual",
+      "fatos confirmados", "dados ausentes", "inferências", "inferencias",
+      "próximo passo", "proximo passo", "próximo arquivo", "proximo arquivo",
+      "módulos", "modulos", "runtime", "backend", "openai", "conexão", "conexao",
+      "memória operacional", "memoria operacional", "anti-repetição", "anti-repeticao",
+      "próximo arquivo único", "proximo arquivo unico", "teste", "validação", "validacao"
+    ];
+
+    let hits = 0;
+    broadSignals.forEach((term) => {
+      if (p.includes(term)) hits += 1;
+    });
+
+    const longPrompt = p.length >= 220 || p.split(/\s+/).length >= 28;
+    const structuredPrompt =
+      p.includes("1.") ||
+      p.includes("2.") ||
+      p.includes("3.") ||
+      p.includes("4.") ||
+      p.includes("5.") ||
+      p.includes("6.") ||
+      p.includes("a)") ||
+      p.includes("b)") ||
+      p.includes("c)");
+
+    return hits >= 3 || longPrompt || structuredPrompt;
+  }
+
+  function isExplicitPatchCommand(prompt) {
+    const p = String(prompt || "").trim().toLowerCase();
+    if (!p) return false;
+
+    const shortEnough = p.length <= 180 && p.split(/\s+/).length <= 18;
+    const startsLikeCommand = /^(aprovar|aprova|validar|valida|stage|aplicar|aplica|planejar|gerar plano|montar plano|rodar doctor|executar doctor|coletar logs|mostrar logs locais|snapshot local|mostrar snapshot|estado local)\b/.test(p);
+
+    return shortEnough && startsLikeCommand;
+  }
+
   function inferLocalActionFromPrompt(prompt) {
     const p = String(prompt || "").trim().toLowerCase();
 
     if (!p) return "";
 
+    if (isBroadDiagnosticPrompt(p) && !isExplicitPatchCommand(p)) return "";
+
     if (
-      (p.includes("aprovar") || p.includes("aprova")) &&
-      p.includes("patch")
+      ((p.includes("aprovar") || p.includes("aprova")) && p.includes("patch")) &&
+      isExplicitPatchCommand(p)
     ) return "approve_patch";
 
     if (
-      (p.includes("validar") || p.includes("valida")) &&
-      p.includes("patch")
+      ((p.includes("validar") || p.includes("valida")) && p.includes("patch")) &&
+      isExplicitPatchCommand(p)
     ) return "validate_patch";
 
     if (
       p.includes("stage") &&
-      p.includes("patch")
+      p.includes("patch") &&
+      isExplicitPatchCommand(p)
     ) return "stage_patch";
 
     if (
       (p.includes("aplicar") || p.includes("aplica")) &&
-      p.includes("patch")
+      p.includes("patch") &&
+      isExplicitPatchCommand(p)
     ) return "apply_patch";
 
     if (
-      p.includes("planejar") ||
-      p.includes("gerar plano") ||
-      p.includes("montar plano") ||
-      (p.includes("plano") && p.includes("próximo"))
+      (
+        p.includes("planejar") ||
+        p.includes("gerar plano") ||
+        p.includes("montar plano") ||
+        (p.includes("plano") && p.includes("próximo")) ||
+        (p.includes("plano") && p.includes("proximo"))
+      ) &&
+      isExplicitPatchCommand(p)
     ) return "plan";
 
     if (
-      p.includes("próximo arquivo") ||
-      p.includes("proximo arquivo")
+      (p.includes("próximo arquivo") || p.includes("proximo arquivo")) &&
+      isExplicitPatchCommand(p)
     ) return "next_file";
 
     if (
-      p.includes("snapshot local") ||
-      p.includes("snapshot do runtime") ||
-      p.includes("mostrar snapshot") ||
-      p.includes("estado local")
+      (
+        p.includes("snapshot local") ||
+        p.includes("snapshot do runtime") ||
+        p.includes("mostrar snapshot") ||
+        p.includes("estado local")
+      ) &&
+      isExplicitPatchCommand(p)
     ) return "snapshot";
 
     if (
-      p.includes("rodar doctor") ||
-      p.includes("executar doctor") ||
-      p.includes("run doctor")
+      (
+        p.includes("rodar doctor") ||
+        p.includes("executar doctor") ||
+        p.includes("run doctor")
+      ) &&
+      isExplicitPatchCommand(p)
     ) return "run_doctor";
 
     if (
-      p.includes("coletar logs") ||
-      p.includes("mostrar logs locais")
+      (
+        p.includes("coletar logs") ||
+        p.includes("mostrar logs locais")
+      ) &&
+      isExplicitPatchCommand(p)
     ) return "collect_logs";
 
     return "";
@@ -2518,6 +2579,7 @@
 
     const finalPrompt = prompt || "Analise os anexos enviados e diga o próximo passo mais seguro.";
     const action = forcedAction || inferActionFromPrompt(finalPrompt);
+    const broadDiagnosticPrompt = isBroadDiagnosticPrompt(finalPrompt);
     const localAction = inferLocalActionFromPrompt(finalPrompt);
 
     let userText = finalPrompt;
@@ -2535,6 +2597,8 @@
 
     if (localAction) {
       runLocalAction(localAction, finalPrompt);
+    } else if (broadDiagnosticPrompt && window.RCF_FACTORY_AI_RUNTIME?.ask) {
+      runRuntimePrompt("chat", finalPrompt);
     } else if (window.RCF_FACTORY_AI_RUNTIME?.ask) {
       runRuntimePrompt(action, finalPrompt);
     } else if (window.RCF_FACTORY_AI_BRAIN?.think) {
@@ -2941,8 +3005,8 @@
 
   function bindHeaderButtons() {
     const btnClear = document.getElementById("rcfFactoryAIClearHistory");
-    if (btnClear && !btnClear.__boundClearV436) {
-      btnClear.__boundClearV436 = true;
+    if (btnClear && !btnClear.__boundClearV437) {
+      btnClear.__boundClearV437 = true;
       btnClear.addEventListener("click", () => {
         try {
           const ok = window.confirm("Limpar histórico desta conversa da Factory AI?");
@@ -3260,7 +3324,7 @@
     __v433: true,
     __v434: true,
     __v435: true,
-    __v436: true,
+    __v437: true,
     version: VERSION,
     mount,
     clearChat,
@@ -3289,7 +3353,7 @@
     __v433_bridge: true,
     __v434_bridge: true,
     __v435_bridge: true,
-    __v436_bridge: true,
+    __v437_bridge: true,
     version: VERSION,
     mount,
     clearChat,
