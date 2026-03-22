@@ -24,7 +24,7 @@
 
   if (global.RCF_PATCH_SUPERVISOR && global.RCF_PATCH_SUPERVISOR.__v102) return;
 
-  var VERSION = "v1.0.2";
+  var VERSION = "v1.0.3";
   var STORAGE_KEY = "rcf:patch_supervisor";
   var MAX_HISTORY = 80;
 
@@ -36,7 +36,9 @@
     stagedPatch: null,
     lastValidationResult: null,
     lastApplyResult: null,
-    history: []
+    history: [],
+    presenceSyncedAt: null,
+    presenceSyncAttempts: 0
   };
 
   function nowISO() {
@@ -789,11 +791,16 @@
       lastApplyTargetFile: safe(function () { return state.lastApplyResult.targetFile; }, ""),
       lastApplyMsg: safe(function () { return state.lastApplyResult.msg; }, ""),
       historyCount: Array.isArray(state.history) ? state.history.length : 0,
-      activeAppSlug: getActiveApp()
+      activeAppSlug: getActiveApp(),
+      presenceSyncedAt: state.presenceSyncedAt || null,
+      presenceSyncAttempts: Number(state.presenceSyncAttempts || 0)
     };
   }
 
   function syncPresence() {
+    state.presenceSyncAttempts = Number(state.presenceSyncAttempts || 0) + 1;
+    state.presenceSyncedAt = nowISO();
+
     try {
       if (global.RCF_FACTORY_STATE?.registerModule) {
         global.RCF_FACTORY_STATE.registerModule("patchSupervisor");
@@ -803,9 +810,48 @@
     } catch (_) {}
 
     try {
+      if (global.RCF_FACTORY_STATE?.refreshRuntime) {
+        global.RCF_FACTORY_STATE.refreshRuntime();
+      }
+    } catch (_) {}
+
+    try {
       if (global.RCF_MODULE_REGISTRY?.register) {
         global.RCF_MODULE_REGISTRY.register("patchSupervisor");
+      } else if (global.RCF_MODULE_REGISTRY?.refresh) {
+        global.RCF_MODULE_REGISTRY.refresh();
       }
+    } catch (_) {}
+
+    try { persist(); } catch (_) {}
+  }
+
+  function schedulePresenceResync() {
+    [120, 900, 2200].forEach(function (ms) {
+      try {
+        global.setTimeout(function () {
+          try { syncPresence(); } catch (_) {}
+        }, ms);
+      } catch (_) {}
+    });
+  }
+
+  function bindPresenceEvents() {
+    try {
+      if (global.__RCF_PATCH_SUPERVISOR_PRESENCE_V103) return;
+      global.__RCF_PATCH_SUPERVISOR_PRESENCE_V103 = true;
+
+      global.addEventListener("RCF:UI_READY", function () {
+        try { syncPresence(); } catch (_) {}
+      }, { passive: true });
+
+      global.addEventListener("pageshow", function () {
+        try { syncPresence(); } catch (_) {}
+      }, { passive: true });
+
+      global.addEventListener("DOMContentLoaded", function () {
+        try { syncPresence(); } catch (_) {}
+      }, { passive: true });
     } catch (_) {}
   }
 
@@ -816,6 +862,8 @@
     state.lastUpdate = nowISO();
     persist();
     syncPresence();
+    schedulePresenceResync();
+    bindPresenceEvents();
     pushLog("OK", "patch_supervisor ready ✅ " + VERSION);
     return status();
   }
