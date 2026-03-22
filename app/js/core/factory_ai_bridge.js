@@ -25,7 +25,7 @@
 
   if (global.RCF_FACTORY_AI_BRIDGE && global.RCF_FACTORY_AI_BRIDGE.__v114) return;
 
-  var VERSION = "v1.1.4";
+  var VERSION = "v1.1.5";
   var STORAGE_KEY = "rcf:factory_ai_bridge";
   var LAST_PLAN_KEY = "rcf:factory_ai_bridge_last_plan";
   var MAX_HISTORY = 40;
@@ -39,7 +39,9 @@
     lastPlan: null,
     approvedPlanId: "",
     lastConnection: null,
-    history: []
+    history: [],
+    presenceSyncedAt: null,
+    presenceSyncAttempts: 0
   };
 
   function nowISO() {
@@ -697,6 +699,9 @@
   }
 
   function syncFactoryState() {
+    state.presenceSyncAttempts = Number(state.presenceSyncAttempts || 0) + 1;
+    state.presenceSyncedAt = nowISO();
+
     try {
       if (global.RCF_FACTORY_STATE?.registerModule) {
         global.RCF_FACTORY_STATE.registerModule("factoryAIBridge");
@@ -718,6 +723,18 @@
         global.RCF_MODULE_REGISTRY.refresh();
       }
     } catch (_) {}
+
+    try { persist(); } catch (_) {}
+  }
+
+  function schedulePresenceResync() {
+    [120, 900, 2200].forEach(function (ms) {
+      try {
+        global.setTimeout(function () {
+          try { syncFactoryState(); } catch (_) {}
+        }, ms);
+      } catch (_) {}
+    });
   }
 
   function getState() {
@@ -971,14 +988,16 @@
       connectionResponseStatus: safe(function () { return state.lastConnection.responseStatus; }, ""),
       connectionIncomplete: !!safe(function () { return state.lastConnection.incomplete; }, false),
       connectionIncompleteReason: safe(function () { return state.lastConnection.incompleteReason; }, ""),
-      historyCount: Array.isArray(state.history) ? state.history.length : 0
+      historyCount: Array.isArray(state.history) ? state.history.length : 0,
+      presenceSyncedAt: state.presenceSyncedAt || null,
+      presenceSyncAttempts: Number(state.presenceSyncAttempts || 0)
     };
   }
 
   function bindEvents() {
     try {
-      if (global.__RCF_FACTORY_AI_BRIDGE_EVENTS_V114) return;
-      global.__RCF_FACTORY_AI_BRIDGE_EVENTS_V114 = true;
+      if (global.__RCF_FACTORY_AI_BRIDGE_EVENTS_V115) return;
+      global.__RCF_FACTORY_AI_BRIDGE_EVENTS_V115 = true;
 
       global.addEventListener("RCF:FACTORY_AI_RESPONSE", function (ev) {
         try {
@@ -987,6 +1006,18 @@
         } catch (e) {
           pushLog("ERR", "event ingest error", String(e && e.message || e));
         }
+      }, { passive: true });
+
+      global.addEventListener("RCF:UI_READY", function () {
+        try { syncFactoryState(); } catch (_) {}
+      }, { passive: true });
+
+      global.addEventListener("pageshow", function () {
+        try { syncFactoryState(); } catch (_) {}
+      }, { passive: true });
+
+      global.addEventListener("DOMContentLoaded", function () {
+        try { syncFactoryState(); } catch (_) {}
       }, { passive: true });
     } catch (_) {}
   }
@@ -998,6 +1029,7 @@
     state.lastUpdate = nowISO();
     persist();
     syncFactoryState();
+    schedulePresenceResync();
     bindEvents();
     pushLog("OK", "factory_ai_bridge ready ✅ " + VERSION);
     return status();
