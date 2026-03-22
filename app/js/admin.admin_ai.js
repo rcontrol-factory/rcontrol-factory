@@ -1,6 +1,6 @@
 /* FILE: /app/js/admin.admin_ai.js
    RControl Factory — Factory AI
-   v4.3.7 HYBRID CHAT ROUTE FIX + RUNTIME TEXT RESCUE + OPENAI STATUS ROUTE
+   v4.3.6 HYBRID CHAT ROUTE FIX + RUNTIME TEXT RESCUE + OPENAI STATUS ROUTE
 
    - mantém visual chat-first aprovado
    - mantém botão + fora da cápsula
@@ -28,22 +28,22 @@
    - FIX v4.3.4: runRuntimePrompt envia payload lean completo para runtime.ask()
    - FIX v4.3.5: perguntas normais sobre OpenAI/runtime/backend NÃO caem mais em ação local
    - FIX v4.3.5: ação local fica só para fluxo supervisionado explícito
-   - FIX v4.3.7: prompts de OpenAI/runtime/backend sobem como openai_status
-   - FIX v4.3.7: resgata response.analysis mesmo em falha do runtime
-   - FIX v4.3.7: reduz sequestro indevido da ação local snapshot
+   - FIX v4.3.6: prompts de OpenAI/runtime/backend sobem como openai_status
+   - FIX v4.3.6: resgata response.analysis mesmo em falha do runtime
+   - FIX v4.3.6: reduz sequestro indevido da ação local snapshot
    - não executa patch automático sem fluxo supervisionado
 */
 
 (() => {
   "use strict";
 
-  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v437) return;
+  if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v438) return;
 
-  const VERSION = "v4.3.7";
+  const VERSION = "v4.3.8";
   const BOX_ID = "rcfFactoryAIBox";
   const CHAT_ID = "rcfFactoryAIChat";
-  const STYLE_ID = "rcfFactoryAIStyleV437";
-  const HISTORY_KEY = "rcf:factory_ai_history_v437";
+  const STYLE_ID = "rcfFactoryAIStyleV438";
+  const HISTORY_KEY = "rcf:factory_ai_history_v438";
   const HISTORY_MAX = 80;
 
   const SYNC_INTERVAL_MS = 2200;
@@ -59,6 +59,11 @@
     history: [],
     mountedIn: "",
     lastEndpoint: "",
+    lastFrontEndpoint: "",
+    lastFrontAction: "",
+    lastFrontResponseAt: "",
+    lastFrontResponseOk: false,
+    lastFrontRouting: null,
     bootedAt: new Date().toISOString(),
     syncTimer: null,
     attachments: [],
@@ -821,6 +826,13 @@
         language: environment.language || navigator.language || "",
         href: environment.href || location.href || "",
         ts: environment.ts || new Date().toISOString()
+      },
+      frontTelemetry: {
+        lastEndpoint: STATE.lastFrontEndpoint || STATE.lastEndpoint || "",
+        lastAction: STATE.lastFrontAction || "",
+        lastResponseAt: STATE.lastFrontResponseAt || "",
+        lastResponseOk: !!STATE.lastFrontResponseOk,
+        lastRouting: clone(STATE.lastFrontRouting || null)
       }
     };
   }
@@ -882,9 +894,8 @@
 }
 #${BOX_ID} .rcfAiShell{
   display:grid;
-  grid-template-rows:auto minmax(0,1fr) auto;
-  min-height:520px;
-  height:100%;
+  grid-template-rows:auto 1fr auto;
+  min-height:620px;
   width:100%;
   max-width:100%;
   min-width:0;
@@ -978,9 +989,7 @@
 }
 #${CHAT_ID}{
   min-height:320px;
-  max-height:none;
-  height:100%;
-  flex:1 1 auto;
+  max-height:52vh;
   overflow:auto;
   overflow-x:hidden;
   padding:14px;
@@ -1120,7 +1129,6 @@
   font-weight:800;
 }
 #${BOX_ID} .rcfAiComposer{
-  padding-bottom:env(safe-area-inset-bottom);
   display:grid;
   gap:10px;
   padding:12px 14px 14px;
@@ -1318,7 +1326,6 @@
   color:rgba(32,45,77,.80);
 }
 #${BOX_ID} details.rcfAiDetails{
-  margin-top:6px;
   border:1px solid rgba(31,41,55,.08);
   border-radius:18px;
   background:rgba(255,255,255,.72);
@@ -1372,7 +1379,6 @@
     max-height:48vh;
   }
   #${BOX_ID} .rcfAiComposer{
-  padding-bottom:env(safe-area-inset-bottom);
     padding:10px 12px 12px;
     gap:8px;
   }
@@ -1727,120 +1733,59 @@
     return "chat";
   }
 
-
-  function isBroadDiagnosticPrompt(prompt) {
-    const p = String(prompt || "").trim().toLowerCase();
-    if (!p) return false;
-
-    const broadSignals = [
-      "diagnóstico", "diagnostico", "snapshot", "status", "estado atual",
-      "fatos confirmados", "dados ausentes", "inferências", "inferencias",
-      "próximo passo", "proximo passo", "próximo arquivo", "proximo arquivo",
-      "módulos", "modulos", "runtime", "backend", "openai", "conexão", "conexao",
-      "memória operacional", "memoria operacional", "anti-repetição", "anti-repeticao",
-      "próximo arquivo único", "proximo arquivo unico", "teste", "validação", "validacao"
-    ];
-
-    let hits = 0;
-    broadSignals.forEach((term) => {
-      if (p.includes(term)) hits += 1;
-    });
-
-    const longPrompt = p.length >= 220 || p.split(/\s+/).length >= 28;
-    const structuredPrompt =
-      p.includes("1.") ||
-      p.includes("2.") ||
-      p.includes("3.") ||
-      p.includes("4.") ||
-      p.includes("5.") ||
-      p.includes("6.") ||
-      p.includes("a)") ||
-      p.includes("b)") ||
-      p.includes("c)");
-
-    return hits >= 3 || longPrompt || structuredPrompt;
-  }
-
-  function isExplicitPatchCommand(prompt) {
-    const p = String(prompt || "").trim().toLowerCase();
-    if (!p) return false;
-
-    const shortEnough = p.length <= 180 && p.split(/\s+/).length <= 18;
-    const startsLikeCommand = /^(aprovar|aprova|validar|valida|stage|aplicar|aplica|planejar|gerar plano|montar plano|rodar doctor|executar doctor|coletar logs|mostrar logs locais|snapshot local|mostrar snapshot|estado local)\b/.test(p);
-
-    return shortEnough && startsLikeCommand;
-  }
-
   function inferLocalActionFromPrompt(prompt) {
     const p = String(prompt || "").trim().toLowerCase();
 
     if (!p) return "";
 
-    if (isBroadDiagnosticPrompt(p) && !isExplicitPatchCommand(p)) return "";
-
     if (
-      ((p.includes("aprovar") || p.includes("aprova")) && p.includes("patch")) &&
-      isExplicitPatchCommand(p)
+      (p.includes("aprovar") || p.includes("aprova")) &&
+      p.includes("patch")
     ) return "approve_patch";
 
     if (
-      ((p.includes("validar") || p.includes("valida")) && p.includes("patch")) &&
-      isExplicitPatchCommand(p)
+      (p.includes("validar") || p.includes("valida")) &&
+      p.includes("patch")
     ) return "validate_patch";
 
     if (
       p.includes("stage") &&
-      p.includes("patch") &&
-      isExplicitPatchCommand(p)
+      p.includes("patch")
     ) return "stage_patch";
 
     if (
       (p.includes("aplicar") || p.includes("aplica")) &&
-      p.includes("patch") &&
-      isExplicitPatchCommand(p)
+      p.includes("patch")
     ) return "apply_patch";
 
     if (
-      (
-        p.includes("planejar") ||
-        p.includes("gerar plano") ||
-        p.includes("montar plano") ||
-        (p.includes("plano") && p.includes("próximo")) ||
-        (p.includes("plano") && p.includes("proximo"))
-      ) &&
-      isExplicitPatchCommand(p)
+      p.includes("planejar") ||
+      p.includes("gerar plano") ||
+      p.includes("montar plano") ||
+      (p.includes("plano") && p.includes("próximo"))
     ) return "plan";
 
     if (
-      (p.includes("próximo arquivo") || p.includes("proximo arquivo")) &&
-      isExplicitPatchCommand(p)
+      p.includes("próximo arquivo") ||
+      p.includes("proximo arquivo")
     ) return "next_file";
 
     if (
-      (
-        p.includes("snapshot local") ||
-        p.includes("snapshot do runtime") ||
-        p.includes("mostrar snapshot") ||
-        p.includes("estado local")
-      ) &&
-      isExplicitPatchCommand(p)
+      p.includes("snapshot local") ||
+      p.includes("snapshot do runtime") ||
+      p.includes("mostrar snapshot") ||
+      p.includes("estado local")
     ) return "snapshot";
 
     if (
-      (
-        p.includes("rodar doctor") ||
-        p.includes("executar doctor") ||
-        p.includes("run doctor")
-      ) &&
-      isExplicitPatchCommand(p)
+      p.includes("rodar doctor") ||
+      p.includes("executar doctor") ||
+      p.includes("run doctor")
     ) return "run_doctor";
 
     if (
-      (
-        p.includes("coletar logs") ||
-        p.includes("mostrar logs locais")
-      ) &&
-      isExplicitPatchCommand(p)
+      p.includes("coletar logs") ||
+      p.includes("mostrar logs locais")
     ) return "collect_logs";
 
     return "";
@@ -2270,6 +2215,8 @@
     }
 
     STATE.lastEndpoint = "runtime:/api/admin-ai";
+    STATE.lastFrontEndpoint = "/api/admin-ai";
+    STATE.lastFrontAction = action || "";
     setButtonsBusy(true);
     setComposerStatus("consultando runtime...");
     setTechResult("");
@@ -2286,6 +2233,9 @@
         attachments: getAttachmentPayload()
       });
 
+      STATE.lastFrontResponseAt = new Date().toISOString();
+      STATE.lastFrontResponseOk = !!(result && result.ok !== false);
+      STATE.lastFrontRouting = clone(result?.request?.routing || result?.routing || null);
       const text = extractRuntimeMessage(result);
 
       if (!result || result.ok === false) {
@@ -2324,6 +2274,9 @@
       return result;
     } catch (e) {
       const msg = String(e?.message || e || "Erro no runtime");
+      STATE.lastFrontResponseAt = new Date().toISOString();
+      STATE.lastFrontResponseOk = false;
+      STATE.lastFrontRouting = { mode: "runtime", action: action || "", ok: false };
       setComposerStatus("erro runtime");
       setTechResult(msg);
 
@@ -2579,7 +2532,6 @@
 
     const finalPrompt = prompt || "Analise os anexos enviados e diga o próximo passo mais seguro.";
     const action = forcedAction || inferActionFromPrompt(finalPrompt);
-    const broadDiagnosticPrompt = isBroadDiagnosticPrompt(finalPrompt);
     const localAction = inferLocalActionFromPrompt(finalPrompt);
 
     let userText = finalPrompt;
@@ -2597,8 +2549,6 @@
 
     if (localAction) {
       runLocalAction(localAction, finalPrompt);
-    } else if (broadDiagnosticPrompt && window.RCF_FACTORY_AI_RUNTIME?.ask) {
-      runRuntimePrompt("chat", finalPrompt);
     } else if (window.RCF_FACTORY_AI_RUNTIME?.ask) {
       runRuntimePrompt(action, finalPrompt);
     } else if (window.RCF_FACTORY_AI_BRAIN?.think) {
@@ -3005,8 +2955,8 @@
 
   function bindHeaderButtons() {
     const btnClear = document.getElementById("rcfFactoryAIClearHistory");
-    if (btnClear && !btnClear.__boundClearV437) {
-      btnClear.__boundClearV437 = true;
+    if (btnClear && !btnClear.__boundClearV436) {
+      btnClear.__boundClearV436 = true;
       btnClear.addEventListener("click", () => {
         try {
           const ok = window.confirm("Limpar histórico desta conversa da Factory AI?");
@@ -3324,7 +3274,7 @@
     __v433: true,
     __v434: true,
     __v435: true,
-    __v437: true,
+    __v438: true,
     version: VERSION,
     mount,
     clearChat,
@@ -3336,6 +3286,15 @@
     },
     getLastEndpoint() {
       return STATE.lastEndpoint || "";
+    },
+    getFrontTelemetry() {
+      return {
+        lastEndpoint: STATE.lastFrontEndpoint || STATE.lastEndpoint || "",
+        lastAction: STATE.lastFrontAction || "",
+        lastResponseAt: STATE.lastFrontResponseAt || "",
+        lastResponseOk: !!STATE.lastFrontResponseOk,
+        lastRouting: clone(STATE.lastFrontRouting || null)
+      };
     },
     getAttachments() {
       return Array.isArray(STATE.attachments) ? STATE.attachments.slice() : [];
@@ -3353,7 +3312,7 @@
     __v433_bridge: true,
     __v434_bridge: true,
     __v435_bridge: true,
-    __v437_bridge: true,
+    __v438_bridge: true,
     version: VERSION,
     mount,
     clearChat,
