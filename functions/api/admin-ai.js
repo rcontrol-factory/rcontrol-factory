@@ -126,7 +126,7 @@ function patchRecommendedFileInObject(obj) {
 
 /* FILE: /functions/api/admin-ai.js
    RControl Factory Ã¢ÂÂ Factory AI API
-   v3.6.1 CHAT COPILOT BACKEND + CONNECTIVITY HARDENED + TEXT FORMAT + INPUT COMPACT GUARD
+   v3.6.2 CHAT COPILOT BACKEND + CONNECTIVITY HARDENED + TEXT FORMAT + INPUT COMPACT GUARD
 
    PATCH v3.5.6:
    - KEEP: openai_status como action permitida
@@ -158,7 +158,6 @@ export async function onRequestPost(context) {
 
     if (!env || !env.OPENAI_API_KEY) {
       return json({
-        request: { action, structuredRuntimeFrontDiagnostic: isStructuredRuntimeFrontDiagnostic(prompt), source, version },
         ok: false,
         error: "OPENAI_API_KEY ausente no ambiente.",
         connection: buildConnectionMeta({
