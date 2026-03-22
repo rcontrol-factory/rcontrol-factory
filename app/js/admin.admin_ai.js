@@ -1,6 +1,6 @@
 /* FILE: /app/js/admin.admin_ai.js
    RControl Factory — Factory AI
-   v4.4.0 HYBRID CHAT ROUTE FIX + RUNTIME TEXT RESCUE + OPENAI STATUS ROUTE
+   v4.4.1 HYBRID CHAT ROUTE FIX + RUNTIME TEXT RESCUE + OPENAI STATUS ROUTE
 
    - mantém visual chat-first aprovado
    - mantém botão + fora da cápsula
@@ -1641,77 +1641,22 @@
     setSnapshotPreview({});
   }
 
-
-  function isStrictDiagnosticPrompt(prompt) {
-    const p = String(prompt || "").trim().toLowerCase();
-    if (!p) return false;
-
-    return (
-      p.includes("diagnóstico técnico") ||
-      p.includes("diagnostico tecnico") ||
-      p.includes("diagnóstico consolidado") ||
-      p.includes("diagnostico consolidado") ||
-      p.includes("runtime/front") ||
-      p.includes("sem ação local") ||
-      p.includes("sem acao local") ||
-      p.includes("não cair em") ||
-      p.includes("nao cair em") ||
-      p.includes("não responder só") ||
-      p.includes("nao responder so") ||
-      p.includes("fatos confirmados") ||
-      p.includes("dados ausentes") ||
-      p.includes("estado real dos módulos") ||
-      p.includes("estado real do runtime/front") ||
-      p.includes("próximo passo mínimo recomendado") ||
-      p.includes("proximo passo minimo recomendado") ||
-      p.includes("próximo arquivo único da fila") ||
-      p.includes("proximo arquivo unico da fila")
-    );
-  }
-
-  function isShortExplicitLocalCommand(prompt) {
-    const p = String(prompt || "").trim().toLowerCase();
-    if (!p) return false;
-    if (isStrictDiagnosticPrompt(prompt)) return false;
-    if (p.length > 120) return false;
-
-    return (
-      p === "validar patch" ||
-      p === "validate patch" ||
-      p === "approve patch" ||
-      p === "aprovar patch" ||
-      p === "stage patch" ||
-      p === "apply patch" ||
-      p === "run doctor" ||
-      p === "rodar doctor" ||
-      p === "doctor scan" ||
-      p === "execute doctor scan" ||
-      p === "snapshot local" ||
-      p === "mostrar logs locais" ||
-      p === "coletar logs" ||
-      p === "próximo arquivo" ||
-      p === "proximo arquivo"
-    );
-  }
-
   function inferActionFromPrompt(prompt) {
     const p = String(prompt || "").trim().toLowerCase();
 
     if (!p) return "chat";
 
-    if (isStrictDiagnosticPrompt(prompt)) return "factory_diagnosis";
-
     if (
-      p.length <= 180 &&
-      (
-        p.includes("openai") ||
-        p.includes("api key") ||
-        p.includes("status real") ||
-        p.includes("teste real") ||
-        p.includes("probe") ||
-        p.includes("conexão openai") ||
-        p.includes("conexao openai")
-      )
+      p.includes("openai") ||
+      p.includes("api key") ||
+      p.includes("status real") ||
+      p.includes("teste real") ||
+      p.includes("runtime") ||
+      p.includes("backend") ||
+      p.includes("endpoint") ||
+      p.includes("conexão") ||
+      p.includes("conexao") ||
+      p.includes("/api/admin-ai")
     ) return "openai_status";
 
     if (
@@ -1727,13 +1672,7 @@
       p.includes("diagnóstico") ||
       p.includes("diagnostico") ||
       p.includes("estabilidade") ||
-      p.includes("stability") ||
-      p.includes("runtime") ||
-      p.includes("backend") ||
-      p.includes("endpoint") ||
-      p.includes("conexão") ||
-      p.includes("conexao") ||
-      p.includes("/api/admin-ai")
+      p.includes("stability")
     ) return "factory_diagnosis";
 
     if (
@@ -1798,32 +1737,38 @@
     const p = String(prompt || "").trim().toLowerCase();
 
     if (!p) return "";
-    if (!isShortExplicitLocalCommand(prompt)) return "";
 
     if (
-      (p.includes("aprovar") || p.includes("aprova") || p.includes("approve")) &&
+      (p.includes("aprovar") || p.includes("aprova")) &&
       p.includes("patch")
     ) return "approve_patch";
 
     if (
-      (p.includes("validar") || p.includes("valida") || p.includes("validate")) &&
+      (p.includes("validar") || p.includes("valida")) &&
       p.includes("patch")
     ) return "validate_patch";
 
-    if (p.includes("stage") && p.includes("patch")) return "stage_patch";
+    if (
+      p.includes("stage") &&
+      p.includes("patch")
+    ) return "stage_patch";
 
     if (
-      (p.includes("aplicar") || p.includes("aplica") || p.includes("apply")) &&
+      (p.includes("aplicar") || p.includes("aplica")) &&
       p.includes("patch")
     ) return "apply_patch";
 
     if (
       p.includes("planejar") ||
       p.includes("gerar plano") ||
-      p.includes("montar plano")
+      p.includes("montar plano") ||
+      (p.includes("plano") && p.includes("próximo"))
     ) return "plan";
 
-    if (p.includes("próximo arquivo") || p.includes("proximo arquivo")) return "next_file";
+    if (
+      p.includes("próximo arquivo") ||
+      p.includes("proximo arquivo")
+    ) return "next_file";
 
     if (
       p.includes("snapshot local") ||
@@ -1834,9 +1779,8 @@
 
     if (
       p.includes("rodar doctor") ||
-      p.includes("run doctor") ||
-      p.includes("doctor scan") ||
-      p.includes("execute doctor scan")
+      p.includes("executar doctor") ||
+      p.includes("run doctor")
     ) return "run_doctor";
 
     if (
@@ -1847,23 +1791,117 @@
     return "";
   }
 
+
+  function buildExplicitLivePayload() {
+    const out = {
+      runtimeLayer: {},
+      frontTelemetry: {},
+      moduleRegistry: {},
+      factoryState: {},
+      doctor: {},
+      activeList: []
+    };
+
+    try {
+      if (window.RCF_FACTORY_AI_RUNTIME?.status) {
+        out.runtimeLayer = clone(window.RCF_FACTORY_AI_RUNTIME.status() || {});
+      }
+    } catch {}
+
+    try {
+      if (window.RCF_FACTORY_AI?.getFrontTelemetry) {
+        out.frontTelemetry = clone(window.RCF_FACTORY_AI.getFrontTelemetry() || {});
+      }
+    } catch {}
+
+    try {
+      if (window.RCF_MODULE_REGISTRY?.summary) {
+        out.moduleRegistry = clone(window.RCF_MODULE_REGISTRY.summary() || {});
+        if (Array.isArray(out.moduleRegistry.active)) {
+          out.activeList = out.moduleRegistry.active.slice(0, 60);
+        }
+      }
+    } catch {}
+
+    try {
+      if (window.RCF_FACTORY_STATE?.getState) {
+        const st = window.RCF_FACTORY_STATE.getState() || {};
+        out.factoryState = {
+          activeModulesCount: Number(st.activeModulesCount || 0) || 0,
+          activeList: Array.isArray(st.activeList) ? clone(st.activeList).slice(0, 60) : [],
+          runtimeLayer: clone(st.runtimeLayer || {}),
+          frontTelemetry: clone(st.frontTelemetry || {}),
+          doctorLastRun: clone(st.doctorLastRun || null)
+        };
+        if (!out.activeList.length && Array.isArray(out.factoryState.activeList)) {
+          out.activeList = out.factoryState.activeList.slice(0, 60);
+        }
+      }
+    } catch {}
+
+    try {
+      out.doctor = {
+        lastRun: clone(window.RCF_DOCTOR_SCAN?.lastRun || window.RCF_DOCTOR?.lastRun || null),
+        lastReport: clone(window.RCF_DOCTOR_SCAN?.lastReport || window.RCF_DOCTOR?.lastReport || null),
+        version: String(window.RCF_DOCTOR_SCAN?.version || window.RCF_DOCTOR?.version || "")
+      };
+    } catch {}
+
+    return out;
+  }
+
   function buildPayload(action) {
     const snapshot = buildLeanSnapshot();
+    const explicitLive = buildExplicitLivePayload();
+
+    try {
+      snapshot.live = snapshot.live || {};
+      snapshot.live.runtimeLayer = clone(explicitLive.runtimeLayer || snapshot.live.runtimeLayer || {});
+      snapshot.live.frontTelemetry = clone(explicitLive.frontTelemetry || snapshot.live.frontTelemetry || {});
+      snapshot.live.moduleRegistry = clone(explicitLive.moduleRegistry || snapshot.live.moduleRegistry || {});
+      snapshot.live.factoryState = clone(explicitLive.factoryState || snapshot.live.factoryState || {});
+      snapshot.live.doctor = clone(explicitLive.doctor || snapshot.live.doctor || {});
+    } catch {}
+
     setSnapshotPreview(snapshot);
     const attachments = getAttachmentPayload();
 
     if (action === "analyze-logs") {
-      return { snapshot, logs: collectLogs(), attachments };
+      return {
+        snapshot,
+        runtimeLayer: clone(explicitLive.runtimeLayer || {}),
+        frontTelemetry: clone(explicitLive.frontTelemetry || {}),
+        moduleRegistry: clone(explicitLive.moduleRegistry || {}),
+        factoryState: clone(explicitLive.factoryState || {}),
+        doctor: clone(explicitLive.doctor || {}),
+        activeList: clone(explicitLive.activeList || []),
+        logs: collectLogs(),
+        attachments
+      };
     }
 
     if (action === "factory_diagnosis") {
-      return { snapshot, doctor: collectDoctorReport(), attachments };
+      return {
+        snapshot,
+        runtimeLayer: clone(explicitLive.runtimeLayer || {}),
+        frontTelemetry: clone(explicitLive.frontTelemetry || {}),
+        moduleRegistry: clone(explicitLive.moduleRegistry || {}),
+        factoryState: clone(explicitLive.factoryState || {}),
+        doctor: clone(explicitLive.doctor || collectDoctorReport() || {}),
+        activeList: clone(explicitLive.activeList || []),
+        attachments
+      };
     }
 
     if (action === "propose-patch" || action === "generate-code") {
       return {
         snapshot,
-        doctor: collectDoctorReport(),
+        runtimeLayer: clone(explicitLive.runtimeLayer || {}),
+        frontTelemetry: clone(explicitLive.frontTelemetry || {}),
+        moduleRegistry: clone(explicitLive.moduleRegistry || {}),
+        factoryState: clone(explicitLive.factoryState || {}),
+        doctor: clone(explicitLive.doctor || collectDoctorReport() || {}),
+        activeList: clone(explicitLive.activeList || []),
         logs: collectLogs(25),
         attachments
       };
@@ -1872,7 +1910,12 @@
     if (action === "review-module") {
       return {
         snapshot,
-        doctor: collectDoctorReport(),
+        runtimeLayer: clone(explicitLive.runtimeLayer || {}),
+        frontTelemetry: clone(explicitLive.frontTelemetry || {}),
+        moduleRegistry: clone(explicitLive.moduleRegistry || {}),
+        factoryState: clone(explicitLive.factoryState || {}),
+        doctor: clone(explicitLive.doctor || collectDoctorReport() || {}),
+        activeList: clone(explicitLive.activeList || []),
         logs: collectLogs(12),
         attachments
       };
@@ -1881,6 +1924,12 @@
     if (action === "zip-readiness") {
       return {
         snapshot,
+        runtimeLayer: clone(explicitLive.runtimeLayer || {}),
+        frontTelemetry: clone(explicitLive.frontTelemetry || {}),
+        moduleRegistry: clone(explicitLive.moduleRegistry || {}),
+        factoryState: clone(explicitLive.factoryState || {}),
+        doctor: clone(explicitLive.doctor || {}),
+        activeList: clone(explicitLive.activeList || []),
         attachments,
         capability: {
           wantsZipFlow: true,
@@ -1892,7 +1941,16 @@
       };
     }
 
-    return { snapshot, attachments };
+    return {
+      snapshot,
+      runtimeLayer: clone(explicitLive.runtimeLayer || {}),
+      frontTelemetry: clone(explicitLive.frontTelemetry || {}),
+      moduleRegistry: clone(explicitLive.moduleRegistry || {}),
+      factoryState: clone(explicitLive.factoryState || {}),
+      doctor: clone(explicitLive.doctor || {}),
+      activeList: clone(explicitLive.activeList || []),
+      attachments
+    };
   }
 
   function getAttachmentPayload() {
