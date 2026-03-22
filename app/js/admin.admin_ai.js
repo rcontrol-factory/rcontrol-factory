@@ -1,27 +1,6 @@
-// --------------------------------------------------
-// RCF PATCH: normalize moduleRegistry / factoryState counts
-// --------------------------------------------------
-try {
-  if (window.RCF_MODULE_REGISTRY && typeof window.RCF_MODULE_REGISTRY.summary === "function") {
-    const reg = window.RCF_MODULE_REGISTRY.summary() || {};
-    if (reg && typeof reg.activeCount === "undefined" && Array.isArray(reg.active)) {
-      reg.activeCount = reg.active.length;
-    }
-  }
-} catch {}
-
-try {
-  if (window.RCF_FACTORY_STATE && typeof window.RCF_FACTORY_STATE.getState === "function") {
-    const st = window.RCF_FACTORY_STATE.getState() || {};
-    if (st && typeof st.activeModulesCount === "undefined" && Array.isArray(st.activeList)) {
-      st.activeModulesCount = st.activeList.length;
-    }
-  }
-} catch {}
-
 /* FILE: /app/js/admin.admin_ai.js
    RControl Factory — Factory AI
-   v4.3.6 HYBRID CHAT ROUTE FIX + RUNTIME TEXT RESCUE + OPENAI STATUS ROUTE
+   v4.4.2 HYBRID CHAT ROUTE FIX + RUNTIME TEXT RESCUE + OPENAI STATUS ROUTE
 
    - mantém visual chat-first aprovado
    - mantém botão + fora da cápsula
@@ -856,6 +835,43 @@ try {
         lastRouting: clone(STATE.lastFrontRouting || null)
       }
     };
+  }
+
+
+  function setFrontTelemetry(patch) {
+    try {
+      const next = Object.assign({}, {
+        lastEndpoint: STATE.lastFrontEndpoint || STATE.lastEndpoint || "",
+        lastAction: STATE.lastFrontAction || "",
+        lastResponseAt: STATE.lastFrontResponseAt || "",
+        lastResponseOk: !!STATE.lastFrontResponseOk,
+        lastRouting: clone(STATE.lastFrontRouting || null)
+      }, patch || {});
+
+      if (Object.prototype.hasOwnProperty.call(next, "lastEndpoint")) {
+        STATE.lastFrontEndpoint = String(next.lastEndpoint || "");
+      }
+      if (Object.prototype.hasOwnProperty.call(next, "lastAction")) {
+        STATE.lastFrontAction = String(next.lastAction || "");
+      }
+      if (Object.prototype.hasOwnProperty.call(next, "lastResponseAt")) {
+        STATE.lastFrontResponseAt = String(next.lastResponseAt || "");
+      }
+      if (Object.prototype.hasOwnProperty.call(next, "lastResponseOk")) {
+        STATE.lastFrontResponseOk = !!next.lastResponseOk;
+      }
+      if (Object.prototype.hasOwnProperty.call(next, "lastRouting")) {
+        STATE.lastFrontRouting = clone(next.lastRouting || null);
+      }
+    } catch {}
+  }
+
+  function ensureFrontRoutingDefault(tag) {
+    try {
+      if (!STATE.lastFrontRouting) {
+        STATE.lastFrontRouting = String(tag || "admin_ai");
+      }
+    } catch {}
   }
 
   function setComposerStatus(txt) {
@@ -1832,24 +1848,7 @@ try {
     return "";
   }
 
-  
-
-// --------------------------------------------------
-// RCF PATCH: ensure frontTelemetry.lastRouting always exists
-// --------------------------------------------------
-try {
-  if (window.RCF_FACTORY_AI && typeof window.RCF_FACTORY_AI.getFrontTelemetry === "function") {
-    const ft = window.RCF_FACTORY_AI.getFrontTelemetry() || {};
-    if (!ft.lastRouting) {
-      ft.lastRouting = "admin_ai";
-    }
-    if (typeof window.RCF_FACTORY_AI.setFrontTelemetry === "function") {
-      window.RCF_FACTORY_AI.setFrontTelemetry(ft);
-    }
-  }
-} catch {}
-
-function buildPayload(action) {
+  function buildPayload(action) {
     const snapshot = buildLeanSnapshot();
     setSnapshotPreview(snapshot);
     const attachments = getAttachmentPayload();
@@ -2215,12 +2214,22 @@ function buildPayload(action) {
     }
 
     STATE.lastEndpoint = "local:factory_ai_actions";
+    setFrontTelemetry({
+      lastEndpoint: "local:factory_ai_actions",
+      lastAction: localAction || "",
+      lastRouting: "local_action"
+    });
     setButtonsBusy(true);
     setComposerStatus("executando local...");
     setTechResult("");
 
     try {
       const result = await api.dispatch(req);
+      setFrontTelemetry({
+        lastResponseAt: new Date().toISOString(),
+        lastResponseOk: !!(result && result.ok !== false),
+        lastRouting: "local_action"
+      });
       const text = formatLocalActionResult(localAction, result);
 
       setComposerStatus(result?.ok ? "concluído local" : "falha local");
@@ -2248,6 +2257,11 @@ function buildPayload(action) {
       return result;
     } catch (e) {
       const msg = String(e?.message || e || "Erro local");
+      setFrontTelemetry({
+        lastResponseAt: new Date().toISOString(),
+        lastResponseOk: false,
+        lastRouting: "local_action"
+      });
       setComposerStatus("erro local");
       setTechResult(msg);
 
@@ -2273,8 +2287,11 @@ function buildPayload(action) {
     }
 
     STATE.lastEndpoint = "runtime:/api/admin-ai";
-    STATE.lastFrontEndpoint = "/api/admin-ai";
-    STATE.lastFrontAction = action || "";
+    setFrontTelemetry({
+      lastEndpoint: "/api/admin-ai",
+      lastAction: action || "",
+      lastRouting: "runtime"
+    });
     setButtonsBusy(true);
     setComposerStatus("consultando runtime...");
     setTechResult("");
@@ -2291,9 +2308,11 @@ function buildPayload(action) {
         attachments: getAttachmentPayload()
       });
 
-      STATE.lastFrontResponseAt = new Date().toISOString();
-      STATE.lastFrontResponseOk = !!(result && result.ok !== false);
-      STATE.lastFrontRouting = clone(result?.request?.routing || result?.routing || null);
+      setFrontTelemetry({
+        lastResponseAt: new Date().toISOString(),
+        lastResponseOk: !!(result && result.ok !== false),
+        lastRouting: clone(result?.request?.routing || result?.routing || "runtime")
+      });
       const text = extractRuntimeMessage(result);
 
       if (!result || result.ok === false) {
@@ -2515,10 +2534,20 @@ function buildPayload(action) {
       }
 
       STATE.lastEndpoint = endpoint;
+      setFrontTelemetry({
+        lastEndpoint: endpoint,
+        lastAction: action || "",
+        lastRouting: "admin_ai"
+      });
 
       const { res, data } = result;
 
       if (!res.ok || !data.ok) {
+        setFrontTelemetry({
+          lastResponseAt: new Date().toISOString(),
+          lastResponseOk: false,
+          lastRouting: "admin_ai"
+        });
         const text =
           trim(data?.analysis) ||
           trim(data?.answer) ||
@@ -2554,6 +2583,11 @@ function buildPayload(action) {
         }));
       } catch {}
 
+      setFrontTelemetry({
+        lastResponseAt: new Date().toISOString(),
+        lastResponseOk: true,
+        lastRouting: "admin_ai"
+      });
       setComposerStatus("concluído");
       setTechResult(text);
       pushHistory({
@@ -2565,6 +2599,11 @@ function buildPayload(action) {
       log("OK", "resposta recebida action=" + action + " endpoint=" + endpoint);
     } catch (e) {
       const msg = String(e?.message || e || "Erro de rede");
+      setFrontTelemetry({
+        lastResponseAt: new Date().toISOString(),
+        lastResponseOk: false,
+        lastRouting: "admin_ai"
+      });
       setComposerStatus("erro");
       setTechResult(msg);
       pushHistory({
@@ -3337,6 +3376,7 @@ function buildPayload(action) {
     mount,
     clearChat,
     sendPrompt,
+    setFrontTelemetry,
     stopListening,
     speakText,
     getHistory() {
@@ -3353,6 +3393,10 @@ function buildPayload(action) {
         lastResponseOk: !!STATE.lastFrontResponseOk,
         lastRouting: clone(STATE.lastFrontRouting || null)
       };
+    },
+    setFrontTelemetry(patch) {
+      setFrontTelemetry(patch || {});
+      return this.getFrontTelemetry();
     },
     getAttachments() {
       return Array.isArray(STATE.attachments) ? STATE.attachments.slice() : [];
