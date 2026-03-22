@@ -882,8 +882,9 @@
 }
 #${BOX_ID} .rcfAiShell{
   display:grid;
-  grid-template-rows:auto 1fr auto;
-  min-height:620px;
+  grid-template-rows:auto minmax(0,1fr) auto;
+  min-height:520px;
+  height:100%;
   width:100%;
   max-width:100%;
   min-width:0;
@@ -977,7 +978,9 @@
 }
 #${CHAT_ID}{
   min-height:320px;
-  max-height:52vh;
+  max-height:none;
+  height:100%;
+  flex:1 1 auto;
   overflow:auto;
   overflow-x:hidden;
   padding:14px;
@@ -1117,6 +1120,7 @@
   font-weight:800;
 }
 #${BOX_ID} .rcfAiComposer{
+  padding-bottom:env(safe-area-inset-bottom);
   display:grid;
   gap:10px;
   padding:12px 14px 14px;
@@ -1314,6 +1318,7 @@
   color:rgba(32,45,77,.80);
 }
 #${BOX_ID} details.rcfAiDetails{
+  margin-top:6px;
   border:1px solid rgba(31,41,55,.08);
   border-radius:18px;
   background:rgba(255,255,255,.72);
@@ -1367,6 +1372,7 @@
     max-height:48vh;
   }
   #${BOX_ID} .rcfAiComposer{
+  padding-bottom:env(safe-area-inset-bottom);
     padding:10px 12px 12px;
     gap:8px;
   }
