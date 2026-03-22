@@ -1,20 +1,25 @@
-// --------------------------------------------------
-// SAFETY PATCH: normalize runtime result + telemetry
-// ensures lastOk / frontTelemetry consistency
-// --------------------------------------------------
-function __rcfNormalizeRuntimeResult(res){
+/* --------------------------------------------------
+RCF STABILITY PATCH
+Separates connection health from single-call failures
+Prevents lastOk from turning false on openai_status checks
+-------------------------------------------------- */
+function __rcfNormalizeRuntimeHealth(state, result){
   try{
-    const ok = !!(res && (res.ok===true || res.status===200));
-    window.__RCF_RUNTIME_LAST_OK__ = ok;
+    const upstreamOk = !!(state && state.connectionStatus === "connected");
+    const callOk = !!(result && (result.ok === true || result.status === 200));
 
-    if(window.RCF_FACTORY_AI && typeof window.RCF_FACTORY_AI.getFrontTelemetry==="function"){
-      const ft = window.RCF_FACTORY_AI.getFrontTelemetry() || {};
-      ft.lastResponseOk = ok;
-      ft.lastRouting = ft.lastRouting || "runtime";
-      try{ window.RCF_FACTORY_AI.setFrontTelemetry && window.RCF_FACTORY_AI.setFrontTelemetry(ft);}catch{}
+    if(upstreamOk){
+      state.lastOk = true;
+    }else{
+      state.lastOk = callOk;
     }
+
+    if(!state.lastRouting){
+      state.lastRouting = "runtime";
+    }
+
   }catch{}
-  return res;
+  return __rcfNormalizeRuntimeHealth(state,result);
 }
 
 /* FILE: /app/js/core/factory_ai_runtime.js
@@ -44,7 +49,7 @@ function __rcfNormalizeRuntimeResult(res){
 
   if (global.RCF_FACTORY_AI_RUNTIME && global.RCF_FACTORY_AI_RUNTIME.__v105) return;
 
-  var VERSION = "v1.0.7";
+  var VERSION = "v1.0.8";
   var STORAGE_KEY = "rcf:factory_ai_runtime";
   var LAST_RESPONSE_KEY = "rcf:factory_ai_runtime_last_response";
   var MAX_HISTORY = 60;
