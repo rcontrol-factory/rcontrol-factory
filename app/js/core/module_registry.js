@@ -1,6 +1,16 @@
+function schedulePresenceResync(syncFn){
+  try{
+    [120,900,2200].forEach(function(ms){
+      setTimeout(function(){
+        try{ syncFn(); }catch(_){}
+      },ms);
+    });
+  }catch(_){}
+}
+
 /* FILE: /app/js/core/module_registry.js
    RControl Factory — Module Registry
-   v1.4.4 CURRENT STACK REGISTRY / SAFE LOOP GUARD
+   v1.0.1 CURRENT STACK REGISTRY / SAFE LOOP GUARD
 
    Objetivo:
    - detectar módulos globais realmente carregados
