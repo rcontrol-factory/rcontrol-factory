@@ -1,6 +1,6 @@
 /* FILE: /app/js/admin.admin_ai.js
    RControl Factory — Factory AI
-   v4.4.3 HYBRID CHAT ROUTE FIX + RUNTIME TEXT RESCUE + OPENAI STATUS ROUTE
+   v4.4.4 HYBRID CHAT ROUTE FIX + RUNTIME TEXT RESCUE + OPENAI STATUS ROUTE
 
    - mantém visual chat-first aprovado
    - mantém botão + fora da cápsula
@@ -80,21 +80,7 @@
     syncStarted: false
   };
 
-  
-
-// --------------------------------------------------
-// RCF HARD FIX: force frontTelemetry persistence
-// guarantees routing + response state even if other code paths fail
-// --------------------------------------------------
-function __rcfForceFrontTelemetry(ok, routing){
-  try{
-    STATE.lastFrontResponseOk = !!ok;
-    STATE.lastFrontRouting = routing || STATE.lastFrontRouting || "admin_ai";
-    STATE.lastFrontResponseAt = new Date().toISOString();
-  }catch{}
-}
-
-function nowMs() {
+  function nowMs() {
     try { return Date.now(); } catch { return 0; }
   }
 
@@ -849,6 +835,37 @@ function nowMs() {
         lastRouting: clone(STATE.lastFrontRouting || null)
       }
     };
+  }
+
+
+  function setFrontTelemetry(patch) {
+    try {
+      const next = Object.assign({}, {
+        lastEndpoint: STATE.lastFrontEndpoint || STATE.lastEndpoint || "",
+        lastAction: STATE.lastFrontAction || "",
+        lastResponseAt: STATE.lastFrontResponseAt || "",
+        lastResponseOk: !!STATE.lastFrontResponseOk,
+        lastRouting: clone(STATE.lastFrontRouting || null)
+      }, patch || {});
+
+      STATE.lastFrontEndpoint = String(next.lastEndpoint || "");
+      STATE.lastFrontAction = String(next.lastAction || "");
+      STATE.lastFrontResponseAt = String(next.lastResponseAt || "");
+      STATE.lastFrontResponseOk = !!next.lastResponseOk;
+      STATE.lastFrontRouting = clone(next.lastRouting || null);
+    } catch {}
+  }
+
+  function touchFrontTelemetry(ok, routing, endpoint, action) {
+    try {
+      setFrontTelemetry({
+        lastEndpoint: endpoint || STATE.lastFrontEndpoint || STATE.lastEndpoint || "",
+        lastAction: action || STATE.lastFrontAction || "",
+        lastResponseAt: new Date().toISOString(),
+        lastResponseOk: !!ok,
+        lastRouting: routing || STATE.lastFrontRouting || "admin_ai"
+      });
+    } catch {}
   }
 
   function setComposerStatus(txt) {
@@ -2191,12 +2208,18 @@ try {
     }
 
     STATE.lastEndpoint = "local:factory_ai_actions";
+    setFrontTelemetry({
+      lastEndpoint: "local:factory_ai_actions",
+      lastAction: localAction || "",
+      lastRouting: "local_action"
+    });
     setButtonsBusy(true);
-    __rcfForceFrontTelemetry(true,'local_action'); setComposerStatus("executando local...");
+    setComposerStatus("executando local...");
     setTechResult("");
 
     try {
       const result = await api.dispatch(req);
+      touchFrontTelemetry(!!(result && result.ok !== false), "local_action", "local:factory_ai_actions", localAction || "");
       const text = formatLocalActionResult(localAction, result);
 
       setComposerStatus(result?.ok ? "concluído local" : "falha local");
@@ -2224,6 +2247,7 @@ try {
       return result;
     } catch (e) {
       const msg = String(e?.message || e || "Erro local");
+      touchFrontTelemetry(false, "local_action", "local:factory_ai_actions", localAction || "");
       setComposerStatus("erro local");
       setTechResult(msg);
 
@@ -2249,8 +2273,11 @@ try {
     }
 
     STATE.lastEndpoint = "runtime:/api/admin-ai";
-    STATE.lastFrontEndpoint = "/api/admin-ai";
-    STATE.lastFrontAction = action || "";
+    setFrontTelemetry({
+      lastEndpoint: "/api/admin-ai",
+      lastAction: action || "",
+      lastRouting: "runtime"
+    });
     setButtonsBusy(true);
     setComposerStatus("consultando runtime...");
     setTechResult("");
@@ -2267,9 +2294,12 @@ try {
         attachments: getAttachmentPayload()
       });
 
-      STATE.lastFrontResponseAt = new Date().toISOString();
-      STATE.lastFrontResponseOk = !!(result && result.ok !== false); __rcfForceFrontTelemetry(STATE.lastFrontResponseOk,'runtime');
-      STATE.lastFrontRouting = clone(result?.request?.routing || result?.routing || 'runtime'); __rcfForceFrontTelemetry(true,'runtime');
+      touchFrontTelemetry(
+        !!(result && result.ok !== false),
+        clone(result?.request?.routing || result?.routing || "runtime"),
+        "/api/admin-ai",
+        action || ""
+      );
       const text = extractRuntimeMessage(result);
 
       if (!result || result.ok === false) {
@@ -2491,17 +2521,23 @@ try {
       }
 
       STATE.lastEndpoint = endpoint;
+      setFrontTelemetry({
+        lastEndpoint: endpoint,
+        lastAction: action || "",
+        lastRouting: endpoint === "/api/admin-ai" ? "admin_ai" : "factory_ai"
+      });
 
       const { res, data } = result;
 
       if (!res.ok || !data.ok) {
+        touchFrontTelemetry(false, endpoint === "/api/admin-ai" ? "admin_ai" : "factory_ai", endpoint, action || "");
         const text =
           trim(data?.analysis) ||
           trim(data?.answer) ||
           trim(data?.result) ||
           pretty(data || { error: "Erro ao chamar endpoint IA" });
 
-        __rcfForceFrontTelemetry(false,'admin_ai'); setComposerStatus("erro");
+        setComposerStatus("erro");
         setTechResult(text);
         pushHistory({
           role: "assistant",
@@ -2530,7 +2566,8 @@ try {
         }));
       } catch {}
 
-      __rcfForceFrontTelemetry(true,'admin_ai'); setComposerStatus("concluído");
+      touchFrontTelemetry(true, endpoint === "/api/admin-ai" ? "admin_ai" : "factory_ai", endpoint, action || "");
+      setComposerStatus("concluído");
       setTechResult(text);
       pushHistory({
         role: "assistant",
@@ -2541,7 +2578,8 @@ try {
       log("OK", "resposta recebida action=" + action + " endpoint=" + endpoint);
     } catch (e) {
       const msg = String(e?.message || e || "Erro de rede");
-      __rcfForceFrontTelemetry(false,'admin_ai'); setComposerStatus("erro");
+      touchFrontTelemetry(false, "admin_ai", "/api/admin-ai", action || "");
+      setComposerStatus("erro");
       setTechResult(msg);
       pushHistory({
         role: "assistant",
@@ -3329,6 +3367,10 @@ try {
         lastResponseOk: !!STATE.lastFrontResponseOk,
         lastRouting: clone(STATE.lastFrontRouting || null)
       };
+    },
+    setFrontTelemetry(patch) {
+      setFrontTelemetry(patch || {});
+      return this.getFrontTelemetry();
     },
     getAttachments() {
       return Array.isArray(STATE.attachments) ? STATE.attachments.slice() : [];
