@@ -10,7 +10,7 @@ function schedulePresenceResync(syncFn){
 
 /* FILE: /app/js/core/module_registry.js
    RControl Factory — Module Registry
-   v1.0.1 CURRENT STACK REGISTRY / SAFE LOOP GUARD
+   v1.0.2 CURRENT STACK REGISTRY / SAFE LOOP GUARD + LIVE TRUTH
 
    Objetivo:
    - detectar módulos globais realmente carregados
@@ -31,9 +31,9 @@ function schedulePresenceResync(syncFn){
 (function (global) {
   "use strict";
 
-  if (global.RCF_MODULE_REGISTRY && global.RCF_MODULE_REGISTRY.__v144) return;
+  if (global.RCF_MODULE_REGISTRY && global.RCF_MODULE_REGISTRY.__v147) return;
 
-  var VERSION = "v1.4.4";
+  var VERSION = "v1.4.7";
 
   var MODULE_KEYS = [
     "logger",
@@ -109,7 +109,9 @@ function schedulePresenceResync(syncFn){
     version: VERSION,
     lastRefresh: null,
     lastChange: null,
-    bootedAt: nowISO()
+    bootedAt: nowISO(),
+    lastReason: "",
+    refreshCount: 0
   };
 
   var __refreshing = false;
@@ -541,6 +543,46 @@ function schedulePresenceResync(syncFn){
     }
   }
 
+
+  function detectByRegistrySummary(name) {
+    try {
+      var summary = global.RCF_FACTORY_STATE && hasFn(global.RCF_FACTORY_STATE, "getState")
+        ? global.RCF_FACTORY_STATE.getState()
+        : null;
+      var mods = summary && summary.modules && typeof summary.modules === "object" ? summary.modules : {};
+      return !!mods[name];
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function detectByReadyObject(obj, methods) {
+    try {
+      if (!obj) return false;
+      if (obj.ready === true) return true;
+      if (typeof obj.status === "function") {
+        var s = obj.status() || {};
+        if (s.ready === true) return true;
+      }
+      var list = Array.isArray(methods) ? methods : [];
+      for (var i = 0; i < list.length; i++) {
+        if (hasFn(obj, list[i])) return true;
+      }
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function markRefreshReason(reason) {
+    try { meta.lastReason = String(reason || "").trim(); } catch (_) {}
+  }
+
+  function refreshWithReason(reason) {
+    markRefreshReason(reason || "");
+    return refreshWithReason("visibility");
+  }
+
   function computeModules() {
     return {
       logger: detectLogger(),
@@ -549,32 +591,32 @@ function schedulePresenceResync(syncFn){
       vault: detectVault(),
       bridge: detectBridge(),
       adminAI: detectAdminAI(),
-      factoryAI: detectFactoryAI(),
-      factoryState: detectFactoryState(),
+      factoryAI: detectFactoryAI() || detectByRegistrySummary("factoryAI"),
+      factoryState: detectFactoryState() || !!global.RCF_FACTORY_STATE,
       moduleRegistry: true,
-      contextEngine: detectContextEngine(),
-      factoryTree: detectFactoryTree(),
+      contextEngine: detectContextEngine() || detectByRegistrySummary("contextEngine"),
+      factoryTree: detectFactoryTree() || detectByRegistrySummary("factoryTree"),
       diagnostics: detectDiagnostics(),
       injector: detectInjector(),
       ui: detectUI(),
       runtime: detectRuntime(),
 
-      factoryAIBridge: detectFactoryAIBridge(),
-      factoryAIActions: detectFactoryAIActions(),
-      factoryAIPlanner: detectFactoryAIPlanner(),
-      patchSupervisor: detectPatchSupervisor(),
+      factoryAIBridge: detectFactoryAIBridge() || detectByReadyObject(global.RCF_FACTORY_AI_BRIDGE, ["status"]) || detectByRegistrySummary("factoryAIBridge"),
+      factoryAIActions: detectFactoryAIActions() || detectByReadyObject(global.RCF_FACTORY_AI_ACTIONS, ["dispatch","status"]) || detectByRegistrySummary("factoryAIActions"),
+      factoryAIPlanner: detectFactoryAIPlanner() || detectByReadyObject(global.RCF_FACTORY_AI_PLANNER, ["status"]) || detectByRegistrySummary("factoryAIPlanner"),
+      patchSupervisor: detectPatchSupervisor() || detectByReadyObject(global.RCF_PATCH_SUPERVISOR, ["status","validateApprovedPlan"]) || detectByRegistrySummary("patchSupervisor"),
       factoryAIDiagnostics: detectDiagnostics(),
       factoryAIMemory: detectFactoryAIMemory(),
       factoryPhaseEngine: detectFactoryPhaseEngine(),
       factoryAIAutoLoop: detectFactoryAIAutoLoop(),
-      factoryAIRuntime: detectFactoryAIRuntime(),
-      factoryAIOrchestrator: detectFactoryAIOrchestrator(),
+      factoryAIRuntime: detectFactoryAIRuntime() || detectByReadyObject(global.RCF_FACTORY_AI_RUNTIME, ["ask","status"]) || detectByRegistrySummary("factoryAIRuntime"),
+      factoryAIOrchestrator: detectFactoryAIOrchestrator() || detectByRegistrySummary("factoryAIOrchestrator"),
       factoryAIProposalUI: detectFactoryAIProposalUI(),
       factoryAISelfEvolution: detectFactoryAISelfEvolution(),
       factoryAIAutoHeal: detectFactoryAIAutoHeal(),
       factoryAIEvolutionMode: detectFactoryAIEvolutionMode(),
       factoryAIGovernor: detectFactoryAIGovernor(),
-      factoryAIController: detectFactoryAIController()
+      factoryAIController: detectFactoryAIController() || detectByRegistrySummary("factoryAIController")
     };
   }
 
@@ -632,6 +674,7 @@ function schedulePresenceResync(syncFn){
 
       modules = clone(next);
       meta.lastRefresh = nowISO();
+      meta.refreshCount = Number(meta.refreshCount || 0) + 1;
 
       if (!sameModules(before, next)) {
         meta.lastChange = meta.lastRefresh;
@@ -745,6 +788,8 @@ function schedulePresenceResync(syncFn){
 
       lastRefresh: meta.lastRefresh || nowISO(),
       lastChange: meta.lastChange || null,
+      lastReason: meta.lastReason || "",
+      refreshCount: Number(meta.refreshCount || 0),
       ts: nowISO()
     };
   }
@@ -758,11 +803,12 @@ function schedulePresenceResync(syncFn){
     __v141: true,
     __v142: true,
     __v143: true,
-    __v144: true,
+    __v147: true,
     version: VERSION,
     register: register,
     unregister: unregister,
     refresh: refresh,
+    refreshWithReason: refreshWithReason,
     getModules: getModules,
     getActiveModules: getActiveModules,
     getActiveModuleNames: getActiveModuleNames,
@@ -777,25 +823,25 @@ function schedulePresenceResync(syncFn){
 
   try {
     global.addEventListener("DOMContentLoaded", function () {
-      try { refresh(); } catch (_) {}
+      try { refreshWithReason("dom_ready"); } catch (_) {}
     }, { once: true });
   } catch (_) {}
 
   try {
     global.addEventListener("load", function () {
-      try { refresh(); } catch (_) {}
+      try { refreshWithReason("window_load"); } catch (_) {}
     }, { once: true });
   } catch (_) {}
 
   try {
     global.addEventListener("pageshow", function () {
-      try { refresh(); } catch (_) {}
+      try { refreshWithReason("pageshow"); } catch (_) {}
     }, { passive: true });
   } catch (_) {}
 
   try {
     global.addEventListener("focus", function () {
-      try { refresh(); } catch (_) {}
+      try { refreshWithReason("focus"); } catch (_) {}
     }, { passive: true });
   } catch (_) {}
 
@@ -813,13 +859,13 @@ function schedulePresenceResync(syncFn){
 
   try {
     global.addEventListener("RCF:UI_READY", function () {
-      try { refresh(); } catch (_) {}
+      try { refreshWithReason("ui_ready"); } catch (_) {}
     }, { passive: true });
   } catch (_) {}
 
   try {
     global.addEventListener("RCF:FACTORY_AI_RESPONSE", function () {
-      try { refresh(); } catch (_) {}
+      try { refreshWithReason("factory_ai_response"); } catch (_) {}
     }, { passive: true });
   } catch (_) {}
 
@@ -839,6 +885,31 @@ function schedulePresenceResync(syncFn){
     setTimeout(function () {
       try { refresh(); } catch (_) {}
     }, 3200);
+  } catch (_) {}
+
+
+  try {
+    global.addEventListener("RCF:FACTORY_AI_RUNTIME_RESPONSE", function () {
+      try { refreshWithReason("runtime_response"); } catch (_) {}
+    }, { passive: true });
+  } catch (_) {}
+
+  try {
+    global.addEventListener("RCF:FACTORY_AI_LOCAL_ACTION", function () {
+      try { refreshWithReason("local_action"); } catch (_) {}
+    }, { passive: true });
+  } catch (_) {}
+
+  try {
+    global.addEventListener("RCF:FACTORY_AI_ORCHESTRATED", function () {
+      try { refreshWithReason("orchestrated"); } catch (_) {}
+    }, { passive: true });
+  } catch (_) {}
+
+  try {
+    setInterval(function () {
+      try { refreshWithReason("interval"); } catch (_) {}
+    }, 5000);
   } catch (_) {}
 
 })(window);
