@@ -1,3 +1,4 @@
+window.RCF_MOTHER_SELFUPDATE_BUILD = 'msu_patch_' + Date.now();
 /* FILE: /app/js/core/mother_selfupdate.js
    RControl Factory — mother_selfupdate.js (PADRÃO SAFE) — v2.3h
 
