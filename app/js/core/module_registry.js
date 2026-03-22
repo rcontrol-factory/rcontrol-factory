@@ -10,7 +10,7 @@ function schedulePresenceResync(syncFn){
 
 /* FILE: /app/js/core/module_registry.js
    RControl Factory — Module Registry
-   v1.0.2 CURRENT STACK REGISTRY / SAFE LOOP GUARD + LIVE TRUTH
+   v1.0.2 CURRENT STACK REGISTRY / SAFE LOOP GUARD + SAFE DETECT
 
    Objetivo:
    - detectar módulos globais realmente carregados
@@ -31,9 +31,9 @@ function schedulePresenceResync(syncFn){
 (function (global) {
   "use strict";
 
-  if (global.RCF_MODULE_REGISTRY && global.RCF_MODULE_REGISTRY.__v147) return;
+  if (global.RCF_MODULE_REGISTRY && global.RCF_MODULE_REGISTRY.__v145) return;
 
-  var VERSION = "v1.4.7";
+  var VERSION = "v1.4.5";
 
   var MODULE_KEYS = [
     "logger",
@@ -110,8 +110,7 @@ function schedulePresenceResync(syncFn){
     lastRefresh: null,
     lastChange: null,
     bootedAt: nowISO(),
-    lastReason: "",
-    refreshCount: 0
+    lastReason: ""
   };
 
   var __refreshing = false;
@@ -259,10 +258,20 @@ function schedulePresenceResync(syncFn){
           hasFn(api, "mount") ||
           hasFn(api, "sendPrompt") ||
           hasFn(api, "getHistory") ||
+          hasFn(api, "getFrontTelemetry") ||
           !!api.__v41 ||
           !!api.__v411 ||
           !!api.__v42 ||
-          !!api.__v421
+          !!api.__v421 ||
+          !!api.__v430 ||
+          !!api.__v431 ||
+          !!api.__v432 ||
+          !!api.__v433 ||
+          !!api.__v434 ||
+          !!api.__v435 ||
+          !!api.__v436 ||
+          !!api.__v438 ||
+          !!api.__v439
         );
     } catch (_) {
       return false;
@@ -288,7 +297,8 @@ function schedulePresenceResync(syncFn){
         (
           hasFn(global.RCF_CONTEXT, "getSnapshot") ||
           hasFn(global.RCF_CONTEXT, "getContext") ||
-          hasFn(global.RCF_CONTEXT, "summary")
+          hasFn(global.RCF_CONTEXT, "summary") ||
+          hasFn(global.RCF_CONTEXT, "build")
         );
     } catch (_) {
       return false;
@@ -364,7 +374,8 @@ function schedulePresenceResync(syncFn){
       return !!global.RCF_FACTORY_AI_BRIDGE &&
         (
           hasFn(global.RCF_FACTORY_AI_BRIDGE, "ingestResponse") ||
-          hasFn(global.RCF_FACTORY_AI_BRIDGE, "getLastPlan")
+          hasFn(global.RCF_FACTORY_AI_BRIDGE, "getLastPlan") ||
+          hasFn(global.RCF_FACTORY_AI_BRIDGE, "status")
         );
     } catch (_) {
       return false;
@@ -376,7 +387,8 @@ function schedulePresenceResync(syncFn){
       return !!global.RCF_FACTORY_AI_ACTIONS &&
         (
           hasFn(global.RCF_FACTORY_AI_ACTIONS, "dispatch") ||
-          hasFn(global.RCF_FACTORY_AI_ACTIONS, "getAutonomySnapshot")
+          hasFn(global.RCF_FACTORY_AI_ACTIONS, "getAutonomySnapshot") ||
+          hasFn(global.RCF_FACTORY_AI_ACTIONS, "status")
         );
     } catch (_) {
       return false;
@@ -388,7 +400,8 @@ function schedulePresenceResync(syncFn){
       return !!global.RCF_FACTORY_AI_PLANNER &&
         (
           hasFn(global.RCF_FACTORY_AI_PLANNER, "buildPlan") ||
-          hasFn(global.RCF_FACTORY_AI_PLANNER, "getLastPlan")
+          hasFn(global.RCF_FACTORY_AI_PLANNER, "getLastPlan") ||
+          hasFn(global.RCF_FACTORY_AI_PLANNER, "status")
         );
     } catch (_) {
       return false;
@@ -401,7 +414,8 @@ function schedulePresenceResync(syncFn){
         (
           hasFn(global.RCF_PATCH_SUPERVISOR, "validateApprovedPlan") ||
           hasFn(global.RCF_PATCH_SUPERVISOR, "stageApprovedPlan") ||
-          hasFn(global.RCF_PATCH_SUPERVISOR, "applyApprovedPlan")
+          hasFn(global.RCF_PATCH_SUPERVISOR, "applyApprovedPlan") ||
+          hasFn(global.RCF_PATCH_SUPERVISOR, "status")
         );
     } catch (_) {
       return false;
@@ -450,7 +464,8 @@ function schedulePresenceResync(syncFn){
       return !!global.RCF_FACTORY_AI_RUNTIME &&
         (
           hasFn(global.RCF_FACTORY_AI_RUNTIME, "ask") ||
-          hasFn(global.RCF_FACTORY_AI_RUNTIME, "status")
+          hasFn(global.RCF_FACTORY_AI_RUNTIME, "status") ||
+          hasFn(global.RCF_FACTORY_AI_RUNTIME, "getState")
         );
     } catch (_) {
       return false;
@@ -543,46 +558,6 @@ function schedulePresenceResync(syncFn){
     }
   }
 
-
-  function detectByRegistrySummary(name) {
-    try {
-      var summary = global.RCF_FACTORY_STATE && hasFn(global.RCF_FACTORY_STATE, "getState")
-        ? global.RCF_FACTORY_STATE.getState()
-        : null;
-      var mods = summary && summary.modules && typeof summary.modules === "object" ? summary.modules : {};
-      return !!mods[name];
-    } catch (_) {
-      return false;
-    }
-  }
-
-  function detectByReadyObject(obj, methods) {
-    try {
-      if (!obj) return false;
-      if (obj.ready === true) return true;
-      if (typeof obj.status === "function") {
-        var s = obj.status() || {};
-        if (s.ready === true) return true;
-      }
-      var list = Array.isArray(methods) ? methods : [];
-      for (var i = 0; i < list.length; i++) {
-        if (hasFn(obj, list[i])) return true;
-      }
-      return false;
-    } catch (_) {
-      return false;
-    }
-  }
-
-  function markRefreshReason(reason) {
-    try { meta.lastReason = String(reason || "").trim(); } catch (_) {}
-  }
-
-  function refreshWithReason(reason) {
-    markRefreshReason(reason || "");
-    return refreshWithReason("visibility");
-  }
-
   function computeModules() {
     return {
       logger: detectLogger(),
@@ -591,32 +566,32 @@ function schedulePresenceResync(syncFn){
       vault: detectVault(),
       bridge: detectBridge(),
       adminAI: detectAdminAI(),
-      factoryAI: detectFactoryAI() || detectByRegistrySummary("factoryAI"),
-      factoryState: detectFactoryState() || !!global.RCF_FACTORY_STATE,
+      factoryAI: detectFactoryAI(),
+      factoryState: detectFactoryState(),
       moduleRegistry: true,
-      contextEngine: detectContextEngine() || detectByRegistrySummary("contextEngine"),
-      factoryTree: detectFactoryTree() || detectByRegistrySummary("factoryTree"),
+      contextEngine: detectContextEngine(),
+      factoryTree: detectFactoryTree(),
       diagnostics: detectDiagnostics(),
       injector: detectInjector(),
       ui: detectUI(),
       runtime: detectRuntime(),
 
-      factoryAIBridge: detectFactoryAIBridge() || detectByReadyObject(global.RCF_FACTORY_AI_BRIDGE, ["status"]) || detectByRegistrySummary("factoryAIBridge"),
-      factoryAIActions: detectFactoryAIActions() || detectByReadyObject(global.RCF_FACTORY_AI_ACTIONS, ["dispatch","status"]) || detectByRegistrySummary("factoryAIActions"),
-      factoryAIPlanner: detectFactoryAIPlanner() || detectByReadyObject(global.RCF_FACTORY_AI_PLANNER, ["status"]) || detectByRegistrySummary("factoryAIPlanner"),
-      patchSupervisor: detectPatchSupervisor() || detectByReadyObject(global.RCF_PATCH_SUPERVISOR, ["status","validateApprovedPlan"]) || detectByRegistrySummary("patchSupervisor"),
+      factoryAIBridge: detectFactoryAIBridge(),
+      factoryAIActions: detectFactoryAIActions(),
+      factoryAIPlanner: detectFactoryAIPlanner(),
+      patchSupervisor: detectPatchSupervisor(),
       factoryAIDiagnostics: detectDiagnostics(),
       factoryAIMemory: detectFactoryAIMemory(),
       factoryPhaseEngine: detectFactoryPhaseEngine(),
       factoryAIAutoLoop: detectFactoryAIAutoLoop(),
-      factoryAIRuntime: detectFactoryAIRuntime() || detectByReadyObject(global.RCF_FACTORY_AI_RUNTIME, ["ask","status"]) || detectByRegistrySummary("factoryAIRuntime"),
-      factoryAIOrchestrator: detectFactoryAIOrchestrator() || detectByRegistrySummary("factoryAIOrchestrator"),
+      factoryAIRuntime: detectFactoryAIRuntime(),
+      factoryAIOrchestrator: detectFactoryAIOrchestrator(),
       factoryAIProposalUI: detectFactoryAIProposalUI(),
       factoryAISelfEvolution: detectFactoryAISelfEvolution(),
       factoryAIAutoHeal: detectFactoryAIAutoHeal(),
       factoryAIEvolutionMode: detectFactoryAIEvolutionMode(),
       factoryAIGovernor: detectFactoryAIGovernor(),
-      factoryAIController: detectFactoryAIController() || detectByRegistrySummary("factoryAIController")
+      factoryAIController: detectFactoryAIController()
     };
   }
 
@@ -659,7 +634,7 @@ function schedulePresenceResync(syncFn){
     } catch (_) {}
   }
 
-  function refresh() {
+  function refresh(reason) {
     if (__refreshing) return getModules();
 
     __refreshing = true;
@@ -674,7 +649,7 @@ function schedulePresenceResync(syncFn){
 
       modules = clone(next);
       meta.lastRefresh = nowISO();
-      meta.refreshCount = Number(meta.refreshCount || 0) + 1;
+      meta.lastReason = String(reason || "").trim();
 
       if (!sameModules(before, next)) {
         meta.lastChange = meta.lastRefresh;
@@ -789,7 +764,6 @@ function schedulePresenceResync(syncFn){
       lastRefresh: meta.lastRefresh || nowISO(),
       lastChange: meta.lastChange || null,
       lastReason: meta.lastReason || "",
-      refreshCount: Number(meta.refreshCount || 0),
       ts: nowISO()
     };
   }
@@ -803,12 +777,11 @@ function schedulePresenceResync(syncFn){
     __v141: true,
     __v142: true,
     __v143: true,
-    __v147: true,
+    __v145: true,
     version: VERSION,
     register: register,
     unregister: unregister,
     refresh: refresh,
-    refreshWithReason: refreshWithReason,
     getModules: getModules,
     getActiveModules: getActiveModules,
     getActiveModuleNames: getActiveModuleNames,
@@ -817,31 +790,31 @@ function schedulePresenceResync(syncFn){
   };
 
   try {
-    refresh();
+    refresh("visibility");
     console.log("[RCF] module_registry ready", VERSION);
   } catch (_) {}
 
   try {
     global.addEventListener("DOMContentLoaded", function () {
-      try { refreshWithReason("dom_ready"); } catch (_) {}
+      try { refresh("dom_ready"); } catch (_) {}
     }, { once: true });
   } catch (_) {}
 
   try {
     global.addEventListener("load", function () {
-      try { refreshWithReason("window_load"); } catch (_) {}
+      try { refresh("window_load"); } catch (_) {}
     }, { once: true });
   } catch (_) {}
 
   try {
     global.addEventListener("pageshow", function () {
-      try { refreshWithReason("pageshow"); } catch (_) {}
+      try { refresh("pageshow"); } catch (_) {}
     }, { passive: true });
   } catch (_) {}
 
   try {
     global.addEventListener("focus", function () {
-      try { refreshWithReason("focus"); } catch (_) {}
+      try { refresh("focus"); } catch (_) {}
     }, { passive: true });
   } catch (_) {}
 
@@ -859,13 +832,13 @@ function schedulePresenceResync(syncFn){
 
   try {
     global.addEventListener("RCF:UI_READY", function () {
-      try { refreshWithReason("ui_ready"); } catch (_) {}
+      try { refresh("ui_ready"); } catch (_) {}
     }, { passive: true });
   } catch (_) {}
 
   try {
     global.addEventListener("RCF:FACTORY_AI_RESPONSE", function () {
-      try { refreshWithReason("factory_ai_response"); } catch (_) {}
+      try { refresh("factory_ai_response"); } catch (_) {}
     }, { passive: true });
   } catch (_) {}
 
@@ -885,31 +858,6 @@ function schedulePresenceResync(syncFn){
     setTimeout(function () {
       try { refresh(); } catch (_) {}
     }, 3200);
-  } catch (_) {}
-
-
-  try {
-    global.addEventListener("RCF:FACTORY_AI_RUNTIME_RESPONSE", function () {
-      try { refreshWithReason("runtime_response"); } catch (_) {}
-    }, { passive: true });
-  } catch (_) {}
-
-  try {
-    global.addEventListener("RCF:FACTORY_AI_LOCAL_ACTION", function () {
-      try { refreshWithReason("local_action"); } catch (_) {}
-    }, { passive: true });
-  } catch (_) {}
-
-  try {
-    global.addEventListener("RCF:FACTORY_AI_ORCHESTRATED", function () {
-      try { refreshWithReason("orchestrated"); } catch (_) {}
-    }, { passive: true });
-  } catch (_) {}
-
-  try {
-    setInterval(function () {
-      try { refreshWithReason("interval"); } catch (_) {}
-    }, 5000);
   } catch (_) {}
 
 })(window);
