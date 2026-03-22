@@ -126,9 +126,9 @@ function patchRecommendedFileInObject(obj) {
 
 /* FILE: /functions/api/admin-ai.js
    RControl Factory Ã¢ÂÂ Factory AI API
-   v3.5.8 CHAT COPILOT BACKEND + CONNECTIVITY HARDENED + TEXT FORMAT + INPUT COMPACT GUARD
+   v3.5.9 CHAT COPILOT BACKEND + CONNECTIVITY HARDENED + TEXT FORMAT + INPUT COMPACT GUARD
 
-   PATCH v3.5.8:
+   PATCH v3.5.9:
    - KEEP: openai_status como action permitida
    - KEEP: normalizeOpenAIUrl endurecido
    - KEEP: extractText ampliado
@@ -159,7 +159,6 @@ export async function onRequestPost(context) {
     if (!env || !env.OPENAI_API_KEY) {
       return json({
         request: { action, structuredRuntimeFrontDiagnostic: isStructuredRuntimeFrontDiagnostic(prompt), source, version },
-        request: requestRouting,
         ok: false,
         error: "OPENAI_API_KEY ausente no ambiente.",
         connection: buildConnectionMeta({
@@ -177,7 +176,6 @@ export async function onRequestPost(context) {
     const body = await safeJson(request);
     if (!body || typeof body !== "object") {
       return json({
-        request: requestRouting,
         ok: false,
         error: "JSON invÃÂ¡lido.",
         connection: buildConnectionMeta({
@@ -199,7 +197,6 @@ export async function onRequestPost(context) {
     const source = String(body.source || "factory-ai").trim();
     const version = String(body.version || "").trim();
     const payload = preparePayloadForModel(body.payload ?? null, prompt, action);
-    const requestRouting = { action, structuredRuntimeFrontDiagnostic: isStructuredRuntimeFrontDiagnostic(prompt), source, version };
 
     const allowed = new Set([
       "factory_diagnosis",
@@ -217,7 +214,6 @@ export async function onRequestPost(context) {
 
     if (!allowed.has(action)) {
       return json({
-        request: requestRouting,
         ok: false,
         error: "AÃÂ§ÃÂ£o nÃÂ£o permitida nesta fase.",
         action,
@@ -341,8 +337,7 @@ export async function onRequestPost(context) {
     const derived = deriveResponseHints(finalText, payload, action, prompt);
 
     return json({
-        request: requestRouting,
-        ok: true,
+      ok: true,
       action,
       source,
       version,
@@ -606,42 +601,9 @@ function buildConnectionMeta(info) {
   };
 }
 
-
-function isStructuredRuntimeFrontDiagnostic(promptValue = "") {
-  const prompt = String(promptValue || "").trim().toLowerCase();
-  if (!prompt) return false;
-
-  return (
-    prompt.includes("nÃ£o faÃ§a probe") ||
-    prompt.includes("nao faca probe") ||
-    prompt.includes("nÃ£o responda sÃ³ com teste") ||
-    prompt.includes("nao responda so com teste") ||
-    prompt.includes("nÃ£o resuma a resposta") ||
-    prompt.includes("nao resuma a resposta") ||
-    prompt.includes("diagnÃ³stico tÃ©cnico real") ||
-    prompt.includes("diagnostico tecnico real") ||
-    prompt.includes("diagnÃ³stico tÃ©cnico curto") ||
-    prompt.includes("diagnostico tecnico curto") ||
-    prompt.includes("runtime/front") ||
-    prompt.includes("consumo real no front") ||
-    prompt.includes("responder obrigatoriamente com estes 10 campos") ||
-    prompt.includes("proibido responder apenas com resultado de probe") ||
-    prompt.includes("proibido responder sÃ³ com probe") ||
-    prompt.includes("proibido responder so com probe") ||
-    prompt.includes("front estÃ¡ ou nÃ£o estÃ¡ consumindo corretamente o backend") ||
-    prompt.includes("front esta ou nao esta consumindo corretamente o backend") ||
-    prompt.includes("lastendpoint do runtimelayer") ||
-    prompt.includes("lastendpoint do admin.admin_ai") ||
-    prompt.includes("fronttelemetry.lastendpoint") ||
-    prompt.includes("diferenÃ§a entre probe") ||
-    prompt.includes("diferenca entre probe")
-  );
-}
-
 function normalizeAction(value, promptValue = "") {
   const raw = String(value || "").trim().toLowerCase();
   const prompt = String(promptValue || "").trim().toLowerCase();
-  const structuredDiagnostic = isStructuredRuntimeFrontDiagnostic(promptValue);
 
   if (raw) {
     if (raw === "factory_diagnosis") return "factory_diagnosis";
@@ -653,7 +615,7 @@ function normalizeAction(value, promptValue = "") {
     if (raw === "propose-patch") return "propose-patch";
     if (raw === "generate-code") return "generate-code";
     if (raw === "ingest-context") return "ingest-context";
-    if (raw === "openai_status") return structuredDiagnostic ? "factory_diagnosis" : "openai_status";
+    if (raw === "openai_status") return "openai_status";
     if (raw === "zip-readiness") return "ingest-context";
 
     if (
@@ -676,33 +638,29 @@ function normalizeAction(value, promptValue = "") {
       return "chat";
     }
 
-    if (raw === "chat") return structuredDiagnostic ? "factory_diagnosis" : "chat";
+    if (raw === "chat") return "chat";
     return raw;
   }
-
-  if (structuredDiagnostic) return "factory_diagnosis";
 
   if (
     prompt.includes("status real") ||
     prompt.includes("teste real") ||
-    prompt.includes("probe openai") ||
-    prompt.includes("testar openai") ||
-    prompt.includes("api key")
+    prompt.includes("openai") ||
+    prompt.includes("api key") ||
+    prompt.includes("endpoint") ||
+    prompt.includes("runtime") ||
+    prompt.includes("backend") ||
+    prompt.includes("conexÃÂ£o") ||
+    prompt.includes("conexao")
   ) {
     return "openai_status";
   }
 
   if (
-    prompt.includes("relatÃ³rio") ||
+    prompt.includes("relatÃÂ³rio") ||
     prompt.includes("relatorio") ||
-    prompt.includes("diagnÃ³stico") ||
-    prompt.includes("diagnostico") ||
-    prompt.includes("runtime") ||
-    prompt.includes("backend") ||
-    prompt.includes("endpoint") ||
-    prompt.includes("/api/admin-ai") ||
-    prompt.includes("conexÃ£o") ||
-    prompt.includes("conexao")
+    prompt.includes("diagnÃÂ³stico") ||
+    prompt.includes("diagnostico")
   ) {
     return "factory_diagnosis";
   }
@@ -710,7 +668,7 @@ function normalizeAction(value, promptValue = "") {
   if (
     prompt.includes("arquitetura") ||
     prompt.includes("estrutura") ||
-    prompt.includes("organizaÃ§Ã£o") ||
+    prompt.includes("organizaÃÂ§ÃÂ£o") ||
     prompt.includes("organizacao")
   ) {
     return "analyze-architecture";
@@ -727,7 +685,7 @@ function normalizeAction(value, promptValue = "") {
 
   if (
     prompt.includes("arquivo completo") ||
-    prompt.includes("cÃ³digo completo") ||
+    prompt.includes("cÃÂ³digo completo") ||
     prompt.includes("codigo completo") ||
     prompt.includes("gere o arquivo") ||
     prompt.includes("gera o arquivo")
@@ -739,7 +697,7 @@ function normalizeAction(value, promptValue = "") {
     prompt.includes("patch") ||
     prompt.includes("corrige") ||
     prompt.includes("corrigir") ||
-    prompt.includes("ajuste mÃ­nimo") ||
+    prompt.includes("ajuste mÃÂ­nimo") ||
     prompt.includes("ajuste minimo")
   ) {
     return "propose-patch";
@@ -749,8 +707,11 @@ function normalizeAction(value, promptValue = "") {
     prompt.includes("zip") ||
     prompt.includes("pdf") ||
     prompt.includes("imagem") ||
-    prompt.includes("Ã¡udio") ||
-    prompt.includes("audio")
+    prompt.includes("vÃÂ­deo") ||
+    prompt.includes("video") ||
+    prompt.includes("ÃÂ¡udio") ||
+    prompt.includes("audio") ||
+    prompt.includes("anexo")
   ) {
     return "ingest-context";
   }
@@ -832,6 +793,13 @@ function buildSnapshotSemanticSummary(payload) {
 
     if (!snapshot || typeof snapshot !== "object") return null;
 
+    const live = safeObj(snapshot.live);
+    const liveFactoryState = safeObj(live.factoryState);
+    const liveModuleRegistry = safeObj(live.moduleRegistry);
+    const liveRuntimeLayer = safeObj(live.runtimeLayer);
+    const liveFrontTelemetry = safeObj(live.frontTelemetry);
+    const liveDoctor = safeObj(live.doctor);
+
     const factory = safeObj(snapshot.factory);
     const modules = safeObj(snapshot.modules);
     const flags = safeObj(snapshot.flags || factory.flags);
@@ -842,8 +810,14 @@ function buildSnapshotSemanticSummary(payload) {
     const admin = safeObj(snapshot.admin);
     const injector = safeObj(snapshot.injector);
 
-    const activeList = Array.isArray(modules.active) ? modules.active.map(String) : [];
-    const moduleStatus = safeObj(modules.status || modules.modules || modules);
+    const activeList = Array.isArray(liveFactoryState.activeList)
+      ? liveFactoryState.activeList.map(String)
+      : Array.isArray(liveModuleRegistry.active)
+        ? liveModuleRegistry.active.map(String)
+        : Array.isArray(modules.active)
+          ? modules.active.map(String)
+          : [];
+    const moduleStatus = safeObj(liveModuleRegistry.modules || modules.status || modules.modules || modules);
 
     const semantics = {
       note: [
@@ -856,6 +830,7 @@ function buildSnapshotSemanticSummary(payload) {
         "- nÃÂ£o conclua 'mÃÂ³dulo desativado' sÃÂ³ porque active=false quando presence=true ou ready=true"
       ].join(" "),
       activeList,
+      live: cloneValue(live),
       modules: {
         logger: buildModuleSemantic("logger", {
           presence: boolFrom(flagValue(flags, ["hasLogger"])),
@@ -878,7 +853,7 @@ function buildSnapshotSemanticSummary(payload) {
           )),
           active: boolFrom(moduleStatus.doctor),
           extra: {
-            lastRun: doctor.lastRun ?? null
+            lastRun: liveDoctor.lastRun ?? doctor.lastRun ?? liveFactoryState.doctorLastRun ?? null
           }
         }),
         github: buildModuleSemantic("github", {
@@ -932,16 +907,24 @@ function buildSnapshotSemanticSummary(payload) {
         factoryState: buildModuleSemantic("factoryState", {
           presence: boolFrom(flagValue(flags, ["hasFactoryState"])),
           ready: boolFrom(firstDefined(
-            moduleStatus.factoryStateReady
+            moduleStatus.factoryStateReady,
+            typeof liveFactoryState.activeModulesCount === "number" ? true : undefined
           )),
-          active: boolFrom(moduleStatus.factoryState)
+          active: boolFrom(firstDefined(
+            moduleStatus.factoryState,
+            typeof liveFactoryState.activeModulesCount === "number" ? liveFactoryState.activeModulesCount > 0 : undefined
+          ))
         }),
         moduleRegistry: buildModuleSemantic("moduleRegistry", {
           presence: boolFrom(flagValue(flags, ["hasModuleRegistry"])),
           ready: boolFrom(firstDefined(
-            moduleStatus.moduleRegistryReady
+            moduleStatus.moduleRegistryReady,
+            typeof liveModuleRegistry.version === "string" && liveModuleRegistry.version ? true : undefined
           )),
-          active: boolFrom(moduleStatus.moduleRegistry)
+          active: boolFrom(firstDefined(
+            moduleStatus.moduleRegistry,
+            typeof liveModuleRegistry.activeCount === "number" ? liveModuleRegistry.activeCount > 0 : undefined
+          ))
         }),
         contextEngine: buildModuleSemantic("contextEngine", {
           presence: boolFrom(flagValue(flags, ["hasContextEngine"])),
@@ -961,7 +944,8 @@ function buildSnapshotSemanticSummary(payload) {
           )),
           active: boolFrom(firstDefined(
             moduleStatus.factoryTree,
-            moduleStatus.tree
+            moduleStatus.tree,
+            Array.isArray(activeList) ? activeList.includes("factoryTree") : undefined
           )),
           extra: {
             pathsCount: numberOrNull(snapshot.tree && snapshot.tree.pathsCount)
@@ -1486,7 +1470,17 @@ function cloneValue(value) {
 
 function buildGroundedPrompt({ action, payload, prompt, history, attachments, source, version }) {
   const plannerHint = safeObj(payload).__planner_hint;
-  const frontTelemetry = safeObj(payload).frontTelemetry || safeObj(safeObj(payload).snapshot).frontTelemetry || {};
+  const live = safeObj(safeObj(payload).snapshot).live;
+  const frontTelemetry =
+    safeObj(payload).frontTelemetry ||
+    safeObj(live.frontTelemetry) ||
+    safeObj(safeObj(payload).snapshot).frontTelemetry ||
+    {};
+  const runtimeLayer =
+    safeObj(payload).runtimeLayer ||
+    safeObj(live.runtimeLayer) ||
+    safeObj(safeObj(payload).snapshot).runtimeLayer ||
+    {};
   const structuredRuntimeFrontDiagnostic = isStructuredRuntimeFrontDiagnostic(prompt);
   const lowerPrompt = String(prompt || "").trim().toLowerCase();
   const asksOpenAI =
@@ -1515,6 +1509,7 @@ function buildGroundedPrompt({ action, payload, prompt, history, attachments, so
     "8. Quando o prompt pedir diagnÃÂ³stico estruturado de runtime/front, NÃÂO reduza a resposta a um probe simples de OpenAI.",
     "9. Em diagnÃÂ³stico estruturado de runtime/front, use explicitamente frontTelemetry, runtimeLayer, connection e request.routing se existirem no payload.",
     "10. SÃÂ³ use probe simples quando a tarefa for explicitamente openai_status/conectividade.",
+    "11. NÃÂO recomende doctor_scan.js automaticamente se runtimeLayer.connectionStatus='connected' e frontTelemetry.lastResponseOk=true e o problema principal estiver em activeCount/activeModulesCount ou consolidaÃÂ§ÃÂ£o de contexto.",
     "   - fato confirmado",
     "   - dado ausente",
     "   - inferÃÂªncia provÃÂ¡vel",
