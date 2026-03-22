@@ -1,6 +1,16 @@
+function schedulePresenceResync(syncFn){
+  try{
+    [120,900,2200].forEach(function(ms){
+      setTimeout(function(){
+        try{ syncFn(); }catch(_){}
+      },ms);
+    });
+  }catch(_){}
+}
+
 /* FILE: /app/js/core/context_engine.js
    RControl Factory — Context Engine
-   v1.6.5 SNAPSHOT CONSOLIDATED / FULL CURRENT STACK + SUPERVISOR + RUNTIME CONNECTION
+   v1.0.1 SNAPSHOT CONSOLIDATED / FULL CURRENT STACK + SUPERVISOR + RUNTIME CONNECTION
 
    Objetivo:
    - consolidar snapshot estrutural mais confiável
