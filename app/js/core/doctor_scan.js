@@ -1,5 +1,5 @@
 /* FILE: /app/js/core/doctor_scan.js
-   RControl Factory — DOCTOR SCAN — v1.6.1 (PLANNER AWARE + STATE SYNC + SAFE)
+   RControl Factory — DOCTOR SCAN — v1.6.3 (PLANNER AWARE + STATE SYNC + SAFE)
    - mantém modal leve e iOS-safe
    - NÃO injeta botão sozinho
    - Expõe API: window.RCF_DOCTOR_SCAN.open()
@@ -13,7 +13,7 @@
 (() => {
   "use strict";
 
-  const VERSION = "v1.6.1";
+  const VERSION = "v1.6.3";
 
   if (window.__RCF_DOCTOR_SCAN_BOOTED__) return;
   window.__RCF_DOCTOR_SCAN_BOOTED__ = true;
