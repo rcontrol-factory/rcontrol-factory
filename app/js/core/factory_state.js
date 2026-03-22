@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/factory_state.js
    RControl Factory — Factory State Engine
-   v1.4.4 SAFE PERSIST GUARD / PATCH MÍNIMO
+   v1.4.6 SAFE PERSIST GUARD / PATCH MÍNIMO
 
    Objetivo:
    - registrar estado operacional mínimo da Factory
@@ -13,7 +13,7 @@
    - reduzir escrita excessiva em localStorage
    - evitar flood de WARN persist falhou
 
-   PATCH v1.4.4:
+   PATCH v1.4.6:
    - ADD: detecta módulos novos da camada Factory AI
    - FIX: boot heurístico fica mais coerente com a fase atual da Factory
    - FIX: refreshRuntime sincroniza melhor presença de módulos recentes
@@ -25,7 +25,7 @@
   if (global.RCF_FACTORY_STATE && global.RCF_FACTORY_STATE.__v144) return;
 
   var STORAGE_KEY = "rcf:factory_state";
-  var VERSION = "v1.4.4";
+  var VERSION = "v1.4.6";
 
   var PERSIST_DEBOUNCE_MS = 220;
   var WARN_THROTTLE_MS = 10000;
