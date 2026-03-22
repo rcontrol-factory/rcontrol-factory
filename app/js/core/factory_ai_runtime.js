@@ -1,3 +1,22 @@
+// --------------------------------------------------
+// SAFETY PATCH: normalize runtime result + telemetry
+// ensures lastOk / frontTelemetry consistency
+// --------------------------------------------------
+function __rcfNormalizeRuntimeResult(res){
+  try{
+    const ok = !!(res && (res.ok===true || res.status===200));
+    window.__RCF_RUNTIME_LAST_OK__ = ok;
+
+    if(window.RCF_FACTORY_AI && typeof window.RCF_FACTORY_AI.getFrontTelemetry==="function"){
+      const ft = window.RCF_FACTORY_AI.getFrontTelemetry() || {};
+      ft.lastResponseOk = ok;
+      ft.lastRouting = ft.lastRouting || "runtime";
+      try{ window.RCF_FACTORY_AI.setFrontTelemetry && window.RCF_FACTORY_AI.setFrontTelemetry(ft);}catch{}
+    }
+  }catch{}
+  return res;
+}
+
 /* FILE: /app/js/core/factory_ai_runtime.js
    RControl Factory — Factory AI Runtime
    v1.0.5 SUPERVISED RUNTIME + OPENAI ROUTE FIX + BACKEND ANALYSIS PRESERVE
