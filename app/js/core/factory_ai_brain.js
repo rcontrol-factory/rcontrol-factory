@@ -18,7 +18,7 @@
 
   if (global.RCF_FACTORY_AI_BRAIN && global.RCF_FACTORY_AI_BRAIN.__v100) return;
 
-  var VERSION = "v1.0.0";
+  var VERSION = "v1.0.1";
   var STORAGE_KEY = "rcf:factory_ai_brain";
   var MAX_HISTORY = 120;
 
@@ -34,7 +34,9 @@
     lastAnswer: "",
     lastTargetFile: "",
     lastReason: "",
-    history: []
+    history: [],
+    presenceSyncedAt: null,
+    presenceSyncAttempts: 0
   };
 
   function nowISO() {
@@ -924,6 +926,7 @@
     state.version = VERSION;
     persist();
     syncPresence();
+    schedulePresenceResync();
     bindEvents();
     pushLog("OK", "factory_ai_brain ready ✅ " + VERSION);
     return status();
