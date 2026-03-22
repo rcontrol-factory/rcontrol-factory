@@ -22,7 +22,7 @@
 
   if (global.RCF_FACTORY_TREE && global.RCF_FACTORY_TREE.__v131) return;
 
-  var VERSION = "v1.3.1";
+  var VERSION = "v1.3.2";
 
   var BUCKETS = [
     "core",
