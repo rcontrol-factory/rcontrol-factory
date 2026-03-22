@@ -1,20 +1,3 @@
-
-// ------------------------------
-// RCF TELEMETRY STABILITY PATCH
-// prevents partial responses from being marked as failure
-// ------------------------------
-function __rcfNormalizeAdminAIResponse(payload){
-  try{
-    if(!payload) payload = {};
-    if(payload.responseStatus === "incomplete" || payload.connection === "partial"){
-      payload.ok = true;
-      payload.partial = true;
-      payload.note = "partial_response_normalized";
-    }
-  }catch(e){}
-  return payload;
-}
-
 // ---- RCF PATCH v1.0.2: recommendation anti-repeat + phase memory ----
 function normalizeRecommendationState(raw) {
   var out = raw && typeof raw === "object" ? raw : {};
@@ -143,7 +126,7 @@ function patchRecommendedFileInObject(obj) {
 
 /* FILE: /functions/api/admin-ai.js
    RControl Factory ÃÂ¢ÃÂÃÂ Factory AI API
-   v3.6.2 CHAT COPILOT BACKEND + CONNECTIVITY HARDENED + TEXT FORMAT + INPUT COMPACT GUARD
+   v3.6.4 CHAT COPILOT BACKEND + CONNECTIVITY HARDENED + TEXT FORMAT + INPUT COMPACT GUARD
 
    PATCH v3.5.6:
    - KEEP: openai_status como action permitida
@@ -174,7 +157,7 @@ export async function onRequestPost(context) {
     const maxOutputTokens = normalizeMaxOutputTokens(env?.OPENAI_MAX_OUTPUT_TOKENS, 1400);
 
     if (!env || !env.OPENAI_API_KEY) {
-      return json({
+      return json(__rcfNormalizeAdminAIResponse({
         ok: false,
         error: "OPENAI_API_KEY ausente no ambiente.",
         connection: buildConnectionMeta({
@@ -191,7 +174,7 @@ export async function onRequestPost(context) {
 
     const body = await safeJson(request);
     if (!body || typeof body !== "object") {
-      return json({
+      return json(__rcfNormalizeAdminAIResponse({
         ok: false,
         error: "JSON invÃÂÃÂ¡lido.",
         connection: buildConnectionMeta({
@@ -230,7 +213,7 @@ export async function onRequestPost(context) {
     ]);
 
     if (!allowed.has(action)) {
-      return json({
+      return json(__rcfNormalizeAdminAIResponse({
         ok: false,
         error: "AÃÂÃÂ§ÃÂÃÂ£o nÃÂÃÂ£o permitida nesta fase.",
         action,
@@ -252,9 +235,9 @@ export async function onRequestPost(context) {
         apiKey: env.OPENAI_API_KEY,
         model,
         maxOutputTokens: 120
-      });
+      }));
 
-      return json({
+      return json(__rcfNormalizeAdminAIResponse({
         ok: !!probe.ok,
         action,
         source,
@@ -294,7 +277,7 @@ export async function onRequestPost(context) {
       attachments,
       source,
       version
-    });
+    }));
 
     const upstream = await postToOpenAI({
       url: upstreamUrl,
@@ -302,7 +285,7 @@ export async function onRequestPost(context) {
       model,
       input,
       maxOutputTokens
-    });
+    }));
 
     if (!upstream.ok) {
       const upstreamStatus = Number(upstream.status || 0) || 0;
@@ -323,7 +306,7 @@ export async function onRequestPost(context) {
                       ? "rate_limited"
                       : "upstream_error";
 
-      return json({
+      return json(__rcfNormalizeAdminAIResponse({
         ok: false,
         error: "Falha ao chamar OpenAI.",
         status: upstreamStatus,
@@ -349,11 +332,11 @@ export async function onRequestPost(context) {
       responseMeta,
       model,
       endpoint: upstreamUrl
-    });
+    }));
 
     const derived = deriveResponseHints(finalText, payload, action, prompt);
 
-    return json({
+    return json(__rcfNormalizeAdminAIResponse({
       ok: true,
       action,
       source,
@@ -375,9 +358,9 @@ export async function onRequestPost(context) {
         upstreamStatus: Number(upstream.status || 200) || 200,
         endpoint: upstreamUrl
       })
-    });
+    }));
   } catch (err) {
-    return json({
+    return json(__rcfNormalizeAdminAIResponse({
       ok: false,
       error: String(err?.message || err || "Erro interno."),
       connection: buildConnectionMeta({
@@ -417,7 +400,7 @@ async function postToOpenAI({ url, apiKey, model, input, maxOutputTokens }) {
         }
       }),
       signal: controller.signal
-    });
+    }));
 
     const data = await upstream.json().catch(() => ({}));
 
@@ -463,7 +446,7 @@ async function probeOpenAI({ url, apiKey, model, maxOutputTokens = 120 }) {
         }
       }),
       signal: controller.signal
-    });
+    }));
 
     const data = await upstream.json().catch(() => ({}));
     const text = extractText(data);
@@ -643,6 +626,57 @@ function isStructuredRuntimeFrontDiagnostic(promptValue = "") {
     prompt.includes("estado real do runtime/front")
   );
 }
+
+
+function __rcfCompactStructuredText(text, limit = 2200) {
+  const src = String(text || "");
+  if (!src) return "";
+
+  const sections = src.split(/\n{2,}/).map(s => s.trim()).filter(Boolean);
+  if (!sections.length) return src.slice(0, limit);
+
+  const kept = [];
+  let size = 0;
+
+  for (const sec of sections) {
+    const clean = sec.length > 700 ? sec.slice(0, 700).trim() + "\n[trecho resumido]" : sec;
+    if ((size + clean.length + 2) > limit) break;
+    kept.push(clean);
+    size += clean.length + 2;
+  }
+
+  return kept.length ? kept.join("\n\n") : src.slice(0, limit);
+}
+
+function __rcfNormalizeAdminAIResponse(payload) {
+  try {
+    if (!payload || typeof payload !== "object") payload = {};
+
+    const responseStatus = String(payload.responseStatus || "").trim().toLowerCase();
+    const connection = String(payload.connection || payload.connectionStatus || "").trim().toLowerCase();
+    const hasUsefulText =
+      !!String(payload.analysis || payload.answer || payload.result || "").trim();
+
+    if (hasUsefulText) {
+      payload.analysis = __rcfCompactStructuredText(
+        payload.analysis || payload.answer || payload.result || "",
+        2200
+      );
+      payload.answer = payload.analysis;
+      payload.result = payload.analysis;
+    }
+
+    if ((responseStatus === "incomplete" || connection === "partial") && hasUsefulText) {
+      payload.ok = true;
+      payload.partial = true;
+      payload.note = payload.note || "partial_response_normalized";
+      payload.connection = "partial";
+    }
+  } catch {}
+
+  return payload;
+}
+
 
 function normalizeAction(value, promptValue = "") {
   const raw = String(value || "").trim().toLowerCase();
@@ -1066,7 +1100,7 @@ function buildDeterministicPlannerHint(payload, prompt = "", action = "chat") {
       candidateFiles,
       flags,
       snapshot
-    });
+    }));
 
     const top = ranking[0] || {
       file: "",
@@ -2055,4 +2089,3 @@ function dedupeStrings(arr) {
 
   return out;
 }
-
