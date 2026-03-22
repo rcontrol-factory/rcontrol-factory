@@ -558,3 +558,4 @@
     try { window.RCF_LOGGER?.push?.("OK", "RCF_GH_SYNC.test hotfix instalado ✅"); } catch {}
   } catch {}
 })();
+
