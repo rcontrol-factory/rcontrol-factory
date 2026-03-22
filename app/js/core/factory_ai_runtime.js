@@ -25,7 +25,7 @@
 
   if (global.RCF_FACTORY_AI_RUNTIME && global.RCF_FACTORY_AI_RUNTIME.__v105) return;
 
-  var VERSION = "v1.0.6";
+  var VERSION = "v1.0.7";
   var STORAGE_KEY = "rcf:factory_ai_runtime";
   var LAST_RESPONSE_KEY = "rcf:factory_ai_runtime_last_response";
   var MAX_HISTORY = 60;
@@ -42,6 +42,7 @@
     lastApprovedPlanId: "",
     lastExecution: null,
     lastEndpoint: "/api/admin-ai",
+    lastRouting: null,
     lastOk: false,
     lastConnection: {
       provider: "",
@@ -158,9 +159,35 @@
     } catch (_) {}
   }
 
+  function isStrictDiagnosticPrompt(prompt) {
+    var p = trimText(prompt).toLowerCase();
+    if (!p) return false;
+
+    return (
+      p.indexOf("não faça probe") >= 0 ||
+      p.indexOf("nao faca probe") >= 0 ||
+      p.indexOf("não responda só com teste") >= 0 ||
+      p.indexOf("nao responda so com teste") >= 0 ||
+      p.indexOf("diagnóstico técnico real") >= 0 ||
+      p.indexOf("diagnostico tecnico real") >= 0 ||
+      p.indexOf("diagnóstico técnico curto") >= 0 ||
+      p.indexOf("diagnostico tecnico curto") >= 0 ||
+      p.indexOf("runtime/front") >= 0 ||
+      p.indexOf("front está ou não está consumindo corretamente o backend") >= 0 ||
+      p.indexOf("ultimo endpoint usado no front") >= 0 ||
+      p.indexOf("último endpoint usado no front") >= 0 ||
+      p.indexOf("não resuma a resposta") >= 0 ||
+      p.indexOf("nao resuma a resposta") >= 0 ||
+      p.indexOf("responder obrigatoriamente com estes 10 campos") >= 0 ||
+      p.indexOf("proibido responder só com probe") >= 0 ||
+      p.indexOf("proibido responder so com probe") >= 0
+    );
+  }
+
   function isOpenAIConnectivityPrompt(prompt) {
     var p = trimText(prompt).toLowerCase();
     if (!p) return false;
+    if (isStrictDiagnosticPrompt(prompt)) return false;
 
     return (
       p.indexOf("openai") >= 0 ||
@@ -181,11 +208,13 @@
     var p = trimText(prompt).toLowerCase();
 
     if (raw) {
+      if (raw === "chat" && isStrictDiagnosticPrompt(prompt)) return "factory_diagnosis";
       if (raw === "chat" && isOpenAIConnectivityPrompt(prompt)) return "openai_status";
       return raw;
     }
 
     if (!p) return "chat";
+    if (isStrictDiagnosticPrompt(prompt)) return "factory_diagnosis";
     if (isOpenAIConnectivityPrompt(prompt)) return "openai_status";
     if (p.indexOf("diagnóstico") >= 0 || p.indexOf("diagnostico") >= 0 || p.indexOf("doctor") >= 0) return "factory_diagnosis";
     if (p.indexOf("log") >= 0 || p.indexOf("erro") >= 0 || p.indexOf("falha") >= 0) return "analyze-logs";
@@ -262,7 +291,12 @@
       attachments: Array.isArray(input.attachments) ? clone(input.attachments).slice(0, 12) : getAttachmentsFromFactoryAI(),
       source: trimText(safe(function () { return input.source; }, "")) || "factory-ai-runtime",
       version: VERSION,
-      probe: !!safe(function () { return input.probe; }, false)
+      probe: !!safe(function () { return input.probe; }, false),
+      routing: {
+        normalizedAction: action,
+        strictDiagnostic: isStrictDiagnosticPrompt(prompt),
+        openAIConnectivityPrompt: isOpenAIConnectivityPrompt(prompt)
+      }
     };
   }
 
@@ -385,19 +419,6 @@
     return null;
   }
 
-  function runtimeHealth() {
-    return {
-      provider: state.connectionProvider || "",
-      configured: !!state.connectionConfigured,
-      attempted: !!state.connectionAttempted,
-      status: state.connectionStatus || "unknown",
-      model: state.connectionModel || "",
-      upstreamStatus: Number(state.connectionUpstreamStatus || 0) || 0,
-      lastOk: !!state.lastOk,
-      ts: nowISO()
-    };
-  }
-
   function status() {
     return {
       version: VERSION,
@@ -409,6 +430,7 @@
       lastPlanId: state.lastPlanId || "",
       lastApprovedPlanId: state.lastApprovedPlanId || "",
       lastEndpoint: state.lastEndpoint || "/api/admin-ai",
+      lastRouting: clone(state.lastRouting || null),
       lastOk: !!state.lastOk,
       connectionStatus: safe(function () { return state.lastConnection.status; }, "unknown"),
       connectionProvider: safe(function () { return state.lastConnection.provider; }, ""),
@@ -445,6 +467,7 @@
     state.lastAction = req.action;
     state.lastPrompt = req.prompt;
     state.lastEndpoint = getBackendUrl();
+    state.lastRouting = clone(req.routing || {});
     persist();
 
     emit("RCF:FACTORY_AI_RUNTIME_START", {
