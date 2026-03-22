@@ -1,6 +1,6 @@
 /* FILE: /app/js/core/factory_ai_planner.js
    RControl Factory — Factory AI Planner
-   v1.0.6 SUPERVISED EVOLUTION PLANNER + RUNTIME CONNECTED AWARE + ANTI SELF-LOOP HARDENED
+   v1.0.7 SUPERVISED EVOLUTION PLANNER + LATE PRESENCE RE-SYNC
 
    Objetivo:
    - transformar snapshot/contexto em plano operacional supervisionado
@@ -11,13 +11,13 @@
    - NÃO aplicar patch automaticamente
    - funcionar como script clássico
 
-   PATCH v1.0.6:
+   PATCH v1.0.7:
    - KEEP: leitura de runtime status real para saber se OpenAI já está conectada
    - KEEP: anti self-loop do planner
-   - FIX: runtime status agora lê endpoint/responseStatus/incomplete/incompleteReason
-   - FIX: openai-connectivity não volta para backend/runtime já resolvidos
-   - FIX: prioridade sobe para actions/bridge/executionGate/autoheal quando OpenAI já está OK
-   - ADD: status() expõe runtimeConnected para melhor contrato com outros módulos
+   - KEEP: buildPlan/status sem reescrever fluxo
+   - FIX: presença do planner agora re-sincroniza quando factoryState/moduleRegistry sobem depois
+   - FIX: planner volta a se registrar em DOMContentLoaded / RCF:UI_READY / pageshow
+   - ADD: status() expõe presenceSyncedAt para diagnóstico
    - mantém estrutura anterior com patch mínimo
 */
 
@@ -26,9 +26,10 @@
 
   if (global.RCF_FACTORY_AI_PLANNER && global.RCF_FACTORY_AI_PLANNER.__v106) return;
 
-  var VERSION = "v1.0.6";
+  var VERSION = "v1.0.7";
   var STORAGE_KEY = "rcf:factory_ai_planner";
   var MAX_HISTORY = 80;
+  var PRESENCE_RETRY_DELAY_MS = 900;
 
   var state = {
     version: VERSION,
@@ -37,7 +38,11 @@
     lastPlan: null,
     lastPriority: null,
     lastGoal: "",
-    history: []
+    history: [],
+    presenceSyncedAt: null,
+    presenceSyncAttempts: 0,
+    presenceRetryTimer: null,
+    visibilityHooksBound: false
   };
 
   var STRATEGIC_FILES = {
@@ -1170,24 +1175,92 @@
       hasPlan: !!state.lastPlan,
       lastNextFile: safe(function () { return state.lastPlan.targetFile || state.lastPlan.nextFile; }, ""),
       runtimeConnected: runtimeConnected(runtimeStatus),
-      historyCount: Array.isArray(state.history) ? state.history.length : 0
+      historyCount: Array.isArray(state.history) ? state.history.length : 0,
+      presenceSyncedAt: state.presenceSyncedAt || null,
+      presenceSyncAttempts: Number(state.presenceSyncAttempts || 0) || 0
     };
   }
 
+  function clearPresenceRetryTimer() {
+    try {
+      if (state.presenceRetryTimer) {
+        clearTimeout(state.presenceRetryTimer);
+      }
+    } catch (_) {}
+    state.presenceRetryTimer = null;
+  }
+
+  function schedulePresenceResync() {
+    clearPresenceRetryTimer();
+
+    state.presenceRetryTimer = setTimeout(function () {
+      try { syncPresence(); } catch (_) {}
+    }, PRESENCE_RETRY_DELAY_MS);
+  }
+
+  function bindPresenceVisibilityHooks() {
+    if (state.visibilityHooksBound) return;
+    state.visibilityHooksBound = true;
+
+    try {
+      global.addEventListener("pageshow", function () {
+        try { syncPresence(); } catch (_) {}
+      }, { passive: true });
+    } catch (_) {}
+
+    try {
+      global.addEventListener("RCF:UI_READY", function () {
+        try { syncPresence(); } catch (_) {}
+      }, { passive: true });
+    } catch (_) {}
+
+    try {
+      if (global.document) {
+        global.document.addEventListener("DOMContentLoaded", function () {
+          try { syncPresence(); } catch (_) {}
+        }, { once: true });
+      }
+    } catch (_) {}
+  }
+
   function syncPresence() {
+    var hasFactoryState = false;
+    var hasRegistry = false;
+
     try {
       if (global.RCF_FACTORY_STATE?.registerModule) {
         global.RCF_FACTORY_STATE.registerModule("factoryAIPlanner");
+        hasFactoryState = true;
       } else if (global.RCF_FACTORY_STATE?.setModule) {
         global.RCF_FACTORY_STATE.setModule("factoryAIPlanner", true);
+        hasFactoryState = true;
       }
     } catch (_) {}
 
     try {
       if (global.RCF_MODULE_REGISTRY?.register) {
         global.RCF_MODULE_REGISTRY.register("factoryAIPlanner");
+        hasRegistry = true;
       }
     } catch (_) {}
+
+    try {
+      if (hasRegistry && global.RCF_MODULE_REGISTRY?.refresh) {
+        global.RCF_MODULE_REGISTRY.refresh();
+      }
+    } catch (_) {}
+
+    state.presenceSyncAttempts = Number(state.presenceSyncAttempts || 0) + 1;
+
+    if (hasFactoryState || hasRegistry) {
+      state.presenceSyncedAt = nowISO();
+      persist();
+      clearPresenceRetryTimer();
+      return true;
+    }
+
+    schedulePresenceResync();
+    return false;
   }
 
   function init() {
@@ -1196,6 +1269,7 @@
     state.version = VERSION;
     state.lastUpdate = nowISO();
     persist();
+    bindPresenceVisibilityHooks();
     syncPresence();
     pushLog("OK", "factory_ai_planner ready ✅ " + VERSION);
     return status();
@@ -1215,7 +1289,8 @@
     getLastPlan: getLastPlan,
     explainLastPlan: explainLastPlan,
     buildPlan: buildPlan,
-    planFromRuntime: planFromRuntime
+    planFromRuntime: planFromRuntime,
+    syncPresence: syncPresence
   };
 
   try { init(); } catch (_) {}
