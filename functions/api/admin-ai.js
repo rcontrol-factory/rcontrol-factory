@@ -126,7 +126,7 @@ function patchRecommendedFileInObject(obj) {
 
 /* FILE: /functions/api/admin-ai.js
    RControl Factory â Factory AI API
-   v3.5.6 CHAT COPILOT BACKEND + CONNECTIVITY HARDENED + TEXT FORMAT + INPUT COMPACT GUARD
+   v3.5.7 CHAT COPILOT BACKEND + CONNECTIVITY HARDENED + TEXT FORMAT + INPUT COMPACT GUARD
 
    PATCH v3.5.6:
    - KEEP: openai_status como action permitida
@@ -158,6 +158,7 @@ export async function onRequestPost(context) {
 
     if (!env || !env.OPENAI_API_KEY) {
       return json({
+        request: { action, structuredRuntimeFrontDiagnostic: isStructuredRuntimeFrontDiagnostic(prompt), source, version },
         ok: false,
         error: "OPENAI_API_KEY ausente no ambiente.",
         connection: buildConnectionMeta({
@@ -1446,6 +1447,8 @@ function cloneValue(value) {
 
 function buildGroundedPrompt({ action, payload, prompt, history, attachments, source, version }) {
   const plannerHint = safeObj(payload).__planner_hint;
+  const frontTelemetry = safeObj(payload).frontTelemetry || safeObj(safeObj(payload).snapshot).frontTelemetry || {};
+  const structuredRuntimeFrontDiagnostic = isStructuredRuntimeFrontDiagnostic(prompt);
   const lowerPrompt = String(prompt || "").trim().toLowerCase();
   const asksOpenAI =
     lowerPrompt.includes("openai") ||
@@ -1470,6 +1473,9 @@ function buildGroundedPrompt({ action, payload, prompt, history, attachments, so
     "5. NÃO trate ausÃªncia de dado como erro confirmado.",
     "6. NÃO diga que um mÃ³dulo estÃ¡ quebrado sÃ³ porque ele nÃ£o apareceu no snapshot.",
     "7. Diferencie sempre:",
+    "8. Quando o prompt pedir diagnÃ³stico estruturado de runtime/front, NÃO reduza a resposta a um probe simples de OpenAI.",
+    "9. Em diagnÃ³stico estruturado de runtime/front, use explicitamente frontTelemetry, runtimeLayer, connection e request.routing se existirem no payload.",
+    "10. SÃ³ use probe simples quando a tarefa for explicitamente openai_status/conectividade.",
     "   - fato confirmado",
     "   - dado ausente",
     "   - inferÃªncia provÃ¡vel",
