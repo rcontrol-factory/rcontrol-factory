@@ -26,7 +26,7 @@
 
   if (global.RCF_FACTORY_AI_PLANNER && global.RCF_FACTORY_AI_PLANNER.__v106) return;
 
-  var VERSION = "v1.0.7";
+  var VERSION = "v1.0.8";
   var STORAGE_KEY = "rcf:factory_ai_planner";
   var MAX_HISTORY = 80;
   var PRESENCE_RETRY_DELAY_MS = 900;
@@ -78,6 +78,21 @@
     try { return JSON.parse(JSON.stringify(obj)); }
     catch (_) { return obj || {}; }
   }
+
+
+  function normalizePlannerSnapshot(snapshot) {
+    try {
+      var out = clone(snapshot || {});
+      if (!out.lastGoal) out.lastGoal = "stabilize_factory_ai";
+      if (!out.lastPriority) out.lastPriority = "openai_runtime";
+      if (!out.lastNextFile) out.lastNextFile = "/app/js/core/factory_ai_planner.js";
+      return out;
+    } catch (_) {
+      return snapshot || {};
+    }
+  }
+
+
 
   function safe(fn, fallback) {
     try {
@@ -504,7 +519,7 @@
       id: "general-supervision",
       label: "Supervisão técnica geral",
       sourceText: rawGoal
-    };
+    });
   }
 
   function getAvoidMap(memoryCtx) {
