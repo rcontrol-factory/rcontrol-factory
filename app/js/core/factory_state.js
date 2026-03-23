@@ -25,7 +25,7 @@
   if (global.RCF_FACTORY_STATE && global.RCF_FACTORY_STATE.__v144) return;
 
   var STORAGE_KEY = "rcf:factory_state";
-  var VERSION = "v1.4.4";
+  var VERSION = "v1.4.5";
 
   var PERSIST_DEBOUNCE_MS = 220;
   var WARN_THROTTLE_MS = 10000;
