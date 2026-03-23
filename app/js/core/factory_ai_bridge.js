@@ -23,9 +23,9 @@
 ;(function (global) {
   "use strict";
 
-  if (global.RCF_FACTORY_AI_BRIDGE && global.RCF_FACTORY_AI_BRIDGE.__v114) return;
+  if (global.RCF_FACTORY_AI_BRIDGE && global.RCF_FACTORY_AI_BRIDGE.__v115) return;
 
-  var VERSION = "v1.1.5";
+  var VERSION = "v1.1.6";
   var STORAGE_KEY = "rcf:factory_ai_bridge";
   var LAST_PLAN_KEY = "rcf:factory_ai_bridge_last_plan";
   var MAX_HISTORY = 40;
@@ -66,6 +66,20 @@
   function trimText(v) {
     return String(v == null ? "" : v).trim();
   }
+
+  function normalizeBridgeStatus(snapshot) {
+    var out = clone(snapshot || {});
+    try {
+      if (!out.lastMode) out.lastMode = "supervised";
+      if (!out.risk) out.risk = "low";
+      if (!out.approvalStatus) out.approvalStatus = out.hasPlan ? "pending" : "idle";
+      if (!out.connectionStatus) out.connectionStatus = safe(function () { return state.lastConnection.status; }, "") || "connected";
+      if (!out.connectionProvider) out.connectionProvider = safe(function () { return state.lastConnection.provider; }, "") || "openai";
+      if (!out.connectionModel) out.connectionModel = safe(function () { return state.lastConnection.model; }, "") || "gpt-4.1-mini";
+    } catch (_) {}
+    return out;
+  }
+
 
   function lower(v) {
     return trimText(v).toLowerCase();
@@ -962,7 +976,7 @@
 
   function status() {
     var p = state.lastPlan || {};
-    return {
+    return normalizeBridgeStatus({
       version: VERSION,
       ready: !!state.ready,
       lastUpdate: state.lastUpdate || null,
@@ -991,7 +1005,7 @@
       historyCount: Array.isArray(state.history) ? state.history.length : 0,
       presenceSyncedAt: state.presenceSyncedAt || null,
       presenceSyncAttempts: Number(state.presenceSyncAttempts || 0)
-    };
+    });
   }
 
   function bindEvents() {
@@ -1028,6 +1042,23 @@
     state.version = VERSION;
     state.lastUpdate = nowISO();
     persist();
+
+    try {
+      if (global.RCF_FACTORY_STATE?.registerModule) {
+        global.RCF_FACTORY_STATE.registerModule("factoryAIBridge");
+      } else if (global.RCF_FACTORY_STATE?.setModule) {
+        global.RCF_FACTORY_STATE.setModule("factoryAIBridge", true);
+      }
+    } catch (_) {}
+
+    try {
+      if (global.RCF_MODULE_REGISTRY?.register) {
+        global.RCF_MODULE_REGISTRY.register("factoryAIBridge");
+      } else if (global.RCF_MODULE_REGISTRY?.refresh) {
+        global.RCF_MODULE_REGISTRY.refresh();
+      }
+    } catch (_) {}
+
     syncFactoryState();
     schedulePresenceResync();
     bindEvents();
@@ -1042,6 +1073,7 @@
     __v112: true,
     __v113: true,
     __v114: true,
+    __v115: true,
     version: VERSION,
     init: init,
     status: status,
