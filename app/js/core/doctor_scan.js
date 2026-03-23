@@ -13,7 +13,7 @@
 (() => {
   "use strict";
 
-  const VERSION = "v1.6.5";
+  const VERSION = "v1.6.6";
 
   if (window.__RCF_DOCTOR_SCAN_BOOTED__) return;
   window.__RCF_DOCTOR_SCAN_BOOTED__ = true;
@@ -563,10 +563,11 @@
 
   function seedDoctorRun(reason) {
     try {
-      var ts = nowISO();
+      const ts = nowISO();
+
       if (!API.lastRun) {
         API.lastRun = {
-          ts: ts,
+          ts,
           version: VERSION,
           summary: {
             reportLength: 0,
@@ -579,10 +580,10 @@
       syncDoctorState({
         source: "RCF_DOCTOR_SCAN",
         version: VERSION,
-        ts: ts,
+        ts,
+        reportLength: Number(API.lastRun?.summary?.reportLength || 0) || 0,
         seeded: true,
-        reason: String(reason || "bootstrap"),
-        reportLength: Number(API.lastRun?.summary?.reportLength || 0) || 0
+        reason: String(reason || "bootstrap")
       });
 
       try {
