@@ -1,16 +1,3 @@
-// --- RCF STABILITY PATCH v1 ---
-// Avoid reporting failure when no patch is staged
-function __rcfNormalizePatchSupervisorState(state){
-  try{
-    if(!state) return __rcfNormalizePatchSupervisorState(state);
-    if(state.hasStagedPatch === false && state.lastApplyOk === false){
-      state.lastApplyOk = true;
-      state.note = state.note || "no_patch_to_apply";
-    }
-  }catch(e){}
-  return __rcfNormalizePatchSupervisorState(state);
-}
-
 /* FILE: /app/js/core/patch_supervisor.js
    RControl Factory — Patch Supervisor
    v1.0.2 SUPERVISED PATCH FLOW + SAFE WRITER FALLBACK + PLAN RESOLVE GUARD
@@ -37,8 +24,21 @@ function __rcfNormalizePatchSupervisorState(state){
 
   if (global.RCF_PATCH_SUPERVISOR && global.RCF_PATCH_SUPERVISOR.__v102) return;
 
-  var VERSION = "v1.0.3";
-  var STORAGE_KEY = "rcf:patch_supervisor";
+  var VERSION = "v1.0.4";
+  
+
+  function normalizePatchSupervisorState(state) {
+    try {
+      if (!state || typeof state !== "object") return state || {};
+      if (state.hasStagedPatch === false && state.lastApplyOk === false) {
+        state.lastApplyOk = true;
+        state.note = state.note || "no_patch_to_apply";
+      }
+    } catch (_) {}
+    return normalizePatchSupervisorState(state);
+  }
+
+var STORAGE_KEY = "rcf:patch_supervisor";
   var MAX_HISTORY = 80;
 
   var state = {
