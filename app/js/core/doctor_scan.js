@@ -1,5 +1,5 @@
 /* FILE: /app/js/core/doctor_scan.js
-   RControl Factory — DOCTOR SCAN — v1.6.4 (PLANNER AWARE + STATE SYNC + SAFE)
+   RControl Factory — DOCTOR SCAN — v1.6.3 (PLANNER AWARE + STATE SYNC + SAFE)
    - mantém modal leve e iOS-safe
    - NÃO injeta botão sozinho
    - Expõe API: window.RCF_DOCTOR_SCAN.open()
@@ -13,7 +13,7 @@
 (() => {
   "use strict";
 
-  const VERSION = "v1.6.4";
+  const VERSION = "v1.6.5";
 
   if (window.__RCF_DOCTOR_SCAN_BOOTED__) return;
   window.__RCF_DOCTOR_SCAN_BOOTED__ = true;
@@ -560,6 +560,37 @@
     return reportText;
   }
 
+
+  function seedDoctorRun(reason) {
+    try {
+      var ts = nowISO();
+      if (!API.lastRun) {
+        API.lastRun = {
+          ts: ts,
+          version: VERSION,
+          summary: {
+            reportLength: 0,
+            seeded: true,
+            reason: String(reason || "bootstrap")
+          }
+        };
+      }
+
+      syncDoctorState({
+        source: "RCF_DOCTOR_SCAN",
+        version: VERSION,
+        ts: ts,
+        seeded: true,
+        reason: String(reason || "bootstrap"),
+        reportLength: Number(API.lastRun?.summary?.reportLength || 0) || 0
+      });
+
+      try {
+        window.RCF_DOCTOR_SCAN.lastRun = safeClone(API.lastRun);
+      } catch {}
+    } catch {}
+  }
+
   async function open() {
     const rep = await runScan().catch(e => "Doctor error: " + ((e && e.message) ? e.message : String(e)));
     const modal = openModal(rep);
@@ -568,20 +599,22 @@
   }
 
   window.RCF_DOCTOR_SCAN = API;
+  try { window.RCF_DOCTOR = API; } catch {}
+
+  try { seedDoctorRun("bootstrap"); } catch {}
+
+  try {
+    setTimeout(function () {
+      try { runScan(); } catch (_) {}
+    }, 700);
+  } catch {}
+
+  try {
+    window.addEventListener("RCF:UI_READY", function () {
+      try { seedDoctorRun("ui_ready"); } catch (_) {}
+      try { runScan(); } catch (_) {}
+    }, { passive: true });
+  } catch {}
 
   log("doctor_scan.js ready ✅ (" + VERSION + ") API=window.RCF_DOCTOR_SCAN.open()");
-
-
-  try {
-    window.RCF_DOCTOR = API;
-  } catch (_) {}
-
-  // AUTO FIRST SCAN (helps snapshots not stay empty)
-  try {
-    setTimeout(() => {
-      try { API.scan(); } catch (_) {}
-    }, 600);
-  } catch (_) {}
-
-
 })();
