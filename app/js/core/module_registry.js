@@ -749,6 +749,19 @@ function schedulePresenceResync(syncFn){
       } catch (_) {}
     }
 
+    if (!active.length) {
+      try {
+        var computed = computeModules();
+        current = clone(computed || current);
+        active = Object.keys(current).filter(function (k) { return !!current[k]; });
+        c = {
+          total: Object.keys(current).length,
+          active: active.length,
+          inactive: Math.max(0, Object.keys(current).length - active.length)
+        };
+      } catch (_) {}
+    }
+
     return {
       version: VERSION,
       total: c.total,
