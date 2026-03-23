@@ -22,23 +22,10 @@
 ;(function (global) {
   "use strict";
 
-  if (global.RCF_PATCH_SUPERVISOR && global.RCF_PATCH_SUPERVISOR.__v102) return;
+  if (global.RCF_PATCH_SUPERVISOR && global.RCF_PATCH_SUPERVISOR.__v104) return;
 
   var VERSION = "v1.0.4";
-  
-
-  function normalizePatchSupervisorState(state) {
-    try {
-      if (!state || typeof state !== "object") return state || {};
-      if (state.hasStagedPatch === false && state.lastApplyOk === false) {
-        state.lastApplyOk = true;
-        state.note = state.note || "no_patch_to_apply";
-      }
-    } catch (_) {}
-    return normalizePatchSupervisorState(state);
-  }
-
-var STORAGE_KEY = "rcf:patch_supervisor";
+  var STORAGE_KEY = "rcf:patch_supervisor";
   var MAX_HISTORY = 80;
 
   var state = {
@@ -72,6 +59,19 @@ var STORAGE_KEY = "rcf:patch_supervisor";
       return fallback;
     }
   }
+
+  function normalizeStatusSnapshot(snapshot) {
+    var out = clone(snapshot || {});
+    try {
+      if (out && out.hasStagedPatch === false && out.lastApplyOk === false) {
+        out.lastApplyOk = true;
+        out.lastApplyMsg = trimText(out.lastApplyMsg || "no_patch_to_apply");
+        out.note = trimText(out.note || "no_patch_to_apply");
+      }
+    } catch (_) {}
+    return out;
+  }
+
 
   function trimText(v) {
     return String(v == null ? "" : v).trim();
@@ -788,7 +788,7 @@ var STORAGE_KEY = "rcf:patch_supervisor";
   }
 
   function status() {
-    return {
+    return normalizeStatusSnapshot({
       version: VERSION,
       ready: !!state.ready,
       lastUpdate: state.lastUpdate || null,
@@ -807,7 +807,7 @@ var STORAGE_KEY = "rcf:patch_supervisor";
       activeAppSlug: getActiveApp(),
       presenceSyncedAt: state.presenceSyncedAt || null,
       presenceSyncAttempts: Number(state.presenceSyncAttempts || 0)
-    };
+    });
   }
 
   function syncPresence() {
@@ -884,7 +884,7 @@ var STORAGE_KEY = "rcf:patch_supervisor";
   global.RCF_PATCH_SUPERVISOR = {
     __v100: true,
     __v101: true,
-    __v102: true,
+    __v104: true,
     version: VERSION,
     init: init,
     status: status,
