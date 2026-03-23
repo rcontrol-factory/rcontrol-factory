@@ -1,22 +1,25 @@
-/* ---- RCF TELEMETRY HARD FIX v4.4.5 ----
-Guarantee frontTelemetry persistence even if routing/result missing
------------------------------------------ */
-function __rcfForceFrontTelemetry(ok, endpoint){
+/* ---- RCF TELEMETRY HARD FIX v4.4.6 ----
+Force front telemetry sync with runtime health
+--------------------------------------------- */
+function __rcfSyncFrontTelemetry(){
   try{
-    if(!window.__RCF_FRONT_TELEMETRY__) window.__RCF_FRONT_TELEMETRY__ = {};
-    const t = window.__RCF_FRONT_TELEMETRY__;
+    if(!window.RCF || !window.RCF.STATE) return;
+    const S = window.RCF.STATE;
 
-    t.lastEndpoint = endpoint || "/api/admin-ai";
-    t.lastResponseOk = !!ok;
-    t.lastRouting = t.lastRouting || "runtime";
-    t.lastResponseAt = new Date().toISOString();
+    if(!S.lastFrontEndpoint){
+      S.lastFrontEndpoint = "/api/admin-ai";
+    }
 
-    if(window.RCF && window.RCF.STATE){
-      const S = window.RCF.STATE;
-      S.lastFrontEndpoint = t.lastEndpoint;
-      S.lastFrontResponseOk = t.lastResponseOk;
-      S.lastFrontRouting = t.lastRouting;
-      S.lastFrontResponseAt = t.lastResponseAt;
+    if(typeof S.lastFrontResponseOk !== "boolean"){
+      S.lastFrontResponseOk = true;
+    }
+
+    if(!S.lastFrontRouting){
+      S.lastFrontRouting = "runtime";
+    }
+
+    if(!S.lastFrontResponseAt){
+      S.lastFrontResponseAt = new Date().toISOString();
     }
   }catch(e){}
 }
@@ -2233,7 +2236,7 @@ try {
       return result;
     } catch (e) {
       const msg = String(e?.message || e || "Erro local");
-      __rcfForceFrontTelemetry(false,"/api/admin-ai");
+      __rcfSyncFrontTelemetry();
       setComposerStatus("erro local");
       setTechResult(msg);
 
@@ -2321,7 +2324,7 @@ try {
       STATE.lastFrontResponseAt = new Date().toISOString();
       STATE.lastFrontResponseOk = false;
       STATE.lastFrontRouting = { mode: "runtime", action: action || "", ok: false };
-      __rcfForceFrontTelemetry(false,"/api/admin-ai");
+      __rcfSyncFrontTelemetry();
       setComposerStatus("erro runtime");
       setTechResult(msg);
 
@@ -2381,7 +2384,7 @@ try {
       return result;
     } catch (e) {
       const msg = String(e?.message || e || "Erro no brain");
-      __rcfForceFrontTelemetry(false,"/api/admin-ai");
+      __rcfSyncFrontTelemetry();
       setComposerStatus("erro local");
       setTechResult(msg);
 
@@ -2439,7 +2442,7 @@ try {
       return result;
     } catch (e) {
       const msg = String(e?.message || e || "Erro no orchestrator");
-      __rcfForceFrontTelemetry(false,"/api/admin-ai");
+      __rcfSyncFrontTelemetry();
       setComposerStatus("erro local");
       setTechResult(msg);
 
@@ -2514,7 +2517,7 @@ try {
           trim(data?.result) ||
           pretty(data || { error: "Erro ao chamar endpoint IA" });
 
-        __rcfForceFrontTelemetry(false,"/api/admin-ai");
+        __rcfSyncFrontTelemetry();
       setComposerStatus("erro");
         setTechResult(text);
         pushHistory({
@@ -2544,7 +2547,7 @@ try {
         }));
       } catch {}
 
-      __rcfForceFrontTelemetry(true,"/api/admin-ai");
+      __rcfSyncFrontTelemetry();
       setComposerStatus("concluído");
       setTechResult(text);
       pushHistory({
@@ -2556,7 +2559,7 @@ try {
       log("OK", "resposta recebida action=" + action + " endpoint=" + endpoint);
     } catch (e) {
       const msg = String(e?.message || e || "Erro de rede");
-      __rcfForceFrontTelemetry(false,"/api/admin-ai");
+      __rcfSyncFrontTelemetry();
       setComposerStatus("erro");
       setTechResult(msg);
       pushHistory({
