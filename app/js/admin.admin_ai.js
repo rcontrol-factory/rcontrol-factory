@@ -1,22 +1,3 @@
-
-function __rcfNormalizeFrontTelemetry(){
-  try{
-    if(!STATE) return;
-    if(!STATE.lastFrontEndpoint){
-      STATE.lastFrontEndpoint = "/api/admin-ai";
-    }
-    if(STATE.lastFrontResponseOk !== true){
-      STATE.lastFrontResponseOk = true;
-    }
-    if(!STATE.lastFrontRouting){
-      STATE.lastFrontRouting = "runtime";
-    }
-    if(!STATE.lastFrontResponseAt){
-      STATE.lastFrontResponseAt = new Date().toISOString();
-    }
-  }catch(e){}
-}
-
 /* FILE: /app/js/admin.admin_ai.js
    RControl Factory — Factory AI
    v4.3.6 HYBRID CHAT ROUTE FIX + RUNTIME TEXT RESCUE + OPENAI STATUS ROUTE
@@ -58,11 +39,11 @@ function __rcfNormalizeFrontTelemetry(){
 
   if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v438) return;
 
-  const VERSION = "v4.4.8";
+  const VERSION = "v4.4.9";
   const BOX_ID = "rcfFactoryAIBox";
   const CHAT_ID = "rcfFactoryAIChat";
-  const STYLE_ID = "rcfFactoryAIStyleV438";
-  const HISTORY_KEY = "rcf:factory_ai_history_v438";
+  const STYLE_ID = "rcfFactoryAIStyleV449";
+  const HISTORY_KEY = "rcf:factory_ai_history_v449";
   const HISTORY_MAX = 80;
 
   const SYNC_INTERVAL_MS = 2200;
@@ -854,6 +835,48 @@ function __rcfNormalizeFrontTelemetry(){
         lastRouting: clone(STATE.lastFrontRouting || null)
       }
     };
+  }
+
+
+  function touchFrontTelemetry(ok, routing, endpoint, action) {
+    try {
+      const patch = {
+        lastEndpoint: endpoint || STATE.lastFrontEndpoint || STATE.lastEndpoint || "/api/admin-ai",
+        lastAction: action || STATE.lastFrontAction || "",
+        lastResponseAt: new Date().toISOString(),
+        lastResponseOk: !!ok,
+        lastRouting: routing || STATE.lastFrontRouting || "runtime"
+      };
+
+      STATE.lastFrontEndpoint = String(patch.lastEndpoint || "");
+      STATE.lastFrontAction = String(patch.lastAction || "");
+      STATE.lastFrontResponseAt = String(patch.lastResponseAt || "");
+      STATE.lastFrontResponseOk = !!patch.lastResponseOk;
+      STATE.lastFrontRouting = clone(patch.lastRouting || null);
+
+      window.__RCF_FRONT_TELEMETRY__ = Object.assign({}, window.__RCF_FRONT_TELEMETRY__ || {}, clone(patch));
+    } catch {}
+  }
+
+  function buildFrontTelemetrySnapshot() {
+    try {
+      const t = window.__RCF_FRONT_TELEMETRY__ || {};
+      return {
+        lastEndpoint: STATE.lastFrontEndpoint || t.lastEndpoint || STATE.lastEndpoint || "/api/admin-ai",
+        lastAction: STATE.lastFrontAction || t.lastAction || "",
+        lastResponseAt: STATE.lastFrontResponseAt || t.lastResponseAt || "",
+        lastResponseOk: (typeof STATE.lastFrontResponseOk === "boolean") ? !!STATE.lastFrontResponseOk : !!t.lastResponseOk,
+        lastRouting: clone(STATE.lastFrontRouting || t.lastRouting || "runtime")
+      };
+    } catch {
+      return {
+        lastEndpoint: "/api/admin-ai",
+        lastAction: "",
+        lastResponseAt: "",
+        lastResponseOk: false,
+        lastRouting: "runtime"
+      };
+    }
   }
 
   function setComposerStatus(txt) {
@@ -1832,21 +1855,78 @@ try {
 
   function buildPayload(action) {
     const snapshot = buildLeanSnapshot();
+
+    try {
+      snapshot.frontTelemetry = buildFrontTelemetrySnapshot();
+    } catch {}
+
+    let runtimeLayer = {};
+    let moduleRegistry = {};
+    let factoryState = {};
+    let doctor = {};
+
+    try {
+      runtimeLayer = clone(window.RCF_FACTORY_AI_RUNTIME?.status?.() || {});
+    } catch {}
+
+    try {
+      moduleRegistry = clone(window.RCF_MODULE_REGISTRY?.summary?.() || {});
+    } catch {}
+
+    try {
+      const st = window.RCF_FACTORY_STATE?.getState?.() || {};
+      factoryState = {
+        activeModulesCount: Number(st.activeModulesCount || 0) || 0,
+        activeList: Array.isArray(st.activeList) ? clone(st.activeList).slice(0, 60) : [],
+        frontTelemetry: clone(st.frontTelemetry || {}),
+        runtimeLayer: clone(st.runtimeLayer || {})
+      };
+    } catch {}
+
+    try {
+      doctor = {
+        lastRun: clone(window.RCF_DOCTOR_SCAN?.lastRun || window.RCF_DOCTOR?.lastRun || null),
+        lastReport: clone(window.RCF_DOCTOR_SCAN?.lastReport || window.RCF_DOCTOR?.lastReport || null),
+        version: String(window.RCF_DOCTOR_SCAN?.version || window.RCF_DOCTOR?.version || "")
+      };
+    } catch {}
+
     setSnapshotPreview(snapshot);
     const attachments = getAttachmentPayload();
 
     if (action === "analyze-logs") {
-      return { snapshot, logs: collectLogs(), attachments };
+      return {
+        snapshot,
+        runtimeLayer,
+        frontTelemetry: buildFrontTelemetrySnapshot(),
+        moduleRegistry,
+        factoryState,
+        doctor,
+        logs: collectLogs(),
+        attachments
+      };
     }
 
     if (action === "factory_diagnosis") {
-      return { snapshot, doctor: collectDoctorReport(), attachments };
+      return {
+        snapshot,
+        runtimeLayer,
+        frontTelemetry: buildFrontTelemetrySnapshot(),
+        moduleRegistry,
+        factoryState,
+        doctor: Object.assign({}, doctor, collectDoctorReport() || {}),
+        attachments
+      };
     }
 
     if (action === "propose-patch" || action === "generate-code") {
       return {
         snapshot,
-        doctor: collectDoctorReport(),
+        runtimeLayer,
+        frontTelemetry: buildFrontTelemetrySnapshot(),
+        moduleRegistry,
+        factoryState,
+        doctor: Object.assign({}, doctor, collectDoctorReport() || {}),
         logs: collectLogs(25),
         attachments
       };
@@ -1855,7 +1935,11 @@ try {
     if (action === "review-module") {
       return {
         snapshot,
-        doctor: collectDoctorReport(),
+        runtimeLayer,
+        frontTelemetry: buildFrontTelemetrySnapshot(),
+        moduleRegistry,
+        factoryState,
+        doctor: Object.assign({}, doctor, collectDoctorReport() || {}),
         logs: collectLogs(12),
         attachments
       };
@@ -1864,6 +1948,11 @@ try {
     if (action === "zip-readiness") {
       return {
         snapshot,
+        runtimeLayer,
+        frontTelemetry: buildFrontTelemetrySnapshot(),
+        moduleRegistry,
+        factoryState,
+        doctor,
         attachments,
         capability: {
           wantsZipFlow: true,
@@ -1875,7 +1964,15 @@ try {
       };
     }
 
-    return { snapshot, attachments };
+    return {
+      snapshot,
+      runtimeLayer,
+      frontTelemetry: buildFrontTelemetrySnapshot(),
+      moduleRegistry,
+      factoryState,
+      doctor,
+      attachments
+    };
   }
 
   function getAttachmentPayload() {
@@ -2196,12 +2293,14 @@ try {
     }
 
     STATE.lastEndpoint = "local:factory_ai_actions";
+    touchFrontTelemetry(true, "local_action", "local:factory_ai_actions", localAction || "");
     setButtonsBusy(true);
     setComposerStatus("executando local...");
     setTechResult("");
 
     try {
       const result = await api.dispatch(req);
+      touchFrontTelemetry(!!(result && result.ok !== false), "local_action", "local:factory_ai_actions", localAction || "");
       const text = formatLocalActionResult(localAction, result);
 
       setComposerStatus(result?.ok ? "concluído local" : "falha local");
@@ -2229,6 +2328,7 @@ try {
       return result;
     } catch (e) {
       const msg = String(e?.message || e || "Erro local");
+      touchFrontTelemetry(false, "local_action", "local:factory_ai_actions", localAction || "");
       setComposerStatus("erro local");
       setTechResult(msg);
 
@@ -2254,8 +2354,7 @@ try {
     }
 
     STATE.lastEndpoint = "runtime:/api/admin-ai";
-    STATE.lastFrontEndpoint = "/api/admin-ai";
-    STATE.lastFrontAction = action || "";
+    touchFrontTelemetry(true, "runtime", "/api/admin-ai", action || "");
     setButtonsBusy(true);
     setComposerStatus("consultando runtime...");
     setTechResult("");
@@ -2272,9 +2371,12 @@ try {
         attachments: getAttachmentPayload()
       });
 
-      STATE.lastFrontResponseAt = new Date().toISOString();
-      STATE.lastFrontResponseOk = !!(result && result.ok !== false);
-      STATE.lastFrontRouting = clone(result?.request?.routing || result?.routing || null);
+      touchFrontTelemetry(
+        !!(result && result.ok !== false),
+        clone(result?.request?.routing || result?.routing || "runtime"),
+        "/api/admin-ai",
+        action || ""
+      );
       const text = extractRuntimeMessage(result);
 
       if (!result || result.ok === false) {
@@ -2292,7 +2394,6 @@ try {
         return result || { ok: false, msg: text };
       }
 
-      __rcfNormalizeFrontTelemetry();
       setComposerStatus("concluído runtime");
       setTechResult(text);
 
@@ -2314,9 +2415,7 @@ try {
       return result;
     } catch (e) {
       const msg = String(e?.message || e || "Erro no runtime");
-      STATE.lastFrontResponseAt = new Date().toISOString();
-      STATE.lastFrontResponseOk = false;
-      STATE.lastFrontRouting = { mode: "runtime", action: action || "", ok: false };
+      touchFrontTelemetry(false, "runtime", "/api/admin-ai", action || "");
       setComposerStatus("erro runtime");
       setTechResult(msg);
 
@@ -2497,10 +2596,12 @@ try {
       }
 
       STATE.lastEndpoint = endpoint;
+      touchFrontTelemetry(true, endpoint === "/api/admin-ai" ? "admin_ai" : "factory_ai", endpoint, action || "");
 
       const { res, data } = result;
 
       if (!res.ok || !data.ok) {
+        touchFrontTelemetry(false, endpoint === "/api/admin-ai" ? "admin_ai" : "factory_ai", endpoint, action || "");
         const text =
           trim(data?.analysis) ||
           trim(data?.answer) ||
@@ -2536,7 +2637,7 @@ try {
         }));
       } catch {}
 
-      __rcfNormalizeFrontTelemetry();
+      touchFrontTelemetry(true, endpoint === "/api/admin-ai" ? "admin_ai" : "factory_ai", endpoint, action || "");
       setComposerStatus("concluído");
       setTechResult(text);
       pushHistory({
@@ -2548,6 +2649,7 @@ try {
       log("OK", "resposta recebida action=" + action + " endpoint=" + endpoint);
     } catch (e) {
       const msg = String(e?.message || e || "Erro de rede");
+      touchFrontTelemetry(false, "admin_ai", "/api/admin-ai", action || "");
       setComposerStatus("erro");
       setTechResult(msg);
       pushHistory({
@@ -3320,6 +3422,7 @@ try {
     mount,
     clearChat,
     sendPrompt,
+    getFrontTelemetry,
     stopListening,
     speakText,
     getHistory() {
@@ -3328,15 +3431,8 @@ try {
     getLastEndpoint() {
       return STATE.lastEndpoint || "";
     },
-    __rcfNormalizeFrontTelemetry();
     getFrontTelemetry() {
-      return {
-        lastEndpoint: STATE.lastFrontEndpoint || STATE.lastEndpoint || "",
-        lastAction: STATE.lastFrontAction || "",
-        lastResponseAt: STATE.lastFrontResponseAt || "",
-        lastResponseOk: !!STATE.lastFrontResponseOk,
-        lastRouting: clone(STATE.lastFrontRouting || null)
-      };
+      return buildFrontTelemetrySnapshot();
     },
     getAttachments() {
       return Array.isArray(STATE.attachments) ? STATE.attachments.slice() : [];
@@ -3379,3 +3475,4 @@ try {
 
   log("OK", "admin.admin_ai.js -> Factory AI ready ✅ " + VERSION);
 })();
+
