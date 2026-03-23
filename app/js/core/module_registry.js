@@ -31,9 +31,9 @@ function schedulePresenceResync(syncFn){
 (function (global) {
   "use strict";
 
-  if (global.RCF_MODULE_REGISTRY && global.RCF_MODULE_REGISTRY.__v148) return;
+  if (global.RCF_MODULE_REGISTRY && global.RCF_MODULE_REGISTRY.__v150) return;
 
-  var VERSION = "v1.4.8";
+  var VERSION = "v1.5.0";
 
   var MODULE_KEYS = [
     "logger",
@@ -573,6 +573,23 @@ function schedulePresenceResync(syncFn){
     }
   }
 
+
+  function computeLiveModulesPersisted() {
+    var current = clone(modules);
+    try {
+      var computed = computeModules();
+      current = clone(computed || current);
+
+      if (Object.keys(current).some(function (k) { return !!current[k]; })) {
+        modules = clone(current);
+        meta.lastRefresh = nowISO();
+        if (!meta.lastChange) meta.lastChange = meta.lastRefresh;
+        syncToFactoryState();
+      }
+    } catch (_) {}
+    return current;
+  }
+
   function computeModules() {
     var next = {
       logger: detectLogger(),
@@ -636,6 +653,13 @@ function schedulePresenceResync(syncFn){
         global.RCF_FACTORY_STATE.registerModule("moduleRegistry");
       } else if (hasFn(global.RCF_FACTORY_STATE, "setModule")) {
         global.RCF_FACTORY_STATE.setModule("moduleRegistry", true);
+      }
+
+      if (hasFn(global.RCF_FACTORY_STATE, "setActiveModules")) {
+        global.RCF_FACTORY_STATE.setActiveModules(getActiveModules());
+      }
+      if (hasFn(global.RCF_FACTORY_STATE, "setActiveModulesCount")) {
+        global.RCF_FACTORY_STATE.setActiveModulesCount(getActiveModules().length);
       }
     } catch (_) {
     } finally {
@@ -708,13 +732,25 @@ function schedulePresenceResync(syncFn){
   }
 
   function getModules() {
+    if (!Object.keys(modules).some(function (k) { return !!modules[k]; })) {
+      try { computeLiveModulesPersisted(); } catch (_) {}
+    }
     return clone(modules);
   }
 
   function getActiveModules() {
-    return Object.keys(modules).filter(function (k) {
+    var active = Object.keys(modules).filter(function (k) {
       return !!modules[k];
     });
+
+    if (!active.length) {
+      try {
+        var current = computeLiveModulesPersisted();
+        active = Object.keys(current).filter(function (k) { return !!current[k]; });
+      } catch (_) {}
+    }
+
+    return active;
   }
 
   function getActiveModuleNames() {
@@ -738,21 +774,7 @@ function schedulePresenceResync(syncFn){
 
     if (!active.length) {
       try {
-        var computed = computeModules();
-        current = clone(computed || current);
-        active = Object.keys(current).filter(function (k) { return !!current[k]; });
-        c = {
-          total: Object.keys(current).length,
-          active: active.length,
-          inactive: Math.max(0, Object.keys(current).length - active.length)
-        };
-      } catch (_) {}
-    }
-
-    if (!active.length) {
-      try {
-        var computed = computeModules();
-        current = clone(computed || current);
+        current = computeLiveModulesPersisted();
         active = Object.keys(current).filter(function (k) { return !!current[k]; });
         c = {
           total: Object.keys(current).length,
