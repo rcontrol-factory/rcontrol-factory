@@ -31,9 +31,9 @@ function schedulePresenceResync(syncFn){
 (function (global) {
   "use strict";
 
-  if (global.RCF_MODULE_REGISTRY && global.RCF_MODULE_REGISTRY.__v150) return;
+  if (global.RCF_MODULE_REGISTRY && global.RCF_MODULE_REGISTRY.__v151) return;
 
-  var VERSION = "v1.5.0";
+  var VERSION = "v1.5.1";
 
   var MODULE_KEYS = [
     "logger",
@@ -661,6 +661,11 @@ function schedulePresenceResync(syncFn){
       if (hasFn(global.RCF_FACTORY_STATE, "setActiveModulesCount")) {
         global.RCF_FACTORY_STATE.setActiveModulesCount(getActiveModules().length);
       }
+      if (hasFn(global.RCF_FACTORY_STATE, "setModule")) {
+        getActiveModules().forEach(function (name) {
+          try { global.RCF_FACTORY_STATE.setModule(name, true); } catch (_) {}
+        });
+      }
     } catch (_) {
     } finally {
       __syncingState = false;
@@ -768,27 +773,32 @@ function schedulePresenceResync(syncFn){
   }
 
   function summary() {
-    var c = counts();
-    var active = getActiveModules();
     var current = getModules();
+    var active = getActiveModules();
 
     if (!active.length) {
       try {
         current = computeLiveModulesPersisted();
         active = Object.keys(current).filter(function (k) { return !!current[k]; });
-        c = {
-          total: Object.keys(current).length,
-          active: active.length,
-          inactive: Math.max(0, Object.keys(current).length - active.length)
-        };
+      } catch (_) {}
+    }
+
+    var totalCount = Object.keys(current).length;
+    var activeCount = active.length;
+    var inactiveCount = Math.max(0, totalCount - activeCount);
+
+    if (activeCount > 0) {
+      try {
+        modules = clone(current);
+        meta.lastRefresh = nowISO();
       } catch (_) {}
     }
 
     return {
       version: VERSION,
-      total: c.total,
-      activeCount: c.active,
-      inactiveCount: c.inactive,
+      total: totalCount,
+      activeCount: activeCount,
+      inactiveCount: inactiveCount,
       active: active,
       modules: clone(current),
 
@@ -840,7 +850,7 @@ function schedulePresenceResync(syncFn){
     __v141: true,
     __v142: true,
     __v143: true,
-    __v148: true,
+    __v151: true,
     version: VERSION,
     register: register,
     unregister: unregister,
@@ -901,6 +911,18 @@ function schedulePresenceResync(syncFn){
 
   try {
     global.addEventListener("RCF:FACTORY_AI_RESPONSE", function () {
+      try { refresh(); } catch (_) {}
+    }, { passive: true });
+  } catch (_) {}
+
+  try {
+    global.addEventListener("RCF:FACTORY_AI_RUNTIME_RESPONSE", function () {
+      try { refresh(); } catch (_) {}
+    }, { passive: true });
+  } catch (_) {}
+
+  try {
+    global.addEventListener("RCF:FACTORY_AI_LOCAL_ACTION", function () {
       try { refresh(); } catch (_) {}
     }, { passive: true });
   } catch (_) {}
