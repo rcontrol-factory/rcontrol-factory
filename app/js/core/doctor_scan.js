@@ -13,7 +13,7 @@
 (() => {
   "use strict";
 
-  const VERSION = "v1.6.6";
+  const VERSION = "v1.6.7";
 
   if (window.__RCF_DOCTOR_SCAN_BOOTED__) return;
   window.__RCF_DOCTOR_SCAN_BOOTED__ = true;
@@ -543,6 +543,11 @@
         reportLength: String(reportText || "").length
       }
     };
+
+    try {
+      localStorage.setItem("rcf:doctor_last_run", JSON.stringify(API.lastRun));
+      localStorage.setItem("rcf:doctor_last_report", String(reportText || ""));
+    } catch {}
 
     syncDoctorState({
       source: "RCF_DOCTOR_SCAN",
