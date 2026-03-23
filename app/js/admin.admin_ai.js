@@ -39,11 +39,11 @@
 
   if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v438) return;
 
-  const VERSION = "v4.4.9";
+  const VERSION = "v4.5.0";
   const BOX_ID = "rcfFactoryAIBox";
   const CHAT_ID = "rcfFactoryAIChat";
-  const STYLE_ID = "rcfFactoryAIStyleV449";
-  const HISTORY_KEY = "rcf:factory_ai_history_v449";
+  const STYLE_ID = "rcfFactoryAIStyleV450";
+  const HISTORY_KEY = "rcf:factory_ai_history_v450";
   const HISTORY_MAX = 80;
 
   const SYNC_INTERVAL_MS = 2200;
@@ -827,13 +827,7 @@
         href: environment.href || location.href || "",
         ts: environment.ts || new Date().toISOString()
       },
-      frontTelemetry: {
-        lastEndpoint: STATE.lastFrontEndpoint || STATE.lastEndpoint || "",
-        lastAction: STATE.lastFrontAction || "",
-        lastResponseAt: STATE.lastFrontResponseAt || "",
-        lastResponseOk: !!STATE.lastFrontResponseOk,
-        lastRouting: clone(STATE.lastFrontRouting || null)
-      }
+      frontTelemetry: buildFrontTelemetrySnapshot()
     };
   }
 
@@ -845,7 +839,7 @@
         lastAction: action || STATE.lastFrontAction || "",
         lastResponseAt: new Date().toISOString(),
         lastResponseOk: !!ok,
-        lastRouting: routing || STATE.lastFrontRouting || "runtime"
+        lastRouting: clone(routing || STATE.lastFrontRouting || "runtime")
       };
 
       STATE.lastFrontEndpoint = String(patch.lastEndpoint || "");
@@ -854,7 +848,11 @@
       STATE.lastFrontResponseOk = !!patch.lastResponseOk;
       STATE.lastFrontRouting = clone(patch.lastRouting || null);
 
-      window.__RCF_FRONT_TELEMETRY__ = Object.assign({}, window.__RCF_FRONT_TELEMETRY__ || {}, clone(patch));
+      window.__RCF_FRONT_TELEMETRY__ = Object.assign(
+        {},
+        window.__RCF_FRONT_TELEMETRY__ || {},
+        clone(patch || {})
+      );
     } catch {}
   }
 
@@ -865,7 +863,9 @@
         lastEndpoint: STATE.lastFrontEndpoint || t.lastEndpoint || STATE.lastEndpoint || "/api/admin-ai",
         lastAction: STATE.lastFrontAction || t.lastAction || "",
         lastResponseAt: STATE.lastFrontResponseAt || t.lastResponseAt || "",
-        lastResponseOk: (typeof STATE.lastFrontResponseOk === "boolean") ? !!STATE.lastFrontResponseOk : !!t.lastResponseOk,
+        lastResponseOk: (typeof STATE.lastFrontResponseOk === "boolean")
+          ? !!STATE.lastFrontResponseOk
+          : !!t.lastResponseOk,
         lastRouting: clone(STATE.lastFrontRouting || t.lastRouting || "runtime")
       };
     } catch {
@@ -1856,23 +1856,13 @@ try {
   function buildPayload(action) {
     const snapshot = buildLeanSnapshot();
 
-    try {
-      snapshot.frontTelemetry = buildFrontTelemetrySnapshot();
-    } catch {}
-
     let runtimeLayer = {};
     let moduleRegistry = {};
     let factoryState = {};
     let doctor = {};
 
-    try {
-      runtimeLayer = clone(window.RCF_FACTORY_AI_RUNTIME?.status?.() || {});
-    } catch {}
-
-    try {
-      moduleRegistry = clone(window.RCF_MODULE_REGISTRY?.summary?.() || {});
-    } catch {}
-
+    try { runtimeLayer = clone(window.RCF_FACTORY_AI_RUNTIME?.status?.() || {}); } catch {}
+    try { moduleRegistry = clone(window.RCF_MODULE_REGISTRY?.summary?.() || {}); } catch {}
     try {
       const st = window.RCF_FACTORY_STATE?.getState?.() || {};
       factoryState = {
@@ -1882,7 +1872,6 @@ try {
         runtimeLayer: clone(st.runtimeLayer || {})
       };
     } catch {}
-
     try {
       doctor = {
         lastRun: clone(window.RCF_DOCTOR_SCAN?.lastRun || window.RCF_DOCTOR?.lastRun || null),
@@ -1890,6 +1879,8 @@ try {
         version: String(window.RCF_DOCTOR_SCAN?.version || window.RCF_DOCTOR?.version || "")
       };
     } catch {}
+
+    snapshot.frontTelemetry = buildFrontTelemetrySnapshot();
 
     setSnapshotPreview(snapshot);
     const attachments = getAttachmentPayload();
@@ -3475,4 +3466,3 @@ try {
 
   log("OK", "admin.admin_ai.js -> Factory AI ready ✅ " + VERSION);
 })();
-
