@@ -544,11 +544,6 @@
       }
     };
 
-    try {
-      localStorage.setItem("rcf:doctor_last_run", JSON.stringify(API.lastRun));
-      localStorage.setItem("rcf:doctor_last_report", String(reportText || ""));
-    } catch {}
-
     syncDoctorState({
       source: "RCF_DOCTOR_SCAN",
       version: VERSION,
