@@ -39,7 +39,7 @@
 
   if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v438) return;
 
-  const VERSION = "v4.5.0";
+  const VERSION = "v4.5.1";
   const BOX_ID = "rcfFactoryAIBox";
   const CHAT_ID = "rcfFactoryAIChat";
   const STYLE_ID = "rcfFactoryAIStyleV450";
@@ -2629,6 +2629,7 @@ try {
       } catch {}
 
       touchFrontTelemetry(true, endpoint === "/api/admin-ai" ? "admin_ai" : "factory_ai", endpoint, action || "");
+      touchFrontTelemetry(true, endpoint === "/api/admin-ai" ? "admin_ai" : "factory_ai", endpoint, action || "");
       setComposerStatus("concluído");
       setTechResult(text);
       pushHistory({
@@ -3413,6 +3414,7 @@ try {
     mount,
     clearChat,
     sendPrompt,
+    getFrontTelemetry,
     getFrontTelemetry,
     stopListening,
     speakText,
