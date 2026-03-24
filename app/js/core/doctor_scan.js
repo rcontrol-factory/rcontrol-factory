@@ -13,7 +13,7 @@
 (() => {
   "use strict";
 
-  const VERSION = "v1.6.8";
+  const VERSION = "v1.6.9";
 
   if (window.__RCF_DOCTOR_SCAN_BOOTED__) return;
   window.__RCF_DOCTOR_SCAN_BOOTED__ = true;
@@ -24,7 +24,8 @@
     lastRun: null,
     open,
     scan: runScan,
-    buildReport
+    buildReport,
+    getLastRun
   };
 
   function log(...a) {
@@ -53,6 +54,19 @@
     return Array.isArray(v) ? v : [];
   }
 
+  function getPersistedLastRun() {
+    try {
+      const raw = localStorage.getItem("rcf:doctor_last_run");
+      if (!raw) return null;
+      return safeJsonParse(raw);
+    } catch {}
+    return null;
+  }
+
+  function getLastRun() {
+    return safeClone(API.lastRun || window.__RCF_DOCTOR_LAST_RUN__ || getPersistedLastRun() || null);
+  }
+
   function persistDoctorState() {
     try {
       if (API.lastRun) localStorage.setItem("rcf:doctor_last_run", JSON.stringify(API.lastRun));
@@ -60,12 +74,17 @@
     try {
       if (API.lastReport) localStorage.setItem("rcf:doctor_last_report", String(API.lastReport || ""));
     } catch {}
+    try {
+      window.__RCF_DOCTOR_LAST_RUN__ = safeClone(API.lastRun || null);
+      window.__RCF_DOCTOR_LAST_REPORT__ = String(API.lastReport || "");
+    } catch {}
   }
 
   function syncDoctorState(meta) {
+    const payload = safeClone(meta || {});
     try {
       if (window.RCF_FACTORY_STATE?.markDoctorRun) {
-        window.RCF_FACTORY_STATE.markDoctorRun(meta || {});
+        window.RCF_FACTORY_STATE.markDoctorRun(payload);
       }
     } catch {}
 
@@ -76,16 +95,30 @@
     } catch {}
 
     try {
-      if (window.RCF_FACTORY_STATE?.refreshRuntime) {
-        window.RCF_FACTORY_STATE.refreshRuntime();
+      if (window.RCF_FACTORY_STATE?.setModule) {
+        window.RCF_FACTORY_STATE.setModule("doctor", true);
       }
     } catch {}
 
     try {
       if (window.RCF_FACTORY_STATE?.registerModule) {
         window.RCF_FACTORY_STATE.registerModule("doctor");
-      } else if (window.RCF_FACTORY_STATE?.setModule) {
-        window.RCF_FACTORY_STATE.setModule("doctor", true);
+      }
+    } catch {}
+
+    try {
+      if (window.RCF_FACTORY_STATE?.getState) {
+        const st = window.RCF_FACTORY_STATE.getState();
+        if (st && typeof st === "object") {
+          st.doctorLastRun = safeClone(payload);
+          st.doctorReady = true;
+        }
+      }
+    } catch {}
+
+    try {
+      if (window.RCF_FACTORY_STATE?.refreshRuntime) {
+        window.RCF_FACTORY_STATE.refreshRuntime();
       }
     } catch {}
 
@@ -356,61 +389,28 @@
   }
 
   function getModuleSnapshot() {
-    try {
-      if (window.RCF_MODULE_REGISTRY?.summary) {
-        return safeClone(window.RCF_MODULE_REGISTRY.summary() || {});
-      }
-    } catch {}
+    try { if (window.RCF_MODULE_REGISTRY?.summary) return safeClone(window.RCF_MODULE_REGISTRY.summary() || {}); } catch {}
     return {};
   }
-
   function getFactoryStateSnapshot() {
-    try {
-      if (window.RCF_FACTORY_STATE?.status) {
-        return safeClone(window.RCF_FACTORY_STATE.status() || {});
-      }
-    } catch {}
-    try {
-      if (window.RCF_FACTORY_STATE?.getState) {
-        return safeClone(window.RCF_FACTORY_STATE.getState() || {});
-      }
-    } catch {}
+    try { if (window.RCF_FACTORY_STATE?.status) return safeClone(window.RCF_FACTORY_STATE.status() || {}); } catch {}
+    try { if (window.RCF_FACTORY_STATE?.getState) return safeClone(window.RCF_FACTORY_STATE.getState() || {}); } catch {}
     return {};
   }
-
   function getPlannerStatus() {
-    try {
-      if (window.RCF_FACTORY_AI_PLANNER?.status) {
-        return safeClone(window.RCF_FACTORY_AI_PLANNER.status() || {});
-      }
-    } catch {}
+    try { if (window.RCF_FACTORY_AI_PLANNER?.status) return safeClone(window.RCF_FACTORY_AI_PLANNER.status() || {}); } catch {}
     return {};
   }
-
   function getBridgeStatus() {
-    try {
-      if (window.RCF_FACTORY_AI_BRIDGE?.status) {
-        return safeClone(window.RCF_FACTORY_AI_BRIDGE.status() || {});
-      }
-    } catch {}
+    try { if (window.RCF_FACTORY_AI_BRIDGE?.status) return safeClone(window.RCF_FACTORY_AI_BRIDGE.status() || {}); } catch {}
     return {};
   }
-
   function getActionsStatus() {
-    try {
-      if (window.RCF_FACTORY_AI_ACTIONS?.status) {
-        return safeClone(window.RCF_FACTORY_AI_ACTIONS.status() || {});
-      }
-    } catch {}
+    try { if (window.RCF_FACTORY_AI_ACTIONS?.status) return safeClone(window.RCF_FACTORY_AI_ACTIONS.status() || {}); } catch {}
     return {};
   }
-
   function getPatchSupervisorStatus() {
-    try {
-      if (window.RCF_PATCH_SUPERVISOR?.status) {
-        return safeClone(window.RCF_PATCH_SUPERVISOR.status() || {});
-      }
-    } catch {}
+    try { if (window.RCF_PATCH_SUPERVISOR?.status) return safeClone(window.RCF_PATCH_SUPERVISOR.status() || {}); } catch {}
     return {};
   }
 
@@ -428,47 +428,15 @@
     const patchSupervisor = getPatchSupervisorStatus();
 
     const hints = [];
-
-    if (sw.supported && sw.controller && sw.registrations === 0) {
-      hints.push("- SW controller=true mas registrations=0: pode ser SW antigo/controlando por outra scope.");
-    }
-
-    if (ca.supported && ca.keys === 0) {
-      hints.push("- Cache API vazio: aceitável se o runtime atual estiver usando overrides + bundle local.");
-    }
-
-    if (!mb.present) {
-      hints.push("- mother_bundle_local não encontrado: confira GitHub pull / MAE update se esperado.");
-    }
-
-    if (!mods.activeCount && Array.isArray(mods.active) && mods.active.length === 0) {
-      hints.push("- Module Registry sem ativos relevantes no snapshot atual.");
-    }
-
-    if (!st.doctorLastRun) {
-      hints.push("- Este scan ainda não estava consolidado no state antes. Após rodar, doctorLastRun deve aparecer.");
-    }
-
-    if (!planner.ready) {
-      hints.push("- Factory AI Planner não aparece como pronto no runtime atual.");
-    }
-
-    if (!bridge.ready) {
-      hints.push("- Factory AI Bridge não aparece como pronto no runtime atual.");
-    }
-
-    if (!actions.ready) {
-      hints.push("- Factory AI Actions não aparece como pronto no runtime atual.");
-    }
-
-    if (!patchSupervisor.ready) {
-      hints.push("- Patch Supervisor não aparece como pronto no runtime atual.");
-    }
+    if (sw.supported && sw.controller && sw.registrations === 0) hints.push("- SW controller=true mas registrations=0.");
+    if (ca.supported && ca.keys === 0) hints.push("- Cache API vazio.");
+    if (!mb.present) hints.push("- mother_bundle_local não encontrado.");
+    if (!mods.activeCount && Array.isArray(mods.active) && mods.active.length === 0) hints.push("- Module Registry sem ativos.");
+    if (!st.doctorLastRun && !getLastRun()) hints.push("- doctorLastRun ainda ausente.");
 
     const lines = [];
     lines.push(`[${nowISO()}] RCF DOCTOR REPORT ${VERSION}`);
     lines.push("");
-
     lines.push("== Factory State ==");
     lines.push(`factoryVersion: ${st.factoryVersion || "unknown"}`);
     lines.push(`engineVersion: ${st.engineVersion || "unknown"}`);
@@ -478,105 +446,68 @@
     lines.push(`activeView: ${st.activeView || ""}`);
     lines.push(`activeAppSlug: ${st.activeAppSlug || ""}`);
     lines.push(`activeModulesCount: ${asArray(st.activeModules).length}`);
+    lines.push(`doctorLastRunPresent: ${!!(st.doctorLastRun || getLastRun())}`);
     lines.push("");
-
     lines.push("== Module Registry ==");
     lines.push(`version: ${mods.version || "unknown"}`);
     lines.push(`activeCount: ${Number(mods.activeCount || 0)}`);
-    if (Array.isArray(mods.active) && mods.active.length) {
-      lines.push(`active: ${mods.active.join(" | ")}`);
-    } else {
-      lines.push("active: (vazio)");
-    }
+    if (Array.isArray(mods.active) && mods.active.length) lines.push(`active: ${mods.active.join(" | ")}`);
+    else lines.push("active: (vazio)");
+    lines.push(`doctor: ${!!mods.doctor}`);
     lines.push(`factoryAI: ${!!mods.factoryAI}`);
     lines.push(`contextEngine: ${!!mods.contextEngine}`);
     lines.push(`factoryTree: ${!!mods.factoryTree}`);
-    lines.push(`factoryAIBridge: ${!!mods.factoryAIBridge}`);
-    lines.push(`factoryAIActions: ${!!mods.factoryAIActions}`);
-    lines.push(`factoryAIPlanner: ${!!mods.factoryAIPlanner}`);
-    lines.push(`patchSupervisor: ${!!mods.patchSupervisor}`);
     lines.push("");
-
     lines.push("== Cognitive / Supervised Flow ==");
     lines.push(`planner.ready: ${!!planner.ready}`);
     lines.push(`planner.lastNextFile: ${planner.lastNextFile || ""}`);
     lines.push(`planner.lastPriority: ${planner.lastPriority || ""}`);
     lines.push(`bridge.ready: ${!!bridge.ready}`);
     lines.push(`bridge.hasPlan: ${!!bridge.hasPlan}`);
-    lines.push(`bridge.targetFile: ${bridge.targetFile || ""}`);
-    lines.push(`bridge.approvalStatus: ${bridge.approvalStatus || ""}`);
     lines.push(`actions.ready: ${!!actions.ready}`);
-    lines.push(`actions.lastAction: ${actions.lastAction && actions.lastAction.name ? actions.lastAction.name : ""}`);
     lines.push(`patchSupervisor.ready: ${!!patchSupervisor.ready}`);
     lines.push(`patchSupervisor.hasStagedPatch: ${!!patchSupervisor.hasStagedPatch}`);
-    lines.push(`patchSupervisor.stagedTargetFile: ${patchSupervisor.stagedTargetFile || ""}`);
     lines.push("");
-
     lines.push("== Service Worker ==");
     lines.push(`supported: ${!!sw.supported}`);
     lines.push(`controller: ${!!sw.controller}`);
     lines.push(`registrations: ${sw.registrations}`);
-    if (sw.scopes.length) lines.push(`scopes: ${sw.scopes.slice(0, 8).join(" | ")}`);
     lines.push("");
-
     lines.push("== Cache API ==");
     lines.push(`supported: ${!!ca.supported}`);
     lines.push(`keys: ${ca.keys}`);
     lines.push("");
-
     lines.push("== localStorage ==");
     lines.push(`total keys: ${ls.total}`);
     lines.push(`rcf:* keys: ${ls.pref}`);
+    lines.push(`doctor_last_run_present: ${!!getPersistedLastRun()}`);
     lines.push("");
-
     lines.push("== mother_bundle_local ==");
     lines.push(`present: ${!!mb.present}`);
     lines.push(`key: ${mb.key}`);
     lines.push(`size: ${mb.size}`);
     lines.push(`filesCount: ${mb.filesCount}`);
     lines.push("");
-
     lines.push("== Resources ==");
     lines.push(`total: ${rs.total}`);
     lines.push(`unique: ${rs.unique}`);
     lines.push(`duplicates: ${rs.duplicates}`);
-
     if (hints.length) {
       lines.push("");
       lines.push("== Hints (SAFE) ==");
       hints.forEach((h) => lines.push(h));
     }
-
     return lines.join("\n");
   }
 
   async function runScan() {
     const reportText = await buildReport();
     const ts = nowISO();
-
     API.lastReport = reportText;
-    API.lastRun = {
-      ts,
-      version: VERSION,
-      summary: {
-        reportLength: String(reportText || "").length
-      }
-    };
-
+    API.lastRun = { ts, version: VERSION, summary: { reportLength: String(reportText || "").length } };
     persistDoctorState();
-
-    syncDoctorState({
-      source: "RCF_DOCTOR_SCAN",
-      version: VERSION,
-      ts,
-      reportLength: String(reportText || "").length
-    });
-
-    try {
-      window.RCF_DOCTOR_SCAN.lastReport = API.lastReport;
-      window.RCF_DOCTOR_SCAN.lastRun = safeClone(API.lastRun);
-    } catch {}
-
+    syncDoctorState({ source: "RCF_DOCTOR_SCAN", version: VERSION, ts, reportLength: String(reportText || "").length });
+    try { window.RCF_DOCTOR_SCAN.lastReport = API.lastReport; window.RCF_DOCTOR_SCAN.lastRun = safeClone(API.lastRun); } catch {}
     log("scan concluído ✅", "ts=" + ts);
     return reportText;
   }
@@ -584,21 +515,10 @@
   function seedDoctorRun(reason) {
     try {
       const ts = nowISO();
-
       if (!API.lastRun) {
-        API.lastRun = {
-          ts,
-          version: VERSION,
-          summary: {
-            reportLength: 0,
-            seeded: true,
-            reason: String(reason || "bootstrap")
-          }
-        };
+        API.lastRun = { ts, version: VERSION, summary: { reportLength: 0, seeded: true, reason: String(reason || "bootstrap") } };
       }
-
       persistDoctorState();
-
       syncDoctorState({
         source: "RCF_DOCTOR_SCAN",
         version: VERSION,
@@ -607,10 +527,7 @@
         seeded: true,
         reason: String(reason || "bootstrap")
       });
-
-      try {
-        window.RCF_DOCTOR_SCAN.lastRun = safeClone(API.lastRun);
-      } catch {}
+      try { window.RCF_DOCTOR_SCAN.lastRun = safeClone(API.lastRun); } catch {}
     } catch {}
   }
 
@@ -623,28 +540,23 @@
 
   window.RCF_DOCTOR_SCAN = API;
   try { window.RCF_DOCTOR = API; } catch {}
-
   try { seedDoctorRun("bootstrap"); } catch {}
-
   try {
     setTimeout(function () {
       try { runScan(); } catch (_) {}
     }, 700);
   } catch {}
-
   try {
     window.addEventListener("RCF:UI_READY", function () {
       try { seedDoctorRun("ui_ready"); } catch (_) {}
       try { runScan(); } catch (_) {}
     }, { passive: true });
   } catch {}
-
   try {
     window.addEventListener("pageshow", function () {
       try { seedDoctorRun("pageshow"); } catch (_) {}
       try { runScan(); } catch (_) {}
     }, { passive: true });
   } catch {}
-
   log("doctor_scan.js ready ✅ (" + VERSION + ") API=window.RCF_DOCTOR_SCAN.open()");
 })();
