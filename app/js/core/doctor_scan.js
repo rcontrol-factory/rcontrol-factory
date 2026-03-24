@@ -13,7 +13,7 @@
 (() => {
   "use strict";
 
-  const VERSION = "v1.6.7";
+  const VERSION = "v1.6.8";
 
   if (window.__RCF_DOCTOR_SCAN_BOOTED__) return;
   window.__RCF_DOCTOR_SCAN_BOOTED__ = true;
@@ -53,6 +53,15 @@
     return Array.isArray(v) ? v : [];
   }
 
+  function persistDoctorState() {
+    try {
+      if (API.lastRun) localStorage.setItem("rcf:doctor_last_run", JSON.stringify(API.lastRun));
+    } catch {}
+    try {
+      if (API.lastReport) localStorage.setItem("rcf:doctor_last_report", String(API.lastReport || ""));
+    } catch {}
+  }
+
   function syncDoctorState(meta) {
     try {
       if (window.RCF_FACTORY_STATE?.markDoctorRun) {
@@ -73,7 +82,17 @@
     } catch {}
 
     try {
-      if (window.RCF_MODULE_REGISTRY?.refresh) {
+      if (window.RCF_FACTORY_STATE?.registerModule) {
+        window.RCF_FACTORY_STATE.registerModule("doctor");
+      } else if (window.RCF_FACTORY_STATE?.setModule) {
+        window.RCF_FACTORY_STATE.setModule("doctor", true);
+      }
+    } catch {}
+
+    try {
+      if (window.RCF_MODULE_REGISTRY?.register) {
+        window.RCF_MODULE_REGISTRY.register("doctor");
+      } else if (window.RCF_MODULE_REGISTRY?.refresh) {
         window.RCF_MODULE_REGISTRY.refresh();
       }
     } catch {}
@@ -544,6 +563,8 @@
       }
     };
 
+    persistDoctorState();
+
     syncDoctorState({
       source: "RCF_DOCTOR_SCAN",
       version: VERSION,
@@ -560,7 +581,6 @@
     return reportText;
   }
 
-
   function seedDoctorRun(reason) {
     try {
       const ts = nowISO();
@@ -576,6 +596,8 @@
           }
         };
       }
+
+      persistDoctorState();
 
       syncDoctorState({
         source: "RCF_DOCTOR_SCAN",
@@ -613,6 +635,13 @@
   try {
     window.addEventListener("RCF:UI_READY", function () {
       try { seedDoctorRun("ui_ready"); } catch (_) {}
+      try { runScan(); } catch (_) {}
+    }, { passive: true });
+  } catch {}
+
+  try {
+    window.addEventListener("pageshow", function () {
+      try { seedDoctorRun("pageshow"); } catch (_) {}
       try { runScan(); } catch (_) {}
     }, { passive: true });
   } catch {}
