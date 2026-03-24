@@ -558,5 +558,12 @@
       try { runScan(); } catch (_) {}
     }, { passive: true });
   } catch {}
-  log("doctor_scan.js ready ✅ (" + VERSION + ") API=window.RCF_DOCTOR_SCAN.open()");
+  log("doctor_scan.js ready ✅ (" + VERSION + ") API=// execução imediata garantida
+(async () => {
+  try {
+    console.info("[RCF_DOCTOR] forced initial scan");
+    await runScan();
+  } catch (err) {
+    console.warn("[RCF_DOCTOR] initial scan failed", err);
+  }
 })();
