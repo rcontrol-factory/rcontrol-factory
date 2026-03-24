@@ -8,6 +8,7 @@
    - PATCH: sincroniza com RCF_FACTORY_STATE.markDoctorRun(...)
    - PATCH: tenta refresh em RCF_FACTORY_STATE e RCF_MODULE_REGISTRY
    - PATCH NOVO: report entende planner/bridge/actions/patch supervisor
+   - PATCH v1.6.9: persistência forte de doctorLastRun
 */
 
 (() => {
@@ -107,12 +108,10 @@
     } catch {}
 
     try {
-      if (window.RCF_FACTORY_STATE?.getState) {
-        const st = window.RCF_FACTORY_STATE.getState();
-        if (st && typeof st === "object") {
-          st.doctorLastRun = safeClone(payload);
-          st.doctorReady = true;
-        }
+      const st = window.RCF_FACTORY_STATE?.getState?.();
+      if (st && typeof st === "object") {
+        st.doctorLastRun = safeClone(payload);
+        st.doctorReady = true;
       }
     } catch {}
 
@@ -389,28 +388,61 @@
   }
 
   function getModuleSnapshot() {
-    try { if (window.RCF_MODULE_REGISTRY?.summary) return safeClone(window.RCF_MODULE_REGISTRY.summary() || {}); } catch {}
+    try {
+      if (window.RCF_MODULE_REGISTRY?.summary) {
+        return safeClone(window.RCF_MODULE_REGISTRY.summary() || {});
+      }
+    } catch {}
     return {};
   }
+
   function getFactoryStateSnapshot() {
-    try { if (window.RCF_FACTORY_STATE?.status) return safeClone(window.RCF_FACTORY_STATE.status() || {}); } catch {}
-    try { if (window.RCF_FACTORY_STATE?.getState) return safeClone(window.RCF_FACTORY_STATE.getState() || {}); } catch {}
+    try {
+      if (window.RCF_FACTORY_STATE?.status) {
+        return safeClone(window.RCF_FACTORY_STATE.status() || {});
+      }
+    } catch {}
+    try {
+      if (window.RCF_FACTORY_STATE?.getState) {
+        return safeClone(window.RCF_FACTORY_STATE.getState() || {});
+      }
+    } catch {}
     return {};
   }
+
   function getPlannerStatus() {
-    try { if (window.RCF_FACTORY_AI_PLANNER?.status) return safeClone(window.RCF_FACTORY_AI_PLANNER.status() || {}); } catch {}
+    try {
+      if (window.RCF_FACTORY_AI_PLANNER?.status) {
+        return safeClone(window.RCF_FACTORY_AI_PLANNER.status() || {});
+      }
+    } catch {}
     return {};
   }
+
   function getBridgeStatus() {
-    try { if (window.RCF_FACTORY_AI_BRIDGE?.status) return safeClone(window.RCF_FACTORY_AI_BRIDGE.status() || {}); } catch {}
+    try {
+      if (window.RCF_FACTORY_AI_BRIDGE?.status) {
+        return safeClone(window.RCF_FACTORY_AI_BRIDGE.status() || {});
+      }
+    } catch {}
     return {};
   }
+
   function getActionsStatus() {
-    try { if (window.RCF_FACTORY_AI_ACTIONS?.status) return safeClone(window.RCF_FACTORY_AI_ACTIONS.status() || {}); } catch {}
+    try {
+      if (window.RCF_FACTORY_AI_ACTIONS?.status) {
+        return safeClone(window.RCF_FACTORY_AI_ACTIONS.status() || {});
+      }
+    } catch {}
     return {};
   }
+
   function getPatchSupervisorStatus() {
-    try { if (window.RCF_PATCH_SUPERVISOR?.status) return safeClone(window.RCF_PATCH_SUPERVISOR.status() || {}); } catch {}
+    try {
+      if (window.RCF_PATCH_SUPERVISOR?.status) {
+        return safeClone(window.RCF_PATCH_SUPERVISOR.status() || {});
+      }
+    } catch {}
     return {};
   }
 
@@ -428,15 +460,31 @@
     const patchSupervisor = getPatchSupervisorStatus();
 
     const hints = [];
-    if (sw.supported && sw.controller && sw.registrations === 0) hints.push("- SW controller=true mas registrations=0.");
-    if (ca.supported && ca.keys === 0) hints.push("- Cache API vazio.");
-    if (!mb.present) hints.push("- mother_bundle_local não encontrado.");
-    if (!mods.activeCount && Array.isArray(mods.active) && mods.active.length === 0) hints.push("- Module Registry sem ativos.");
-    if (!st.doctorLastRun && !getLastRun()) hints.push("- doctorLastRun ainda ausente.");
+
+    if (sw.supported && sw.controller && sw.registrations === 0) {
+      hints.push("- SW controller=true mas registrations=0.");
+    }
+
+    if (ca.supported && ca.keys === 0) {
+      hints.push("- Cache API vazio.");
+    }
+
+    if (!mb.present) {
+      hints.push("- mother_bundle_local não encontrado.");
+    }
+
+    if (!mods.activeCount && Array.isArray(mods.active) && mods.active.length === 0) {
+      hints.push("- Module Registry sem ativos.");
+    }
+
+    if (!st.doctorLastRun && !getLastRun()) {
+      hints.push("- doctorLastRun ainda ausente.");
+    }
 
     const lines = [];
     lines.push(`[${nowISO()}] RCF DOCTOR REPORT ${VERSION}`);
     lines.push("");
+
     lines.push("== Factory State ==");
     lines.push(`factoryVersion: ${st.factoryVersion || "unknown"}`);
     lines.push(`engineVersion: ${st.engineVersion || "unknown"}`);
@@ -448,16 +496,21 @@
     lines.push(`activeModulesCount: ${asArray(st.activeModules).length}`);
     lines.push(`doctorLastRunPresent: ${!!(st.doctorLastRun || getLastRun())}`);
     lines.push("");
+
     lines.push("== Module Registry ==");
     lines.push(`version: ${mods.version || "unknown"}`);
     lines.push(`activeCount: ${Number(mods.activeCount || 0)}`);
-    if (Array.isArray(mods.active) && mods.active.length) lines.push(`active: ${mods.active.join(" | ")}`);
-    else lines.push("active: (vazio)");
+    if (Array.isArray(mods.active) && mods.active.length) {
+      lines.push(`active: ${mods.active.join(" | ")}`);
+    } else {
+      lines.push("active: (vazio)");
+    }
     lines.push(`doctor: ${!!mods.doctor}`);
     lines.push(`factoryAI: ${!!mods.factoryAI}`);
     lines.push(`contextEngine: ${!!mods.contextEngine}`);
     lines.push(`factoryTree: ${!!mods.factoryTree}`);
     lines.push("");
+
     lines.push("== Cognitive / Supervised Flow ==");
     lines.push(`planner.ready: ${!!planner.ready}`);
     lines.push(`planner.lastNextFile: ${planner.lastNextFile || ""}`);
@@ -468,46 +521,72 @@
     lines.push(`patchSupervisor.ready: ${!!patchSupervisor.ready}`);
     lines.push(`patchSupervisor.hasStagedPatch: ${!!patchSupervisor.hasStagedPatch}`);
     lines.push("");
+
     lines.push("== Service Worker ==");
     lines.push(`supported: ${!!sw.supported}`);
     lines.push(`controller: ${!!sw.controller}`);
     lines.push(`registrations: ${sw.registrations}`);
     lines.push("");
+
     lines.push("== Cache API ==");
     lines.push(`supported: ${!!ca.supported}`);
     lines.push(`keys: ${ca.keys}`);
     lines.push("");
+
     lines.push("== localStorage ==");
     lines.push(`total keys: ${ls.total}`);
     lines.push(`rcf:* keys: ${ls.pref}`);
     lines.push(`doctor_last_run_present: ${!!getPersistedLastRun()}`);
     lines.push("");
+
     lines.push("== mother_bundle_local ==");
     lines.push(`present: ${!!mb.present}`);
     lines.push(`key: ${mb.key}`);
     lines.push(`size: ${mb.size}`);
     lines.push(`filesCount: ${mb.filesCount}`);
     lines.push("");
+
     lines.push("== Resources ==");
     lines.push(`total: ${rs.total}`);
     lines.push(`unique: ${rs.unique}`);
     lines.push(`duplicates: ${rs.duplicates}`);
+
     if (hints.length) {
       lines.push("");
       lines.push("== Hints (SAFE) ==");
       hints.forEach((h) => lines.push(h));
     }
+
     return lines.join("\n");
   }
 
   async function runScan() {
     const reportText = await buildReport();
     const ts = nowISO();
+
     API.lastReport = reportText;
-    API.lastRun = { ts, version: VERSION, summary: { reportLength: String(reportText || "").length } };
+    API.lastRun = {
+      ts,
+      version: VERSION,
+      summary: {
+        reportLength: String(reportText || "").length
+      }
+    };
+
     persistDoctorState();
-    syncDoctorState({ source: "RCF_DOCTOR_SCAN", version: VERSION, ts, reportLength: String(reportText || "").length });
-    try { window.RCF_DOCTOR_SCAN.lastReport = API.lastReport; window.RCF_DOCTOR_SCAN.lastRun = safeClone(API.lastRun); } catch {}
+
+    syncDoctorState({
+      source: "RCF_DOCTOR_SCAN",
+      version: VERSION,
+      ts,
+      reportLength: String(reportText || "").length
+    });
+
+    try {
+      window.RCF_DOCTOR_SCAN.lastReport = API.lastReport;
+      window.RCF_DOCTOR_SCAN.lastRun = safeClone(API.lastRun);
+    } catch {}
+
     log("scan concluído ✅", "ts=" + ts);
     return reportText;
   }
@@ -515,10 +594,21 @@
   function seedDoctorRun(reason) {
     try {
       const ts = nowISO();
+
       if (!API.lastRun) {
-        API.lastRun = { ts, version: VERSION, summary: { reportLength: 0, seeded: true, reason: String(reason || "bootstrap") } };
+        API.lastRun = {
+          ts,
+          version: VERSION,
+          summary: {
+            reportLength: 0,
+            seeded: true,
+            reason: String(reason || "bootstrap")
+          }
+        };
       }
+
       persistDoctorState();
+
       syncDoctorState({
         source: "RCF_DOCTOR_SCAN",
         version: VERSION,
@@ -527,7 +617,10 @@
         seeded: true,
         reason: String(reason || "bootstrap")
       });
-      try { window.RCF_DOCTOR_SCAN.lastRun = safeClone(API.lastRun); } catch {}
+
+      try {
+        window.RCF_DOCTOR_SCAN.lastRun = safeClone(API.lastRun);
+      } catch {}
     } catch {}
   }
 
@@ -540,30 +633,28 @@
 
   window.RCF_DOCTOR_SCAN = API;
   try { window.RCF_DOCTOR = API; } catch {}
+
   try { seedDoctorRun("bootstrap"); } catch {}
+
   try {
     setTimeout(function () {
       try { runScan(); } catch (_) {}
     }, 700);
   } catch {}
+
   try {
     window.addEventListener("RCF:UI_READY", function () {
       try { seedDoctorRun("ui_ready"); } catch (_) {}
       try { runScan(); } catch (_) {}
     }, { passive: true });
   } catch {}
+
   try {
     window.addEventListener("pageshow", function () {
       try { seedDoctorRun("pageshow"); } catch (_) {}
       try { runScan(); } catch (_) {}
     }, { passive: true });
   } catch {}
-  log("doctor_scan.js ready ✅ (" + VERSION + ") API=// execução imediata garantida
-(async () => {
-  try {
-    console.info("[RCF_DOCTOR] forced initial scan");
-    await runScan();
-  } catch (err) {
-    console.warn("[RCF_DOCTOR] initial scan failed", err);
-  }
+
+  log("doctor_scan.js ready ✅ (" + VERSION + ") API=window.RCF_DOCTOR_SCAN.open()");
 })();
