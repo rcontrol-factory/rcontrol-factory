@@ -1,6 +1,6 @@
 /* FILE: /app/js/ui/ui_factory_view.js
    RControl Factory — Factory View Module
-   V2.7 FACTORY-AI STABLE CHAT HOST
+   V2.8 FACTORY-AI REMOUNT GUARD
 
    FECHADO:
    - Factory AI monta somente na view oficial
@@ -29,6 +29,9 @@
     __mounted: false,
     __mountCount: 0,
     __retryTimers: [],
+    __mountBusy: false,
+    __retryQueued: false,
+    __lastViewKey: "",
 
     init(deps) {
       this.__deps = Object.assign({}, this.__deps || {}, deps || {});
@@ -78,6 +81,28 @@
       }
 
       return null;
+    },
+
+    getViewKey(viewEl) {
+      try {
+        if (!viewEl) return "";
+        return String(viewEl.id || viewEl.getAttribute("data-rcf-view") || viewEl.getAttribute("data-rcf-factory-ai-view") || "");
+      } catch {
+        return "";
+      }
+    },
+
+    isStableHostMounted(viewEl) {
+      try {
+        if (!viewEl) return false;
+        const host = qs(':scope > [data-rcf-ui-factory-root="1"]', viewEl);
+        if (!host) return false;
+        const cleanRoot = qs('[data-rcf-ui-factory-chat-only="1"]', host);
+        const tools = qs('#rcfFactoryAISlotTools', host);
+        return !!(cleanRoot && tools);
+      } catch {
+        return false;
+      }
     },
 
     ensureHost(viewEl) {
@@ -255,6 +280,8 @@
     },
 
     requestIAMountWithRetries() {
+      if (this.__retryQueued) return true;
+      this.__retryQueued = true;
       this._clearRetryTimers();
 
       const tryMount = () => {
@@ -269,6 +296,10 @@
         } catch {}
 
         try { this.clearFallbacksIfRealContentMounted(); } catch {}
+        if (this.hasRealIAMount()) {
+          this.__retryQueued = false;
+          this._clearRetryTimers();
+        }
         return ok;
       };
 
@@ -284,10 +315,22 @@
         this.__retryTimers.push(id);
       });
 
+      const resetId = setTimeout(() => {
+        this.__retryQueued = false;
+      }, 1900);
+      this.__retryTimers.push(resetId);
+
       return true;
     },
 
     refreshChildren() {
+      try {
+        if (this.hasRealIAMount()) {
+          this.clearFallbacksIfRealContentMounted();
+          return true;
+        }
+      } catch {}
+
       try { this.requestIAMountWithRetries(); } catch {}
       return true;
     },
@@ -296,10 +339,25 @@
       this.init(ctx);
 
       try {
+        if (this.__mountBusy) {
+          this.log("mount skip: busy");
+          return true;
+        }
+        this.__mountBusy = true;
+
         const view = this.resolveFactoryView();
         if (!view) {
           this.log("mount skip: factory-ai view ausente");
           return false;
+        }
+
+        const viewKey = this.getViewKey(view);
+        const alreadyMounted = view.getAttribute("data-rcf-ui-factory-mounted") === "1" && this.isStableHostMounted(view);
+        if (alreadyMounted && this.__lastViewKey === viewKey) {
+          this.ensureStableHost(qs(':scope > [data-rcf-ui-factory-root="1"]', view) || view);
+          this.refreshChildren();
+          this.log("mount skip: already mounted", "count=" + this.__mountCount);
+          return true;
         }
 
         const host = this.ensureHost(view);
@@ -308,7 +366,10 @@
           return false;
         }
 
-        host.innerHTML = this.buildView();
+        if (!this.isStableHostMounted(view)) {
+          host.innerHTML = this.buildView();
+        }
+
         view.setAttribute("data-rcf-ui-factory-mounted", "1");
         view.setAttribute("data-rcf-ui-factory-ai-ready", "1");
 
@@ -316,6 +377,7 @@
         this.refreshChildren();
 
         this.__mounted = true;
+        this.__lastViewKey = viewKey;
         this.__mountCount += 1;
 
         this.log("mount ok", "count=" + this.__mountCount);
@@ -323,6 +385,8 @@
       } catch (e) {
         this.log("mount err:", e?.message || e);
         return false;
+      } finally {
+        this.__mountBusy = false;
       }
     },
 
@@ -354,13 +418,12 @@
         const mounted = view && view.getAttribute("data-rcf-ui-factory-mounted") === "1";
         const host = view ? qs('[data-rcf-ui-factory-root="1"]', view) : null;
 
-        if (!mounted || !host) {
+        if (!mounted || !host || !this.isStableHostMounted(view)) {
           return this.mount(this.__deps || {});
         }
 
         this.ensureStableHost(host);
         this.refreshChildren();
-
         return true;
       } catch (e) {
         this.log("refresh err:", e?.message || e);
