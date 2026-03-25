@@ -1,12 +1,11 @@
 /* FILE: /app/js/core/diagnostics.js
-   RCF — /app/js/core/diagnostics.js (V7.2 BOOT TRACE + STABILITY CHECK) — PADRÃO
+   RCF — /app/js/core/diagnostics.js (V7.3 SNAPSHOT CONSOLIDATION) — PADRÃO
+   Base preservada do V7.2 BOOT TRACE + STABILITY CHECK
    Patch mínimo e seguro:
-   - ✅ BOOT TRACE: detecta "boot duplo" via localStorage/sessionStorage (somente log, sem timers)
-   - ✅ FIX: BOOT_LOCK aceita __RCF_BOOTED__ OU __RCF_INDEX_BOOTED__ (evita FAIL falso no index clean)
-   - Mantém: Não dar FAIL falso no CLICK CHECK (depende da view atual)
-   - Mantém: Emergency UI só falha se estiver ativa/visível
-   - Mantém: SW getRegistration mais robusto
-   - Mantém: installCount consistente
+   - mantém run/status existentes
+   - adiciona collect()/print() para snapshot consolidado
+   - normaliza dados ausentes como "dado ausente"
+   - lê runtime/front/moduleRegistry/factoryState/doctor/logger sem quebrar a Factory
    API: window.RCF_DIAGNOSTICS
 */
 
@@ -14,7 +13,7 @@
 (() => {
   "use strict";
 
-  if (window.RCF_DIAGNOSTICS && window.RCF_DIAGNOSTICS.__v72) return;
+  if (window.RCF_DIAGNOSTICS && window.RCF_DIAGNOSTICS.__v73) return;
 
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -33,9 +32,24 @@
 
   function ok(name, details = "")   { return { name, pass: true,  details, ts: now() }; }
   function fail(name, details = "") { return { name, pass: false, details, ts: now() }; }
-
-  // "WARN" = não bloqueia estabilidade (pass=true), mas registra atenção
   function warn(name, details = "") { return { name, pass: true,  details: "WARN: " + details, ts: now() }; }
+
+  function safeValue(v) {
+    return (v === undefined || v === null) ? "dado ausente" : v;
+  }
+
+  function safeCall(fn, fallback = "dado ausente") {
+    try {
+      const out = fn();
+      return (out === undefined || out === null) ? fallback : out;
+    } catch {
+      return fallback;
+    }
+  }
+
+  function asArray(v) {
+    return Array.isArray(v) ? v : [];
+  }
 
   function setStatusStable(isStable) {
     window.RCF_STABLE = !!isStable;
@@ -61,12 +75,9 @@
     }
   }
 
-  // -----------------------------
-  // 0) BOOT TRACE (mínimo, só log)
-  // -----------------------------
   const BOOT_LS_KEY = "rcf:diag:last_boot";
   const BOOT_SS_KEY = "rcf:diag:boot_session";
-  const BOOT_DOUBLE_WINDOW_MS = 5 * 60 * 1000; // 5 min
+  const BOOT_DOUBLE_WINDOW_MS = 5 * 60 * 1000;
 
   function safeParse(raw, fb) { try { return raw ? JSON.parse(raw) : fb; } catch { return fb; } }
   function safeStringify(obj) { try { return JSON.stringify(obj); } catch { return ""; } }
@@ -133,18 +144,13 @@
 
   bootStamp();
 
-  // -----------------------------
-  // 1) BOOT CHECK
-  // -----------------------------
   function checkBoot() {
     const items = [];
-
-    // ✅ FIX: aceitar locks diferentes (index clean usa __RCF_INDEX_BOOTED__)
     try {
       const lockVal =
         window.__RCF_BOOTED__ ||
         window.__RCF_INDEX_BOOTED__ ||
-        window.__RCF_INDEX_BOOTED || // fallback (caso alguém setou sem __)
+        window.__RCF_INDEX_BOOTED ||
         null;
 
       if (lockVal) items.push(ok("BOOT_LOCK", `lock=${String(lockVal)}`));
@@ -153,7 +159,6 @@
       items.push(warn("BOOT_LOCK", e?.message || String(e)));
     }
 
-    // Emergency UI — só acusa se estiver ativo/visível
     try {
       const reloadBtn = document.getElementById("rcfReloadBtn");
       const clearBtn  = document.getElementById("rcfClearLogsBtn");
@@ -164,17 +169,13 @@
       items.push(warn("EMERGENCY_UI", e?.message || String(e)));
     }
 
-    // BOOT DOUBLE (somente WARN)
     try {
       const prev = window.__RCF_PREV_BOOT__;
       const cur = window.__RCF_LAST_BOOT__;
       if (prev && cur && typeof prev.ts === "number" && typeof cur.ts === "number") {
         const dt = cur.ts - prev.ts;
-        if (dt > 0 && dt <= BOOT_DOUBLE_WINDOW_MS) {
-          items.push(warn("BOOT_DOUBLE", `detected dtMs=${dt} nav=${cur.navType}`));
-        } else {
-          items.push(ok("BOOT_DOUBLE", "no recent double boot"));
-        }
+        if (dt > 0 && dt <= BOOT_DOUBLE_WINDOW_MS) items.push(warn("BOOT_DOUBLE", `detected dtMs=${dt} nav=${cur.navType}`));
+        else items.push(ok("BOOT_DOUBLE", "no recent double boot"));
       } else {
         items.push(ok("BOOT_DOUBLE", "no prev boot stamp"));
       }
@@ -185,18 +186,13 @@
     return items;
   }
 
-  // -----------------------------
-  // 2) CSS CHECK
-  // -----------------------------
   function checkCSS() {
     const items = [];
     try {
       const body = document.body;
       if (!body) return [fail("CSS_BODY", "document.body ausente")];
-
       const st = getComputedStyle(body);
       if (!st) return [fail("CSS_STYLE", "getComputedStyle(body) falhou")];
-
       items.push(ok("CSS_STYLE", `font=${st.fontFamily || "-"} bg=${st.backgroundColor || "-"}`));
     } catch (e) {
       items.push(fail("CSS_STYLE", e?.message || String(e)));
@@ -204,12 +200,8 @@
     return items;
   }
 
-  // -----------------------------
-  // 3) UI CHECK
-  // -----------------------------
   function checkUI() {
     const items = [];
-
     try {
       const appRoot =
         document.getElementById("app") ||
@@ -235,12 +227,8 @@
     return items;
   }
 
-  // -----------------------------
-  // 4) ENGINE CHECK
-  // -----------------------------
   function checkEngine() {
     const items = [];
-
     try {
       if (window.RCF_ENGINE && typeof window.RCF_ENGINE.init === "function") items.push(ok("ENGINE_PRESENT", "RCF_ENGINE presente"));
       else items.push(warn("ENGINE_PRESENT", "RCF_ENGINE ausente (pode carregar depois)"));
@@ -258,16 +246,11 @@
     return items;
   }
 
-  // -----------------------------
-  // 5) VFS/OVERRIDES CHECK
-  // -----------------------------
   function checkVFS() {
     const items = [];
-
     try {
       const ov = window.RCF_VFS_OVERRIDES;
       const vfs = window.RCF_VFS;
-
       if (ov && typeof ov.put === "function") items.push(ok("VFS_OVERRIDES", "RCF_VFS_OVERRIDES.put ok"));
       else items.push(warn("VFS_OVERRIDES", "RCF_VFS_OVERRIDES.put ausente"));
 
@@ -276,16 +259,11 @@
     } catch (e) {
       items.push(fail("VFS", e?.message || String(e)));
     }
-
     return items;
   }
 
-  // -----------------------------
-  // 6) SERVICE WORKER CHECK
-  // -----------------------------
   async function checkSW() {
     const items = [];
-
     try {
       if (!("serviceWorker" in navigator)) {
         items.push(warn("SW", "navigator.serviceWorker indisponível"));
@@ -293,10 +271,7 @@
       }
 
       let reg = null;
-      try {
-        reg = await navigator.serviceWorker.getRegistration();
-      } catch {}
-
+      try { reg = await navigator.serviceWorker.getRegistration(); } catch {}
       if (!reg) {
         try {
           const regs = await navigator.serviceWorker.getRegistrations();
@@ -306,20 +281,14 @@
 
       if (reg) items.push(ok("SW_REG", `scope=${reg.scope || "-"}`));
       else items.push(warn("SW_REG", "Sem registration (pode ser normal no iOS/primeiro load)"));
-
     } catch (e) {
       items.push(warn("SW_REG", e?.message || String(e)));
     }
-
     return items;
   }
 
-  // -----------------------------
-  // 7) CLICK CHECK (não dar FAIL falso)
-  // -----------------------------
   function checkClickBindings() {
     const items = [];
-
     try {
       const anyButton = $$("button").length > 0;
       if (!anyButton) {
@@ -338,17 +307,145 @@
 
       if (known.disabled) items.push(warn("CLICK_CHECK", "Botão conhecido está disabled"));
       else items.push(ok("CLICK_CHECK", "Botão conhecido detectado e habilitado"));
-
     } catch (e) {
       items.push(warn("CLICK_CHECK", e?.message || String(e)));
     }
-
     return items;
   }
 
-  // -----------------------------
-  // RUNNER
-  // -----------------------------
+  function readRuntimeLayer() {
+    const runtime =
+      window.runtimeLayer ||
+      window.RCF_FACTORY_AI_RUNTIME ||
+      window.__RCF_RUNTIME_LAYER__ ||
+      {};
+
+    return {
+      connectionConfigured: safeValue(runtime.connectionConfigured),
+      connectionAttempted: safeValue(runtime.connectionAttempted),
+      connectionStatus: safeValue(runtime.connectionStatus),
+      lastOk: safeValue(runtime.lastOk),
+      connectionModel: safeValue(runtime.model || runtime.connectionModel),
+      connectionProvider: safeValue(runtime.provider || runtime.connectionProvider),
+      connectionUpstreamStatus: safeValue(runtime.upstreamStatus || runtime.connectionUpstreamStatus)
+    };
+  }
+
+  function readFrontTelemetry() {
+    const front =
+      window.frontTelemetry ||
+      window.__RCF_FRONT_TELEMETRY__ ||
+      {};
+
+    return {
+      lastEndpoint: safeValue(front.lastEndpoint),
+      lastResponseOk: safeValue(front.lastResponseOk),
+      lastRouting: safeValue(front.lastRouting),
+      lastResponseAt: safeValue(front.lastResponseAt)
+    };
+  }
+
+  function readModuleRegistrySnapshot() {
+    const reg =
+      window.RCF_MODULE_REGISTRY ||
+      window.moduleRegistry ||
+      {};
+
+    const summary = safeCall(() => reg.summary(), null);
+    if (summary && typeof summary === "object") {
+      const active = asArray(summary.active);
+      return {
+        activeCount: safeValue(summary.activeCount ?? active.length),
+        activeList: active,
+        version: safeValue(summary.version)
+      };
+    }
+
+    const activeList = asArray(reg.activeList || reg.active);
+    return {
+      activeCount: activeList.length,
+      activeList,
+      version: safeValue(reg.version)
+    };
+  }
+
+  function readFactoryStateSnapshot() {
+    const stateApi =
+      window.RCF_FACTORY_STATE ||
+      window.factoryState ||
+      {};
+
+    const statusObj = safeCall(() => stateApi.status(), null);
+    if (statusObj && typeof statusObj === "object") {
+      const activeModules = asArray(statusObj.activeModules || statusObj.active);
+      return {
+        activeModulesCount: safeValue(statusObj.activeModulesCount ?? activeModules.length),
+        activeModules,
+        bootStatus: safeValue(statusObj.bootStatus),
+        activeView: safeValue(statusObj.activeView)
+      };
+    }
+
+    const state = safeCall(() => stateApi.getState(), null) || stateApi;
+    const activeModules = asArray(state.activeModules || state.active);
+    return {
+      activeModulesCount: activeModules.length,
+      activeModules,
+      bootStatus: safeValue(state.bootStatus),
+      activeView: safeValue(state.activeView)
+    };
+  }
+
+  function readDoctorSnapshot() {
+    const doctor =
+      window.RCF_DOCTOR_SCAN ||
+      window.RCF_DOCTOR ||
+      window.doctor ||
+      {};
+
+    return {
+      ready: safeValue(doctor.ready),
+      version: safeValue(doctor.version),
+      lastRun: safeValue(
+        doctor.lastRun ||
+        window.__RCF_DOCTOR_LAST_RUN__ ||
+        safeCall(() => JSON.parse(localStorage.getItem("rcf:doctor_last_run")), null)
+      )
+    };
+  }
+
+  function readLoggerSnapshot() {
+    const logger =
+      window.RCF_LOGGER ||
+      window.logger ||
+      {};
+
+    return {
+      ready: safeValue(logger.ready),
+      loggerItemsCount: safeValue(logger.itemsCount || safeCall(() => asArray(window.__RCF_LOGS__).length, null))
+    };
+  }
+
+  function collect() {
+    return {
+      ts: now(),
+      diagnosticsVersion: "v7.3",
+      runtimeLayer: readRuntimeLayer(),
+      frontTelemetry: readFrontTelemetry(),
+      moduleRegistry: readModuleRegistrySnapshot(),
+      factoryState: readFactoryStateSnapshot(),
+      doctor: readDoctorSnapshot(),
+      logger: readLoggerSnapshot()
+    };
+  }
+
+  function print() {
+    const snapshot = collect();
+    try { console.log("FACTORY AI DIAGNOSTICS"); } catch {}
+    try { console.log(JSON.stringify(snapshot, null, 2)); } catch {}
+    return snapshot;
+  }
+
   async function run() {
     const out = [];
     out.push(...checkBoot());
@@ -375,6 +472,7 @@
       passCount,
       failCount,
       items: out,
+      snapshot: collect(),
       ts: now()
     };
   }
@@ -397,14 +495,16 @@
 
   window.RCF_DIAGNOSTICS = {
     __v72: true,
+    __v73: true,
     run,
-    status
+    status,
+    collect,
+    print
   };
 
-  log("ok", "core/diagnostics.js ready ✅ (v7.2 BOOT TRACE)");
+  log("ok", "core/diagnostics.js ready ✅ (v7.3 SNAPSHOT CONSOLIDATION)");
 })();
 /* === RCF_RANGE_END file:/app/js/core/diagnostics.js === */
-
 
 // --- Doctor AI-ready hook (non-breaking patch) ---
 window.RCF_runDoctorAI = async function(report){
