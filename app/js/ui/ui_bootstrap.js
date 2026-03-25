@@ -1,6 +1,6 @@
 /* FILE: /app/js/ui/ui_bootstrap.js
    RControl Factory — UI Bootstrap
-   V2.3 FACTORY-AI REMOUNT GUARD REAL
+   V2.4 HARD REMOUNT GUARD + LIGHT REFRESH SAFE
 
    - Orquestra módulos visuais leves
    - Inicializa dependências da nova UI
@@ -11,6 +11,9 @@
    - Evita remount excessivo e encaixe torto da Factory IA
    - Guarda mount/refresh para não montar a Factory View toda hora
    - Mantém retries curtos e controlados
+   - HARD FIX: após bootstrap inicial, remount vira refresh leve
+   - HARD FIX: retries da Factory AI só quando a view oficial está visível
+   - HARD FIX: evita remount repetido do engine/slot da Factory AI
 */
 (() => {
   "use strict";
@@ -302,16 +305,40 @@
     }
   }
 
+  function getCurrentViewName() {
+    try {
+      return String(window.RCF?.state?.active?.view || "").trim().toLowerCase();
+    } catch {
+      return "";
+    }
+  }
+
+  function isFactoryAISlotMounted(view) {
+    try {
+      if (!view) return false;
+      if (view.getAttribute("data-rcf-ui-factory-mounted") === "1") return true;
+      if (view.querySelector('[data-rcf-ui-factory-root="1"]')) return true;
+      if (view.querySelector("#rcfFactoryAISlotTools")) return true;
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
   const API = {
     __deps: null,
     __inited: false,
     __mountCount: 0,
-    __remountBusy__: false,
     __bootstrappedOnce__: false,
     __factoryAIScriptPromise__: null,
     __retryTimers__: [],
     __mountBusy__: false,
+    __refreshBusy__: false,
     __remountTimer__: null,
+    __lastSoftRefreshAt__: 0,
+    __lastMountAt__: 0,
+    __domReadySeen__: false,
+    __uiReadySeen__: false,
 
     getDeps() {
       if (!this.__deps) this.__deps = buildDeps();
@@ -397,7 +424,7 @@
       return true;
     },
 
-    mountFactoryView() {
+    mountFactoryView(forceMount = false) {
       try {
         const view = getFactoryAIView();
         if (!view) {
@@ -411,12 +438,13 @@
           officialViewOnly: true
         });
 
-        const alreadyMounted =
-          view.getAttribute("data-rcf-ui-factory-mounted") === "1" ||
-          !!view.querySelector('[data-rcf-ui-factory-root="1"]');
+        const alreadyMounted = isFactoryAISlotMounted(view);
 
-        if (alreadyMounted && window.RCF_UI_FACTORY_VIEW && typeof window.RCF_UI_FACTORY_VIEW.refresh === "function") {
-          return !!window.RCF_UI_FACTORY_VIEW.refresh(deps);
+        if (alreadyMounted && !forceMount) {
+          if (window.RCF_UI_FACTORY_VIEW && typeof window.RCF_UI_FACTORY_VIEW.refresh === "function") {
+            return !!window.RCF_UI_FACTORY_VIEW.refresh(deps);
+          }
+          return true;
         }
 
         if (window.RCF_UI_FACTORY_VIEW && typeof window.RCF_UI_FACTORY_VIEW.mount === "function") {
@@ -433,10 +461,31 @@
       }
     },
 
-    mountFactoryAIEngine() {
+    mountFactoryAIEngine(forceMount = false) {
       try {
         const view = getFactoryAIView();
         if (!view) return false;
+
+        const slotAlreadyMounted = isFactoryAISlotMounted(view);
+        const visible = isFactoryAIViewVisible() || getCurrentViewName() === "factory-ai";
+
+        if (slotAlreadyMounted && !forceMount) {
+          if (visible) {
+            try {
+              if (window.RCF_FACTORY_AI && typeof window.RCF_FACTORY_AI.refresh === "function") {
+                window.RCF_FACTORY_AI.refresh();
+                return true;
+              }
+            } catch {}
+            try {
+              if (window.RCF_ADMIN_AI && typeof window.RCF_ADMIN_AI.refresh === "function") {
+                window.RCF_ADMIN_AI.refresh();
+                return true;
+              }
+            } catch {}
+          }
+          return true;
+        }
 
         let ok = false;
 
@@ -454,37 +503,57 @@
       }
     },
 
-    refreshUi() {
-      try { callSafe(window.RCF_UI_DASHBOARD, "refresh", this.getDeps()); } catch {}
-      try { callSafe(window.RCF_UI_RUNTIME, "refreshDashboardUI"); } catch {}
-      try { callSafe(window.RCF_UI_RUNTIME, "renderAppsList"); } catch {}
-      try { callSafe(window.RCF_UI_RUNTIME, "renderFilesList"); } catch {}
-      try { callSafe(window.RCF_UI_RUNTIME, "syncFabStatusText"); } catch {}
-      try { callSafe(window.RCF_UI_VIEWS, "refresh", this.getDeps()); } catch {}
+    refreshUi(lightOnly = false) {
+      if (this.__refreshBusy__) return true;
 
+      this.__refreshBusy__ = true;
       try {
-        const view = getFactoryAIView();
-        if (view) {
-          callSafe(window.RCF_UI_FACTORY_VIEW, "refresh", Object.assign({}, this.getDeps(), {
-            root: view,
-            viewEl: view,
-            officialViewOnly: true
-          }));
-        }
-      } catch {}
+        try { callSafe(window.RCF_UI_DASHBOARD, "refresh", this.getDeps()); } catch {}
+        try { callSafe(window.RCF_UI_RUNTIME, "refreshDashboardUI"); } catch {}
+        try { callSafe(window.RCF_UI_RUNTIME, "renderAppsList"); } catch {}
+        try { callSafe(window.RCF_UI_RUNTIME, "renderFilesList"); } catch {}
+        try { callSafe(window.RCF_UI_RUNTIME, "syncFabStatusText"); } catch {}
 
-      return true;
+        if (!lightOnly) {
+          try { callSafe(window.RCF_UI_VIEWS, "refresh", this.getDeps()); } catch {}
+        }
+
+        try {
+          const view = getFactoryAIView();
+          if (view && (isFactoryAIViewVisible() || getCurrentViewName() === "factory-ai")) {
+            callSafe(window.RCF_UI_FACTORY_VIEW, "refresh", Object.assign({}, this.getDeps(), {
+              root: view,
+              viewEl: view,
+              officialViewOnly: true
+            }));
+          }
+        } catch {}
+
+        return true;
+      } finally {
+        this.__refreshBusy__ = false;
+      }
     },
 
     scheduleFactoryAIRetries() {
       this._clearRetryTimers();
 
+      if (!(isFactoryAIViewVisible() || getCurrentViewName() === "factory-ai")) {
+        return;
+      }
+
       const steps = [180, 700];
       steps.forEach(ms => {
         const id = setTimeout(() => {
-          try { this.mountFactoryView(); } catch {}
-          try { this.mountFactoryAIEngine(); } catch {}
-          try { this.refreshUi(); } catch {}
+          try {
+            if (!(isFactoryAIViewVisible() || getCurrentViewName() === "factory-ai")) return;
+            this.mountFactoryView(false);
+          } catch {}
+          try {
+            if (!(isFactoryAIViewVisible() || getCurrentViewName() === "factory-ai")) return;
+            this.mountFactoryAIEngine(false);
+          } catch {}
+          try { this.refreshUi(true); } catch {}
         }, ms);
         this.__retryTimers__.push(id);
       });
@@ -494,6 +563,7 @@
       try {
         if (this.__mountBusy__) return true;
         this.__mountBusy__ = true;
+        this.__lastMountAt__ = Date.now();
 
         this.initModules();
 
@@ -501,14 +571,19 @@
           this.mountShell();
           this.mountHeader();
           this.mountLegacyViews();
+        } else {
+          this.refreshUi(true);
         }
 
         await this.ensureFactoryAIScript();
 
-        this.mountFactoryView();
-        this.mountFactoryAIEngine();
-        this.refreshUi();
-        this.scheduleFactoryAIRetries();
+        if (isFactoryAIViewVisible() || getCurrentViewName() === "factory-ai") {
+          this.mountFactoryView(false);
+          this.mountFactoryAIEngine(false);
+          this.scheduleFactoryAIRetries();
+        }
+
+        this.refreshUi(false);
 
         this.__mountCount += 1;
         this.__bootstrappedOnce__ = true;
@@ -522,7 +597,29 @@
       }
     },
 
-    remountSoft() {
+    softRefresh(reason = "soft") {
+      try {
+        const now = Date.now();
+        if (now - this.__lastSoftRefreshAt__ < 120) return true;
+        this.__lastSoftRefreshAt__ = now;
+
+        this.initModules();
+
+        if (isFactoryAIViewVisible() || getCurrentViewName() === "factory-ai") {
+          this.mountFactoryView(false);
+          this.mountFactoryAIEngine(false);
+          this.scheduleFactoryAIRetries();
+        }
+
+        this.refreshUi(true);
+        this._log("softRefresh ok", reason);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+
+    remountSoft(reason = "remountSoft") {
       try {
         if (this.__remountTimer__) {
           clearTimeout(this.__remountTimer__);
@@ -531,7 +628,13 @@
 
         this.__remountTimer__ = setTimeout(() => {
           this.__remountTimer__ = null;
-          try { this.mount(); } catch {}
+          try {
+            if (!this.__bootstrappedOnce__) {
+              this.mount();
+            } else {
+              this.softRefresh(reason);
+            }
+          } catch {}
         }, this.__bootstrappedOnce__ ? 40 : 80);
       } catch {}
     }
@@ -541,21 +644,27 @@
 
   try {
     document.addEventListener("DOMContentLoaded", () => {
-      try { API.remountSoft(); } catch {}
-    }, { passive: true });
+      try {
+        API.__domReadySeen__ = true;
+        API.remountSoft("DOMContentLoaded");
+      } catch {}
+    }, { passive: true, once: true });
   } catch {}
 
   try {
     window.addEventListener("RCF:UI_READY", () => {
-      try { API.remountSoft(); } catch {}
+      try {
+        API.__uiReadySeen__ = true;
+        API.remountSoft("RCF:UI_READY");
+      } catch {}
     });
   } catch {}
 
   try {
     document.addEventListener("visibilitychange", () => {
       try {
-        if (!document.hidden && isFactoryAIViewVisible()) {
-          API.remountSoft();
+        if (!document.hidden && (isFactoryAIViewVisible() || getCurrentViewName() === "factory-ai")) {
+          API.remountSoft("visibilitychange");
         }
       } catch {}
     }, { passive: true });
