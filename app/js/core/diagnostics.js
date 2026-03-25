@@ -1,11 +1,12 @@
 /* FILE: /app/js/core/diagnostics.js
-   RCF — /app/js/core/diagnostics.js (V7.3 SNAPSHOT CONSOLIDATION) — PADRÃO
-   Base preservada do V7.2 BOOT TRACE + STABILITY CHECK
-   Patch mínimo e seguro:
-   - mantém run/status existentes
-   - adiciona collect()/print() para snapshot consolidado
-   - normaliza dados ausentes como "dado ausente"
-   - lê runtime/front/moduleRegistry/factoryState/doctor/logger sem quebrar a Factory
+   RCF — /app/js/core/diagnostics.js (V7.3 DIAGNOSTICS REGISTRATION + SNAPSHOT) — PADRÃO
+   Patch mínimo e seguro sobre a base V7.2:
+   - ✅ mantém BOOT TRACE + STABILITY CHECK
+   - ✅ mantém run()/status()
+   - ✅ adiciona collect()/print() para snapshot consolidado
+   - ✅ registra presença do diagnostics no runtime atual
+   - ✅ tenta sincronizar com RCF_FACTORY_STATE / RCF_MODULE_REGISTRY sem quebrar
+   - ✅ normaliza ausências como "dado ausente"
    API: window.RCF_DIAGNOSTICS
 */
 
@@ -38,12 +39,12 @@
     return (v === undefined || v === null) ? "dado ausente" : v;
   }
 
-  function safeCall(fn, fallback = "dado ausente") {
+  function safeCall(fn, fb = "dado ausente") {
     try {
       const out = fn();
-      return (out === undefined || out === null) ? fallback : out;
+      return (out === undefined || out === null) ? fb : out;
     } catch {
-      return fallback;
+      return fb;
     }
   }
 
@@ -146,6 +147,7 @@
 
   function checkBoot() {
     const items = [];
+
     try {
       const lockVal =
         window.__RCF_BOOTED__ ||
@@ -174,8 +176,11 @@
       const cur = window.__RCF_LAST_BOOT__;
       if (prev && cur && typeof prev.ts === "number" && typeof cur.ts === "number") {
         const dt = cur.ts - prev.ts;
-        if (dt > 0 && dt <= BOOT_DOUBLE_WINDOW_MS) items.push(warn("BOOT_DOUBLE", `detected dtMs=${dt} nav=${cur.navType}`));
-        else items.push(ok("BOOT_DOUBLE", "no recent double boot"));
+        if (dt > 0 && dt <= BOOT_DOUBLE_WINDOW_MS) {
+          items.push(warn("BOOT_DOUBLE", `detected dtMs=${dt} nav=${cur.navType}`));
+        } else {
+          items.push(ok("BOOT_DOUBLE", "no recent double boot"));
+        }
       } else {
         items.push(ok("BOOT_DOUBLE", "no prev boot stamp"));
       }
@@ -191,8 +196,10 @@
     try {
       const body = document.body;
       if (!body) return [fail("CSS_BODY", "document.body ausente")];
+
       const st = getComputedStyle(body);
       if (!st) return [fail("CSS_STYLE", "getComputedStyle(body) falhou")];
+
       items.push(ok("CSS_STYLE", `font=${st.fontFamily || "-"} bg=${st.backgroundColor || "-"}`));
     } catch (e) {
       items.push(fail("CSS_STYLE", e?.message || String(e)));
@@ -202,6 +209,7 @@
 
   function checkUI() {
     const items = [];
+
     try {
       const appRoot =
         document.getElementById("app") ||
@@ -229,6 +237,7 @@
 
   function checkEngine() {
     const items = [];
+
     try {
       if (window.RCF_ENGINE && typeof window.RCF_ENGINE.init === "function") items.push(ok("ENGINE_PRESENT", "RCF_ENGINE presente"));
       else items.push(warn("ENGINE_PRESENT", "RCF_ENGINE ausente (pode carregar depois)"));
@@ -248,9 +257,11 @@
 
   function checkVFS() {
     const items = [];
+
     try {
       const ov = window.RCF_VFS_OVERRIDES;
       const vfs = window.RCF_VFS;
+
       if (ov && typeof ov.put === "function") items.push(ok("VFS_OVERRIDES", "RCF_VFS_OVERRIDES.put ok"));
       else items.push(warn("VFS_OVERRIDES", "RCF_VFS_OVERRIDES.put ausente"));
 
@@ -259,11 +270,13 @@
     } catch (e) {
       items.push(fail("VFS", e?.message || String(e)));
     }
+
     return items;
   }
 
   async function checkSW() {
     const items = [];
+
     try {
       if (!("serviceWorker" in navigator)) {
         items.push(warn("SW", "navigator.serviceWorker indisponível"));
@@ -272,6 +285,7 @@
 
       let reg = null;
       try { reg = await navigator.serviceWorker.getRegistration(); } catch {}
+
       if (!reg) {
         try {
           const regs = await navigator.serviceWorker.getRegistrations();
@@ -281,14 +295,17 @@
 
       if (reg) items.push(ok("SW_REG", `scope=${reg.scope || "-"}`));
       else items.push(warn("SW_REG", "Sem registration (pode ser normal no iOS/primeiro load)"));
+
     } catch (e) {
       items.push(warn("SW_REG", e?.message || String(e)));
     }
+
     return items;
   }
 
   function checkClickBindings() {
     const items = [];
+
     try {
       const anyButton = $$("button").length > 0;
       if (!anyButton) {
@@ -307,9 +324,11 @@
 
       if (known.disabled) items.push(warn("CLICK_CHECK", "Botão conhecido está disabled"));
       else items.push(ok("CLICK_CHECK", "Botão conhecido detectado e habilitado"));
+
     } catch (e) {
       items.push(warn("CLICK_CHECK", e?.message || String(e)));
     }
+
     return items;
   }
 
@@ -426,10 +445,36 @@
     };
   }
 
+  function syncPresence() {
+    try { window.__RCF_HAS_DIAGNOSTICS__ = true; } catch {}
+
+    try {
+      if (window.RCF_FACTORY_STATE?.setModule) window.RCF_FACTORY_STATE.setModule("diagnostics", true);
+    } catch {}
+    try {
+      if (window.RCF_FACTORY_STATE?.registerModule) window.RCF_FACTORY_STATE.registerModule("diagnostics");
+    } catch {}
+    try {
+      if (window.RCF_FACTORY_STATE?.setDiagnosticsReady) window.RCF_FACTORY_STATE.setDiagnosticsReady(true);
+    } catch {}
+    try {
+      const st = window.RCF_FACTORY_STATE?.getState?.();
+      if (st && typeof st === "object") {
+        st.diagnosticsReady = true;
+      }
+    } catch {}
+
+    try {
+      if (window.RCF_MODULE_REGISTRY?.register) window.RCF_MODULE_REGISTRY.register("diagnostics");
+      else if (window.RCF_MODULE_REGISTRY?.refresh) window.RCF_MODULE_REGISTRY.refresh();
+    } catch {}
+  }
+
   function collect() {
     return {
       ts: now(),
-      diagnosticsVersion: "v7.3",
+      diagnosticsVersion: "v7.3.1",
+      diagnosticsPresent: true,
       runtimeLayer: readRuntimeLayer(),
       frontTelemetry: readFrontTelemetry(),
       moduleRegistry: readModuleRegistrySnapshot(),
@@ -464,6 +509,7 @@
     const passCount = out.filter(x => x.pass).length;
     const failCount = out.length - passCount;
 
+    syncPresence();
     log(stable ? "ok" : "warn", `Diagnostics done. stable=${stable} pass=${passCount} fail=${failCount}`);
 
     return {
@@ -484,7 +530,8 @@
       ts: now(),
       installCount: Number(window.__RCF_INSTALL_COUNT__ || 0),
       lastBoot: window.__RCF_LAST_BOOT__ || null,
-      prevBoot: window.__RCF_PREV_BOOT__ || null
+      prevBoot: window.__RCF_PREV_BOOT__ || null,
+      diagnosticsPresent: true
     };
   }
 
@@ -496,13 +543,16 @@
   window.RCF_DIAGNOSTICS = {
     __v72: true,
     __v73: true,
+    __v731: true,
+    ready: true,
     run,
     status,
     collect,
     print
   };
 
-  log("ok", "core/diagnostics.js ready ✅ (v7.3 SNAPSHOT CONSOLIDATION)");
+  syncPresence();
+  log("ok", "core/diagnostics.js ready ✅ (v7.3.1 DIAGNOSTICS REGISTRATION + SNAPSHOT)");
 })();
 /* === RCF_RANGE_END file:/app/js/core/diagnostics.js === */
 
@@ -518,6 +568,6 @@ window.RCF_runDoctorAI = async function(report){
       })
     });
   }catch(e){
-    // endpoint optional
+      // endpoint optional
   }
 };
