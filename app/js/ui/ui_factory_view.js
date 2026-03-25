@@ -1,6 +1,6 @@
 /* FILE: /app/js/ui/ui_factory_view.js
    RControl Factory — Factory View Module
-   V2.8 FACTORY-AI REMOUNT GUARD
+   V2.9 FACTORY-AI VISIBILITY GUARD + REAL MOUNT THROTTLE
 
    FECHADO:
    - Factory AI monta somente na view oficial
@@ -11,8 +11,14 @@
    - retries curtos e seguros para encaixar o módulo vivo
    - fallback visível se o chat ainda não entrar
    - compatível com app.js V8.x
-*/
 
+   HARD FIX v2.9:
+   - só tenta mount real da Factory AI quando a view oficial está visível/ativa
+   - throttle real de mount do engine para evitar cascata 1..9
+   - refresh leve fora da view oficial, sem reinjetar chat
+   - não recria host à toa quando já existe host estável
+   - limpa retries antigos antes de novos ciclos
+*/
 (() => {
   "use strict";
 
@@ -24,6 +30,10 @@
     try { return Array.from(root.querySelectorAll(sel)); } catch { return []; }
   }
 
+  function nowMs() {
+    try { return Date.now(); } catch { return 0; }
+  }
+
   const API = {
     __deps: null,
     __mounted: false,
@@ -32,6 +42,9 @@
     __mountBusy: false,
     __retryQueued: false,
     __lastViewKey: "",
+    __lastEngineMountAt: 0,
+    __engineMountCooldownMs: 1600,
+    __lastLightRefreshAt: 0,
 
     init(deps) {
       this.__deps = Object.assign({}, this.__deps || {}, deps || {});
@@ -74,7 +87,7 @@
         const el = qs(sel);
         if (!el) continue;
 
-        const id = String(el.id || el.getAttribute("data-rcf-view") || "").toLowerCase();
+        const id = String(el.id || el.getAttribute("data-rcf-view") || el.getAttribute("data-rcf-factory-ai-view") || "").toLowerCase();
         if (!/factory-ai/.test(id) && !/view-factory-ai/.test(id)) continue;
 
         return el;
@@ -89,6 +102,27 @@
         return String(viewEl.id || viewEl.getAttribute("data-rcf-view") || viewEl.getAttribute("data-rcf-factory-ai-view") || "");
       } catch {
         return "";
+      }
+    },
+
+    isOfficialViewVisible(viewEl = null) {
+      try {
+        const view = viewEl || this.resolveFactoryView();
+        if (!view) return false;
+        if (view.classList.contains("active")) return true;
+        if (view.getAttribute("data-rcf-visible") === "1") return true;
+        if (view.hidden) return false;
+
+        const cs = window.getComputedStyle(view);
+        if (!cs) return false;
+        if (cs.display === "none" || cs.visibility === "hidden") return false;
+
+        const st = window.RCF?.state?.active?.view;
+        if (String(st || "").trim().toLowerCase() === "factory-ai") return true;
+
+        return false;
+      } catch {
+        return false;
       }
     },
 
@@ -279,36 +313,75 @@
       this.__retryTimers = [];
     },
 
+    _canRequestRealEngineMount() {
+      try {
+        if (!this.isOfficialViewVisible()) return false;
+        const dt = nowMs() - Number(this.__lastEngineMountAt || 0);
+        if (dt >= 0 && dt < this.__engineMountCooldownMs) return false;
+        return true;
+      } catch {
+        return false;
+      }
+    },
+
+    _requestRealEngineMountOnce() {
+      let ok = false;
+
+      if (!this._canRequestRealEngineMount()) {
+        return false;
+      }
+
+      try { this.__lastEngineMountAt = nowMs(); } catch {}
+
+      try { this.ensureStableHost(); } catch {}
+
+      try {
+        if (window.RCF_FACTORY_AI && typeof window.RCF_FACTORY_AI.mount === "function") {
+          ok = window.RCF_FACTORY_AI.mount() !== false || ok;
+        }
+      } catch {}
+
+      try {
+        if (!ok && window.RCF_ADMIN_AI && typeof window.RCF_ADMIN_AI.mount === "function") {
+          ok = window.RCF_ADMIN_AI.mount() !== false || ok;
+        }
+      } catch {}
+
+      try { this.clearFallbacksIfRealContentMounted(); } catch {}
+      return ok;
+    },
+
     requestIAMountWithRetries() {
+      if (!this.isOfficialViewVisible()) {
+        this._clearRetryTimers();
+        this.__retryQueued = false;
+        return false;
+      }
+
+      if (this.hasRealIAMount()) {
+        this.clearFallbacksIfRealContentMounted();
+        this._clearRetryTimers();
+        this.__retryQueued = false;
+        return true;
+      }
+
       if (this.__retryQueued) return true;
       this.__retryQueued = true;
       this._clearRetryTimers();
 
-      const tryMount = () => {
-        let ok = false;
+      try { this.ensureStableHost(); } catch {}
+      try { this.ensureVisibleFallbacks(); } catch {}
+      try { this._requestRealEngineMountOnce(); } catch {}
 
-        try { this.ensureStableHost(); } catch {}
-
-        try {
-          if (window.RCF_FACTORY_AI && typeof window.RCF_FACTORY_AI.mount === "function") {
-            ok = window.RCF_FACTORY_AI.mount() !== false || ok;
-          }
-        } catch {}
-
-        try { this.clearFallbacksIfRealContentMounted(); } catch {}
-        if (this.hasRealIAMount()) {
-          this.__retryQueued = false;
-          this._clearRetryTimers();
-        }
-        return ok;
-      };
-
-      tryMount();
-
-      [120, 420, 900, 1600].forEach((ms) => {
+      [220, 700, 1400].forEach((ms) => {
         const id = setTimeout(() => {
           try {
-            tryMount();
+            if (!this.isOfficialViewVisible()) return;
+            if (this.hasRealIAMount()) {
+              this.clearFallbacksIfRealContentMounted();
+              return;
+            }
+            this._requestRealEngineMountOnce();
             if (!this.hasRealIAMount()) this.ensureVisibleFallbacks();
           } catch {}
         }, ms);
@@ -317,7 +390,7 @@
 
       const resetId = setTimeout(() => {
         this.__retryQueued = false;
-      }, 1900);
+      }, 1800);
       this.__retryTimers.push(resetId);
 
       return true;
@@ -325,8 +398,22 @@
 
     refreshChildren() {
       try {
+        if (!this.isOfficialViewVisible()) {
+          const now = nowMs();
+          if ((now - this.__lastLightRefreshAt) < 250) return true;
+          this.__lastLightRefreshAt = now;
+          return true;
+        }
+
         if (this.hasRealIAMount()) {
           this.clearFallbacksIfRealContentMounted();
+          try {
+            if (window.RCF_FACTORY_AI && typeof window.RCF_FACTORY_AI.refresh === "function") {
+              window.RCF_FACTORY_AI.refresh();
+            } else if (window.RCF_ADMIN_AI && typeof window.RCF_ADMIN_AI.refresh === "function") {
+              window.RCF_ADMIN_AI.refresh();
+            }
+          } catch {}
           return true;
         }
       } catch {}
@@ -353,10 +440,10 @@
 
         const viewKey = this.getViewKey(view);
         const alreadyMounted = view.getAttribute("data-rcf-ui-factory-mounted") === "1" && this.isStableHostMounted(view);
+
         if (alreadyMounted && this.__lastViewKey === viewKey) {
           this.ensureStableHost(qs(':scope > [data-rcf-ui-factory-root="1"]', view) || view);
           this.refreshChildren();
-          this.log("mount skip: already mounted", "count=" + this.__mountCount);
           return true;
         }
 
@@ -417,6 +504,8 @@
         const view = this.resolveFactoryView();
         const mounted = view && view.getAttribute("data-rcf-ui-factory-mounted") === "1";
         const host = view ? qs('[data-rcf-ui-factory-root="1"]', view) : null;
+
+        if (!view) return false;
 
         if (!mounted || !host || !this.isStableHostMounted(view)) {
           return this.mount(this.__deps || {});
