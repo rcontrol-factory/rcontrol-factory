@@ -765,22 +765,144 @@
     });
   }
 
+  
   function bindDiagnosticsView() {
     const out = $("diagOut");
-    const btnRun = $("btnDiagRun");
-    const btnClear = $("btnDiagClear");
+    const btnRun =
+      findFirst(["btnDiagRun", "btnRunV8Check", "btnDiagnosticsRun"]);
+    const btnScan =
+      findFirst(["btnScanOverlays", "btnDiagScanOverlays"]);
+    const btnMicro =
+      findFirst(["btnMicroTests", "btnDiagMicroTests"]);
+    const btnClear =
+      findFirst(["btnDiagClear", "btnDiagnosticsClear"]);
 
-    const run = async () => {
-      setTopStatus("Diagnostics: rodando...");
-      const rep = await runStabilityAndGetText();
-      if (out) setBoxText(out, rep);
-      setTopStatus("Diagnostics: pronto ✅");
+    const bindOnce = (el, key, fn) => {
+      if (!el) return;
+      try {
+        if (el.dataset && el.dataset[key] === "1") return;
+        if (el.dataset) el.dataset[key] = "1";
+      } catch {}
+      bindTap(el, fn);
+    };
+
+    const finish = (msg) => {
+      setTopStatus(msg || "Diagnostics: pronto ✅");
       setTimeout(() => setTopStatus("OK ✅"), 900);
     };
 
-    if (btnRun) bindTap(btnRun, run);
-    if (btnClear) bindTap(btnClear, () => { if (out) setBoxText(out, "Pronto."); setTopStatus("OK ✅"); });
+    const runMain = async () => {
+      setTopStatus("Diagnostics: rodando...");
+      const rep = await runStabilityAndGetText();
+      if (out) setBoxText(out, rep);
+      finish("Diagnostics: pronto ✅");
+    };
+
+    const runOverlayScan = async () => {
+      setTopStatus("Diagnostics: overlays...");
+      const lines = [];
+      try {
+        const nodes = $$("*");
+        const visibleFixed = nodes.filter((el) => {
+          try {
+            const st = getComputedStyle(el);
+            const r = el.getBoundingClientRect();
+            return st.position === "fixed" && (r.width > 0 || r.height > 0) &&
+              st.display !== "none" && st.visibility !== "hidden" && st.opacity !== "0";
+          } catch { return false; }
+        });
+        lines.push("SCAN OVERLAYS ✅");
+        lines.push("fixed visíveis: " + visibleFixed.length);
+        visibleFixed.slice(0, 40).forEach((el, i) => {
+          const id = safeText(el.id || "");
+          const cls = safeText(el.className || "");
+          const tag = safeText(el.tagName || "");
+          lines.push(`${i + 1}. <${tag.toLowerCase()}> id="${id}" class="${cls}"`);
+        });
+      } catch (e) {
+        lines.push("ERRO overlay scan: " + safeText(e && e.message ? e.message : e));
+      }
+      if (out) setBoxText(out, lines.join("\n"));
+      finish("Diagnostics: overlays ✅");
+    };
+
+    const runMicrotests = async () => {
+      setTopStatus("Diagnostics: microtests...");
+      const lines = [];
+      try {
+        lines.push("MICROTESTS ✅");
+        lines.push("RCF_DIAGNOSTICS=" + !!window.RCF_DIAGNOSTICS);
+        lines.push("RCF_DOCTOR_SCAN=" + !!window.RCF_DOCTOR_SCAN);
+        lines.push("RCF_MODULE_REGISTRY=" + !!window.RCF_MODULE_REGISTRY);
+        lines.push("RCF_FACTORY_STATE=" + !!window.RCF_FACTORY_STATE);
+        lines.push("runtimeLayer=" + !!window.runtimeLayer);
+        lines.push("frontTelemetry=" + !!window.frontTelemetry);
+
+        try {
+          const snap = window.RCF_DIAGNOSTICS?.collect?.();
+          if (snap) {
+            lines.push("");
+            lines.push("runtime.connectionStatus=" + safeText(snap.runtimeLayer?.connectionStatus));
+            lines.push("front.lastEndpoint=" + safeText(snap.frontTelemetry?.lastEndpoint));
+            lines.push("registry.activeCount=" + safeText(snap.moduleRegistry?.activeCount));
+            lines.push("state.activeModulesCount=" + safeText(snap.factoryState?.activeModulesCount));
+          }
+        } catch (e) {
+          lines.push("collect() erro: " + safeText(e && e.message ? e.message : e));
+        }
+      } catch (e) {
+        lines.push("ERRO microtests: " + safeText(e && e.message ? e.message : e));
+      }
+      if (out) setBoxText(out, lines.join("\n"));
+      finish("Diagnostics: microtests ✅");
+    };
+
+    bindOnce(btnRun, "rcfDiagRunBound", runMain);
+    bindOnce(btnScan, "rcfDiagScanBound", runOverlayScan);
+    bindOnce(btnMicro, "rcfDiagMicroBound", runMicrotests);
+    bindOnce(btnClear, "rcfDiagClearBound", () => { if (out) setBoxText(out, "Pronto."); setTopStatus("OK ✅"); });
   }
+
+  function bindDoctorBridge() {
+    try {
+      if (document.__rcfDoctorBridgeBound__) return;
+      document.__rcfDoctorBridgeBound__ = true;
+    } catch {}
+
+    document.addEventListener("RCF:DOCTOR", async () => {
+      try {
+        if (window.RCF_DOCTOR_SCAN?.open) {
+          await window.RCF_DOCTOR_SCAN.open();
+          return;
+        }
+      } catch {}
+
+      try {
+        if (window.RCF_DOCTOR_SCAN?.scan) {
+          const rep = await window.RCF_DOCTOR_SCAN.scan();
+          const out = $("adminOut") || $("diagOut");
+          if (out) setBoxText(out, safeText(rep));
+          return;
+        }
+      } catch {}
+
+      try {
+        if (window.RCF_DOCTOR?.open) {
+          await window.RCF_DOCTOR.open();
+          return;
+        }
+      } catch {}
+
+      try {
+        if (window.RCF_DOCTOR?.scan) {
+          const rep = await window.RCF_DOCTOR.scan();
+          const out = $("adminOut") || $("diagOut");
+          if (out) setBoxText(out, safeText(rep));
+        }
+      } catch {}
+    }, { passive: true });
+  }
+
 
   function bindLogsView() {
     const logsViewBox =
@@ -824,6 +946,7 @@
     bindAgent();
     bindAdmin();
     bindDiagnosticsView();
+    bindDoctorBridge();
     bindLogsView();
 
     // ✅ NEW
@@ -839,6 +962,7 @@
         enforceLogsScopeNow();
         try { ensurePipelineButtons(); updateApplyButtonEnabled(); } catch {}
         try { bindGenerator(); } catch {}
+        try { bindDiagnosticsView(); } catch {}
         // mantém o bind do select vivo mesmo com re-render
         try { bindAppsSelectionButtons(); } catch {}
       });
@@ -847,6 +971,7 @@
 
     window.RCF_UI_BINDINGS = {
       __v127: true,
+      openDoctor: () => document.dispatchEvent(new CustomEvent("RCF:DOCTOR", { detail: { source: "ui_bindings" } })),
       dailyCheckup: async () => await dailyCheckup($("adminOut") || $("diagOut")),
       applySavedManual: async () => await applySavedManual(),
       generatorBuildZip: async () => await generatorBuildZip(),
