@@ -21,19 +21,19 @@ function schedulePresenceResync(syncFn){
    - evitar loop indireto entre summary -> refresh -> factory_state -> registry
    - funcionar como script clássico
 
-   PATCH v1.4.4:
-   - FIX: inclui stack completa atual da Factory AI
-   - FIX: diagnostics agora aponta para RCF_FACTORY_AI_DIAGNOSTICS
-   - FIX: adiciona memory/phase/autoloop/runtime/orchestrator/proposalUI/selfEvolution/autoheal/evolutionMode/governor/controller
-   - FIX: summary expõe módulos atuais completos
+   PATCH v1.5.2:
+   - FIX: mantém stack completa atual da Factory AI
+   - FIX: diagnostics reconhece RCF_DIAGNOSTICS, RCF_FACTORY_AI_DIAGNOSTICS e hook RCF_runDoctorAI
+   - FIX: forceLiveActive promove diagnostics quando o core já estiver pronto
+   - FIX: resync extra em eventos críticos para reduzir falso-negativo em Safari/PWA
 */
 
 (function (global) {
   "use strict";
 
-  if (global.RCF_MODULE_REGISTRY && global.RCF_MODULE_REGISTRY.__v151) return;
+  if (global.RCF_MODULE_REGISTRY && global.RCF_MODULE_REGISTRY.__v152) return;
 
-  var VERSION = "v1.5.1";
+  var VERSION = "v1.5.2";
 
   var MODULE_KEYS = [
     "logger",
@@ -192,6 +192,30 @@ function schedulePresenceResync(syncFn){
     }
   }
 
+  function detectDiagnostics() {
+    try {
+      var coreDiag = !!global.RCF_DIAGNOSTICS &&
+        (
+          hasFn(global.RCF_DIAGNOSTICS, "run") ||
+          hasFn(global.RCF_DIAGNOSTICS, "status")
+        );
+
+      var aiDiag = !!global.RCF_FACTORY_AI_DIAGNOSTICS &&
+        (
+          hasFn(global.RCF_FACTORY_AI_DIAGNOSTICS, "scan") ||
+          hasFn(global.RCF_FACTORY_AI_DIAGNOSTICS, "getLastReport") ||
+          hasFn(global.RCF_FACTORY_AI_DIAGNOSTICS, "status")
+        );
+
+      var legacyHook = hasFn(global, "RCF_runDoctorAI");
+      var bootFlag = !!global.__RCF_DIAGNOSTICS_BOOTED__;
+
+      return !!(coreDiag || aiDiag || legacyHook || bootFlag);
+    } catch (_) {
+      return false;
+    }
+  }
+
   function forceLiveActive(next) {
     try {
       if (global.RCF_FACTORY_AI || global.RCF_FACTORY_IA) next.factoryAI = true;
@@ -205,6 +229,7 @@ function schedulePresenceResync(syncFn){
       if (global.RCF_LOGGER) next.logger = true;
       if (global.RCF_DOCTOR_SCAN || global.RCF_DOCTOR) next.doctor = true;
       if (global.RCF_FACTORY_STATE) next.factoryState = true;
+      if (detectDiagnostics()) next.diagnostics = true;
       next.moduleRegistry = true;
     } catch (_) {}
     return next;
@@ -332,19 +357,6 @@ function schedulePresenceResync(syncFn){
           hasFn(global.RCF_FACTORY_TREE, "summary") ||
           hasFn(global.RCF_FACTORY_TREE, "getAllPaths") ||
           hasFn(global.RCF_FACTORY_TREE, "getTree")
-        );
-    } catch (_) {
-      return false;
-    }
-  }
-
-  function detectDiagnostics() {
-    try {
-      return !!global.RCF_FACTORY_AI_DIAGNOSTICS &&
-        (
-          hasFn(global.RCF_FACTORY_AI_DIAGNOSTICS, "scan") ||
-          hasFn(global.RCF_FACTORY_AI_DIAGNOSTICS, "getLastReport") ||
-          hasFn(global.RCF_FACTORY_AI_DIAGNOSTICS, "status")
         );
     } catch (_) {
       return false;
@@ -572,7 +584,6 @@ function schedulePresenceResync(syncFn){
       return false;
     }
   }
-
 
   function computeLiveModulesPersisted() {
     var current = clone(modules);
@@ -851,6 +862,7 @@ function schedulePresenceResync(syncFn){
     __v142: true,
     __v143: true,
     __v151: true,
+    __v152: true,
     version: VERSION,
     register: register,
     unregister: unregister,
@@ -864,6 +876,7 @@ function schedulePresenceResync(syncFn){
 
   try {
     refresh();
+    try { schedulePresenceResync(refresh); } catch (_) {}
     console.log("[RCF] module_registry ready", VERSION);
   } catch (_) {}
 
@@ -906,6 +919,7 @@ function schedulePresenceResync(syncFn){
   try {
     global.addEventListener("RCF:UI_READY", function () {
       try { refresh(); } catch (_) {}
+      try { schedulePresenceResync(refresh); } catch (_) {}
     }, { passive: true });
   } catch (_) {}
 
@@ -924,6 +938,7 @@ function schedulePresenceResync(syncFn){
   try {
     global.addEventListener("RCF:FACTORY_AI_LOCAL_ACTION", function () {
       try { refresh(); } catch (_) {}
+      try { schedulePresenceResync(refresh); } catch (_) {}
     }, { passive: true });
   } catch (_) {}
 
