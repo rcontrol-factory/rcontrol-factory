@@ -294,6 +294,7 @@
       try {
         if (window.RCF_DOCTOR_SCAN && typeof window.RCF_DOCTOR_SCAN.scan === "function") {
           window.RCF_DOCTOR_SCAN.scan();
+          this._openViewSafe("diagnostics");
           return true;
         }
       } catch {}
@@ -308,6 +309,7 @@
       try {
         if (window.RCF_DOCTOR && typeof window.RCF_DOCTOR.scan === "function") {
           window.RCF_DOCTOR.scan();
+          this._openViewSafe("diagnostics");
           return true;
         }
       } catch {}
@@ -324,8 +326,8 @@
       } catch {}
 
       try {
-        const ok = this._openViewSafe("diagnostics");
-        if (ok !== false) return true;
+        this._openViewSafe("diagnostics");
+        return true;
       } catch {}
 
       return false;
