@@ -1,6 +1,6 @@
 /* FILE: /app/js/ui/ui_bootstrap.js
    RControl Factory — UI Bootstrap
-   V2.3 FACTORY-AI OFFICIAL LOADER REMOUNT GUARD
+   V2.3 FACTORY-AI REMOUNT GUARD REAL
 
    - Orquestra módulos visuais leves
    - Inicializa dependências da nova UI
@@ -9,9 +9,8 @@
    - Carrega ./js/admin.admin_ai.js quando necessário
    - Factory View monta somente na view oficial
    - Evita remount excessivo e encaixe torto da Factory IA
+   - Guarda mount/refresh para não montar a Factory View toda hora
    - Mantém retries curtos e controlados
-   - Guarda remount para evitar mount duplicado
-   - Prefere refresh ao invés de remontar a view oficial já montada
 */
 (() => {
   "use strict";
@@ -311,10 +310,8 @@
     __bootstrappedOnce__: false,
     __factoryAIScriptPromise__: null,
     __retryTimers__: [],
-    __mountPromise__: null,
-    __lastRemountAt__: 0,
-    __lastMountAt__: 0,
-    __lastRefreshAt__: 0,
+    __mountBusy__: false,
+    __remountTimer__: null,
 
     getDeps() {
       if (!this.__deps) this.__deps = buildDeps();
@@ -414,7 +411,9 @@
           officialViewOnly: true
         });
 
-        const alreadyMounted = view.getAttribute("data-rcf-ui-factory-mounted") === "1";
+        const alreadyMounted =
+          view.getAttribute("data-rcf-ui-factory-mounted") === "1" ||
+          !!view.querySelector('[data-rcf-ui-factory-root="1"]');
 
         if (alreadyMounted && window.RCF_UI_FACTORY_VIEW && typeof window.RCF_UI_FACTORY_VIEW.refresh === "function") {
           return !!window.RCF_UI_FACTORY_VIEW.refresh(deps);
@@ -474,30 +473,13 @@
         }
       } catch {}
 
-      this.__lastRefreshAt__ = Date.now();
       return true;
-    },
-
-    refreshOnly() {
-      try {
-        this.initModules();
-        this.mountShell();
-        this.mountHeader();
-        this.mountLegacyViews();
-        this.mountFactoryView();
-        this.mountFactoryAIEngine();
-        this.refreshUi();
-        this._log("refresh only", "bootstrapped=1");
-        return true;
-      } catch {
-        return false;
-      }
     },
 
     scheduleFactoryAIRetries() {
       this._clearRetryTimers();
 
-      const steps = this.__bootstrappedOnce__ ? [180, 620] : [120, 420, 900];
+      const steps = [180, 700];
       steps.forEach(ms => {
         const id = setTimeout(() => {
           try { this.mountFactoryView(); } catch {}
@@ -510,86 +492,48 @@
 
     async mount() {
       try {
-        if (this.__mountPromise__) {
-          return await this.__mountPromise__;
-        }
+        if (this.__mountBusy__) return true;
+        this.__mountBusy__ = true;
 
-        this.__mountPromise__ = (async () => {
-          this.initModules();
+        this.initModules();
 
+        if (!this.__bootstrappedOnce__) {
           this.mountShell();
           this.mountHeader();
           this.mountLegacyViews();
+        }
 
-          await this.ensureFactoryAIScript();
+        await this.ensureFactoryAIScript();
 
-          const alreadyMounted = (() => {
-            try {
-              const view = getFactoryAIView();
-              return !!(view && view.getAttribute("data-rcf-ui-factory-mounted") === "1");
-            } catch {
-              return false;
-            }
-          })();
+        this.mountFactoryView();
+        this.mountFactoryAIEngine();
+        this.refreshUi();
+        this.scheduleFactoryAIRetries();
 
-          if (this.__bootstrappedOnce__ && alreadyMounted) {
-            this.refreshOnly();
-            this.__lastMountAt__ = Date.now();
-            return true;
-          }
+        this.__mountCount += 1;
+        this.__bootstrappedOnce__ = true;
 
-          this.mountFactoryView();
-          this.mountFactoryAIEngine();
-          this.refreshUi();
-          this.scheduleFactoryAIRetries();
-
-          this.__mountCount += 1;
-          this.__bootstrappedOnce__ = true;
-          this.__lastMountAt__ = Date.now();
-
-          this._log("mount ok", "count=" + this.__mountCount);
-          return true;
-        })();
-
-        return await this.__mountPromise__;
+        this._log("mount ok", "count=" + this.__mountCount);
+        return true;
       } catch {
         return false;
       } finally {
-        this.__mountPromise__ = null;
+        this.__mountBusy__ = false;
       }
     },
 
-    remountSoft(reason = "soft") {
+    remountSoft() {
       try {
-        const nowTs = Date.now();
-        if (this.__remountBusy__) return;
-        if (this.__lastRemountAt__ && (nowTs - this.__lastRemountAt__) < 1200) {
-          this._log("remount skip", "reason=" + reason + " throttled");
-          return;
+        if (this.__remountTimer__) {
+          clearTimeout(this.__remountTimer__);
+          this.__remountTimer__ = null;
         }
 
-        this.__remountBusy__ = true;
-        this.__lastRemountAt__ = nowTs;
-
-        const run = () => {
-          try {
-            if (this.__bootstrappedOnce__) this.refreshOnly();
-            else this.mount();
-          } catch {}
-        };
-
-        setTimeout(run, 20);
-
-        if (!this.__bootstrappedOnce__) {
-          setTimeout(run, 180);
-        }
-
-        setTimeout(() => {
-          this.__remountBusy__ = false;
-        }, 760);
-      } catch {
-        this.__remountBusy__ = false;
-      }
+        this.__remountTimer__ = setTimeout(() => {
+          this.__remountTimer__ = null;
+          try { this.mount(); } catch {}
+        }, this.__bootstrappedOnce__ ? 40 : 80);
+      } catch {}
     }
   };
 
@@ -597,13 +541,13 @@
 
   try {
     document.addEventListener("DOMContentLoaded", () => {
-      try { API.remountSoft("domcontentloaded"); } catch {}
+      try { API.remountSoft(); } catch {}
     }, { passive: true });
   } catch {}
 
   try {
     window.addEventListener("RCF:UI_READY", () => {
-      try { API.remountSoft("ui_ready"); } catch {}
+      try { API.remountSoft(); } catch {}
     });
   } catch {}
 
@@ -611,7 +555,7 @@
     document.addEventListener("visibilitychange", () => {
       try {
         if (!document.hidden && isFactoryAIViewVisible()) {
-          API.remountSoft("visibility");
+          API.remountSoft();
         }
       } catch {}
     }, { passive: true });
