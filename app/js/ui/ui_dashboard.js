@@ -285,6 +285,34 @@
 
     _runDoctor() {
       try {
+        if (window.RCF_DOCTOR_SCAN && typeof window.RCF_DOCTOR_SCAN.open === "function") {
+          window.RCF_DOCTOR_SCAN.open();
+          return true;
+        }
+      } catch {}
+
+      try {
+        if (window.RCF_DOCTOR_SCAN && typeof window.RCF_DOCTOR_SCAN.scan === "function") {
+          window.RCF_DOCTOR_SCAN.scan();
+          return true;
+        }
+      } catch {}
+
+      try {
+        if (window.RCF_DOCTOR && typeof window.RCF_DOCTOR.open === "function") {
+          window.RCF_DOCTOR.open();
+          return true;
+        }
+      } catch {}
+
+      try {
+        if (window.RCF_DOCTOR && typeof window.RCF_DOCTOR.scan === "function") {
+          window.RCF_DOCTOR.scan();
+          return true;
+        }
+      } catch {}
+
+      try {
         if (window.RCF_DOCTOR && typeof window.RCF_DOCTOR.run === "function") {
           window.RCF_DOCTOR.run();
           return true;
@@ -293,7 +321,11 @@
 
       try {
         document.dispatchEvent(new CustomEvent("RCF:DOCTOR", { detail: { source: "ui_dashboard" } }));
-        return true;
+      } catch {}
+
+      try {
+        const ok = this._openViewSafe("diagnostics");
+        if (ok !== false) return true;
       } catch {}
 
       return false;
