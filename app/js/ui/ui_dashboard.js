@@ -285,36 +285,6 @@
 
     _runDoctor() {
       try {
-        if (window.RCF_DOCTOR_SCAN && typeof window.RCF_DOCTOR_SCAN.open === "function") {
-          window.RCF_DOCTOR_SCAN.open();
-          return true;
-        }
-      } catch {}
-
-      try {
-        if (window.RCF_DOCTOR_SCAN && typeof window.RCF_DOCTOR_SCAN.scan === "function") {
-          window.RCF_DOCTOR_SCAN.scan();
-          this._openViewSafe("diagnostics");
-          return true;
-        }
-      } catch {}
-
-      try {
-        if (window.RCF_DOCTOR && typeof window.RCF_DOCTOR.open === "function") {
-          window.RCF_DOCTOR.open();
-          return true;
-        }
-      } catch {}
-
-      try {
-        if (window.RCF_DOCTOR && typeof window.RCF_DOCTOR.scan === "function") {
-          window.RCF_DOCTOR.scan();
-          this._openViewSafe("diagnostics");
-          return true;
-        }
-      } catch {}
-
-      try {
         if (window.RCF_DOCTOR && typeof window.RCF_DOCTOR.run === "function") {
           window.RCF_DOCTOR.run();
           return true;
@@ -323,10 +293,6 @@
 
       try {
         document.dispatchEvent(new CustomEvent("RCF:DOCTOR", { detail: { source: "ui_dashboard" } }));
-      } catch {}
-
-      try {
-        this._openViewSafe("diagnostics");
         return true;
       } catch {}
 
@@ -1489,9 +1455,17 @@
         const now = Date.now();
         if (now - last < 240) return;
         last = now;
-        try { if (ev && ev.cancelable) ev.preventDefault(); } catch {}
-        try { ev?.stopPropagation?.(); } catch {}
-        try { fn(ev); } catch {}
+
+        let handled = false;
+        try {
+          handled = (fn(ev) !== false);
+        } catch {}
+
+        if (handled) {
+          try { el.__rcf_dash_last_direct__ = Date.now(); } catch {}
+          try { if (ev && ev.cancelable) ev.preventDefault(); } catch {}
+          try { ev?.stopPropagation?.(); } catch {}
+        }
       };
 
       try {
@@ -1511,14 +1485,16 @@
         view.querySelectorAll(".rcfDashCardHead[data-rcf-route-view], .rcfDashCardHead[data-view]").forEach((head) => {
           this._bindTap(head, () => {
             const next = String(head.getAttribute("data-rcf-route-view") || head.getAttribute("data-view") || "").trim();
-            if (next) this._openViewSafe(next);
+            if (next) return this._openViewSafe(next);
+            return false;
           });
         });
 
         view.querySelectorAll(".rcfDashCardHead[data-rcf-special-panel]").forEach((head) => {
           this._bindTap(head, () => {
             const panel = String(head.getAttribute("data-rcf-special-panel") || "").trim();
-            if (panel) this._openSpecial(panel);
+            if (panel) return this._openSpecial(panel);
+            return false;
           });
         });
 
@@ -1526,7 +1502,8 @@
           this._bindTap(btn, () => {
             const slug = String(btn.getAttribute("data-rcf-app-slug") || "").trim();
             const next = String(btn.getAttribute("data-rcf-open-view") || btn.getAttribute("data-view") || "").trim();
-            if (next) this._openViewSafe(next, slug);
+            if (next) return this._openViewSafe(next, slug);
+            return false;
           });
         });
 
@@ -1535,14 +1512,15 @@
             const act = String(btn.getAttribute("data-rcf-action") || "").trim();
             if (act === "open-tools") {
               this._closeSpecial();
-              this._openTools();
+              return this._openTools();
             } else if (act === "open-doctor") {
               this._closeSpecial();
-              this._runDoctor();
+              return this._runDoctor();
             } else if (act === "refresh-dashboard") {
               this._syncDynamicBits();
-              this._saveAll("dashboard.refresh");
+              return this._saveAll("dashboard.refresh");
             }
+            return false;
           });
         });
 
@@ -1568,6 +1546,17 @@
 
       const handler = (ev) => {
         if (!this._isDashboardActuallyVisible()) return;
+
+        const directTarget = ev.target && ev.target.closest
+          ? ev.target.closest("[data-rcf-open-view],[data-rcf-action],[data-rcf-special-panel],[data-rcf-route-view],[data-rcf-close-special],.rcfDashCardHead")
+          : null;
+
+        try {
+          if (directTarget && directTarget.__rcf_dash_last_direct__) {
+            const dt = Date.now() - Number(directTarget.__rcf_dash_last_direct__ || 0);
+            if (dt >= 0 && dt < 500) return;
+          }
+        } catch {}
 
         const specialBtn = ev.target && ev.target.closest ? ev.target.closest("[data-rcf-special-panel]") : null;
         if (specialBtn) {
