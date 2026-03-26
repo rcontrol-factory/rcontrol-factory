@@ -39,7 +39,7 @@
 
   if (window.RCF_FACTORY_AI && window.RCF_FACTORY_AI.__v438) return;
 
-  const VERSION = "v4.5.1";
+  const VERSION = "v4.5.2";
   const BOX_ID = "rcfFactoryAIBox";
   const CHAT_ID = "rcfFactoryAIChat";
   const STYLE_ID = "rcfFactoryAIStyleV450";
@@ -266,31 +266,72 @@
     }
   }
 
+  function getCurrentViewName() {
+    try {
+      return String(window.RCF?.state?.active?.view || "").trim().toLowerCase();
+    } catch {
+      return "";
+    }
+  }
+
+  function isFactoryAIContext() {
+    try {
+      const v = getCurrentViewName();
+      return v === "factory-ai" || isFactoryAIViewVisible();
+    } catch {
+      return false;
+    }
+  }
+
+  function isAdminContext() {
+    try {
+      const v = getCurrentViewName();
+      return v === "admin" || isAdminViewVisible();
+    } catch {
+      return false;
+    }
+  }
+
+  function shouldMountFactoryAI() {
+    try {
+      return !!(isFactoryAIContext() || isAdminContext());
+    } catch {
+      return false;
+    }
+  }
+
   function getPreferredSlots() {
     const out = {
       tools: null,
       fallback: null
     };
 
+    const allowTools = isFactoryAIContext();
+    const allowFallback = !allowTools && isAdminContext();
+
     try {
       const ui = window.RCF_UI;
       if (ui && typeof ui.getSlot === "function") {
-        out.tools = ui.getSlot("factoryai.tools") || null;
-        out.fallback =
-          ui.getSlot("admin.integrations") ||
-          ui.getSlot("admin.top") ||
-          null;
+        if (allowTools) {
+          out.tools = ui.getSlot("factoryai.tools") || null;
+        }
+        if (allowFallback) {
+          out.fallback =
+            ui.getSlot("admin.integrations") ||
+            ui.getSlot("admin.top") ||
+            null;
+        }
       }
     } catch {}
 
-    if (!out.tools) {
+    if (allowTools && !out.tools) {
       out.tools =
         document.getElementById("rcfFactoryAISlotTools") ||
         document.querySelector('[data-rcf-slot="factoryai.tools"]') ||
         null;
     }
 
-    if (!out.fallback) {
+    if (allowFallback && !out.fallback) {
       out.fallback =
         document.getElementById("rcfAdminSlotIntegrations") ||
         document.querySelector('[data-rcf-slot="admin.integrations"]') ||
@@ -3303,9 +3344,17 @@ try {
   }
 
   function mount() {
+    if (!shouldMountFactoryAI()) {
+      try { syncVisibility(); } catch {}
+      return false;
+    }
+
     const slots = getPreferredSlots();
     const primary = slots.tools || slots.fallback || null;
-    if (!primary) return false;
+    if (!primary) {
+      try { syncVisibility(); } catch {}
+      return false;
+    }
 
     const nextMountedIn = slots.tools ? "factoryai.tools" : "admin.fallback";
     const prevMountedIn = STATE.mountedIn || "";
@@ -3331,10 +3380,14 @@ try {
   }
 
   function mountLoop() {
+    if (!shouldMountFactoryAI()) {
+      try { syncVisibility(); } catch {}
+      return false;
+    }
+
     if (mount()) return true;
-    setTimeout(() => { try { mount(); } catch {} }, 700);
-    setTimeout(() => { try { mount(); } catch {} }, 1600);
-    setTimeout(() => { try { mount(); } catch {} }, 2800);
+    setTimeout(() => { try { if (shouldMountFactoryAI()) mount(); } catch {} }, 700);
+    setTimeout(() => { try { if (shouldMountFactoryAI()) mount(); } catch {} }, 1600);
     return false;
   }
 
@@ -3346,7 +3399,7 @@ try {
       document.addEventListener("visibilitychange", () => {
         try {
           if (document.visibilityState === "visible") {
-            mount();
+            if (shouldMountFactoryAI()) mount();
             syncVisibility();
           }
         } catch {}
@@ -3378,7 +3431,9 @@ try {
     } catch {}
 
     STATE.syncTimer = setInterval(() => {
-      try { mount(); } catch {}
+      try {
+        if (shouldMountFactoryAI()) mount();
+      } catch {}
       try { syncVisibility(); } catch {}
     }, SYNC_INTERVAL_MS);
 
@@ -3452,17 +3507,24 @@ try {
 
   try {
     window.addEventListener("RCF:UI_READY", () => {
-      try { mountLoop(); } catch {}
+      try {
+        if (shouldMountFactoryAI()) mountLoop();
+        else syncVisibility();
+      } catch {}
     }, { passive: true });
   } catch {}
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", () => {
-      try { mountLoop(); } catch {}
+      try {
+        if (shouldMountFactoryAI()) mountLoop();
+        else syncVisibility();
+      } catch {}
       try { startSync(); } catch {}
     }, { once: true });
   } else {
-    mountLoop();
+    if (shouldMountFactoryAI()) mountLoop();
+    else syncVisibility();
     startSync();
   }
 
