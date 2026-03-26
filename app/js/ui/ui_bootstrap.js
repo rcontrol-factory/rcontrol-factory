@@ -1,6 +1,6 @@
 /* FILE: /app/js/ui/ui_bootstrap.js
    RControl Factory — UI Bootstrap
-   V2.4 HARD REMOUNT GUARD + LIGHT REFRESH SAFE
+   V2.5 FACTORY-AI VIEW-ONLY BOOT + COOLDOWN
 
    - Orquestra módulos visuais leves
    - Inicializa dependências da nova UI
@@ -339,6 +339,8 @@
     __lastMountAt__: 0,
     __domReadySeen__: false,
     __uiReadySeen__: false,
+    __lastFactoryAIBootAt__: 0,
+    __factoryAIBootCooldownMs__: 1800,
 
     getDeps() {
       if (!this.__deps) this.__deps = buildDeps();
@@ -424,12 +426,28 @@
       return true;
     },
 
+    _canBootFactoryAI(forceMount = false) {
+      try {
+        if (forceMount) return true;
+        if (!(isFactoryAIViewVisible() || getCurrentViewName() === "factory-ai")) return false;
+        const dt = Date.now() - Number(this.__lastFactoryAIBootAt__ || 0);
+        if (dt >= 0 && dt < this.__factoryAIBootCooldownMs__) return false;
+        return true;
+      } catch {
+        return false;
+      }
+    },
+
     mountFactoryView(forceMount = false) {
       try {
         const view = getFactoryAIView();
         if (!view) {
           this._log("mountFactoryView skip", "official view missing");
           return false;
+        }
+
+        if (!this._canBootFactoryAI(forceMount)) {
+          return true;
         }
 
         const deps = Object.assign({}, this.getDeps(), {
@@ -486,6 +504,9 @@
           }
           return true;
         }
+
+        if (!this._canBootFactoryAI(forceMount)) return true;
+        try { this.__lastFactoryAIBootAt__ = Date.now(); } catch {}
 
         let ok = false;
 
@@ -581,6 +602,8 @@
           this.mountFactoryView(false);
           this.mountFactoryAIEngine(false);
           this.scheduleFactoryAIRetries();
+        } else {
+          this._clearRetryTimers();
         }
 
         this.refreshUi(false);
@@ -609,6 +632,8 @@
           this.mountFactoryView(false);
           this.mountFactoryAIEngine(false);
           this.scheduleFactoryAIRetries();
+        } else {
+          this._clearRetryTimers();
         }
 
         this.refreshUi(true);
