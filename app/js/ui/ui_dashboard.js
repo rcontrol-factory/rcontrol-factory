@@ -1,6 +1,6 @@
 /* FILE: /app/js/ui/ui_dashboard.js
    RControl Factory — UI Dashboard
-   V3.7.2 SPECIAL PANEL TAP + HOME RESET FIX
+   V3.8.1 SPECIAL PANEL RESET + DOCTOR VIEW FIX
    - Home leve e rápida para Safari / iPhone / PWA
    - Card normal abre tela direto pelo head
    - Dashboard e RCF Factory abrem painel próprio
@@ -27,17 +27,33 @@
   const MOD = {
     _ctx: null,
     _booted: false,
-    _styleId: "rcfUiDashboardStyleV372",
+    _styleId: "rcfUiDashboardStyleV381",
     _rootSel: "#rcfRoot",
     _viewSel: "#view-dashboard",
     _surfaceSel: "#rcfDashboardSurface",
     _gridSel: "#rcfDashboardCards",
     _detailSel: "#rcfDashboardDetailPanel",
     _expandedCardId: null,
-    _bindVersion: "v3.7.2",
+    _bindVersion: "v3.8.1",
     _openSpecialPanel: null,
     __uiReadyBound__: false,
     __dashboardResetBound__: false,
+
+    resetToHome() {
+      try {
+        this._expandedCardId = null;
+        this._openSpecialPanel = null;
+        this._markDashboardMode();
+        this._syncDynamicBits();
+        this._applyExpandedState();
+        this._applySpecialPanelState();
+        this._bindInteractiveElements();
+        this._bindDashboardResetControls();
+        return true;
+      } catch {
+        return false;
+      }
+    },
 
     init(ctx = {}) {
       this._ctx = Object.assign({}, this._ctx || {}, ctx || {});
@@ -85,7 +101,7 @@
 
       const currentView = this._getCurrentView();
       if (currentView !== "dashboard" && !this._isDashboardActuallyVisible()) {
-        this._closeTransientState();
+        this.resetToHome();
         return true;
       }
 
@@ -293,6 +309,31 @@
 
     _runDoctor() {
       try {
+        const goDiagnostics = () => {
+          try { this._openViewSafe("diagnostics"); } catch {}
+          return true;
+        };
+
+        const setDiagOut = (text) => {
+          try {
+            const out = document.getElementById("diagOut");
+            if (out) out.textContent = String(text || "Pronto.");
+          } catch {}
+        };
+
+        if (window.RCF_DOCTOR_SCAN && typeof window.RCF_DOCTOR_SCAN.scan === "function") {
+          goDiagnostics();
+          Promise.resolve()
+            .then(() => window.RCF_DOCTOR_SCAN.scan())
+            .then((rep) => { setDiagOut(rep); })
+            .catch((e) => {
+              setDiagOut("Doctor error: " + ((e && e.message) ? e.message : String(e)));
+            });
+          return true;
+        }
+      } catch {}
+
+      try {
         if (window.RCF_DOCTOR_SCAN && typeof window.RCF_DOCTOR_SCAN.open === "function") {
           window.RCF_DOCTOR_SCAN.open();
           return true;
@@ -300,31 +341,8 @@
       } catch {}
 
       try {
-        if (window.RCF_DOCTOR_SCAN && typeof window.RCF_DOCTOR_SCAN.scan === "function") {
-          window.RCF_DOCTOR_SCAN.scan();
-          this._openViewSafe("diagnostics");
-          return true;
-        }
-      } catch {}
-
-      try {
         if (window.RCF_DOCTOR && typeof window.RCF_DOCTOR.open === "function") {
           window.RCF_DOCTOR.open();
-          return true;
-        }
-      } catch {}
-
-      try {
-        if (window.RCF_DOCTOR && typeof window.RCF_DOCTOR.scan === "function") {
-          window.RCF_DOCTOR.scan();
-          this._openViewSafe("diagnostics");
-          return true;
-        }
-      } catch {}
-
-      try {
-        if (window.RCF_DOCTOR && typeof window.RCF_DOCTOR.run === "function") {
-          window.RCF_DOCTOR.run();
           return true;
         }
       } catch {}
@@ -1554,7 +1572,7 @@
     _bindDashboardResetControls() {
       try {
         const buttons = document.querySelectorAll(
-          '.rcfBottomNav [data-view="dashboard"], .rcfBottomNav [data-view="home"], .tabs [data-view="dashboard"], .tabs [data-view="home"], [data-rcf-nav] [data-view="dashboard"], [data-rcf-nav] [data-view="home"], button.tab[data-view="dashboard"], button.tab[data-view="home"]'
+          '.rcfBottomNav [data-view="dashboard"], .rcfBottomNav [data-view="home"], .tabs [data-view="dashboard"], .tabs [data-view="home"], [data-rcf-nav] [data-view="dashboard"], [data-rcf-nav] [data-view="home"], button.tab[data-view="dashboard"], button.tab[data-view="home"], [data-rcf-back-home="1"]'
         );
         buttons.forEach((btn) => {
           this._bindSoftTap(btn, () => {
